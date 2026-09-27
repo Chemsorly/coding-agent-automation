@@ -257,7 +257,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // cycle can start, preventing the third work item (implementation) from being claimed in
         // cycle 2. Without this, a 1s interval allows cycle 2 to begin in the ~0-1s window between
         // WaitUntilAsync(Count >= 2) returning and StopLoop() executing, making Assert.Equal(2) flaky.
+        // MinIssueSlots=0: disable the floor reservation so the full budget=2 is available to the
+        // priority pass (Review → Decomposition). The default MinIssueSlots=1 reduces the priority
+        // budget to 1, causing the floor pass to dispatch an implementation issue instead of the
+        // decomposition epic, making Assert.Contains(Decomposition) fail.
         await SetPollIntervalAsync(maxRunsPerCycle: 2, pollInterval: TimeSpan.FromSeconds(60));
+        var cfg2 = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+        await Fixture.ConfigStore.SavePipelineConfigAsync(cfg2 with { MinIssueSlots = 0 }, CancellationToken.None);
 
         // Connect 3 agents so capacity is never the bottleneck
         await using var agent1 = new FakeAgentClient("loop-prio-1", "e2e");
