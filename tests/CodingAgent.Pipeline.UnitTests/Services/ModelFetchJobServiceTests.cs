@@ -44,6 +44,7 @@ public sealed class ModelFetchJobServiceTests
             Namespace = "coding-agent",
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "agent-api-key",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             KiroPvcPool = ["caa-kiro-data-0", "caa-kiro-data-1"]
         };
@@ -242,6 +243,7 @@ public sealed class ModelFetchJobServiceTests
             Namespace = "coding-agent",
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "agent-api-key",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             KiroPvcPool = []
         };
@@ -469,6 +471,7 @@ public sealed class ModelFetchJobServiceTests
             Namespace = "coding-agent",
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "agent-api-key",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "caa-agent",
             KiroPvcPool = []   // empty
         };

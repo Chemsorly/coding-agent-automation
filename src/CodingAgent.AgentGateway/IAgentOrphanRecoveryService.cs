@@ -13,5 +13,13 @@ public interface IAgentOrphanRecoveryService
     /// <summary>
     /// Reconciles agent state after registration. Called immediately after <c>_facade.Register()</c>.
     /// </summary>
-    Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId);
+    Task<OrphanRecoveryResult> RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId);
 }
+
+/// <summary>What <see cref="IAgentOrphanRecoveryService.RecoverOrphanedStateAsync"/> did that the hub acts on.</summary>
+/// <param name="FirstPickupRun">
+/// The tracked run the agent was just recorded on as its first agent — the moment a dispatched run is
+/// actually picked up — or <see langword="null"/>. Only reported once the agent's claim to the run was
+/// accepted.
+/// </param>
+public readonly record struct OrphanRecoveryResult(PipelineRun? FirstPickupRun);

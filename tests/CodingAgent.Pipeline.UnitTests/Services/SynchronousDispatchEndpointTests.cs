@@ -79,6 +79,7 @@ public sealed class SynchronousDispatchEndpointTests
             Namespace = "test",
             OrchestratorUrl = "http://test",
             AgentApiKeySecretName = "secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "sa",
             KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
         };
@@ -762,6 +763,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             Namespace = "test",
             OrchestratorUrl = "http://test",
             AgentApiKeySecretName = "secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "sa",
             KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
         };
@@ -1437,6 +1439,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
                 Namespace = "test",
                 OrchestratorUrl = "http://test",
                 AgentApiKeySecretName = "secret",
+                AgentApiKeyValue = "test-master-key",
                 AgentServiceAccountName = "sa",
                 KiroPvcPool = []  // non-kiro: no PVC involvement
             },
@@ -2513,6 +2516,7 @@ public sealed class UniqueViolationIdempotentRetryTests
             Namespace = "test",
             OrchestratorUrl = "http://test",
             AgentApiKeySecretName = "secret",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "sa",
             KiroPvcPool = (pvcPool ?? ["pvc-0", "pvc-1"]).ToList()
         };
