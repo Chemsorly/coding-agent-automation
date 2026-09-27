@@ -185,8 +185,123 @@ app.MapApiSchedulerEndpoints();
 // response with no provider configs. Resolve eagerly to fail fast on misconfiguration.
 _ = app.Services.GetRequiredService<AssignmentEnricher>();
 
+// ── Counter pre-initialization ────────────────────────────────────────────────
+// Pre-initializing all closed-tag series to 0 before the first real event means that
+// Prometheus increase() is visible from the very first increment after a deploy.
+// Each Add(0) creates the series; a single ForceFlush exports them to the OTLP endpoint.
+// Histograms are intentionally excluded — see issue #2967.
+PreInitializeMetrics(app.Services);
+
 await app.RunAsync();
 
+// ── Pre-initialization helper ─────────────────────────────────────────────────
+
+/// <summary>
+/// Pre-initializes all closed-tag combinations for counters that would otherwise lose their
+/// first increment to the Prometheus <c>increase()</c> gap on new series.
+/// </summary>
+/// <remarks>
+/// TODO: [WARNING] This function writes directly to shared static instrument instances
+/// (<see cref="PipelineTelemetry.RunOutcomes"/>, <see cref="WorkDistributionTelemetry.WorkItemsTerminated"/>).
+/// If the application startup path is exercised more than once in the same process (e.g. in an integration
+/// test suite using <c>WebApplicationFactory&lt;Program&gt;</c> with multiple test server instances), the
+/// <c>Add(0)</c> calls execute multiple times — which is safe for counters (adding 0 is idempotent) — but
+/// <c>ForceFlush()</c> is also invoked once per test host start, potentially causing unexpected OTLP export
+/// side effects if a real OTLP endpoint is configured in CI. The <c>meterProvider?.ForceFlush()</c> null-check
+/// silently skips the flush when OTLP is not configured, limiting the blast radius in practice.
+/// </remarks>
+static void PreInitializeMetrics(IServiceProvider services)
+{
+    // Emit all Add(0) series via the shared helper (also callable from tests to verify coverage).
+    Program.EmitPreInitCounters();
+
+    // Flush all pre-initialized series to the OTLP endpoint immediately.
+    // TODO: [WARNING] meterProvider?.ForceFlush() silently skips the flush when GetService returns null.
+    // This happens when metrics are wired without registering MeterProvider in DI (e.g. OTLP export is
+    // not configured, or a future refactor removes the explicit AddOpenTelemetry().WithMetrics() call).
+    // If the flush is skipped, the pre-initialized Add(0) series are never exported to the OTLP endpoint
+    // before the first real event, defeating the pre-init goal. Add a log warning when meterProvider is
+    // null so a misconfigured API startup is observable rather than silent.
+    var meterProvider = services.GetService<OpenTelemetry.Metrics.MeterProvider>();
+    meterProvider?.ForceFlush();
+}
+
 // Make Program accessible for WebApplicationFactory in integration tests
-public partial class Program { } // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
+public partial class Program // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
+{
+    /// <summary>
+    /// Emits <c>Add(0)</c> for all closed-tag combinations of the counters that must be pre-initialized.
+    /// Callable from both the API startup path (via <c>PreInitializeMetrics</c>) and integration tests
+    /// that need to verify pre-initialization coverage without re-implementing the logic.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>pipeline.run.outcomes:</strong> 75 series —
+    /// 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
+    /// <c>pipeline.project_name</c> is intentionally excluded (unbounded cardinality, Requirement 7).
+    /// </para>
+    /// <para>
+    /// <strong>workdistribution.workitems_terminated:</strong> 24 series —
+    /// 3 statuses × (1 none + 7 failure_reasons).
+    /// </para>
+    /// <para>
+    /// TODO: [WARNING] (run_type, "failed", "none") is NOT included. DeriveOutcome priority 9 returns
+    /// failure_reason="none" when failureReason is null — which happens when a request carries
+    /// Status=Failed with no parseable request.FailureReason and no payload FailureCategory. The first
+    /// such event after a deploy is invisible to increase() until a second identical series event arrives.
+    /// Fix: add (run_type, "failed", "none") per runType (5 additional series, total 80, under the ~100 limit).
+    /// </para>
+    /// </remarks>
+    internal static void EmitPreInitCounters()
+    {
+        const string FailureReasonKey = "failure_reason";
+
+        string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
+        string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
+        string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
+        string[] terminalStatuses = ["Succeeded", "Failed", "Cancelled"];
+
+        // pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7)
+        foreach (var runType in runTypes)
+        {
+            foreach (var outcome in nonFailureOutcomes)
+            {
+                PipelineTelemetry.RunOutcomes.Add(0,
+                    new KeyValuePair<string, object?>("run_type", runType),
+                    new KeyValuePair<string, object?>("outcome", outcome),
+                    new KeyValuePair<string, object?>(FailureReasonKey, "none"));
+            }
+
+            // timeout outcome
+            PipelineTelemetry.RunOutcomes.Add(0,
+                new KeyValuePair<string, object?>("run_type", runType),
+                new KeyValuePair<string, object?>("outcome", "timeout"),
+                new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
+
+            // failed outcome — one series per named failure_reason
+            foreach (var failureReason in failureReasons)
+            {
+                PipelineTelemetry.RunOutcomes.Add(0,
+                    new KeyValuePair<string, object?>("run_type", runType),
+                    new KeyValuePair<string, object?>("outcome", "failed"),
+                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
+            }
+        }
+
+        // workdistribution.workitems_terminated: 24 series
+        foreach (var status in terminalStatuses)
+        {
+            WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
+                new KeyValuePair<string, object?>("status", status),
+                new KeyValuePair<string, object?>(FailureReasonKey, "none"));
+
+            foreach (var failureReason in failureReasons)
+            {
+                WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
+                    new KeyValuePair<string, object?>("status", status),
+                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
+            }
+        }
+    }
+}
 
