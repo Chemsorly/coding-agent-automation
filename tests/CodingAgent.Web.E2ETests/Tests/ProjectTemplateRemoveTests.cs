@@ -56,28 +56,32 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
         // Wait for the template-add-row which is unique to the Templates tab content
         await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
 
-        // Verify template is visible before removal
-        var tabContent = await Page.TextContentAsync(".provider-form");
-        Assert.Contains("E2E Remove Template", tabContent);
+        // Verify template is visible before removal (must be in the template-list, not just the dropdown)
+        var templateList = await Page.WaitForSelectorAsync(".template-list", new() { Timeout = 5_000 });
+        var listContent = await templateList!.TextContentAsync();
+        Assert.Contains("E2E Remove Template", listContent);
 
         // Click the ✕ button to remove the template from this project
         await Page.ClickAsync(".btn-icon-danger[title='Remove from project (moves to Default)']");
-        // Wait for the success status toast to appear — this confirms MoveTemplateAsync completed
-        // and the UI has re-rendered with the updated template list.
-        await Page.WaitForSelectorAsync(".inline-status-success", new() { Timeout = 15_000 });
+        // Wait for the template-list to disappear — when the only template is removed the list
+        // is no longer rendered (TemplateIds.Count == 0). This is the authoritative signal that
+        // MoveTemplateAsync completed and Blazor has re-rendered the template list.
+        await Page.WaitForSelectorAsync(".template-list",
+            new() { State = WaitForSelectorState.Hidden, Timeout = 15_000 });
 
-        // Assert: template is no longer in Test Project's Templates tab
-        var tabContentAfter = await Page.TextContentAsync(".provider-form");
-        Assert.DoesNotContain("E2E Remove Template", tabContentAfter);
+        // Assert: template is no longer in Test Project's template list
+        var templateListAfter = Page.Locator(".template-list");
+        Assert.Equal(0, await templateListAfter.CountAsync());
 
         // Assert: navigate to Default project Templates tab and verify template is there
         await settingsPage.SelectTreeNodeAsync("Default");
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
         // Wait for the template-add-row which is unique to the Templates tab content
         await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
-
-        var defaultTabContent = await Page.TextContentAsync(".provider-form");
-        Assert.Contains("E2E Remove Template", defaultTabContent);
+        // Wait for the template-list to appear (template was moved here)
+        var defaultTemplateList = await Page.WaitForSelectorAsync(".template-list", new() { Timeout = 5_000 });
+        var defaultListContent = await defaultTemplateList!.TextContentAsync();
+        Assert.Contains("E2E Remove Template", defaultListContent);
     }
 
     [Fact]
@@ -106,9 +110,10 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
         // Wait for the template-add-row which is unique to the Templates tab content
         await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
 
-        // Verify template is visible
-        var tabContent = await Page.TextContentAsync(".provider-form");
-        Assert.Contains("Default Template", tabContent);
+        // Verify template is visible in the template-list (must be listed, not just in the dropdown)
+        var templateList = await Page.WaitForSelectorAsync(".template-list", new() { Timeout = 5_000 });
+        var listContent = await templateList!.TextContentAsync();
+        Assert.Contains("Default Template", listContent);
 
         // Assert: no ✕ remove button is rendered for Default project templates
         var removeButtons = await Page.Locator(".btn-icon-danger").CountAsync();
