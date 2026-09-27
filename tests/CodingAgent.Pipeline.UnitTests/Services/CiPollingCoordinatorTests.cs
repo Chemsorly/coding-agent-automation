@@ -882,10 +882,12 @@ public class CiPollingCoordinatorTests
         var run = CreateRun();
         run.PullRequestNumber = null;
 
-        // Use a longer CiNotStartedTimeout (500ms) so WaitForCiRunsToAppearAsync polls
-        // multiple times: first call returns a pre-notBefore run (filtered), then subsequent
-        // calls return a post-notBefore run (accepted). ExternalCiPollInterval is kept small (50ms).
-        var context = BuildContextForPostPrCi(run, ciNotStartedTimeout: TimeSpan.FromMilliseconds(500));
+        // Use a long CiNotStartedTimeout so WaitForCiRunsToAppearAsync polls more than once: the
+        // first call returns a pre-notBefore run (filtered), a later call a post-notBefore run
+        // (accepted). ExternalCiPollInterval is kept small (50ms). The accepted run ends the wait
+        // at once, so the timeout only bounds a failing run; a short one (it was 500ms) ran out on
+        // a loaded CI runner before the second poll, failing the test in ~1s.
+        var context = BuildContextForPostPrCi(run, ciNotStartedTimeout: TimeSpan.FromSeconds(10));
 
         var callCount = 0;
         _mockPipelineProvider
