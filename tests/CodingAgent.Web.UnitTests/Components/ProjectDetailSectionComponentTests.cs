@@ -789,7 +789,8 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
             Name = "test-server",
             Type = "http",
             Command = null
-        } with { Headers = null! };
+        } with
+        { Headers = null! };
 
         var project = new PipelineProject
         {
@@ -829,7 +830,8 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
             Name = "env-null-server",
             Type = "stdio",
             Command = "uvx"
-        } with { Env = null! };
+        } with
+        { Env = null! };
 
         var project = new PipelineProject
         {

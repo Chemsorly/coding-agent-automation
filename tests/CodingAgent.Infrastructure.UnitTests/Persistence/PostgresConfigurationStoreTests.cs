@@ -472,11 +472,15 @@ public class PostgresConfigurationStoreTests : IDisposable
 
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = defaultId, Name = "Default", Enabled = true
+            Id = defaultId,
+            Name = "Default",
+            Enabled = true
         }, CancellationToken.None);
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = projectId, Name = "Source", Enabled = true
+            Id = projectId,
+            Name = "Source",
+            Enabled = true
         }, CancellationToken.None);
 
         var template = new PipelineJobTemplate
@@ -566,17 +570,20 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             db.Projects.Add(new ProjectEntity
             {
-                Id = defaultGuid, Name = "Default",
+                Id = defaultGuid,
+                Name = "Default",
                 TemplateIds = [templateIdStr] // already listed
             });
             db.Projects.Add(new ProjectEntity
             {
-                Id = projectGuid, Name = "Source",
+                Id = projectGuid,
+                Name = "Source",
                 TemplateIds = [templateIdStr]
             });
             db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
             {
-                Id = templateGuid, ProjectId = projectGuid,
+                Id = templateGuid,
+                ProjectId = projectGuid,
                 Name = "T1"
             });
             await db.SaveChangesAsync();
@@ -1125,7 +1132,7 @@ public class PostgresConfigurationStoreTests : IDisposable
             foreach (var t in orphanedTemplates)
             {
                 t.ProjectId = defaultGuid;
-                defaultProject!.TemplateIds = [..defaultProject.TemplateIds, t.Id.ToString()];
+                defaultProject!.TemplateIds = [.. defaultProject.TemplateIds, t.Id.ToString()];
             }
 
             // Step 4
@@ -1156,11 +1163,14 @@ public class PostgresConfigurationStoreTests : IDisposable
 
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = defaultId, Name = "Default", Enabled = true
+            Id = defaultId,
+            Name = "Default",
+            Enabled = true
         }, CancellationToken.None);
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = projectId, Name = "Source"
+            Id = projectId,
+            Name = "Source"
         }, CancellationToken.None);
 
         var template = new PipelineJobTemplate
@@ -1185,7 +1195,9 @@ public class PostgresConfigurationStoreTests : IDisposable
         // Act: save the project with an empty TemplateIds (drops the template)
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = projectId, Name = "Source", TemplateIds = []
+            Id = projectId,
+            Name = "Source",
+            TemplateIds = []
         }, CancellationToken.None);
 
         // Assert via raw DB: template FK moved to Default
@@ -1234,7 +1246,9 @@ public class PostgresConfigurationStoreTests : IDisposable
 
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = defaultId, Name = "Default", Enabled = true
+            Id = defaultId,
+            Name = "Default",
+            Enabled = true
         }, CancellationToken.None);
 
         var template = new PipelineJobTemplate
@@ -1249,7 +1263,9 @@ public class PostgresConfigurationStoreTests : IDisposable
         // Act: save Default with empty TemplateIds (guard is skipped for Default)
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = defaultId, Name = "Default", TemplateIds = []
+            Id = defaultId,
+            Name = "Default",
+            TemplateIds = []
         }, CancellationToken.None);
 
         // Assert: the guard was skipped — Default's TemplateIds is now empty as requested.
@@ -1276,16 +1292,22 @@ public class PostgresConfigurationStoreTests : IDisposable
 
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = defaultId, Name = "Default", Enabled = true
+            Id = defaultId,
+            Name = "Default",
+            Enabled = true
         }, CancellationToken.None);
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = projectId, Name = "Source"
+            Id = projectId,
+            Name = "Source"
         }, CancellationToken.None);
 
         var template = new PipelineJobTemplate
         {
-            Id = templateId, Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp"
+            Id = templateId,
+            Name = "T1",
+            IssueProviderId = "ip",
+            RepoProviderId = "rp"
         };
         await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
 
@@ -1302,7 +1324,9 @@ public class PostgresConfigurationStoreTests : IDisposable
         // Act: save source with empty TemplateIds — guard should reparent but not duplicate
         await _store.SaveProjectAsync(new PipelineProject
         {
-            Id = projectId, Name = "Source", TemplateIds = []
+            Id = projectId,
+            Name = "Source",
+            TemplateIds = []
         }, CancellationToken.None);
 
         var defaultProject = await CreateFreshStore().GetProjectByIdAsync(defaultId, CancellationToken.None);

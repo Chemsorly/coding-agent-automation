@@ -628,7 +628,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                                     // TODO [WARNING]: O(N²) allocation — each iteration creates a new List<string>
                                     // via spread [...defaultProject.TemplateIds, t.Id.ToString()]. Use .Add() (O(1))
                                     // as the DeleteProjectAsync path does.
-                                    defaultProject.TemplateIds = [..defaultProject.TemplateIds, t.Id.ToString()];
+                                    defaultProject.TemplateIds = [.. defaultProject.TemplateIds, t.Id.ToString()];
                                 }
 
                                 Logger.Information(
