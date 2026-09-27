@@ -204,29 +204,27 @@ public partial class QualityGateExecutor
 
         if (report.AllPassed)
         {
-            // Capture the timestamp immediately before FinalizePullRequest. This serves as the
-            // notBefore anchor for the post-PR CI poll: any CI run that started before this point
-            // was a push-event run that completed before the PR was marked ready-for-review, and
-            // must not be used to satisfy the post-PR CI check.
-            // The pull_request-event CI (triggered by UpdatePullRequestAsync(..., markReady: true)
-            // inside RunFullPrCreationAsync) starts asynchronously after this point — typically
-            // 5–60 seconds after mark-ready fires. WaitForCiRunsToAppearAsync will filter out
-            // pre-notBefore runs and wait for a run that started after mark-ready.
-            // TODO [WARNING] (Correctness #3114): prReadyAt is captured BEFORE FinalizePullRequest
-            // runs. The true notBefore boundary is the mark-ready API call (UpdatePullRequestAsync
-            // markReady:true), which executes inside RunFullPrCreationAsync and completes strictly
-            // AFTER this point. Any push-event CI run that started in the window (prReadyAt,
-            // mark-ready] satisfies StartedAt > prReadyAt and may be wrongly accepted as the
-            // post-PR run, masking a later pull_request-event CI failure — the exact class of bug
-            // #3114 aims to fix. Capturing the anchor after FinalizePullRequest returns (or
-            // propagating the actual mark-ready timestamp from RunFullPrCreationAsync) would close
-            // this window, at the cost of adding a return value to the finalization path.
-            var prReadyAt = DateTime.UtcNow;
+            // Capture a fallback notBefore anchor before FinalizePullRequest runs.
+            // The actual mark-ready timestamp (run.PrMarkedReadyAt) is set inside
+            // RunPostPrSequenceAsync after UpdatePullRequestAsync(markReady:true) succeeds,
+            // and is preferred by HandlePostPrCiAsync when non-null. This fallback anchors
+            // only against CI runs started before FinalizePullRequest was called — a weaker
+            // guard than the actual mark-ready time but never worse than the pre-fix behavior.
+            // TODO [WARNING] (DotNetSpecialist): prReadyFallback is captured here, before the
+            // FinalizePullRequest await. FinalizePullRequest is async and runs brain sync,
+            // reflection, the mark-ready API call, and PR description generation — all of which
+            // execute after this timestamp. The fallback therefore precedes all of that work by
+            // potentially many seconds. This is only used when run.PrMarkedReadyAt is null
+            // (draft PRs, mark-ready errors); on the happy path PrMarkedReadyAt is preferred.
+            // The residual risk is confined to already-degraded fallback scenarios and is never
+            // worse than pre-fix behavior, but reviewers should be aware the fallback anchor
+            // is not tight.
+            var prReadyFallback = DateTime.UtcNow;
             await callbacks.FinalizePullRequest(run, false, linkedCt);
 
             // Wait for post-PR CI and handle retry/draft if it fails.
             // Extracted to keep RunPostRetryCleanupAndFinalizeAsync within complexity threshold.
-            await HandlePostPrCiAsync(context, report, prReadyAt, linkedCt);
+            await HandlePostPrCiAsync(context, report, prReadyFallback, linkedCt);
         }
         else
             await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
@@ -236,15 +234,32 @@ public partial class QualityGateExecutor
     /// Waits for post-PR CI after FinalizePullRequest and routes failures through the retry loop.
     /// Extracted from <see cref="RunPostRetryCleanupAndFinalizeAsync"/> to reduce cognitive complexity.
     /// </summary>
-    /// <param name="prReadyAt">
-    /// Timestamp captured just before <c>FinalizePullRequest</c> was called in
-    /// <see cref="RunPostRetryCleanupAndFinalizeAsync"/>. Passed to <see cref="WaitForPostPrCiAsync"/>
-    /// as the <c>notBefore</c> filter so only CI runs that started after mark-ready are accepted.
+    /// <param name="prReadyFallback">
+    /// Fallback timestamp captured just before <c>FinalizePullRequest</c> was called in
+    /// <see cref="RunPostRetryCleanupAndFinalizeAsync"/>. Used as the <c>notBefore</c> filter
+    /// only when <see cref="PipelineRun.PrMarkedReadyAt"/> is null (mark-ready call was skipped
+    /// or failed). When <c>PrMarkedReadyAt</c> is set (happy path), it is preferred because it
+    /// accurately reflects when <c>UpdatePullRequestAsync(markReady:true)</c> completed, closing
+    /// the window where a push-event CI run starting between the fallback and actual mark-ready
+    /// could be wrongly accepted as the post-PR CI check.
     /// </param>
-    private async Task HandlePostPrCiAsync(QualityGateContext context, QualityGateReport report, DateTime prReadyAt, CancellationToken linkedCt)
+    private async Task HandlePostPrCiAsync(QualityGateContext context, QualityGateReport report, DateTime prReadyFallback, CancellationToken linkedCt)
     {
         var run = context.Run;
-        report = await WaitForPostPrCiAsync(context, report, prReadyAt, linkedCt);
+        // Prefer the actual mark-ready timestamp (set by RunPostPrSequenceAsync after
+        // UpdatePullRequestAsync(markReady:true) succeeds) over the pre-FinalizePullRequest fallback.
+        // This closes the window where a push-event CI that started between prReadyFallback and the
+        // actual mark-ready call could be wrongly accepted as the pull_request-event CI — the root
+        // cause of issue #3114.
+        // TODO [WARNING] (Correctness): run.PrMarkedReadyAt is read here after FinalizePullRequest
+        // returns. In the OCE case (UpdatePullRequestAsync(markReady:true) succeeds and sets
+        // PrMarkedReadyAt, then a subsequent call inside RunPostPrSequenceAsync throws OCE),
+        // FinalizePullRequest propagates the OCE and this line is never reached — the path is safe.
+        // However, the comment in the XML doc implies the field is set "without error"; it is more
+        // accurate to say the field is set after the mark-ready call completes successfully,
+        // regardless of what follows within the same FinalizePullRequest invocation.
+        var notBefore = run.PrMarkedReadyAt ?? prReadyFallback;
+        report = await WaitForPostPrCiAsync(context, report, notBefore, linkedCt);
         if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
                 or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
 
@@ -270,9 +285,9 @@ public partial class QualityGateExecutor
     private Task<QualityGateReport> WaitForPostPrCiAsync(
         QualityGateContext context,
         QualityGateReport report,
-        DateTime prReadyAt,
+        DateTime notBefore,
         CancellationToken ct)
-        => _ciPollingCoordinator.WaitForPostPrCiAsync(context, report, prReadyAt, ct);
+        => _ciPollingCoordinator.WaitForPostPrCiAsync(context, report, notBefore, ct);
 
     /// <summary>
     /// Encapsulates the draft-PR finalization pattern: log a warning, emit a UI line,

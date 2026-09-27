@@ -229,6 +229,19 @@ public sealed class PullRequestFinalizationService
                     // intended behavior matching all other UpdatePullRequestAsync guards in this file.
                     await repoProvider.UpdatePullRequestAsync(prNum, run.PullRequestBody ?? "", true, ct);
                     emitOutputLine($"✅ PR #{run.PullRequestNumber} marked ready for review");
+                    // Record the mark-ready timestamp so post-PR CI polling can use it as the
+                    // notBefore anchor (filters out push-event CI runs that completed before
+                    // mark-ready, ensuring only the pull_request-event CI is observed).
+                    // TODO [WARNING] (DotNetSpecialist): DateTime.UtcNow is captured after the
+                    // async continuation resumes, not at the exact instant the HTTP call returned.
+                    // On a busy thread pool the delta between HTTP completion and this assignment
+                    // can be a few ms. This cannot produce a false-negative (timestamp is always
+                    // >= actual mark-ready, never before it), so no CI run will be wrongly accepted
+                    // due to this. The XML doc on PrMarkedReadyAt says "immediately after … completes
+                    // without error" — that approximation is acceptable given the usage as a filter
+                    // anchor, but reviewers should be aware of the imprecision if clock resolution
+                    // requirements tighten.
+                    run.PrMarkedReadyAt = DateTime.UtcNow;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
