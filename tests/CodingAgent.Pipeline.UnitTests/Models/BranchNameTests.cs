@@ -39,6 +39,11 @@ public class BranchNameTests
         result.Should().Be("main");
     }
 
+    // TODO [WARNING]: No test for whitespace-only input through the implicit string → BranchName
+    // operator. ArgumentException.ThrowIfNullOrEmpty does not reject strings like "   ", so a
+    // whitespace-only branch name would be silently accepted. Add a test (and, if desired, switch to
+    // ArgumentException.ThrowIfNullOrWhiteSpace) to specify and lock in the intended boundary.
+
     [Fact]
     public void ToString_ReturnsInnerValue()
     {
@@ -67,6 +72,12 @@ public class BranchNameTests
         (a != b).Should().BeTrue();
     }
 
+    // TODO [WARNING]: Default_HasNullValue confirms that default(BranchName).Value is null, but there
+    // is no corresponding test verifying that passing a default(BranchName) or new BranchName(null)
+    // through the implicit string operator (or into a provider method) fails early with a clear
+    // exception rather than silently propagating null deeper into the call stack. Add a test for the
+    // downstream guard path (ArgumentException.ThrowIfNullOrEmpty(branchName.Value) in providers) to
+    // document the intended failure mode and prevent silent null propagation.
     [Fact]
     public void Default_HasNullValue()
     {
