@@ -11,9 +11,8 @@ namespace CodingAgent.Api.IntegrationTests;
 /// AC: "Pre-initialized series are exported at 0 before any event, and the first real event
 /// after startup shows up in increase()."
 ///
-/// These tests verify the pre-initialization logic defined in Program.cs startup directly
-/// (since the full host startup is too expensive to re-run in each test).
-/// They call <see cref="RunPreInitialization"/> which mirrors the startup logic.
+/// These tests verify the pre-initialization logic via <see cref="Program.EmitPreInitCounters"/>,
+/// the production helper extracted from <c>Program.PreInitializeMetrics</c>.
 /// </summary>
 [Collection("PostStatusIdempotencyCollection")]
 public sealed class RunOutcomeCounterPreInitializationTests
@@ -29,56 +28,6 @@ public sealed class RunOutcomeCounterPreInitializationTests
          "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
 
     private static readonly string[] TerminalStatuses = ["Succeeded", "Failed", "Cancelled"];
-
-    /// <summary>
-    /// Mirrors the pre-initialization logic from Program.cs without requiring a full host start.
-    /// </summary>
-    private static void RunPreInitialization(
-        ConcurrentBag<(string InstrumentName, long Value, string? RunType, string? Outcome, string? FailureReason, string? Status)> bag)
-    {
-        foreach (var runType in RunTypes)
-        {
-            foreach (var outcome in NonFailureOutcomes)
-            {
-                bag.Add(("pipeline.run.outcomes", 0, runType, outcome, "none", null));
-                PipelineTelemetry.RunOutcomes.Add(0,
-                    new KeyValuePair<string, object?>("run_type", runType),
-                    new KeyValuePair<string, object?>("outcome", outcome),
-                    new KeyValuePair<string, object?>("failure_reason", "none"));
-            }
-
-            PipelineTelemetry.RunOutcomes.Add(0,
-                new KeyValuePair<string, object?>("run_type", runType),
-                new KeyValuePair<string, object?>("outcome", "timeout"),
-                new KeyValuePair<string, object?>("failure_reason", "timeout"));
-            bag.Add(("pipeline.run.outcomes", 0, runType, "timeout", "timeout", null));
-
-            foreach (var failureReason in FailureReasons)
-            {
-                PipelineTelemetry.RunOutcomes.Add(0,
-                    new KeyValuePair<string, object?>("run_type", runType),
-                    new KeyValuePair<string, object?>("outcome", "failed"),
-                    new KeyValuePair<string, object?>("failure_reason", failureReason));
-                bag.Add(("pipeline.run.outcomes", 0, runType, "failed", failureReason, null));
-            }
-        }
-
-        foreach (var status in TerminalStatuses)
-        {
-            WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
-                new KeyValuePair<string, object?>("status", status),
-                new KeyValuePair<string, object?>("failure_reason", "none"));
-            bag.Add(("workdistribution.workitems_terminated", 0, null, null, "none", status));
-
-            foreach (var failureReason in FailureReasons)
-            {
-                WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
-                    new KeyValuePair<string, object?>("status", status),
-                    new KeyValuePair<string, object?>("failure_reason", failureReason));
-                bag.Add(("workdistribution.workitems_terminated", 0, null, null, failureReason, status));
-            }
-        }
-    }
 
     [Fact]
     public void PreInitialization_RunOutcomes_Produces75Series()
@@ -173,16 +122,11 @@ public sealed class RunOutcomeCounterPreInitializationTests
     [Fact]
     public void PreInitialization_EmitsAdd0_ForAllRunOutcomesCombinations()
     {
-        // Verify Add(0) is emitted for all 75 combinations via a MeterListener.
-        // TODO: [WARNING] This test re-executes the pre-initialization logic inline (calls
-        // PipelineTelemetry.RunOutcomes.Add(0, ...) in the test body) rather than delegating
-        // to RunPreInitialization or Program.PreInitializeMetrics. It is therefore partially
-        // tautological: it calls Add(0) itself and then asserts those same calls were observed,
-        // so it would pass even if Program.PreInitializeMetrics were deleted entirely.
-        // The static RunOutcomes counter is shared across the test process; these Add(0) calls
-        // also permanently affect the series-existence state for the live static meter.
-        // To be meaningful, the test should verify that RunPreInitialization (or Program.PreInitializeMetrics)
-        // covers all required combinations — not re-run the logic inline.
+        // Verify Add(0) is emitted for all 75 combinations by calling the real production
+        // pre-initialization helper (Program.EmitPreInitCounters), observed via a MeterListener.
+        // This test directly exercises the production code path, so a regression in
+        // Program.EmitPreInitCounters (e.g. missing a run_type or outcome) will cause this test
+        // to fail.
         var observed = new ConcurrentBag<(string RunType, string Outcome, string FailureReason)>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
@@ -204,28 +148,8 @@ public sealed class RunOutcomeCounterPreInitializationTests
         });
         listener.Start();
 
-        // Simulate pre-initialization
-        foreach (var runType in RunTypes)
-        {
-            foreach (var nonFailureOutcome in NonFailureOutcomes)
-            {
-                PipelineTelemetry.RunOutcomes.Add(0,
-                    new KeyValuePair<string, object?>("run_type", runType),
-                    new KeyValuePair<string, object?>("outcome", nonFailureOutcome),
-                    new KeyValuePair<string, object?>("failure_reason", "none"));
-            }
-            PipelineTelemetry.RunOutcomes.Add(0,
-                new KeyValuePair<string, object?>("run_type", runType),
-                new KeyValuePair<string, object?>("outcome", "timeout"),
-                new KeyValuePair<string, object?>("failure_reason", "timeout"));
-            foreach (var failureReason in FailureReasons)
-            {
-                PipelineTelemetry.RunOutcomes.Add(0,
-                    new KeyValuePair<string, object?>("run_type", runType),
-                    new KeyValuePair<string, object?>("outcome", "failed"),
-                    new KeyValuePair<string, object?>("failure_reason", failureReason));
-            }
-        }
+        // Call the production pre-initialization helper (not an inline copy).
+        Program.EmitPreInitCounters();
 
         // All 75 combinations must have been observed
         observed.Should().HaveCountGreaterThanOrEqualTo(75,
@@ -244,6 +168,55 @@ public sealed class RunOutcomeCounterPreInitializationTests
             {
                 observed.Should().Contain((runType, "failed", failureReason),
                     $"pre-init must cover ({runType}, failed, {failureReason})");
+            }
+        }
+    }
+
+    [Fact]
+    public void PreInitialization_EmitsAdd0_ForAllWorkItemsTerminatedCombinations()
+    {
+        // Verify Add(0) is emitted for all 24 combinations of workdistribution.workitems_terminated
+        // by calling the real production pre-initialization helper (Program.EmitPreInitCounters),
+        // observed via a MeterListener on WorkDistributionTelemetry.MeterName.
+        // This test directly exercises the production code path, so a regression in
+        // Program.EmitPreInitCounters (e.g. missing a status or failure_reason) will cause this
+        // test to fail — unlike PreInitialization_WorkItemsTerminated_Produces24Series which only
+        // verifies arithmetic on test-local arrays.
+        var observed = new ConcurrentBag<(string Status, string FailureReason)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
+                && instrument.Name == "workdistribution.workitems_terminated")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string status = "", failureReason = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "status") status = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "failure_reason") failureReason = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((status, failureReason));
+        });
+        listener.Start();
+
+        // Call the production pre-initialization helper.
+        Program.EmitPreInitCounters();
+
+        // All 24 combinations must have been observed: 3 statuses × (1 none + 7 failure_reasons)
+        observed.Should().HaveCountGreaterThanOrEqualTo(24,
+            "all 24 pre-initialized combinations must have been observed by MeterListener");
+
+        foreach (var status in TerminalStatuses)
+        {
+            observed.Should().Contain((status, "none"),
+                $"pre-init must cover ({status}, none)");
+            foreach (var failureReason in FailureReasons)
+            {
+                observed.Should().Contain((status, failureReason),
+                    $"pre-init must cover ({status}, {failureReason})");
             }
         }
     }

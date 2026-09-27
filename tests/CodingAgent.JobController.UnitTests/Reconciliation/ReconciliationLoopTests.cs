@@ -3841,34 +3841,34 @@ public sealed class ReconciliationLoopMetricTests : IDisposable
     {
         // Issue #2967: pipeline.jobs.* must NOT be emitted from LogTerminalStatus.
         // Run-level metrics are now consolidated in WorkItemStatusTransitionService.
-        // TODO: [WARNING] These assertions are vacuously true. PipelineTelemetry.JobsCompleted,
-        // JobsFailed, and JobDuration were removed from PipelineTelemetry.cs in this diff, so
-        // those instruments no longer exist in the meter. The _pipelineCounters bag listens on
-        // PipelineTelemetry.SourceName — since the instruments are gone, pipeline.jobs.* can
-        // never appear in _pipelineCounters regardless of what LogTerminalStatus does. The delta
-        // will always be 0 no matter how LogTerminalStatus is changed in future.
-        // Fix: also assert that no new entries appear in _recordings (the workdistribution bag)
-        // beyond the two expected workdistribution.workitems_terminated increments, or explicitly
-        // check that the net delta of ALL observed metric names contains no "pipeline.jobs.*" names.
-        var completedBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
-        var failedBefore = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        var durationBefore = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
+        //
+        // Use a per-test MeterListener on PipelineTelemetry.SourceName that captures every
+        // instrument name observed during the two LogTerminalStatus calls. Any entry whose name
+        // starts with "pipeline.jobs." would indicate an unintended re-introduction of those
+        // emissions from this code path. This check remains meaningful even if the instruments
+        // are re-added to PipelineTelemetry in the future.
+        var observedPipelineInstrumentNames = new ConcurrentBag<string>();
+        using var perTestListener = new MeterListener();
+        perTestListener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
+                l.EnableMeasurementEvents(instrument);
+        };
+        perTestListener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
+            observedPipelineInstrumentNames.Add(instrument.Name));
+        perTestListener.SetMeasurementEventCallback<double>((instrument, _, _, _) =>
+            observedPipelineInstrumentNames.Add(instrument.Name));
+        perTestListener.Start();
 
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Succeeded, TimeSpan.FromSeconds(60), null, null);
         WorkDistributionTelemetry.LogTerminalStatus(
             Guid.NewGuid(), WorkItemStatus.Failed, TimeSpan.FromSeconds(60), null, FailureReason.AgentError);
 
-        var completedAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.completed");
-        var failedAfter = _pipelineCounters.Count(r => r.InstrumentName == "pipeline.jobs.failed");
-        var durationAfter = _pipelineHistograms.Count(r => r.InstrumentName == "pipeline.jobs.duration");
-
-        (completedAfter - completedBefore).Should().Be(0,
-            "pipeline.jobs.completed must NOT be emitted from LogTerminalStatus (issue #2967)");
-        (failedAfter - failedBefore).Should().Be(0,
-            "pipeline.jobs.failed must NOT be emitted from LogTerminalStatus (issue #2967)");
-        (durationAfter - durationBefore).Should().Be(0,
-            "pipeline.jobs.duration must NOT be emitted from LogTerminalStatus (issue #2967)");
+        observedPipelineInstrumentNames.Should().NotContain(
+            name => name.StartsWith("pipeline.jobs.", StringComparison.Ordinal),
+            "LogTerminalStatus must not emit any pipeline.jobs.* instruments after issue #2967 — " +
+            "run-level metrics are consolidated in WorkItemStatusTransitionService");
     }
 
     [Fact]

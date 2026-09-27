@@ -212,81 +212,8 @@ await app.RunAsync();
 /// </remarks>
 static void PreInitializeMetrics(IServiceProvider services)
 {
-    // Tag key constants — used multiple times across pre-initialization loops.
-    const string FailureReasonKey = "failure_reason";
-
-    // run_type values
-    string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
-
-    // Non-failure outcomes (failure_reason=none)
-    string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
-
-    // failure_reason snake_case values for the "failed" outcome
-    string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
-
-    // WorkItem terminal statuses
-    string[] terminalStatuses = ["Succeeded", "Failed", "Cancelled"];
-
-    // pipeline.run.outcomes: (5 run_types × 7 non-failure outcomes × none) +
-    //                        (5 run_types × 1 timeout outcome × timeout) +
-    //                        (5 run_types × 1 failed outcome × 7 failure_reasons)
-    //                      = 35 + 5 + 35 = 75 series
-    // pipeline.project_name is excluded from pre-initialization per Requirement 7:
-    // it has unbounded cardinality so it cannot appear in the pre-init set.
-    // The live recording in RecordRunOutcomeMetrics does include pipeline.project_name (4-tag series),
-    // so pre-initialized series (3 tags) and live series (4 tags) have different label fingerprints —
-    // which is acceptable: the closed dimensions are still pre-initialized correctly.
-    foreach (var runType in runTypes)
-    {
-        foreach (var outcome in nonFailureOutcomes)
-        {
-            PipelineTelemetry.RunOutcomes.Add(0,
-                new KeyValuePair<string, object?>("run_type", runType),
-                new KeyValuePair<string, object?>("outcome", outcome),
-                new KeyValuePair<string, object?>(FailureReasonKey, "none"));
-        }
-
-        // timeout outcome
-        PipelineTelemetry.RunOutcomes.Add(0,
-            new KeyValuePair<string, object?>("run_type", runType),
-            new KeyValuePair<string, object?>("outcome", "timeout"),
-            new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
-
-        // failed outcome — one series per failure_reason
-        // TODO: [WARNING] (run_type, "failed", "none") is NOT pre-initialized here. DeriveOutcome
-        // priority 9 returns failure_reason="none" when failureReason is null — which happens when
-        // a request carries Status=Failed with no parseable request.FailureReason and no payload
-        // FailureCategory (e.g. an agent or external caller POSTs {"status":"Failed"} with no other
-        // fields). The first such event after a deploy is therefore invisible to increase() until a
-        // second event of the identical series arrives — the "first-series zero" problem this code
-        // exists to eliminate. Fix: add (run_type, "failed", "none") to each runType loop iteration
-        // (5 additional series, total 80, still well under the ~100 limit). Alternatively, change
-        // DeriveOutcome priority 9 to coerce null failureReason to FailureReason.AgentError so it
-        // maps onto the already-pre-initialized (run_type, "failed", "agent_error") series.
-        foreach (var failureReason in failureReasons)
-        {
-            PipelineTelemetry.RunOutcomes.Add(0,
-                new KeyValuePair<string, object?>("run_type", runType),
-                new KeyValuePair<string, object?>("outcome", "failed"),
-                new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
-        }
-    }
-
-    // workdistribution.workitems_terminated: 3 statuses × (none + 7 failure_reasons) = 24 series
-    // failure_reason values match the snake_case normalization in LogTerminalStatus (issue #2967).
-    foreach (var status in terminalStatuses)
-    {
-        WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
-            new KeyValuePair<string, object?>("status", status),
-            new KeyValuePair<string, object?>(FailureReasonKey, "none"));
-
-        foreach (var failureReason in failureReasons)
-        {
-            WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
-                new KeyValuePair<string, object?>("status", status),
-                new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
-        }
-    }
+    // Emit all Add(0) series via the shared helper (also callable from tests to verify coverage).
+    Program.EmitPreInitCounters();
 
     // Flush all pre-initialized series to the OTLP endpoint immediately.
     // TODO: [WARNING] meterProvider?.ForceFlush() silently skips the flush when GetService returns null.
@@ -300,5 +227,81 @@ static void PreInitializeMetrics(IServiceProvider services)
 }
 
 // Make Program accessible for WebApplicationFactory in integration tests
-public partial class Program { } // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
+public partial class Program // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
+{
+    /// <summary>
+    /// Emits <c>Add(0)</c> for all closed-tag combinations of the counters that must be pre-initialized.
+    /// Callable from both the API startup path (via <c>PreInitializeMetrics</c>) and integration tests
+    /// that need to verify pre-initialization coverage without re-implementing the logic.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>pipeline.run.outcomes:</strong> 75 series —
+    /// 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
+    /// <c>pipeline.project_name</c> is intentionally excluded (unbounded cardinality, Requirement 7).
+    /// </para>
+    /// <para>
+    /// <strong>workdistribution.workitems_terminated:</strong> 24 series —
+    /// 3 statuses × (1 none + 7 failure_reasons).
+    /// </para>
+    /// <para>
+    /// TODO: [WARNING] (run_type, "failed", "none") is NOT included. DeriveOutcome priority 9 returns
+    /// failure_reason="none" when failureReason is null — which happens when a request carries
+    /// Status=Failed with no parseable request.FailureReason and no payload FailureCategory. The first
+    /// such event after a deploy is invisible to increase() until a second identical series event arrives.
+    /// Fix: add (run_type, "failed", "none") per runType (5 additional series, total 80, under the ~100 limit).
+    /// </para>
+    /// </remarks>
+    internal static void EmitPreInitCounters()
+    {
+        const string FailureReasonKey = "failure_reason";
+
+        string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
+        string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
+        string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
+        string[] terminalStatuses = ["Succeeded", "Failed", "Cancelled"];
+
+        // pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7)
+        foreach (var runType in runTypes)
+        {
+            foreach (var outcome in nonFailureOutcomes)
+            {
+                PipelineTelemetry.RunOutcomes.Add(0,
+                    new KeyValuePair<string, object?>("run_type", runType),
+                    new KeyValuePair<string, object?>("outcome", outcome),
+                    new KeyValuePair<string, object?>(FailureReasonKey, "none"));
+            }
+
+            // timeout outcome
+            PipelineTelemetry.RunOutcomes.Add(0,
+                new KeyValuePair<string, object?>("run_type", runType),
+                new KeyValuePair<string, object?>("outcome", "timeout"),
+                new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
+
+            // failed outcome — one series per named failure_reason
+            foreach (var failureReason in failureReasons)
+            {
+                PipelineTelemetry.RunOutcomes.Add(0,
+                    new KeyValuePair<string, object?>("run_type", runType),
+                    new KeyValuePair<string, object?>("outcome", "failed"),
+                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
+            }
+        }
+
+        // workdistribution.workitems_terminated: 24 series
+        foreach (var status in terminalStatuses)
+        {
+            WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
+                new KeyValuePair<string, object?>("status", status),
+                new KeyValuePair<string, object?>(FailureReasonKey, "none"));
+
+            foreach (var failureReason in failureReasons)
+            {
+                WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
+                    new KeyValuePair<string, object?>("status", status),
+                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
+            }
+        }
+    }
+}
 

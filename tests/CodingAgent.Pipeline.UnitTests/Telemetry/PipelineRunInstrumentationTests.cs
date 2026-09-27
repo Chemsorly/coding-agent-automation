@@ -141,14 +141,14 @@ public class PipelineRunInstrumentationTests
             "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
 
         instrumentation.MarkCompleted();
-        instrumentation.Dispose();
 
-        // MarkCompleted sets OK status on the span.
-        // TODO: [WARNING] This assertion only checks that Activity is non-null (trivially guaranteed by
-        // the ActivityListener above). It does NOT verify that MarkCompleted() actually set the status to
-        // ActivityStatusCode.Ok. Add: instrumentation.Activity!.Status.Should().Be(ActivityStatusCode.Ok)
-        // to make this test meaningful and catch regressions in MarkCompleted's SetStatus call.
+        // Assert status BEFORE Dispose() — disposal terminates the activity but does not clear Status.
+        // Reading Status here ensures the SetStatus(Ok) call in MarkCompleted is verified.
         instrumentation.Activity.Should().NotBeNull();
+        instrumentation.Activity!.Status.Should().Be(ActivityStatusCode.Ok,
+            "MarkCompleted() must call Activity.SetStatus(ActivityStatusCode.Ok)");
+
+        instrumentation.Dispose();
     }
 
     [Fact]

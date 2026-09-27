@@ -362,14 +362,10 @@ public sealed class PipelineRunOutcomeMetricsTests
                 new WorkItemStatusRequest { Status = WorkItemStatus.Failed, FailureReason = "Timeout" },
                 CancellationToken.None, awaitTelemetry: true);
 
-            // TODO: [WARNING] The early-exit here only asserts outcome='timeout' — the expectedSnakeCase
-            // parameter value ("timeout") is never asserted in this branch. A regression that changed
-            // the snake-case conversion for Timeout (e.g. keeping it as "Timeout") would still pass
-            // because the return skips the bag.Should().Contain(...FailureReason == expectedSnakeCase)
-            // assertion at the bottom. The Timeout case is already covered by Outcome_Timeout_WhenFailureReasonIsTimeout;
-            // consider removing the InlineData("Timeout","timeout") row from this theory to eliminate the gap.
+            // The Timeout row asserts both outcome AND failure_reason snake-case to avoid
+            // a silent regression (e.g. failure_reason reverts to "Timeout" PascalCase).
             timeoutBag.Should().Contain(r => r.Outcome == "timeout" && r.FailureReason == "timeout",
-                $"FailureReason.Timeout → outcome='timeout', failure_reason='timeout'");
+                $"FailureReason.Timeout → outcome='timeout', failure_reason='timeout' (snake_case)");
             return;
         }
 
