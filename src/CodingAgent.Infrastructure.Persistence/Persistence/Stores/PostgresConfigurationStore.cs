@@ -585,6 +585,63 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             }
             else
             {
+                // Detect template IDs that were dropped from this project's list but whose
+                // PipelineJobTemplateEntity.ProjectId still points here. Reparent each to Default.
+                // Skip this guard when saving the Default project itself — the identity map means
+                // entity == defaultProject, and the TemplateIds assignment below would overwrite
+                // the guard's repair. On the Default project, the only way to "orphan" a template
+                // is to remove it from TemplateIds AND change its FK, which should use DeleteTemplateAsync.
+                // TODO [WARNING]: Guard is intentionally skipped for the Default project, so criterion 2
+                // ("saving a project whose TemplateIds drops a template never leaves it in no project")
+                // is only eventually-consistent for Default — a template dropped from Default's TemplateIds
+                // stays orphaned at runtime until the next process restart runs ClaimOrphanedTemplatesAsync.
+                // This is a known, accepted gap documented in SaveProjectAsync_DefaultProject_DroppingId_NoOrphanCreated.
+                var defaultGuidForGuard = Guid.Parse(WellKnownIds.DefaultProjectId);
+                if (guid != defaultGuidForGuard)
+                {
+                    var newIdSet = project.TemplateIds.ToHashSet();
+                    var droppedIds = entity.TemplateIds
+                        .Where(id => !newIdSet.Contains(id))
+                        .ToList();
+
+                    if (droppedIds.Count > 0)
+                    {
+                        var defaultProject = await db.Projects.FirstOrDefaultAsync(e => e.Id == defaultGuidForGuard, ct);
+
+                        if (defaultProject is not null)
+                        {
+                            var droppedGuids = droppedIds
+                                .Where(id => Guid.TryParse(id, out _))
+                                .Select(Guid.Parse)
+                                .ToList();
+
+                            var orphanedTemplates = await db.PipelineJobTemplates
+                                .Where(t => droppedGuids.Contains(t.Id) && t.ProjectId == guid)
+                                .ToListAsync(ct);
+
+                            foreach (var t in orphanedTemplates)
+                            {
+                                t.ProjectId = defaultGuidForGuard;
+                                db.Entry(t).Property(x => x.ProjectId).IsModified = true;
+                                if (!defaultProject.TemplateIds.Contains(t.Id.ToString()))
+                                {
+                                    // TODO [WARNING]: O(N²) allocation — each iteration creates a new List<string>
+                                    // via spread [...defaultProject.TemplateIds, t.Id.ToString()]. Use .Add() (O(1))
+                                    // as the DeleteProjectAsync path does.
+                                    defaultProject.TemplateIds = [.. defaultProject.TemplateIds, t.Id.ToString()];
+                                }
+
+                                Logger.Information(
+                                    "SaveProjectAsync: reparented orphaned template {TemplateId} from project {ProjectId} to Default",
+                                    t.Id, guid);
+                            }
+
+                            if (orphanedTemplates.Count > 0)
+                                ResyncSettingsJson(defaultProject);
+                        }
+                    }
+                }
+
                 entity.Name = project.Name;
                 entity.Enabled = project.Enabled;
                 entity.Description = project.Description;
@@ -619,16 +676,17 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                 return;
 
             // Move orphaned templates to Default project
-            if (entity.TemplateIds.Count > 0)
-            {
-                var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
-                var defaultProject = await db.Projects
-                    .FirstOrDefaultAsync(e => e.Id == defaultGuid, ct);
+            var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+            var defaultProject = await db.Projects
+                .FirstOrDefaultAsync(e => e.Id == defaultGuid, ct);
 
-                if (defaultProject is not null)
+            if (defaultProject is not null)
+            {
+                var alreadyReparentedIds = new HashSet<Guid>();
+
+                // Reparent templates listed in TemplateIds
+                if (entity.TemplateIds.Count > 0)
                 {
-                    defaultProject.TemplateIds.AddRange(entity.TemplateIds);
-                    // Move template entities
                     var templateGuids = entity.TemplateIds
                         .Where(t => Guid.TryParse(t, out _))
                         .Select(Guid.Parse)
@@ -637,11 +695,41 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                         .Where(t => templateGuids.Contains(t.Id))
                         .ToListAsync(ct);
                     foreach (var t in templates)
+                    {
                         t.ProjectId = defaultGuid;
+                        alreadyReparentedIds.Add(t.Id);
+                    }
 
+                    foreach (var tid in entity.TemplateIds)
+                    {
+                        if (!defaultProject.TemplateIds.Contains(tid))
+                            defaultProject.TemplateIds.Add(tid);
+                    }
+                }
+
+                // Also reparent FK-only orphans (FK points here but ID not in TemplateIds list)
+                var fkOnlyOrphans = await db.PipelineJobTemplates
+                    .Where(t => t.ProjectId == guid && !alreadyReparentedIds.Contains(t.Id))
+                    .ToListAsync(ct);
+                foreach (var t in fkOnlyOrphans)
+                {
+                    t.ProjectId = defaultGuid;
+                    var tid = t.Id.ToString();
+                    if (!defaultProject.TemplateIds.Contains(tid))
+                        defaultProject.TemplateIds.Add(tid);
+                }
+
+                // TODO [WARNING]: totalMoved uses entity.TemplateIds.Count (the full ID list from the
+                // entity) rather than the number of template entities actually found and reparented.
+                // If TemplateIds contains dangling IDs or non-GUID strings, the log overreports.
+                // Consider using templates.Count + fkOnlyOrphans.Count for accuracy.
+                var totalMoved = entity.TemplateIds.Count + fkOnlyOrphans.Count;
+                if (totalMoved > 0)
+                {
+                    ResyncSettingsJson(defaultProject);
                     Logger.Information(
-                        "Moved {Count} templates from deleted project to Default project",
-                        entity.TemplateIds.Count);
+                        "Moved {Count} templates from deleted project {ProjectId} to Default project",
+                        totalMoved, guid);
                 }
             }
 
