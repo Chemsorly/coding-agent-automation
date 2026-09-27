@@ -53,8 +53,8 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
 
         // Click the Templates tab
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
-        // Wait for the tab content to render before reading/asserting on it
-        await Page.WaitForSelectorAsync(".provider-form", new() { Timeout = 5_000 });
+        // Wait for the template-add-row which is unique to the Templates tab content
+        await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
 
         // Verify template is visible before removal
         var tabContent = await Page.TextContentAsync(".provider-form");
@@ -73,8 +73,8 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
         // Assert: navigate to Default project Templates tab and verify template is there
         await settingsPage.SelectTreeNodeAsync("Default");
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
-        // Wait for the tab content to render before asserting
-        await Page.WaitForSelectorAsync(".provider-form", new() { Timeout = 5_000 });
+        // Wait for the template-add-row which is unique to the Templates tab content
+        await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
 
         var defaultTabContent = await Page.TextContentAsync(".provider-form");
         Assert.Contains("E2E Remove Template", defaultTabContent);
@@ -103,8 +103,8 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
 
         // Click the Templates tab
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
-        // Wait for the tab content to render before reading/asserting on it
-        await Page.WaitForSelectorAsync(".provider-form", new() { Timeout = 5_000 });
+        // Wait for the template-add-row which is unique to the Templates tab content
+        await Page.WaitForSelectorAsync(".template-add-row", new() { Timeout = 5_000 });
 
         // Verify template is visible
         var tabContent = await Page.TextContentAsync(".provider-form");
