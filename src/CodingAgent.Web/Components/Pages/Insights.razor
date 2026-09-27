@@ -25,7 +25,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Insights</h1>
-            <span class="cockpit-page-sub">Trends across the last @_total run@(_total == 1 ? "" : "s")@(_isTruncated ? $" (showing most recent {PageSize} — results may be partial)" : "")</span>
+            <span class="cockpit-page-sub">Trends across the last <span data-testid="insights-total">@_total</span> run@(_total == 1 ? "" : "s")@(_isTruncated ? $" (showing most recent {PageSize} — results may be partial)" : "")</span>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
             @* TODO: [WARNING] OnRefresh is wired directly to LoadAsync, which sets _loading = true and
@@ -71,7 +71,7 @@
         <div class="cockpit-stat-strip">
             <div class="cockpit-stat" title="Succeeded ÷ (succeeded + failed + cancelled). Conflict restarts are left out — the re-dispatched run carries the outcome.">
                 <span class="cockpit-stat-l">Success rate · @RecentWindowLabel</span>
-                <span class="cockpit-stat-v">
+                <span class="cockpit-stat-v" data-testid="insights-success-rate">
                     @if (_successRate is { } successRate)
                     {
                         @successRate<span style="font-size: 15px; color: var(--text-faint);">%</span>
@@ -82,8 +82,8 @@
                     }
                 </span>
             </div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg cycle time · @RecentWindowLabel</span><span class="cockpit-stat-v">@_avgCycle</span></div>
-            <div class="cockpit-stat"><span class="cockpit-stat-l">Retry rate · @RecentWindowLabel</span><span class="cockpit-stat-v">@_retryRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Avg cycle time · @RecentWindowLabel</span><span class="cockpit-stat-v" data-testid="insights-avg-cycle">@_avgCycle</span></div>
+            <div class="cockpit-stat"><span class="cockpit-stat-l">Retry rate · @RecentWindowLabel</span><span class="cockpit-stat-v" data-testid="insights-retry-rate">@_retryRate<span style="font-size: 15px; color: var(--text-faint);">%</span></span></div>
             @if (_anyRunHasTokens)
             {
                 <div class="cockpit-stat"><span class="cockpit-stat-l">Avg tokens / run · @RecentWindowLabel</span><span class="cockpit-stat-v">@CostFormatter.FormatTokens(_avgTokens)</span></div>
@@ -145,12 +145,12 @@
                     }
                 </div>
                 <div style="display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 12px; font-size: 12.5px; color: var(--text-muted);">
-                    <span style="display: inline-flex; align-items: center; gap: 6px;" title="Completed or PR merged"><span style="width: 9px; height: 9px; border-radius: 2px; background: @SucceededColor;"></span>Succeeded <strong style="color: var(--text);">@_succeeded</strong></span>
-                    <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; border-radius: 2px; background: @FailedColor;"></span>Failed <strong style="color: var(--text);">@_failed</strong></span>
-                    <span style="display: inline-flex; align-items: center; gap: 6px;" title="Cancelled or PR closed"><span style="width: 9px; height: 9px; border-radius: 2px; background: @CancelledColor;"></span>Cancelled <strong style="color: var(--text);">@_cancelled</strong></span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px;" title="Completed or PR merged"><span style="width: 9px; height: 9px; border-radius: 2px; background: @SucceededColor;"></span>Succeeded <strong data-testid="insights-succeeded" style="color: var(--text);">@_succeeded</strong></span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 9px; height: 9px; border-radius: 2px; background: @FailedColor;"></span>Failed <strong data-testid="insights-failed" style="color: var(--text);">@_failed</strong></span>
+                    <span style="display: inline-flex; align-items: center; gap: 6px;" title="Cancelled or PR closed"><span style="width: 9px; height: 9px; border-radius: 2px; background: @CancelledColor;"></span>Cancelled <strong data-testid="insights-cancelled" style="color: var(--text);">@_cancelled</strong></span>
                     @if (_restarted > 0)
                     {
-                        <span style="display: inline-flex; align-items: center; gap: 6px;" title="Superseded by a conflict restart"><span style="width: 9px; height: 9px; border-radius: 2px; background: @RestartedColor;"></span>Restarted <strong style="color: var(--text);">@_restarted</strong></span>
+                        <span style="display: inline-flex; align-items: center; gap: 6px;" title="Superseded by a conflict restart"><span style="width: 9px; height: 9px; border-radius: 2px; background: @RestartedColor;"></span>Restarted <strong data-testid="insights-restarted" style="color: var(--text);">@_restarted</strong></span>
                     }
                 </div>
 
@@ -158,12 +158,12 @@
                     <h3 style="margin: 0 0 10px; font-size: 13px; font-weight: 700; color: var(--text-muted);">By run type</h3>
                     @foreach (var (type, count) in _byType.OrderByDescending(kv => kv.Value))
                     {
-                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;" data-testid="insights-runtype-@type.ToLowerInvariant().Replace(" ", "-").Replace(".", "")">
                             <span style="width: 130px; font-size: 12.5px; color: var(--text-muted); flex-shrink: 0;">@type</span>
                             <div style="flex: 1; height: 12px; background: var(--surface-alt); border-radius: 4px; overflow: hidden;">
                                 <div style="width: @Pct(count)%; height: 100%; background: var(--accent); border-radius: 4px;"></div>
                             </div>
-                            <span class="mono" style="font-size: 12px; font-weight: 600; width: 30px; text-align: right;">@count</span>
+                            <span class="mono" data-testid="insights-runtype-count-@type.ToLowerInvariant().Replace(" ", "-").Replace(".", "")" style="font-size: 12px; font-weight: 600; width: 30px; text-align: right;">@count</span>
                         </div>
                     }
                 </div>
@@ -195,11 +195,11 @@
             <div class="cockpit-card-header"><h2>Quality gate failures</h2><span style="font-size: 12px; color: var(--text-muted);">recent runs with gate data</span></div>
             @if (_runsWithGateData == 0)
             {
-                <div class="cockpit-empty" style="padding: 24px;">No gate data for runs in this window.</div>
+                <div class="cockpit-empty" data-testid="insights-gate-no-data" style="padding: 24px;">No gate data for runs in this window.</div>
             }
             else if (_gateRanking.Count == 0)
             {
-                <div class="cockpit-empty" style="padding: 24px;">No gate failures in @_runsWithGateData run@(_runsWithGateData == 1 ? "" : "s") with gate data.</div>
+                <div class="cockpit-empty" data-testid="insights-gate-no-failures" style="padding: 24px;">No gate failures in @_runsWithGateData run@(_runsWithGateData == 1 ? "" : "s") with gate data.</div>
             }
             else
             {
