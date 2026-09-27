@@ -4,12 +4,9 @@
 @inject IPipelineApiConfigClient ConfigClient
 
 @*
-    TODO [WARNING]: NavLink uses Match="NavLinkMatch.All", which requires the full URL (path + query
-    string) to match exactly for the `active` CSS class to be applied. This is correct for the current
-    single-query-param pattern (?section=<value>), but if any additional query parameter is ever
-    appended to the settings URL, all nav items will silently lose the `active` class. Consider
-    switching to a custom active-class strategy (e.g. comparing only the `section` query param in
-    code-behind) if the settings URL is extended in the future.
+    Tree nodes are plain links whose active state comes from the parent's SelectedNode, not NavLink.
+    Since .NET 10, NavLinkMatch.All ignores the query string, so every "settings?section=…" NavLink matched
+    /settings and the whole tree rendered as active.
 *@
 <div class="settings-tree">
     <div class="tree-group">
@@ -20,18 +17,18 @@
         @if (_providersExpanded)
         {
             <div class="tree-group-children">
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersIssue}")" Match="NavLinkMatch.All">
+                <a class="@NodeClass(SettingsNodes.ProvidersIssue)" href="@Href(SettingsNodes.ProvidersIssue)" aria-current="@AriaCurrent(SettingsNodes.ProvidersIssue)">
                     Issue
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersRepository}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.ProvidersRepository)" href="@Href(SettingsNodes.ProvidersRepository)" aria-current="@AriaCurrent(SettingsNodes.ProvidersRepository)">
                     Repository
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersAgent}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.ProvidersAgent)" href="@Href(SettingsNodes.ProvidersAgent)" aria-current="@AriaCurrent(SettingsNodes.ProvidersAgent)">
                     Agent
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ProvidersPipeline}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.ProvidersPipeline)" href="@Href(SettingsNodes.ProvidersPipeline)" aria-current="@AriaCurrent(SettingsNodes.ProvidersPipeline)">
                     Pipeline
-                </NavLink>
+                </a>
             </div>
         }
     </div>
@@ -44,20 +41,20 @@
         @if (_projectsExpanded)
         {
             <div class="tree-group-children">
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.Projects}")" Match="NavLinkMatch.All">
+                <a class="@NodeClass(SettingsNodes.Projects)" href="@Href(SettingsNodes.Projects)" aria-current="@AriaCurrent(SettingsNodes.Projects)">
                     Manage
-                </NavLink>
+                </a>
                 @foreach (var project in _projects)
                 {
                     var nodeId = $"{SettingsNodes.ProjectDetail}:{project.Id}";
                     var isDefault = project.Id == WellKnownIds.DefaultProjectId;
-                    <NavLink class="tree-node" href="@($"settings?section={Uri.EscapeDataString(nodeId)}")" Match="NavLinkMatch.All">
+                    <a class="@NodeClass(nodeId)" href="@Href(nodeId)" aria-current="@AriaCurrent(nodeId)">
                         @project.Name
                         @if (isDefault)
                         {
                             <span class="badge-default">default</span>
                         }
-                    </NavLink>
+                    </a>
                 }
             </div>
         }
@@ -71,30 +68,30 @@
         @if (_pipelineExpanded)
         {
             <div class="tree-group-children">
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineGeneral}")" Match="NavLinkMatch.All">
+                <a class="@NodeClass(SettingsNodes.PipelineGeneral)" href="@Href(SettingsNodes.PipelineGeneral)" aria-current="@AriaCurrent(SettingsNodes.PipelineGeneral)">
                     General
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineLoop}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelineLoop)" href="@Href(SettingsNodes.PipelineLoop)" aria-current="@AriaCurrent(SettingsNodes.PipelineLoop)">
                     Pipeline Loop
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelinePrompts}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelinePrompts)" href="@Href(SettingsNodes.PipelinePrompts)" aria-current="@AriaCurrent(SettingsNodes.PipelinePrompts)">
                     Prompts
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineDecomposition}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelineDecomposition)" href="@Href(SettingsNodes.PipelineDecomposition)" aria-current="@AriaCurrent(SettingsNodes.PipelineDecomposition)">
                     Decomposition
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineImplementation}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelineImplementation)" href="@Href(SettingsNodes.PipelineImplementation)" aria-current="@AriaCurrent(SettingsNodes.PipelineImplementation)">
                     Implementation
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineReview}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelineReview)" href="@Href(SettingsNodes.PipelineReview)" aria-current="@AriaCurrent(SettingsNodes.PipelineReview)">
                     Review
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineConsolidation}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelineConsolidation)" href="@Href(SettingsNodes.PipelineConsolidation)" aria-current="@AriaCurrent(SettingsNodes.PipelineConsolidation)">
                     Consolidation
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.PipelineAdvanced}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.PipelineAdvanced)" href="@Href(SettingsNodes.PipelineAdvanced)" aria-current="@AriaCurrent(SettingsNodes.PipelineAdvanced)">
                     Advanced
-                </NavLink>
+                </a>
             </div>
         }
     </div>
@@ -107,15 +104,15 @@
         @if (_labelRoutingExpanded)
         {
             <div class="tree-group-children">
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.AgentProfiles}")" Match="NavLinkMatch.All">
+                <a class="@NodeClass(SettingsNodes.AgentProfiles)" href="@Href(SettingsNodes.AgentProfiles)" aria-current="@AriaCurrent(SettingsNodes.AgentProfiles)">
                     Agent Profiles
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.QualityGateConfigs}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.QualityGateConfigs)" href="@Href(SettingsNodes.QualityGateConfigs)" aria-current="@AriaCurrent(SettingsNodes.QualityGateConfigs)">
                     Quality Gate Configs
-                </NavLink>
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ReviewerConfigs}")" Match="NavLinkMatch.All">
+                </a>
+                <a class="@NodeClass(SettingsNodes.ReviewerConfigs)" href="@Href(SettingsNodes.ReviewerConfigs)" aria-current="@AriaCurrent(SettingsNodes.ReviewerConfigs)">
                     Reviewer Configs
-                </NavLink>
+                </a>
             </div>
         }
     </div>
@@ -128,9 +125,9 @@
         @if (_dataManagementExpanded)
         {
             <div class="tree-group-children">
-                <NavLink class="tree-node" href="@($"settings?section={SettingsNodes.ConfigImportExport}")" Match="NavLinkMatch.All">
+                <a class="@NodeClass(SettingsNodes.ConfigImportExport)" href="@Href(SettingsNodes.ConfigImportExport)" aria-current="@AriaCurrent(SettingsNodes.ConfigImportExport)">
                     Import / Export
-                </NavLink>
+                </a>
             </div>
         }
     </div>
@@ -145,6 +142,10 @@
 
     private IReadOnlyList<PipelineProject> _projects = [];
 
+    /// <summary>The node whose section the page is showing; rendered as the only active node.</summary>
+    [Parameter]
+    public string? SelectedNode { get; set; }
+
     protected override async Task OnInitializedAsync()
     {
         _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
@@ -155,6 +156,12 @@
         _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
         StateHasChanged();
     }
+
+    private static string Href(string nodeId) => $"settings?section={Uri.EscapeDataString(nodeId)}";
+
+    private string NodeClass(string nodeId) => nodeId == SelectedNode ? "tree-node active" : "tree-node";
+
+    private string? AriaCurrent(string nodeId) => nodeId == SelectedNode ? "page" : null;
 
     private void ToggleProviders()
     {

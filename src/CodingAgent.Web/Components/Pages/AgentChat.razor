@@ -34,12 +34,12 @@
         </div>
     </div>
 
-    <section class="settings-section" style="margin: 16px 20px;">
+    <section class="settings-section">
         @if (!_isChatActive)
         {
             <!-- K8s mode: Job Template selection + pod launch -->
+            <div class="cockpit-card-header"><h2><Icon Name="message-circle" Size="16" /> Interactive Chat</h2></div>
             <div class="chat-setup">
-                <div class="cockpit-card-header" style="margin-bottom: 12px;"><h2><Icon Name="message-circle" Size="20" /> Interactive Chat</h2></div>
                 <p class="chat-description">Select an agent type to launch a dedicated chat pod.</p>
 
                 <div class="chat-agent-select">

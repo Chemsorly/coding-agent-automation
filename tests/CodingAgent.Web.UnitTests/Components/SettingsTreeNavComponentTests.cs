@@ -129,25 +129,38 @@ public class SettingsTreeNavComponentTests : BunitContext
     }
 
     [Fact]
-    public void TreeNav_ActiveNode_MatchesCurrentUrl()
+    public void TreeNav_SelectedNode_IsTheOnlyActiveNode()
     {
-        // TODO [WARNING]: This test only checks that the href contains the section value — which is
-        // the same assertion already made by TreeNav_TreeNodes_HaveCorrectHrefs above, making it a
-        // duplicate with a misleading name. It does NOT verify that the `active` CSS class is applied
-        // when the URL matches (the actual acceptance criterion). To test active-class behavior, set
-        // the NavigationManager URL to match a specific section, render the component, and assert that
-        // exactly one <a.tree-node.active> element exists with the matching text.
+        var cut = Render<SettingsTreeNav>(p => p.Add(t => t.SelectedNode, SettingsNodes.PipelineLoop));
 
-        // NavLink generates correct hrefs — verify that the Issue node's href contains the right section
+        var active = Assert.Single(cut.FindAll("a.tree-node.active"));
+        Assert.Equal("Pipeline Loop", active.TextContent.Trim());
+        Assert.Equal("page", active.GetAttribute("aria-current"));
+        Assert.All(cut.FindAll("a.tree-node:not(.active)"), n => Assert.Null(n.GetAttribute("aria-current")));
+    }
+
+    [Fact]
+    public void TreeNav_NoSelectedNode_HasNoActiveNode()
+    {
         var cut = Render<SettingsTreeNav>();
 
-        var issueNode = cut.FindAll("a.tree-node").FirstOrDefault(n => n.TextContent.Trim() == "Issue");
-        Assert.NotNull(issueNode);
+        Assert.Empty(cut.FindAll("a.tree-node.active"));
+    }
 
-        // The href must contain the section value so NavLink can apply the active class at runtime
-        var href = issueNode!.GetAttribute("href");
-        Assert.NotNull(href);
-        Assert.Contains(SettingsNodes.ProvidersIssue, href);
+    [Fact]
+    public void TreeNav_SelectedProjectNode_IsActiveAndLinksToProject()
+    {
+        var mockConfigClient = new Mock<IPipelineApiConfigClient>();
+        mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new PipelineProject { Id = "p-1", Name = "Alpha" } });
+        Services.AddSingleton(mockConfigClient.Object);
+        var nodeId = $"{SettingsNodes.ProjectDetail}:p-1";
+
+        var cut = Render<SettingsTreeNav>(p => p.Add(t => t.SelectedNode, nodeId));
+
+        var active = Assert.Single(cut.FindAll("a.tree-node.active"));
+        Assert.Equal("Alpha", active.TextContent.Trim());
+        Assert.Equal($"settings?section={Uri.EscapeDataString(nodeId)}", active.GetAttribute("href"));
     }
 
     [Fact]

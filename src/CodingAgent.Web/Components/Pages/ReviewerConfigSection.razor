@@ -50,7 +50,7 @@
                             <td title="@string.Join(", ", rc.Agents.Select(a => a.Name))">
                                 @FormatAgents(rc)
                             </td>
-                            <td><Icon Name="@(rc.Enabled ? "check-circle" : "x-circle")" /></td>
+                            <td><StatusIcon Enabled="rc.Enabled" /></td>
                             <td>@rc.ExecutionOrder</td>
                             <td>
                                 <button class="btn-edit" @onclick="() => EditConfig(rc)">Edit</button>
@@ -91,7 +91,7 @@
                 @for (var i = 0; i < _form.Agents.Count; i++)
                 {
                     var index = i;
-                    <div style="border: 1px solid var(--border-color, #333); padding: 8px; margin-bottom: 8px; border-radius: 4px;">
+                    <div class="reviewer-agent-card">
                         <div class="form-group">
                             <label>Agent Name *</label>
                             <input type="text" @bind="_form.Agents[index].Name" placeholder="e.g. Correctness" />

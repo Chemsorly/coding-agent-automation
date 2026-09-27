@@ -15,63 +15,69 @@
     }
     else
     {
-        <table class="projects-list-table">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Description</th>
-                    <th>Templates</th>
-                    <th>Enabled</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach (var project in _projects)
-                {
-                    var isDefault = project.Id == WellKnownIds.DefaultProjectId;
-                    <tr class="@(isDefault ? "projects-row-default" : "")">
-                        <td class="projects-name-cell">
-                            @if (isDefault)
-                            {
-                                <span class="projects-lock-icon"><Icon Name="lock" /></span>
-                            }
-                            @if (project.EpicIssueProviderId is not null)
-                            {
-                                <span class="projects-epic-icon"><Icon Name="puzzle" /></span>
-                            }
-                            <span>@project.Name</span>
-                            @if (isDefault)
-                            {
-                                <span class="badge-default">default</span>
-                            }
-                        </td>
-                        <td class="projects-description-cell">
-                            @(string.IsNullOrEmpty(project.Description) ? "—" : TruncateUnicode(project.Description, 60))
-                        </td>
-                        <td>@project.TemplateIds.Count</td>
-                        <td>
-                            <label class="projects-toggle">
-                                <input type="checkbox" checked="@project.Enabled"
-                                       @onchange="e => ToggleEnabledAsync(project, (bool)(e.Value ?? false))" />
-                                @(project.Enabled ? "Yes" : "No")
-                            </label>
-                        </td>
-                        <td class="projects-actions-cell">
-                            <button class="btn-edit" @onclick="() => NavigateToProject(project.Id)">Edit</button>
-                            <button class="btn-delete" disabled="@isDefault"
-                                    @onclick="() => ConfirmDeleteAsync(project)"
-                                    title="@(isDefault ? "Cannot delete Default project" : "Delete project")">Delete</button>
-                        </td>
+        <div class="monitoring-table-wrap">
+            <table class="projects-list-table">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Description</th>
+                        <th>Templates</th>
+                        <th>Enabled</th>
+                        <th>Actions</th>
                     </tr>
-                    @if (isDefault)
+                </thead>
+                <tbody>
+                    @foreach (var project in _projects)
                     {
-                        <tr class="projects-note-row">
-                            <td colspan="5"><span class="projects-note">Cannot be deleted</span></td>
+                        var isDefault = project.Id == WellKnownIds.DefaultProjectId;
+                        <tr class="@(isDefault ? "projects-row-default" : "")">
+                            <td class="projects-name-cell">
+                                <div class="projects-name">
+                                    @if (isDefault)
+                                    {
+                                        <span class="projects-lock-icon"><Icon Name="lock" /></span>
+                                    }
+                                    @if (project.EpicIssueProviderId is not null)
+                                    {
+                                        <span class="projects-epic-icon"><Icon Name="puzzle" /></span>
+                                    }
+                                    <span>@project.Name</span>
+                                    @if (isDefault)
+                                    {
+                                        <span class="badge-default">default</span>
+                                    }
+                                </div>
+                            </td>
+                            <td class="projects-description-cell">
+                                @(string.IsNullOrEmpty(project.Description) ? "—" : TruncateUnicode(project.Description, 60))
+                            </td>
+                            <td>@project.TemplateIds.Count</td>
+                            <td>
+                                <label class="projects-toggle">
+                                    <input type="checkbox" checked="@project.Enabled"
+                                           @onchange="e => ToggleEnabledAsync(project, (bool)(e.Value ?? false))" />
+                                    @(project.Enabled ? "Yes" : "No")
+                                </label>
+                            </td>
+                            <td class="projects-actions-cell">
+                                <div class="projects-actions">
+                                    <button class="btn-edit" @onclick="() => NavigateToProject(project.Id)">Edit</button>
+                                    <button class="btn-delete" disabled="@isDefault"
+                                            @onclick="() => ConfirmDeleteAsync(project)"
+                                            title="@(isDefault ? "Cannot delete Default project" : "Delete project")">Delete</button>
+                                </div>
+                            </td>
                         </tr>
+                        @if (isDefault)
+                        {
+                            <tr class="projects-note-row">
+                                <td colspan="5"><span class="projects-note">Cannot be deleted</span></td>
+                            </tr>
+                        }
                     }
-                }
-            </tbody>
-        </table>
+                </tbody>
+            </table>
+        </div>
     }
 
     @if (_confirmingDelete is not null)
