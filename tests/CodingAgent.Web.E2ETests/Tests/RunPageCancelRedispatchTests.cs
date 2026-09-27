@@ -243,7 +243,7 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
             Labels = new[] { "enhancement" }
         });
 
-        await using var fakeAgent1 = new FakeAgentClient("redispatch-agent-1", "e2e");
+        var fakeAgent1 = new FakeAgentClient("redispatch-agent-1", "e2e");
         await fakeAgent1.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
@@ -264,6 +264,11 @@ public sealed class RunPageCancelRedispatchTests : E2ETestBase
         var failedRun = await WaitForHistoryAsync(
             r => r.IssueIdentifier == "3091c" && r.FinalStep == PipelineStep.Failed,
             timeout: TimeSpan.FromSeconds(20));
+
+        // Disconnect fakeAgent1 before connecting fakeAgent2 so FakeJobController does not
+        // re-assign the re-dispatched work item to fakeAgent1 (whose JobAssigned TCS is
+        // already resolved). With fakeAgent1 gone, fakeAgent2 is the only idle agent.
+        await fakeAgent1.DisposeAsync();
 
         // Connect a second agent to receive the re-dispatched assignment.
         // FakeAgentClient.JobAssigned is a single-use TaskCompletionSource.
