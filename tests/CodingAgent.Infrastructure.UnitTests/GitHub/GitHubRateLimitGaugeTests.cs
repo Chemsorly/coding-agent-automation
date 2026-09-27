@@ -17,7 +17,7 @@ namespace CodingAgent.Infrastructure.UnitTests.GitHub;
 /// 3. A GraphQL call (passing <c>isGraphQL: true</c>) emits under <c>resource=graphql</c>.
 /// 4. The gauge still works after a transient client is discarded (dynamic-token path).
 /// </summary>
-[Collection("GitHubTelemetry")]
+[Collection("GitHubRateLimitGauge")]
 public class GitHubRateLimitGaugeTests : IDisposable
 {
     // Static fields in GitHubTelemetry are shared across tests — reset before each test.

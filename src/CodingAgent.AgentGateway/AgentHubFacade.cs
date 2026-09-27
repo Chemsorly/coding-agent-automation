@@ -280,6 +280,19 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
+    public bool CanVerifyWorkItems => _transitionStore is not null;
+
+    /// <inheritdoc />
+    public Task<WorkItemRunRecord?> GetWorkItemRunRecordAsync(JobId jobId, CancellationToken ct)
+    {
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var id))
+            return Task.FromResult<WorkItemRunRecord?>(null);
+
+        // No catch: a failed read must not look like "no such work item" to the ownership check.
+        return _transitionStore.GetWorkItemRunRecordAsync(id, ct);
+    }
+
+    /// <inheritdoc />
     public Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value)
         => _registry.UpdateAgentFieldAsync(agentId, field, value);
 

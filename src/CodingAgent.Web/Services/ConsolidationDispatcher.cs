@@ -194,6 +194,12 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (baked is { Count: > 0 })
         {
             var profile = ProfileResolver.ResolveByRequiredLabels(profiles, baked);
+            // TODO [WARNING]: If no profile matches the baked labels, the fallback returns baked
+            // directly as the selector key. If the baked labels are a required-labels subset
+            // (e.g. ["kiro","dotnet"]) rather than full MatchLabels (e.g. ["kiro","dotnet","dotnet10"]),
+            // the resulting selector may not match any job template → 422 → permanent-failure cascade.
+            // Pre-existing behavior (same as old code), but the cascade-to-Failed makes the
+            // consequence permanent rather than recoverable. (review-findings.md DotNetSpecialist warning)
             var selector = profile?.MatchLabels ?? baked;
             Log.Debug(
                 "ConsolidationDispatcher: run {RunId} using baked QueuedRequiredLabels → selector '{Selector}'",
@@ -218,10 +224,26 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
             return selector;
         }
 
-        // 3. No default labels configured. Pick the first enabled profile explicitly rather
-        //    than passing empty labels to ResolveByRequiredLabels (which would match ALL profiles
-        //    via Superset and return an arbitrary/wrong one).
-        var firstEnabled = profiles.FirstOrDefault(p => p.Enabled);
+        // 3. No default labels configured. Pick the highest-priority enabled profile explicitly
+        //    rather than passing empty labels to ResolveByRequiredLabels (which would match ALL
+        //    profiles via Superset and return an arbitrary/wrong one — bug fixed in #2536).
+        //    Sort by descending Priority (highest wins), then ascending Id as a deterministic
+        //    tiebreak for equal priorities. This mirrors the Priority+Id ordering used in
+        //    ProfileResolver.ResolveByRequiredLabels (branches 1 and 2 above), ensuring the
+        //    same profile wins regardless of DB insertion order from LoadAgentProfilesAsync.
+        // TODO [WARNING]: The selected profile's MatchLabels may have no matching job template,
+        // causing dispatch to 422 and cascade the run to Failed — even if another enabled profile
+        // DOES have a template. A better approach would prefer a profile whose selector resolves to
+        // an existing job template before falling back arbitrarily. (review-findings.md finding #4)
+        // TODO [WARNING]: sorted via OrderByDescending before applying the Enabled predicate,
+        // meaning disabled profiles participate in the sort before being discarded. This is
+        // logically correct but marginally less efficient than pre-filtering:
+        //   .Where(p => p.Enabled).OrderByDescending(p => p.Priority).ThenBy(p => p.Id, ...).FirstOrDefault()
+        // For typical profile counts the difference is negligible. (review-findings-dotnetspecialist.md)
+        var firstEnabled = profiles
+            .OrderByDescending(p => p.Priority)
+            .ThenBy(p => p.Id, StringComparer.Ordinal)
+            .FirstOrDefault(p => p.Enabled);
         if (firstEnabled is not null)
         {
             Log.Warning(
@@ -285,6 +307,16 @@ internal sealed class ConsolidationDispatcher : IConsolidationDispatcher
     {
         try
         {
+            // TODO [WARNING]: This passes the caller's ct rather than CancellationToken.None.
+            // If the outer request/token is cancelled by the time a permanent failure is detected
+            // (e.g. HTTP request aborted, orchestrator shutdown), UpdateRunAsync will throw
+            // OperationCanceledException, which is caught here and logged — leaving the run in
+            // Queued instead of Failed. This defeats the permanent-failure cascade (acceptance
+            // criterion 2 / issue #2536): the run will be retried by the retry sweep, hit the
+            // same 422, and permanently fail again indefinitely. Consider using CancellationToken.None
+            // here for the same reason TransitionToPendingSafelyAsync does: the bookkeeping write
+            // for a permanent outcome must not be skipped on cancellation.
+            // (review-findings-correctness.md WARNING)
             await _consolidationService.UpdateRunAsync(
                 new RunId(run.RunId),
                 ConsolidationRunStatus.Failed,

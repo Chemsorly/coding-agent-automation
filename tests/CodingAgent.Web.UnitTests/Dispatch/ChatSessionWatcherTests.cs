@@ -357,17 +357,18 @@ public class ChatSessionWatcherTests
             options: CreateOptions(idleTimeoutSeconds: 3, gracePeriod: 1));
         using var cts = new CancellationTokenSource();
         var entry = CreateEntry(cts: cts);
+        // This test is about the transient-read retry, not idle-kill. Pin the heartbeat an hour
+        // ahead so idle-kill cannot fire however long the runner stalls between polls. Refreshing
+        // the heartbeat on each read was not enough: on a loaded CI runner the 1s poll delay ran
+        // past the 3s idle window, idle-kill fired first, and callCount stayed at 1.
+        System.Threading.Interlocked.Exchange(
+            ref entry.LastClientHeartbeatTicks,
+            DateTimeOffset.UtcNow.AddHours(1).UtcTicks);
 
         var callCount = 0;
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
-                // Refresh heartbeat on every poll so CI slowness cannot expire the 3s idle window
-                // before the second ReadJobAsync call. Without this, slow CI agents can delay the
-                // watcher loop long enough that idle-kill fires first, keeping callCount at 1.
-                System.Threading.Interlocked.Exchange(
-                    ref entry.LastClientHeartbeatTicks,
-                    DateTimeOffset.UtcNow.UtcTicks);
                 callCount++;
                 if (callCount == 1)
                     throw new HttpRequestException("transient error");

@@ -1,6 +1,7 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.AspNetCore.SignalR;
 using Serilog.Events;
 using ILogger = Serilog.ILogger;
 
@@ -25,15 +26,16 @@ public sealed class AgentOrphanRecoveryService(
     // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
     // in the refactoring, but this operation hits history storage and should be cancellable.
     /// <inheritdoc />
-    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
+    public async Task<OrphanRecoveryResult> RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // Re-track active job from agent state (handles orchestrator restart scenario)
+        PipelineRun? firstPickupRun = null;
         if (message.ActiveJob is not null)
         {
-            await RestoreActiveJobAsync(message, agentId);
+            firstPickupRun = await RestoreActiveJobAsync(message, agentId);
         }
 
         // Detect orphaned runs: if the orchestrator tracks active runs for this agent
@@ -49,25 +51,73 @@ public sealed class AgentOrphanRecoveryService(
         {
             await HandleCrashRecoveryAsync(message, agentId, entry);
         }
+
+        return new OrphanRecoveryResult(firstPickupRun);
     }
 
-    private async Task RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
+    /// <returns>The tracked run when the agent was just recorded on it as its first agent.</returns>
+    private async Task<PipelineRun?> RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         var activeJob = message.ActiveJob!;
+
+        // The run-scoped [RequiresActiveJob] hub methods (token refresh, labels, comments) act on the
+        // restored run's identity, so where the WorkItem store is available (the API host) the
+        // report is accepted only for a work item this agent owns, and the identity — issue,
+        // provider configs, project — is taken from the database rather than from the report.
+        // Nothing about the run changes before that check: not its agent, not its labels.
+        RunIdentity identity;
+        if (_facade.CanVerifyWorkItems)
+        {
+            var record = await ReadWorkItemRecordAsync(agentId, activeJob.RunId);
+            if (record is null || !record.IsOwnedBy(agentId.Value))
+            {
+                _logger.Warning(
+                    "Agent {AgentId} reported active job {RunId}, which could not be verified as a work item assigned to it — ignoring the claim",
+                    agentId, LogSanitizer.SanitizeForLog(activeJob.RunId));
+                return null;
+            }
+            identity = RunIdentity.FromWorkItem(record, activeJob);
+        }
+        else
+        {
+            identity = RunIdentity.FromAgentReport(activeJob);
+        }
+
         var existingRun = _facade.GetRun(activeJob.RunId);
 
         if (existingRun is null)
         {
-            await RestoreRunFromAgentStateAsync(agentId, activeJob);
+            await RestoreRunFromAgentStateAsync(agentId, activeJob, identity);
+            return null;
         }
-        else
+
+        return LinkAgentToExistingRun(existingRun, agentId, activeJob);
+    }
+
+    /// <summary>
+    /// Reads the work item behind a run an agent is to be attached to. A failed read is not taken
+    /// as "not the agent's": registration fails with an error the agent retries, so a store outage
+    /// does not leave a legitimate agent registered without its run.
+    /// </summary>
+    private async Task<WorkItemRunRecord?> ReadWorkItemRecordAsync(AgentId agentId, string runId)
+    {
+        try
         {
-            LinkAgentToExistingRun(existingRun, agentId, activeJob);
+            return await _facade.GetWorkItemRunRecordAsync(runId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "Agent {AgentId}: could not read work item {RunId} to verify the agent's run — failing registration so the agent retries",
+                agentId, LogSanitizer.SanitizeForLog(runId));
+            // The agent's SignalR retry pipeline treats "Failed to ..." hub errors as transient.
+            throw new HubException(
+                $"Failed to verify run {LogSanitizer.SanitizeForLog(runId)} for agent {agentId}: the work item store is unavailable");
         }
     }
 
     private async Task RestoreRunFromAgentStateAsync(
-        AgentId agentId, ActiveJobState activeJob)
+        AgentId agentId, ActiveJobState activeJob, RunIdentity identity)
     {
         // Check history — don't re-register a completed run.
         // Only treat runs with successful terminal states as stale.
@@ -79,28 +129,28 @@ public sealed class AgentOrphanRecoveryService(
 
         if (!inHistory)
         {
-            await RestoreNewRunAsync(agentId, activeJob);
+            await RestoreNewRunAsync(agentId, activeJob, identity);
         }
         else
         {
             _logger.Information(
                 "Agent {AgentId} reported active job {RunId} but it's already in history — ignoring stale state",
-                agentId, activeJob.RunId);
+                agentId, LogSanitizer.SanitizeForLog(activeJob.RunId));
         }
     }
 
-    private Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob)
+    private Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob, RunIdentity identity)
     {
         // Skip restoration for consolidation runs — they have their own
         // completion path (ReportConsolidationComplete) and should not
         // enter pipeline run tracking or history.
-        if (activeJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+        if (identity.IsConsolidation)
         {
             RestoreConsolidationTracking(agentId, activeJob);
         }
         else
         {
-            RestorePipelineRun(agentId, activeJob);
+            RestorePipelineRun(agentId, activeJob, identity);
         }
         return Task.CompletedTask;
     }
@@ -142,13 +192,13 @@ public sealed class AgentOrphanRecoveryService(
         _changeNotifier.NotifyChange();
     }
 
-    private void RestorePipelineRun(AgentId agentId, ActiveJobState activeJob)
+    private void RestorePipelineRun(AgentId agentId, ActiveJobState activeJob, RunIdentity identity)
     {
-        var restoredRun = CreateRestoredPipelineRun(agentId.Value, activeJob);
+        var restoredRun = CreateRestoredPipelineRun(agentId.Value, activeJob, identity);
         restoredRun.CurrentStep = activeJob.CurrentStep;
-        restoredRun.PipelineProviderConfigId = activeJob.PipelineProviderConfigId;
+        restoredRun.PipelineProviderConfigId = identity.PipelineProviderConfigId;
         restoredRun.ResolvedProfileId = activeJob.ResolvedProfileId;
-        restoredRun.ProjectId = activeJob.ProjectId;
+        restoredRun.ProjectId = identity.ProjectId;
         restoredRun.ProjectName = activeJob.ProjectName;
         restoredRun.RepositoryName = activeJob.RepositoryName;
         restoredRun.ModelName = activeJob.ModelName;
@@ -185,62 +235,133 @@ public sealed class AgentOrphanRecoveryService(
 
         _logger.Information(
             "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
-            LogSanitizer.SanitizeForLog(activeJob.RunId), agentId, LogSanitizer.SanitizeForLog(activeJob.IssueIdentifier), activeJob.CurrentStep);
+            LogSanitizer.SanitizeForLog(activeJob.RunId), agentId, LogSanitizer.SanitizeForLog(identity.IssueIdentifier), activeJob.CurrentStep);
 
         _changeNotifier.NotifyChange();
     }
 
-    private static PipelineRun CreateRestoredPipelineRun(string agentId, ActiveJobState activeJob)
+    /// <summary>
+    /// Builds the restored run: identity (run type, issue, provider configs) from
+    /// <paramref name="identity"/>, progress and display fields from the agent's report.
+    /// </summary>
+    private static PipelineRun CreateRestoredPipelineRun(string agentId, ActiveJobState activeJob, RunIdentity identity)
     {
-        return activeJob.RunType switch
+        return identity.RunType switch
         {
             PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
             {
                 RunId = activeJob.RunId,
-                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueIdentifier = identity.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
-                IssueProviderConfigId = activeJob.IssueProviderConfigId,
-                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
+                IssueProviderConfigId = identity.IssueProviderConfigId,
+                RepoProviderConfigId = identity.RepoProviderConfigId,
                 RunType = PipelineRunType.Review,
                 StartedAt = activeJob.StartedAt,
                 InitiatedBy = activeJob.InitiatedBy,
                 AgentId = agentId,
                 AgentProviderConfigId = activeJob.AgentProviderConfigId,
-                BrainProviderConfigId = activeJob.BrainProviderConfigId,
+                BrainProviderConfigId = identity.BrainProviderConfigId,
                 ReviewPrBranchName = string.Empty,
                 ReviewPrTargetBranch = string.Empty
+                // NOTE: ActiveJobState carries no ReviewPrUrl, ReviewPrBranchName, or ReviewPrTargetBranch.
+                // On re-registration, a restored review run will be missing:
+                //   - ReviewPrUrl: used by RunPage.razor to render the "PR under review" chip.
+                //   - ReviewPrBranchName / ReviewPrTargetBranch: used for git operations during the pipeline.
+                // These cannot be recovered from ActiveJobState alone without fetching the original
+                // WorkItem payload or adding more MessagePack keys (out of scope for issue #3095).
+                // Impact: the "PR under review" chip will not render on the Run page for a restored review run.
+                // TODO: open a follow-up issue to track this gap (issue #3095 is being closed by this fix;
+                // this limitation needs its own tracking ticket so it is not lost).
             }),
             PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
             {
                 RunId = activeJob.RunId,
-                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueIdentifier = identity.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
-                IssueProviderConfigId = activeJob.IssueProviderConfigId,
-                RepoProviderConfigId = activeJob.RepoProviderConfigId,
-                RunType = activeJob.RunType,
+                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
+                IssueProviderConfigId = identity.IssueProviderConfigId,
+                RepoProviderConfigId = identity.RepoProviderConfigId,
+                RunType = identity.RunType,
                 StartedAt = activeJob.StartedAt,
                 InitiatedBy = activeJob.InitiatedBy,
                 AgentId = agentId,
                 AgentProviderConfigId = activeJob.AgentProviderConfigId,
-                BrainProviderConfigId = activeJob.BrainProviderConfigId
+                BrainProviderConfigId = identity.BrainProviderConfigId
             }),
             _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
             {
                 RunId = activeJob.RunId,
-                IssueIdentifier = activeJob.IssueIdentifier,
+                IssueIdentifier = identity.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
-                IssueProviderConfigId = activeJob.IssueProviderConfigId,
-                RepoProviderConfigId = activeJob.RepoProviderConfigId,
+                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
+                IssueProviderConfigId = identity.IssueProviderConfigId,
+                RepoProviderConfigId = identity.RepoProviderConfigId,
                 StartedAt = activeJob.StartedAt,
                 InitiatedBy = activeJob.InitiatedBy,
                 AgentId = agentId,
                 AgentProviderConfigId = activeJob.AgentProviderConfigId,
-                BrainProviderConfigId = activeJob.BrainProviderConfigId
+                BrainProviderConfigId = identity.BrainProviderConfigId
             })
         };
     }
 
-    private void LinkAgentToExistingRun(
+    /// <summary>
+    /// The reported issue URL, if it is an absolute http(s) URL. The work item does not record the
+    /// URL, so it comes from the agent — and the UI renders it as a link.
+    /// </summary>
+    private static string? HttpUrlOrNull(string? url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp)
+            ? url
+            : null;
+
+    /// <summary>
+    /// The identity a restored run is built from: the verified work item's when the WorkItem store
+    /// is available, the agent's own report otherwise (in-memory / test hosts).
+    /// </summary>
+    private sealed record RunIdentity(
+        bool IsConsolidation,
+        PipelineRunType RunType,
+        string IssueIdentifier,
+        string IssueProviderConfigId,
+        string RepoProviderConfigId,
+        string? BrainProviderConfigId,
+        string? PipelineProviderConfigId,
+        string? ProjectId)
+    {
+        public static RunIdentity FromAgentReport(ActiveJobState activeJob) => new(
+            activeJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId,
+            activeJob.RunType,
+            activeJob.IssueIdentifier,
+            activeJob.IssueProviderConfigId,
+            activeJob.RepoProviderConfigId,
+            activeJob.BrainProviderConfigId,
+            activeJob.PipelineProviderConfigId,
+            activeJob.ProjectId);
+
+        public static RunIdentity FromWorkItem(WorkItemRunRecord record, ActiveJobState activeJob)
+        {
+            // The database records the task, not the decomposition phase: take the phase from the
+            // agent as long as it stays within the decomposition task.
+            var runType = record.TaskType.ToDefaultRunType();
+            if (runType == PipelineRunType.DecompositionAnalysis && activeJob.RunType == PipelineRunType.Decomposition)
+                runType = PipelineRunType.Decomposition;
+
+            return new(
+                record.TaskType == WorkItemTaskType.Consolidation,
+                runType,
+                record.IssueIdentifier,
+                record.IssueProviderConfigId,
+                record.RepoProviderConfigId ?? string.Empty,
+                record.BrainProviderConfigId,
+                record.PipelineProviderConfigId,
+                record.ProjectId?.ToString());
+        }
+    }
+
+    /// <returns>The run when the agent was just recorded on it as its first agent, otherwise null.</returns>
+    private PipelineRun? LinkAgentToExistingRun(
         PipelineRun existingRun, AgentId agentId, ActiveJobState activeJob)
     {
         // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
@@ -248,12 +369,15 @@ public sealed class AgentOrphanRecoveryService(
         //
         // AgentId update: covers first pickup (null AgentId) and pod-replacement reconnect
         // (different AgentId). Same-agent reconnect (already matches) is a no-op for the assignment.
-        if (existingRun.AgentId != agentId.Value)
+        // This is the only place registration records the agent on a run, and it runs only for an
+        // accepted claim — that is what the UI and orphan detection read the run's agent from.
+        var previousAgentId = existingRun.AgentId;
+        var agentChanged = previousAgentId != agentId.Value;
+        if (agentChanged)
         {
-            var previousAgentId = existingRun.AgentId;
             existingRun.AgentId = agentId.Value;
 
-            if (previousAgentId is not null)
+            if (!string.IsNullOrEmpty(previousAgentId))
             {
                 // Pod replacement: a different agent pod has taken over this run.
                 _logger.Information(
@@ -269,8 +393,14 @@ public sealed class AgentOrphanRecoveryService(
         // path did not, and this is the ordinary Kubernetes path, so every run that dispatched
         // normally reached history with a null ModelName.
         // ??= so a re-registration cannot blank a value already recorded.
+        var metadataAdopted = (existingRun.ModelName is null && activeJob.ModelName is not null)
+            || (existingRun.RepositoryName is null && activeJob.RepositoryName is not null);
         existingRun.ModelName ??= activeJob.ModelName;
         existingRun.RepositoryName ??= activeJob.RepositoryName;
+
+        // Write the changes back: under the distributed run service GetRun returns a copy.
+        if (agentChanged || metadataAdopted)
+            _facade.ReplaceRun(existingRun);
 
         // Agent tracking: always run when the run belongs to this agent.
         // This covers: first pickup (AgentId just set above), pod replacement (AgentId just updated),
@@ -307,6 +437,8 @@ public sealed class AgentOrphanRecoveryService(
 
         _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
             agentId, activeJob.RunId);
+
+        return agentChanged && string.IsNullOrEmpty(previousAgentId) ? existingRun : null;
     }
 
     private async Task DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
@@ -318,6 +450,20 @@ public sealed class AgentOrphanRecoveryService(
             // disconnect grace period timer applies. If the agent truly lost the job,
             // ReconciliationService (JobController) will time out the run after the grace period.
             var mostRecent = orphanedRuns[^1];
+
+            // The run records this agent, but only its work item says whose work it is: as for a
+            // reported active job, re-attach it only to the work item's own agent.
+            if (_facade.CanVerifyWorkItems)
+            {
+                var record = await ReadWorkItemRecordAsync(agentId, mostRecent.RunId);
+                if (record is null || !record.IsOwnedBy(agentId.Value))
+                {
+                    _logger.Warning(
+                        "Agent {AgentId}: tracked run {RunId} could not be verified as a work item assigned to it — not restoring it",
+                        agentId, LogSanitizer.SanitizeForLog(mostRecent.RunId));
+                    return;
+                }
+            }
 
             // Guard: don't re-activate a run that is already in history as a non-Cancelled/
             // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
