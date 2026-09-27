@@ -3,7 +3,7 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 <section class="settings-section" style="margin: 16px 20px;">
-    <h2>Pipeline Job Templates</h2>
+    <div class="cockpit-card-header"><h2>Pipeline Job Templates</h2></div>
     @if (Templates.Count == 0)
     {
         <p class="section-description">Templates define how the pipeline processes issues — which providers to use, quality gates to apply, and dispatch rules.</p>
