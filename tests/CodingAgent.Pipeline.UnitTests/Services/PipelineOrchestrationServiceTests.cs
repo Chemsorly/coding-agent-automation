@@ -115,11 +115,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .ReturnsAsync(true);
 
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
+        _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
-        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
         _mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         _mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
@@ -1033,11 +1033,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
         firstIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
         firstIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
         firstRepoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        firstRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
+        firstRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
         firstRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         firstRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
         firstRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
-        firstRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        firstRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         firstRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
         firstAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>())).ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         firstAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
@@ -1588,10 +1588,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         // Main repo provider
         mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
+        mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
         mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
-        mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
         mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
         mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
@@ -2281,7 +2281,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         };
 
         // Override CreateBranchAsync to throw after clone succeeds
-        _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("ref already exists"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -2891,9 +2891,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         };
 
         // Override PushBranchAsync to throw (called inside PullRequestOrchestrator.CreatePullRequestAsync)
-        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Remote rejected push"));
-        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+        _mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Remote rejected push"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -3161,7 +3161,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         _mockRepoProvider.Setup(p => p.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _mockRepoProvider.Setup(p => p.MergeFromBaseAsync(
@@ -3198,9 +3198,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.CheckoutRemoteBranchAsync(
-            It.IsAny<WorkspacePath>(), It.Is<string>(b => b == "feature/auto-7-fix-bug-abc12345"), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<WorkspacePath>(), It.Is<BranchName>(b => b.Value == "feature/auto-7-fix-bug-abc12345"), It.IsAny<CancellationToken>()), Times.Once);
         _mockRepoProvider.Verify(p => p.CreateBranchAsync(
-            It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -3210,7 +3210,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var callOrder = new List<string>();
         _mockRepoProvider.Setup(p => p.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("Checkout"))
             .Returns(Task.CompletedTask);
         _mockRepoProvider.Setup(p => p.MergeFromBaseAsync(
@@ -3231,7 +3231,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockRepoProvider.Verify(p => p.PushBranchAsync(
-            It.IsAny<WorkspacePath>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), true, It.IsAny<CancellationToken>()), Times.Once);
         _mockRepoProvider.Verify(p => p.CreatePullRequestAsync(
             It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -3308,7 +3308,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupReworkMocks();
 
         _mockRepoProvider.Setup(p => p.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Branch not found"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -3330,7 +3330,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.LinkedPullRequest.Should().BeNull();
         _mockRepoProvider.Verify(p => p.CreateBranchAsync(
-            It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -3339,7 +3339,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupReworkMocks();
 
         _mockRepoProvider.Setup(p => p.PushBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("non-fast-forward"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
