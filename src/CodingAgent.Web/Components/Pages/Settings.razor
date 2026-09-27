@@ -22,9 +22,19 @@
 <PageTitle>Settings - Coding Agent</PageTitle>
 
 <div class="settings-page">
-    <header class="settings-header">
-        <h1>Settings</h1>
-    </header>
+    @* TODO [WARNING]: Settings.razor intentionally keeps "settings-page" as the root element (not
+       "cockpit-page") because the inner settings-layout requires a sidebar tree nav that is
+       incompatible with the cockpit-page column-gap layout. As a result the cockpit-page-header
+       padding is duplicated inline (22px 28px) rather than being driven by the shared cockpit.css
+       rule. A future change to the canonical cockpit-page-header padding in cockpit.css will NOT
+       propagate here automatically. Consider extracting the header padding into a CSS variable or
+       a shared modifier class so the value stays in sync. *@
+    <div class="cockpit-page-header" style="padding: 22px 28px; border-bottom: 1px solid var(--border); background: var(--surface);">
+        <div class="cockpit-page-titles">
+            <h1>Settings</h1>
+            <span class="cockpit-page-sub">Providers, templates, and agent configuration</span>
+        </div>
+    </div>
 
     <div class="settings-layout">
         <SettingsTreeNav @ref="_treeNav" />

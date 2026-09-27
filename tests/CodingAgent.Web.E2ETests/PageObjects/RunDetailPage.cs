@@ -35,10 +35,30 @@ public sealed class RunDetailPage
 
     public ILocator CancelButton => _page.Locator("[data-testid='cancel-pipeline-btn']");
 
+    /// <summary>Returns true when the "Cancel Pipeline" button is visible in the sidebar.</summary>
+    public async Task<bool> IsCancelButtonVisibleAsync()
+        => await CancelButton.IsVisibleAsync();
+
+    /// <summary>
+    /// Returns true when the "Live output" card is present on the page.
+    /// This card is rendered only while the run is active (<c>_isLive == true</c>). It has no
+    /// <c>data-testid</c>; the <c>data-testid="output-tail-card"</c> is the post-run tail card.
+    /// </summary>
+    public async Task<bool> HasLiveOutputPanelAsync()
+        => await _page.Locator(".cockpit-card:has(h2:has-text('Live output'))").IsVisibleAsync();
+
     /// <summary>Clicks the sidebar's "Cancel Pipeline" button (present only while the run is active).</summary>
     public async Task CancelAsync()
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
         await CancelButton.ClickAsync();
     }
+
+    /// <summary>
+    /// Returns true if the Run page shows an "Issue #&lt;issueIdentifier&gt;" chip linking to the issue.
+    /// Uses the <c>cockpit-link-chip</c> anchor rendered by RunPage.razor when <c>run.IssueUrl</c>
+    /// is non-null (added for issue #3095 coverage).
+    /// </summary>
+    public async Task<bool> HasIssueLinkAsync(string issueIdentifier) =>
+        await _page.Locator($"a.cockpit-link-chip:has-text('Issue #{issueIdentifier}')").IsVisibleAsync();
 }

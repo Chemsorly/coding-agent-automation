@@ -125,4 +125,29 @@ public abstract class E2ETestBase : IAsyncLifetime
         throw new TimeoutException(
             $"Condition not met within {effectiveTimeout.TotalSeconds}s");
     }
+
+    /// <summary>
+    /// Async overload: polls an async condition until it returns true, or times out.
+    /// Use this when the condition itself performs async I/O (e.g. awaiting an API call or
+    /// <c>CreateDbContextAsync</c>). For synchronous predicates prefer the <c>Func&lt;bool&gt;</c>
+    /// overload to avoid the overhead of an async state machine per poll iteration.
+    /// </summary>
+    protected static async Task WaitUntilAsync(
+        Func<Task<bool>> condition,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(25);
+        var deadline = DateTime.UtcNow + effectiveTimeout;
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(50);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition()) return;
+            await Task.Delay(interval);
+        }
+
+        throw new TimeoutException(
+            $"Condition not met within {effectiveTimeout.TotalSeconds}s");
+    }
 }

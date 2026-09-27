@@ -26,21 +26,24 @@
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
 
-<div class="agent-monitoring-page">
-    <header class="agent-header">
-        <h1>Agent Chat</h1>
-    </header>
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Agent Chat</h1>
+            <span class="cockpit-page-sub">Launch a dedicated chat pod for interactive sessions</span>
+        </div>
+    </div>
 
     <section class="settings-section" style="margin: 16px 20px;">
         @if (!_isChatActive)
         {
             <!-- K8s mode: Job Template selection + pod launch -->
             <div class="chat-setup">
-                <h2><Icon Name="message-circle" Size="20" /> Interactive Chat</h2>
+                <div class="cockpit-card-header" style="margin-bottom: 12px;"><h2><Icon Name="message-circle" Size="20" /> Interactive Chat</h2></div>
                 <p class="chat-description">Select an agent type to launch a dedicated chat pod.</p>
 
                 <div class="chat-agent-select">
-                    <label for="template-select">Job Template:</label>
+                    <label for="template-select">Agent Labels:</label>
                     <select id="template-select" @bind="_selectedTemplateLabels" @bind:after="OnTemplateSelected" class="chat-select">
                         <option value="">— Select agent type —</option>
                         @foreach (var t in _templates)
