@@ -187,7 +187,14 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 {
                     var json = File.ReadAllText(file.FullName);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
-                    if (summary != null && summary.InitiatedBy?.StartsWith(ConsolidationConstants.InitiatedByPrefix, StringComparison.Ordinal) != true)
+                    // TODO(#3025): Unlike the Postgres path (which has IsConsolidationGhost to filter
+                    // legacy ghost rows), the file-backed service performs no ghost filtering here.
+                    // Any legacy ghost .json file written before #3024 (with RunType defaulting to
+                    // Implementation and InitiatedBy = ConsolidationConstants.InitiatedBy) will now
+                    // be surfaced on the Runs page. For fresh deployments this is harmless. For
+                    // existing deployments with ghost files on disk, consider adding an IsConsolidationGhost
+                    // check mirroring the Postgres implementation to avoid surfacing legacy junk data.
+                    if (summary != null)
                         summaries.Add(summary);
                 }
                 catch (Exception ex)
