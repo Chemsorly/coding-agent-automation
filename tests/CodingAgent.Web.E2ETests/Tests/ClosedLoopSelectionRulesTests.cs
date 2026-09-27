@@ -221,12 +221,16 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Dispatch preparation calls GetIssueAsync with the PR identifier. On GitHub every PR is
         // also an issue under the same number; the harness models them separately, so we must seed
         // the issue side or orchestration returns null and the review work item is never created.
+        // Do NOT include agent:next here — that would add this PR-as-issue to the implementation
+        // queue, causing the MinIssueSlots floor pass to re-dispatch it as an implementation item
+        // (hitting a 409 conflict since the review work item already exists) and consuming a
+        // budget slot without producing a second work item that agents can receive.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "42",
             Title = "PR for review",
             Description = "PR body",
-            Labels = new[] { "agent:next" }
+            Labels = Array.Empty<string>()
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
@@ -325,12 +329,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Dispatch preparation calls GetIssueAsync with the PR identifier. On GitHub every PR is
         // also an issue under the same number; the harness models them separately, so we must seed
         // the issue side or orchestration returns null and the review work item is never created.
+        // Do NOT include agent:next — see Budget2 test for the rationale.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "43",
             Title = "PR for review",
             Description = "PR body",
-            Labels = new[] { "agent:next" }
+            Labels = Array.Empty<string>()
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
