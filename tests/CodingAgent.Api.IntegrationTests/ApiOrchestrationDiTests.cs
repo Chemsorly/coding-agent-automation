@@ -304,7 +304,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         services.AddSingleton<IWorkItemFallbackTransitionService>(sp => new WorkItemFallbackTransitionService(
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemFallbackTransitionService>()));
-        services.AddSingleton<IWorkItemTransitionStore>(sp => new EfWorkItemTransitionStore(
+        services.AddSingleton<IWorkItemTransitionStore>(sp => new PostgresWorkItemTransitionStore(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<WorkItemTransitionService>()));
 
@@ -343,6 +343,14 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         services.RemoveAll<IHostedService>();
 
         return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = false });
+        // TODO [WARNING]: ValidateOnBuild = false suppresses MS DI's eager graph validation at
+        // build time, which is the primary purpose of this characterization test. Switch to
+        // ValidateOnBuild = true (and ValidateScopes = true) once the scoped PipelineDbContext
+        // registration is resolved through a scope rather than the root provider. With both
+        // flags false, broken registrations (missing dependencies, mismatched lifetimes) can
+        // pass undetected until a specific GetRequiredService<T> call is reached at test runtime.
+        // See review finding [WARNING] ApiOrchestrationDiTests.cs:343 (DotNetSpecialist and
+        // TestQualityReviewer reviews).
     }
 
     private static DelegatingDbContextFactory BuildInMemoryDbFactory(string? dbName = null)

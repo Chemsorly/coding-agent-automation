@@ -238,6 +238,18 @@ public static class ApiServiceCollectionExtensions
     /// <c>mux.GetDatabase()</c>), so request-scoped use would silently allocate extra
     /// <c>IDatabase</c> handles from the multiplexer's connection pool.
     /// </remarks>
+    // TODO [WARNING]: This method is `internal` (not `private`) solely to enable the
+    // ResolveRedisStoreOrNull_WhenNoMultiplexer_ReturnsNull unit test. The broader `internal`
+    // visibility means any future code in this assembly can call it from a scoped or transient
+    // factory lambda, silently exhausting the multiplexer's connection pool under load. There
+    // is no compiler/analyser guard against misuse. Consider making it `private` and testing
+    // the behaviour indirectly via the observable DI wiring (IOrchestratorRunService concrete
+    // type) instead. See review finding [WARNING] ApiServiceCollectionExtensions.cs:244.
+    // TODO [WARNING]: No ArgumentNullException.ThrowIfNull(sp) guard. If called with a null
+    // IServiceProvider, sp.GetService<...>() will throw NullReferenceException with no
+    // actionable message. All current callers are DI factory lambdas (non-null), but the
+    // asymmetry with CreateAgentRegistryService (which documents this concern) is worth
+    // closing. See review finding [WARNING] ApiServiceCollectionExtensions.cs:257.
     internal static CodingAgent.Orchestration.Redis.IRedisStore? ResolveRedisStoreOrNull(
         IServiceProvider sp)
     {
@@ -292,6 +304,16 @@ public static class ApiServiceCollectionExtensions
         // Serilog.ILogger for DI resolution (some services take Serilog.ILogger directly)
         services.AddSingleton(Log.Logger);
 
+        // Sub-method call order encodes cross-method registration dependencies.
+        // AddTokenVending must run before AddLifecycleAndConsolidation (ITokenVendingService
+        // is required by IConsolidationJobPreparationService registered there).
+        // AddKubernetes must run before AddDispatch (IKubernetesJobClient required by
+        // DispatchLifecycleService) and before AddChatDispatch (ModelFetchJobService,
+        // ChatJobDispatcher). Do not reorder these calls without tracing all cross-method deps.
+        // TODO [WARNING]: Reordering these sub-method calls would silently break DI resolution
+        // at runtime (not at build time, because ValidateOnBuild = false in the test provider).
+        // If the call order must change, verify all cross-sub-method dependencies are satisfied.
+        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:292 (Correctness review).
         AddOrchestrationCore(services, config);
         AddTokenVending(services);
         AddLabelServices(services);
@@ -425,6 +447,13 @@ public static class ApiServiceCollectionExtensions
 
         // ── IAgentCommunication → SignalRAgentCommunication ──────────────────
         // Registered before ModelFetchService which depends on it.
+        // TODO [WARNING]: The comment "Registered before ModelFetchService which depends on it"
+        // implies registration order matters. It does not — MS DI resolves singleton factory
+        // lambdas lazily at first-use, not at registration time. The comment is inaccurate and
+        // may mislead future readers into believing eager ordering constraints apply here.
+        // IAgentCommunication was moved earlier (before ConsolidationBadgeService) in this
+        // refactor; the move is safe but the ordering rationale in the comment is wrong.
+        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:423 (DotNetSpecialist review).
         services.AddSingleton<IAgentCommunication>(sp =>
             new SignalRAgentCommunication(
                 sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub, IAgentHubClient>>()));
@@ -470,6 +499,13 @@ public static class ApiServiceCollectionExtensions
         // Required by AssignmentEnricher to resolve provider configs and vend short-lived tokens
         // at assignment time (GET /api/work-items/{id}/assignment).
         // Also used by ReportConsolidationComplete hub handling.
+        // TODO [WARNING]: IConsolidationJobPreparationService requires ITokenVendingService,
+        // which is registered by AddTokenVending — a sibling sub-method called before
+        // AddLifecycleAndConsolidation in AddApiOrchestration. This cross-sub-method dependency
+        // is correct with the current call order but is fragile: moving AddTokenVending to after
+        // AddLifecycleAndConsolidation (or calling AddLifecycleAndConsolidation standalone)
+        // would silently break resolution at runtime. See the ordering comment in AddApiOrchestration.
+        // See review finding [WARNING] ApiServiceCollectionExtensions.cs:454 (Correctness review).
         services.AddSingleton<IConsolidationJobPreparationService>(sp =>
             new ConsolidationJobPreparationService(
                 sp.GetRequiredService<IProviderConfigStore>(),
