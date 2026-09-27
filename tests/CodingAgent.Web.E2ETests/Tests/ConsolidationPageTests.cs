@@ -65,7 +65,7 @@ public sealed class ConsolidationPageTests : E2ETestBase
         Assert.Contains("Consolidation", title);
 
         // The consolidation section should show "No enabled templates configured."
-        var pageText = await Page.TextContentAsync(".consolidation-page");
+        var pageText = await Page.TextContentAsync(".cockpit-page");
         Assert.Contains("No enabled templates configured", pageText);
     }
 

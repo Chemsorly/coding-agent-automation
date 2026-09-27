@@ -199,6 +199,7 @@ public sealed class AgentOrphanRecoveryService(
                 RunId = activeJob.RunId,
                 IssueIdentifier = activeJob.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
+                IssueUrl = activeJob.IssueUrl,
                 IssueProviderConfigId = activeJob.IssueProviderConfigId,
                 RepoProviderConfigId = activeJob.RepoProviderConfigId,
                 RunType = PipelineRunType.Review,
@@ -209,12 +210,22 @@ public sealed class AgentOrphanRecoveryService(
                 BrainProviderConfigId = activeJob.BrainProviderConfigId,
                 ReviewPrBranchName = string.Empty,
                 ReviewPrTargetBranch = string.Empty
+                // NOTE: ActiveJobState carries no ReviewPrUrl, ReviewPrBranchName, or ReviewPrTargetBranch.
+                // On re-registration, a restored review run will be missing:
+                //   - ReviewPrUrl: used by RunPage.razor to render the "PR under review" chip.
+                //   - ReviewPrBranchName / ReviewPrTargetBranch: used for git operations during the pipeline.
+                // These cannot be recovered from ActiveJobState alone without fetching the original
+                // WorkItem payload or adding more MessagePack keys (out of scope for issue #3095).
+                // Impact: the "PR under review" chip will not render on the Run page for a restored review run.
+                // TODO: open a follow-up issue to track this gap (issue #3095 is being closed by this fix;
+                // this limitation needs its own tracking ticket so it is not lost).
             }),
             PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
             {
                 RunId = activeJob.RunId,
                 IssueIdentifier = activeJob.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
+                IssueUrl = activeJob.IssueUrl,
                 IssueProviderConfigId = activeJob.IssueProviderConfigId,
                 RepoProviderConfigId = activeJob.RepoProviderConfigId,
                 RunType = activeJob.RunType,
@@ -229,6 +240,7 @@ public sealed class AgentOrphanRecoveryService(
                 RunId = activeJob.RunId,
                 IssueIdentifier = activeJob.IssueIdentifier,
                 IssueTitle = activeJob.IssueTitle,
+                IssueUrl = activeJob.IssueUrl,
                 IssueProviderConfigId = activeJob.IssueProviderConfigId,
                 RepoProviderConfigId = activeJob.RepoProviderConfigId,
                 StartedAt = activeJob.StartedAt,

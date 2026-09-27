@@ -127,12 +127,11 @@
                     @if (SelectedItem.CreatedAt.HasValue)
                     {
                         <p style="font-size: 0.78rem; color: var(--text-muted); margin: 0 0 8px;">
-                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("g")
+                            Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
-                            data-testid="dispatch-pr-btn"
-                            style="background: var(--accent-secondary, #6366f1);">
+                            data-testid="dispatch-pr-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Review on PR #{SelectedItem.Identifier}")
                     </button>
                 </div>
