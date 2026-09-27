@@ -213,6 +213,37 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
     }
 
     /// <summary>
+    /// A Kubernetes client timeout surfaces as an OperationCanceledException although the dispatch
+    /// itself was not cancelled. It is a failure like any other: the keyless Job is deleted and the
+    /// work item fails, rather than the Job waiting until the dispatch timeout.
+    /// </summary>
+    [Fact]
+    public async Task WhenKeySecretCreationTimesOut_JobIsDeletedAndWorkItemFails()
+    {
+        var entity = await SeedPendingWorkItemAsync();
+        var expectedJobName = DispatchLifecycleService.GenerateJobName(entity.Id);
+
+        var k8sMock = new Mock<IKubernetesJobClient>(MockBehavior.Strict);
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        k8sMock.Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Name = expectedJobName, Uid = "test-uid" } });
+        k8sMock.Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("The request was canceled due to the configured HttpClient.Timeout"));
+        k8sMock.Setup(k => k.DeleteJobAsync(expectedJobName, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateServiceWithApiKey(k8sMock.Object, "super-secret-master");
+        using var _ = service;
+
+        await RunDispatchAsync(entity, service, projectSecrets: null);
+
+        k8sMock.Verify(k => k.DeleteJobAsync(expectedJobName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once,
+            "a Job whose agent key could not be issued must be deleted");
+        (await ReloadAsync(entity.Id)).Status.Should().Be(WorkItemStatus.Failed);
+    }
+
+    /// <summary>
     /// A key Secret with the same name can only be left over from an earlier Job with the same name
     /// (re-dispatched work item). It is replaced so the new Job owns it; otherwise garbage collection
     /// of the old Job would delete the key under the new pod.

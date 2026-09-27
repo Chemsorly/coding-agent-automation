@@ -318,6 +318,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         try
         {
             var jobUid = await AgentJobKeySecret.ReadJobUidAsync(_jobClient, _options.Namespace, jobName, cancellationToken);
+            if (string.IsNullOrEmpty(jobUid))
+                _logger.Warning("ChatJobDispatcher: creating the agent key Secret for chat Job {JobName} without OwnerReference — it will not be deleted with the Job", jobName);
             await AgentJobKeySecret.CreateForJobAsync(
                 _jobClient, _options.Namespace, jobName, jobUid, _options.AgentApiKeyValue, cancellationToken);
         }

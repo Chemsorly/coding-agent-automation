@@ -69,6 +69,56 @@ public sealed class AgentJobKeySecretTests
         client.Verify(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    /// <summary>
+    /// The stale Secret belongs to an earlier Job with the same name, so its garbage collection can
+    /// remove it between the conflict and the delete — that is not a failure.
+    /// </summary>
+    [Fact]
+    public async Task CreateForJobAsync_StaleSecretVanishesBeforeTheDelete_IsCreated()
+    {
+        var client = new Mock<IKubernetesJobClient>();
+        client.SetupSequence(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Conflict())
+            .Returns(Task.CompletedTask);
+        client.Setup(c => c.DeleteSecretAsync($"caa-key-{JobName}", Namespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Status(HttpStatusCode.NotFound));
+
+        await AgentJobKeySecret.CreateForJobAsync(client.Object, Namespace, JobName, "new-uid", MasterKey, CancellationToken.None);
+
+        client.Verify(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    /// <summary>
+    /// Another dispatcher of the same Job can recreate the Secret between the delete and the create.
+    /// </summary>
+    [Fact]
+    public async Task CreateForJobAsync_SecretRecreatedConcurrently_RetriesTheReplacement()
+    {
+        var client = new Mock<IKubernetesJobClient>();
+        client.SetupSequence(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Conflict())
+            .ThrowsAsync(Conflict())
+            .Returns(Task.CompletedTask);
+
+        await AgentJobKeySecret.CreateForJobAsync(client.Object, Namespace, JobName, "new-uid", MasterKey, CancellationToken.None);
+
+        client.Verify(c => c.DeleteSecretAsync($"caa-key-{JobName}", Namespace, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        client.Verify(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
+    [Fact]
+    public async Task CreateForJobAsync_NameKeepsConflicting_ThrowsAfterBoundedAttempts()
+    {
+        var client = new Mock<IKubernetesJobClient>();
+        client.Setup(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Conflict());
+
+        var act = () => AgentJobKeySecret.CreateForJobAsync(client.Object, Namespace, JobName, "uid", MasterKey, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HttpOperationException>();
+        client.Verify(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), Namespace, It.IsAny<CancellationToken>()), Times.Exactly(3));
+    }
+
     [Fact]
     public async Task CreateForJobAsync_OtherFailure_Throws()
     {
@@ -118,8 +168,10 @@ public sealed class AgentJobKeySecretTests
 
     private static readonly TimeSpan[] NoDelays = [TimeSpan.Zero, TimeSpan.Zero];
 
-    private static HttpOperationException Conflict() => new("exists")
+    private static HttpOperationException Conflict() => Status(HttpStatusCode.Conflict);
+
+    private static HttpOperationException Status(HttpStatusCode status) => new(status.ToString())
     {
-        Response = new HttpResponseMessageWrapper(new HttpResponseMessage(HttpStatusCode.Conflict), "")
+        Response = new HttpResponseMessageWrapper(new HttpResponseMessage(status), "")
     };
 }

@@ -20,6 +20,9 @@ public static class AgentJobKeySecret
     private static readonly TimeSpan[] DefaultUidReadRetryDelays =
         [TimeSpan.FromMilliseconds(200), TimeSpan.FromMilliseconds(400)];
 
+    /// <summary>Create attempts before a Secret name that keeps conflicting is reported as a failure.</summary>
+    private const int MaxCreateAttempts = 3;
+
     /// <summary>Name of the Secret that holds the key for <paramref name="jobName"/>.</summary>
     public static string NameFor(string jobName) => $"caa-key-{jobName}";
 
@@ -28,7 +31,8 @@ public static class AgentJobKeySecret
     /// <paramref name="jobUid"/> is known. A Secret with the same name can only be left over from an
     /// earlier Job with the same name (a re-dispatched work item), and garbage collection of that
     /// Job would delete it under the new Job's pod — so it is replaced. Throws when the Secret cannot
-    /// be created: the Job's pod cannot start without it.
+    /// be created (after <see cref="MaxCreateAttempts"/> conflicting attempts, or on any other
+    /// error): the Job's pod cannot start without it.
     /// </summary>
     public static async Task CreateForJobAsync(
         IKubernetesJobClient client, string ns, string jobName, string? jobUid, string masterKey, CancellationToken ct)
@@ -57,14 +61,28 @@ public static class AgentJobKeySecret
             }
         };
 
-        try
+        // Delete-and-create rather than replace: the API's role grants create and delete on Secrets,
+        // not update. The stale Secret can vanish on its own in between (its old Job is being
+        // garbage-collected, so the delete finds nothing), and another dispatcher of the same Job
+        // can recreate it (so the create conflicts again); both are retried.
+        for (var attempt = 1; ; attempt++)
         {
-            await client.CreateSecretAsync(secret, ns, ct);
-        }
-        catch (HttpOperationException ex) when (ex.Response?.StatusCode == HttpStatusCode.Conflict)
-        {
-            await client.DeleteSecretAsync(secret.Metadata.Name, ns, ct);
-            await client.CreateSecretAsync(secret, ns, ct);
+            try
+            {
+                await client.CreateSecretAsync(secret, ns, ct);
+                return;
+            }
+            catch (HttpOperationException ex) when (HasStatus(ex, HttpStatusCode.Conflict) && attempt < MaxCreateAttempts)
+            {
+                try
+                {
+                    await client.DeleteSecretAsync(secret.Metadata.Name, ns, ct);
+                }
+                catch (HttpOperationException deleteEx) when (HasStatus(deleteEx, HttpStatusCode.NotFound))
+                {
+                    // Already gone — nothing to replace.
+                }
+            }
         }
     }
 
@@ -97,4 +115,7 @@ public static class AgentJobKeySecret
             }
         }
     }
+
+    private static bool HasStatus(HttpOperationException ex, HttpStatusCode status) =>
+        ex.Response?.StatusCode == status;
 }

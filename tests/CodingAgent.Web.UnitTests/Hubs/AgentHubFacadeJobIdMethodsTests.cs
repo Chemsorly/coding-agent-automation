@@ -305,6 +305,26 @@ public sealed class AgentHubFacadeJobIdMethodsTests : IDisposable
         record.Should().BeNull();
     }
 
+    [Fact]
+    public async Task GetWorkItemRunRecordAsync_StoreFails_Throws()
+    {
+        // A failed read must not look like "no such work item": the ownership check would then
+        // silently reject a legitimate agent.
+        var store = new Mock<IWorkItemTransitionStore>();
+        store.Setup(s => s.GetWorkItemRunRecordAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection refused"));
+        var mockLogger = new Mock<ILogger>();
+        var facade = new AgentHubFacade(new AgentHubFacadeDependencies(
+            new AgentRegistryService(mockLogger.Object), new OrchestratorRunService(mockLogger.Object),
+            Mock.Of<IPipelineRunHistoryService>(), Mock.Of<IConfigurationStore>(),
+            Mock.Of<IProviderFactory>(), NullLogger<AgentHubFacadeDependencies>.Instance,
+            TransitionStore: store.Object));
+
+        var act = () => facade.GetWorkItemRunRecordAsync(Guid.NewGuid().ToString(), CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+    }
+
     // ── TouchLastProgressAsync ────────────────────────────────────────────
 
     [Fact]

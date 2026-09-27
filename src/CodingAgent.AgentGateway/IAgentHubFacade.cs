@@ -196,8 +196,8 @@ public interface IAgentHubFacade
 
     /// <summary>
     /// Reads the server-side record of the work item with ID <paramref name="jobId"/>. Returns null
-    /// when the work item does not exist, the ID is not a work item ID, no store is configured, or
-    /// the read fails.
+    /// when the work item does not exist, the ID is not a work item ID, or no store is configured.
+    /// A failed read throws, so callers cannot mistake it for a missing work item.
     /// </summary>
     Task<WorkItemRunRecord?> GetWorkItemRunRecordAsync(JobId jobId, CancellationToken ct);
 

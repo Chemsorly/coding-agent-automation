@@ -5,7 +5,8 @@ namespace CodingAgent.Pipeline;
 
 /// <summary>
 /// Per-agent API key derivation, shared by the code that issues agent keys (the per-Job key
-/// Secret) and the code that verifies them (<c>AgentApiKeyAuthHandler</c>), so the two cannot drift.
+/// Secret), the code that verifies them (<c>AgentApiKeyAuthHandler</c>) and agents started by hand
+/// that derive their own key from the master key, so none of them can drift.
 /// </summary>
 public static class AgentKeyDerivation
 {

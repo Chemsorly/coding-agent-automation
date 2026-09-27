@@ -829,6 +829,65 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
             agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository));
     }
 
+    [Theory]
+    [InlineData(null)]                    // dispatched, its pod not connected yet
+    [InlineData("caa-k8s-live-owner")]    // its pod connected
+    public async Task K8sMode_AgentReportsAnotherPodsTrackedRun_RunNotTakenOver(string? trackedAgentId)
+    {
+        // Arrange: another pod's work item and its run as the API tracks it after dispatch
+        await Fixture.ConfigStore.SaveProviderConfigAsync(
+            RepoConfigWithStaticToken("repo-k8s-live-run", "fake-live-run-token"), CancellationToken.None);
+        var workItemId = Guid.NewGuid();
+        await SeedDispatchedWorkItemAsync(workItemId, "k8s-live-run-1405",
+            k8sJobName: "caa-k8s-live-owner", repoProviderConfigId: "repo-k8s-live-run");
+        Fixture.RunService.AddRun(TrackedRun(workItemId, "k8s-live-run-1405", "repo-k8s-live-run", trackedAgentId));
+
+        // Act: a different agent registers reporting that run as its active job
+        await using var agent = new FakeAgentClient("caa-k8s-live-other-pod", "kiro");
+        await agent.ConnectWithActiveJobAsync(
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
+            workItemId.ToString(),
+            "k8s-live-run-1405",
+            "repo-k8s-live-run");
+
+        // Assert: the run still records its own agent, and the registering agent got no active job
+        Assert.Equal(trackedAgentId, Fixture.RunService.GetRun(workItemId.ToString())?.AgentId);
+        var entry = Fixture.AgentRegistry.GetByAgentId("caa-k8s-live-other-pod");
+        Assert.NotNull(entry);
+        Assert.Null(entry.ActiveJobId);
+        Assert.NotEqual(AgentStatus.Busy, entry.Status);
+        await Assert.ThrowsAnyAsync<Exception>(() =>
+            agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository));
+    }
+
+    [Fact]
+    public async Task K8sMode_OwnPodPicksUpItsTrackedRun_RunRecordsTheAgent()
+    {
+        // Arrange: a dispatched work item and its tracked run, not yet picked up
+        await Fixture.ConfigStore.SaveProviderConfigAsync(
+            RepoConfigWithStaticToken("repo-k8s-live-pickup", "fake-live-pickup-token"), CancellationToken.None);
+        var workItemId = Guid.NewGuid();
+        await SeedDispatchedWorkItemAsync(workItemId, "k8s-live-pickup-1406",
+            k8sJobName: "caa-k8s-live-pickup", repoProviderConfigId: "repo-k8s-live-pickup");
+        Fixture.RunService.AddRun(TrackedRun(workItemId, "k8s-live-pickup-1406", "repo-k8s-live-pickup", agentId: null));
+
+        // Act: the work item's own pod registers with it
+        await using var agent = new FakeAgentClient("caa-k8s-live-pickup", "kiro");
+        await agent.ConnectWithActiveJobAsync(
+            AgentHubUrl,
+            E2EWebApplicationFactory.TestApiKey,
+            workItemId.ToString(),
+            "k8s-live-pickup-1406",
+            "repo-k8s-live-pickup");
+
+        // Assert: the run records the pod, the pod is busy with it, and its tokens are vended
+        Assert.Equal("caa-k8s-live-pickup", Fixture.RunService.GetRun(workItemId.ToString())?.AgentId);
+        Assert.Equal(workItemId.ToString(), Fixture.AgentRegistry.GetByAgentId("caa-k8s-live-pickup")?.ActiveJobId);
+        var token = await agent.RequestTokenRefreshAsync(workItemId.ToString(), ProviderKind.Repository);
+        Assert.Equal("fake-live-pickup-token", token.Token);
+    }
+
     [Fact]
     public async Task K8sMode_RestoredRun_TakesProviderConfigsFromTheWorkItem()
     {
@@ -1230,6 +1289,21 @@ public sealed class K8sModeTests : HeadlessE2ETestBase
         });
         await db.SaveChangesAsync();
     }
+
+    /// <summary>
+    /// The run the API tracks for a dispatched work item: <paramref name="agentId"/> is null until
+    /// the work item's pod registers with it.
+    /// </summary>
+    private static PipelineRun TrackedRun(Guid workItemId, string issueIdentifier, string repoProviderConfigId, string? agentId) => new()
+    {
+        RunId = workItemId.ToString(),
+        IssueIdentifier = issueIdentifier,
+        IssueTitle = $"Test issue {issueIdentifier}",
+        IssueProviderConfigId = "issue-e2e",
+        RepoProviderConfigId = repoProviderConfigId,
+        AgentId = agentId,
+        StartedAt = DateTime.UtcNow
+    };
 
     /// <summary>
     /// A repository provider with a static access token (the GitLab PAT path of token refresh,

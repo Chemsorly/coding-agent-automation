@@ -406,8 +406,17 @@ internal sealed class DispatchLifecycleService : IDisposable
             await AgentJobKeySecret.CreateForJobAsync(
                 _kubeClient, _options.Namespace, ctx.JobName, jobUid, _options.AgentApiKeyValue, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch when (ct.IsCancellationRequested)
         {
+            // Cancelled between the Job and its key Secret: the Job's pod could never authenticate,
+            // so remove it (not with ct, which is already cancelled) and let the cancellation propagate.
+            await TryDeleteJobAsync(ctx.JobName);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Includes a Kubernetes client timeout, which surfaces as an OperationCanceledException
+            // without ct being cancelled.
             _log.Error(ex, "DispatchLifecycleService: failed to create the agent key Secret for Job {JobName} ({LogPrefix}WorkItem {WorkItemId}) — deleting the Job",
                 ctx.JobName, ctx.LogPrefix, ctx.Item.Id);
             await TryDeleteJobAsync(ctx.JobName);

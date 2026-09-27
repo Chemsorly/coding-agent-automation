@@ -130,6 +130,8 @@ public sealed class ModelFetchJobService
         try
         {
             var jobUid = await AgentJobKeySecret.ReadJobUidAsync(_kubeClient, _options.Namespace, jobName, ct);
+            if (string.IsNullOrEmpty(jobUid))
+                Log.Warning("ModelFetchJobService: creating the agent key Secret for job {JobName} without OwnerReference — it will not be deleted with the job", jobName);
             await AgentJobKeySecret.CreateForJobAsync(
                 _kubeClient, _options.Namespace, jobName, jobUid, _options.AgentApiKeyValue, ct);
         }
@@ -144,7 +146,7 @@ public sealed class ModelFetchJobService
             {
                 Log.Warning(deleteEx, "ModelFetchJobService: failed to delete job {JobName} after its agent key Secret could not be created", jobName);
             }
-            return ([], ex is OperationCanceledException
+            return ([], ct.IsCancellationRequested
                 ? "Fetch models was cancelled before the job's agent key could be created."
                 : $"Failed to create the fetch-models job's agent key: {ex.Message}");
         }
