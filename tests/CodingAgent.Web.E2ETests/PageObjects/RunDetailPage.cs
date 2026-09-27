@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -84,6 +85,10 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm = true)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
+        // Wait for the Blazor circuit to register @onclick on the cancel button before clicking.
+        // Without this, ClickAsync() fires before the server-side handler is active and
+        // _showCancelConfirm never becomes true on a slow CI runner.
+        await _page.WaitForInteractiveAsync("[data-testid='cancel-pipeline-btn']");
         await CancelButton.ClickAsync();
 
         // Wait for the confirm section to appear (the sidebar shows it after the initial click)
@@ -106,6 +111,10 @@ public sealed class RunDetailPage
     public async Task RedispatchAsync(bool confirm = true)
     {
         await RedispatchButton.WaitForAsync(new() { Timeout = 10_000 });
+        // Wait for the Blazor circuit to register @onclick on the redispatch button before clicking.
+        // Without this, ClickAsync() fires before the server-side handler is active and
+        // _showRedispatchConfirm never becomes true on a slow CI runner.
+        await _page.WaitForInteractiveAsync("[data-testid='redispatch-btn']");
         await RedispatchButton.ClickAsync();
 
         // Wait for the confirm box to appear

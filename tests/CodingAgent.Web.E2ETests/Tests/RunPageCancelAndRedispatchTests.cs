@@ -281,6 +281,7 @@ public sealed class RunPageCancelAndRedispatchTests : E2ETestBase
 
         // Open the confirm section
         await runPage.CancelButton.WaitForAsync(new() { Timeout = 15_000 });
+        await Page.WaitForInteractiveAsync("[data-testid='cancel-pipeline-btn']");
         await runPage.CancelButton.ClickAsync();
         await runPage.CancelConfirmSection.WaitForAsync(new() { Timeout = 10_000 });
 
