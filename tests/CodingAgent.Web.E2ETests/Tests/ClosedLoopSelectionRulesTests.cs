@@ -797,15 +797,28 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         var startedA = await loopService.StartLoopAsync();
         Assert.True(startedA, "StartLoopAsync should succeed");
 
-        // Allow at least two full poll cycles (poll interval = 1s, so 2.5s is enough)
-        // TODO [WARNING]: Task.Delay(2.5s) at a 1s poll interval provides only ~2 poll cycles to
-        // establish that the blocked issue was NOT dispatched. Under CI load the first cycle may not
-        // complete within 2.5s, causing Assert.Empty to pass vacuously (loop never ran a full cycle).
-        // A stronger guard would poll WaitUntilAsync for a sentinel condition (e.g. a counter
-        // incremented per loop cycle) to confirm at least one cycle completed before asserting emptiness.
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
-        loopService.StopLoop();
-        await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
+        try
+        {
+            // Allow at least two full poll cycles (poll interval = 1s, so 2.5s is enough)
+            // TODO [WARNING]: Task.Delay(2.5s) at a 1s poll interval provides only ~2 poll cycles to
+            // establish that the blocked issue was NOT dispatched. Under CI load the first cycle may not
+            // complete within 2.5s, causing Assert.Empty to pass vacuously (loop never ran a full cycle).
+            // A stronger guard would poll WaitUntilAsync for a sentinel condition (e.g. a counter
+            // incremented per loop cycle) to confirm at least one cycle completed before asserting emptiness.
+            await Task.Delay(TimeSpan.FromSeconds(2.5));
+            loopService.StopLoop();
+            // Use 30s (matching other dispatch-wait timeouts) so CI under load has time for the
+            // current cycle to finish before CleanupAsync sets IsLoopActive=false. 10s was not
+            // enough when the suite ran near its 228-test end under maximum resource pressure.
+            await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(30));
+        }
+        catch
+        {
+            // Ensure the loop is stopped even if WaitUntilAsync times out, so the test fixture
+            // isn't left in a broken state for subsequent tests in the collection.
+            loopService.StopLoop();
+            throw;
+        }
 
         Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
 
