@@ -56,7 +56,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
-        var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
+        var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
             var started = await loopService.StartLoopAsync();
@@ -140,7 +140,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
-        var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
+        var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
             var started = await loopService.StartLoopAsync();
@@ -238,7 +238,7 @@ public sealed class EpicDecompositionTests : E2ETestBase
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Act
-        var loopService = Fixture.Factory.Services.GetRequiredService<PipelineLoopService>();
+        var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
         try
         {
             var started = await loopService.StartLoopAsync();
