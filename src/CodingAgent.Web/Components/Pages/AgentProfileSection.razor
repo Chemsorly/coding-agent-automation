@@ -77,7 +77,7 @@
                                 }
                             </td>
                             <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
-                            <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
+                            <td><StatusIcon Enabled="profile.Enabled" /></td>
                             <td>@profile.Priority</td>
                             <td>@(profile.McpServers?.Count(s => !s.Disabled) ?? 0)</td>
                             @if (IsKubernetesMode)
@@ -92,7 +92,7 @@
                                     }
                                     else if (profile.Enabled && profile.MatchLabels.Count > 0)
                                     {
-                                        <span title="Template matched"><Icon Name="check-circle" Size="14" /></span>
+                                        <span class="status-icon is-on" title="Template matched"><Icon Name="check-circle" Size="16" /></span>
                                     }
                                     else
                                     {
@@ -172,7 +172,7 @@
                                         <td class="monitoring-mono">@server.Name</td>
                                         <td>@server.Type</td>
                                         <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
-                                        <td><Icon Name="@(server.Enabled ? "check-circle" : "x-circle")" /></td>
+                                        <td><StatusIcon Enabled="server.Enabled" /></td>
                                         <td>
                                             <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
                                             <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
@@ -186,7 +186,7 @@
 
                 @if (_showMcpForm)
                 {
-                    <div class="provider-form" style="margin-top: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;">
+                    <div class="provider-form" style="margin-top: 8px;">
                         <h4 style="margin-top: 0;">@(_editingMcpIndex >= 0 ? "Edit" : "Add") MCP Server</h4>
                         <div class="form-group">
                             <label>Name *</label>

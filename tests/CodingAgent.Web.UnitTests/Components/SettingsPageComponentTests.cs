@@ -411,4 +411,48 @@ public class SettingsPageComponentTests : BunitContext
         // Assert: the displayed section has updated on the same component instance
         Assert.Contains("Repository Provider", component.Markup);
     }
+
+    [Fact]
+    public void Settings_NoSectionQuery_MarksOnlyIssueNodeActive()
+    {
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo("http://localhost/settings");
+
+        var component = Render<Settings>();
+
+        // /settings shows the Issue section, so exactly that node is highlighted. In .NET 10 a NavLink with
+        // NavLinkMatch.All ignores the query string, so every "settings?section=…" node used to be active.
+        var active = Assert.Single(component.FindAll("a.tree-node.active"));
+        Assert.Equal("Issue", active.TextContent.Trim());
+        Assert.Equal("page", active.GetAttribute("aria-current"));
+    }
+
+    [Fact]
+    public void Settings_SectionQuery_MarksOnlyThatNodeActive()
+    {
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersRepository}");
+
+        var component = Render<Settings>();
+
+        var active = Assert.Single(component.FindAll("a.tree-node.active"));
+        Assert.Equal("Repository", active.TextContent.Trim());
+    }
+
+    [Fact]
+    public void Settings_NavigatingToBareSettings_ResetsToDefaultSection()
+    {
+        // The sidebar "Settings" link points at /settings without a section. Following it from another
+        // section must show the default section again instead of keeping the previous one.
+        var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
+        nav.NavigateTo($"http://localhost/settings?section={SettingsNodes.ProvidersRepository}");
+        var component = Render<Settings>();
+        Assert.Contains("Repository Provider", component.Markup);
+
+        nav.NavigateTo("http://localhost/settings");
+
+        Assert.Contains("+ Add Issue Provider", component.Markup);
+        var active = Assert.Single(component.FindAll("a.tree-node.active"));
+        Assert.Equal("Issue", active.TextContent.Trim());
+    }
 }
