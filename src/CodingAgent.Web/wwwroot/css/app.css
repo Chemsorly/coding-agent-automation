@@ -295,9 +295,7 @@ select option { background: var(--surface); color: var(--text); }
 .error-boundary h2 { margin-bottom: 8px; }
 
 /* ===== Settings Page ===== */
-.settings-page, .agent-coding-page, .about-page, .agent-monitoring-page { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
-.settings-header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.settings-header h1 { font-size: 1.25rem; font-weight: 600; }
+.settings-page { display: flex; flex-direction: column; height: 100%; overflow-y: auto; }
 .settings-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .settings-tree { width: 220px; min-width: 220px; border-right: 1px solid var(--border); overflow-y: auto; padding: 12px 0; background: var(--surface); }
 .settings-content { flex: 1; overflow-y: auto; padding: 20px; }
@@ -501,8 +499,6 @@ select option { background: var(--surface); color: var(--text); }
 .modal-footer { display: flex; justify-content: flex-end; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
 
 /* ===== Agent Coding Page ===== */
-.agent-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.agent-header h1 { font-size: 1.25rem; font-weight: 600; }
 .agent-content-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .agent-main { flex: 1; padding: 20px; overflow-y: auto; }
 
@@ -717,11 +713,15 @@ select option { background: var(--surface); color: var(--text); }
 .history-meta a:hover { text-decoration: underline; }
 
 /* About Page */
-.about-header { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
-.about-header h1 { font-size: 1.25rem; font-weight: 600; }
-.about-content { padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 700px; }
-.about-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
-.about-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--accent-light); }
+/* TODO [WARNING]: about-content has max-width: 700px with no left margin, so the card stack
+   starts at the left edge of the cockpit-page padded region. Other cockpit pages have no
+   max-width constraint, making the About page appear narrower than peers. If the max-width
+   constraint is intentional for readability, add margin: 0 auto to centre it; otherwise
+   remove max-width to match the behaviour of every other cockpit page. */
+.about-content { display: flex; flex-direction: column; gap: 16px; max-width: 700px; }
+.about-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.about-section-body { padding: 16px; }
+.about-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0; color: var(--text); }
 .about-oneliner { font-size: 0.95rem; color: var(--text-muted); margin-bottom: 8px; }
 .about-description { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
 .about-info-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; font-size: 0.85rem; }
@@ -811,6 +811,9 @@ select option { background: var(--surface); color: var(--text); }
 .badge-default { background: #1e6b3a; color: #a8e6cf; font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; margin-left: 6px; font-weight: 600; text-transform: uppercase; }
 .badge-global { background: #1e3a6b; color: #a8cfe6; font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; margin-left: 6px; font-weight: 600; text-transform: uppercase; }
 .badge-disabled-table { background: var(--error-bg); color: var(--error); font-size: 0.65rem; padding: 1px 5px; border-radius: 3px; margin-left: 6px; font-weight: 600; }
+/* Epic-phase badge/label — replaces inline #7057ff styles in EpicDispatchDrawer */
+.badge-epic { background: var(--accent-fill, #7057ff); color: white; font-size: 0.7rem; }
+.phase-epic { color: var(--accent-light, #a78bfa); font-weight: 500; }
 .monitoring-row-disabled td { opacity: 0.6; }
 
 /* Feature badge bar — compact pill row replacing individual toggle columns */
@@ -899,7 +902,7 @@ select option { background: var(--surface); color: var(--text); }
 .chat-setup { max-width: 600px; }
 .chat-description { color: var(--text-muted); margin-bottom: 16px; font-size: 0.85rem; }
 .chat-agent-select { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.chat-agent-select label { font-weight: 500; white-space: nowrap; }
+.chat-agent-select label { font-weight: 500; white-space: nowrap; min-width: 160px; }
 .chat-select { flex: 1; background: var(--surface-alt); }
 .btn-start-chat { padding: 10px 24px; background: var(--accent-fill); color: white; font-weight: 500; }
 .btn-start-chat:hover:not(:disabled) { opacity: 0.85; }
@@ -1048,6 +1051,15 @@ select option { background: var(--surface); color: var(--text); }
 .drawer-issue-title {
     font-size: 0.82rem;
     color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.drawer-issue-preview {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    margin-top: 2px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1267,10 +1279,6 @@ select option { background: var(--surface); color: var(--text); }
 }
 
 /* ===== Consolidation Page ===== */
-.consolidation-page { padding: 0; }
-.consolidation-header { padding: 16px 20px; border-bottom: 1px solid var(--border); }
-.consolidation-header h1 { font-size: 1.25rem; font-weight: 600; }
-
 .consolidation-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; }
 .consolidation-card { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
 .consolidation-card-title { font-size: 0.92rem; font-weight: 600; margin: 0 0 10px; color: var(--text); }

@@ -240,6 +240,7 @@ public sealed class K8sChatIntegrationTests : HeadlessE2ETestBase
             Namespace = "test",
             OrchestratorUrl = "http://test-orchestrator",
             AgentApiKeySecretName = "agent-api-key",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "agent-sa",
             KiroPvcPool = new List<string> { "fake-pvc-0", "fake-pvc-1" },
             ChatJobMaxDurationSeconds = 7200,

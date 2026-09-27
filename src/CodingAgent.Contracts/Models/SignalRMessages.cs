@@ -53,6 +53,13 @@ public sealed record ActiveJobState
     [Key(14)] public PipelineRunType RunType { get; init; }
     [Key(15)] public string? RepositoryName { get; init; }
     [Key(16)] public string? ModelName { get; init; }
+    /// <summary>
+    /// Web URL of the issue on the provider (e.g. GitHub HtmlUrl), or null if unknown.
+    /// Wire-compat note: additive field — old agents omit it (null on the orchestrator side),
+    /// new agents sending to an old orchestrator have it silently ignored. Both directions are safe.
+    /// Added for issue #3095: restored runs were losing their issue URL on re-registration.
+    /// </summary>
+    [Key(17)] public string? IssueUrl { get; init; }
 }
 
 /// <summary>

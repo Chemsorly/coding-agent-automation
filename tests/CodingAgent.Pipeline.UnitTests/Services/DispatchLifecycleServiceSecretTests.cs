@@ -75,6 +75,7 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
             Namespace = "test-ns",
             OrchestratorUrl = "http://test",
             AgentApiKeySecretName = "agent-key",
+            AgentApiKeyValue = "test-master-key",
             AgentServiceAccountName = "sa",
             KiroPvcPool = ["pvc-0"]
         };
@@ -270,9 +271,11 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
             Times.Exactly(3),
             "ReadJobAsync must be called 3 times — one initial attempt plus two retries");
 
-        // Assert: secret was still created (degraded mode — job can run without OwnerReference)
+        // Assert: the project-secrets Secret was still created (degraded mode — job can run without
+        // OwnerReference). The Job's agent key Secret is created too, from the same UID read.
         k8sMock.Verify(
-            k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            k => k.CreateSecretAsync(
+                It.Is<V1Secret>(s => s.Metadata.Name.StartsWith("caa-secrets-")), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "CreateSecretAsync must still be called even when UID is unavailable");
 
@@ -386,15 +389,15 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
         ownerRef.ApiVersion.Should().Be("batch/v1");
     }
 
-    // ── Test 5: null projectSecrets → CreateSecretAsync and ReadJobAsync never called ───────────
+    // ── Test 5: null projectSecrets → no project-secrets Secret ────────────────────────────────
 
     /// <summary>
-    /// When <c>prepareVariant</c> returns <see langword="null"/> project secrets, the entire
-    /// secret-creation path is short-circuited. Neither <c>CreateSecretAsync</c> nor
-    /// <c>ReadJobAsync</c> is called.
+    /// When <c>prepareVariant</c> returns <see langword="null"/> project secrets, no project-secrets
+    /// Secret is created. The Job's agent key Secret is still created — every Job gets one — and the
+    /// Job UID is read only once for it.
     /// </summary>
     [Fact]
-    public async Task WhenProjectSecretsIsNull_SecretIsNeverCreated_ReadJobNeverCalled()
+    public async Task WhenProjectSecretsIsNull_ProjectSecretIsNeverCreated()
     {
         // Arrange
         var entity = await SeedPendingWorkItemAsync();
@@ -403,21 +406,25 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
         k8sMock
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        // ReadJobAsync and CreateSecretAsync are NOT set up — MockBehavior.Strict will throw
-        // if either is called unexpectedly.
+        k8sMock
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "job-uid" } });
+        var createdSecrets = new List<V1Secret>();
+        k8sMock
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<V1Secret, string, CancellationToken>((s, _, _) => createdSecrets.Add(s))
+            .Returns(Task.CompletedTask);
 
         // Act: pass null projectSecrets → CreateJobSecretIfNeededAsync returns early
         await RunDispatchAndCaptureSecretAsync(entity, k8sMock.Object, projectSecrets: null);
 
-        // Assert: neither CreateSecretAsync nor ReadJobAsync were called
-        k8sMock.Verify(
-            k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "CreateSecretAsync must not be called when projectSecrets is null");
+        // Assert: only the agent key Secret was created
+        createdSecrets.Should().ContainSingle()
+            .Which.Metadata.Name.Should().StartWith("caa-key-", "the only Secret must be the Job's agent key");
         k8sMock.Verify(
             k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "ReadJobAsync must not be called when projectSecrets is null");
+            Times.Once,
+            "the Job UID is read once, for the agent key Secret");
     }
 
     // ── Test infrastructure ──────────────────────────────────────────────────────────────────────
