@@ -269,12 +269,17 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // Wait for exactly 2 claims in an event-driven way, then stop.
+            // Wait for both budget-2 dispatches using event-driven JobAssigned signals.
+            // Polling ClaimedWorkItemIds.Count was unreliable under CI load because it required
+            // the full orchestration→HTTP→DB→FakeJobController chain to complete within 30s —
+            // two HTTP round-trips to the test API host were slow enough to time out.
+            // JobAssigned fires as soon as FakeJobController bootstraps the agent, which is the
+            // same signal but observed directly rather than through a shared counter.
             // The 60s poll interval ensures cycle 2 cannot start before StopLoop() fires,
             // making the snapshot deterministically contain only the cycle-1 dispatches.
-            await WaitUntilAsync(
-                () => Fixture.JobController.ClaimedWorkItemIds.Count >= 2,
-                timeout: TimeSpan.FromSeconds(30));
+            await Task.WhenAll(
+                agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)),
+                agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
@@ -362,12 +367,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // Wait for exactly 3 claims in an event-driven way, then stop immediately.
-            // MaxRunsPerCycle resets every poll interval, so a fixed Task.Delay would allow
-            // additional cycles and an unpredictable total claim count.
-            await WaitUntilAsync(
-                () => Fixture.JobController.ClaimedWorkItemIds.Count >= 3,
-                timeout: TimeSpan.FromSeconds(30));
+            // Wait for all 3 dispatches using event-driven JobAssigned signals on all 3 agents.
+            // See TypePriority_Budget2 for the rationale: ClaimedWorkItemIds polling was timing
+            // out because two HTTP round-trips to the test API were too slow under CI load.
+            // MaxRunsPerCycle resets every poll interval, so after all 3 fire we stop immediately.
+            await Task.WhenAll(
+                agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)),
+                agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)),
+                agent3.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
