@@ -35,9 +35,35 @@ public sealed class RunDetailPage
 
     public ILocator CancelButton => _page.Locator("[data-testid='cancel-pipeline-btn']");
 
+    /// <summary>The inline cancel confirm section rendered by the sidebar after the initial Cancel click.</summary>
+    public ILocator CancelConfirmSection => _page.Locator("[data-testid='cancel-pipeline-confirm-section']");
+
+    /// <summary>The "Yes, cancel" confirmation button rendered inside the confirm section.</summary>
+    public ILocator ConfirmCancelButton => _page.Locator("[data-testid='confirm-cancel-pipeline-btn']");
+
+    /// <summary>The "No" dismiss button rendered inside the cancel confirm section.</summary>
+    public ILocator DismissCancelButton => _page.Locator("[data-testid='dismiss-cancel-pipeline-btn']");
+
+    /// <summary>The re-dispatch card, visible only for terminal Implementation runs with provider IDs.</summary>
+    public ILocator RedispatchCard => _page.Locator("[data-testid='redispatch-card']");
+
+    /// <summary>The initial "Re-dispatch" trigger button (before confirm).</summary>
+    public ILocator RedispatchButton => _page.Locator("[data-testid='redispatch-btn']");
+
+    /// <summary>The "Confirm re-dispatch" button inside the confirmation box.</summary>
+    public ILocator RedispatchConfirmButton => _page.Locator("[data-testid='redispatch-confirm-btn']");
+
     /// <summary>Returns true when the "Cancel Pipeline" button is visible in the sidebar.</summary>
     public async Task<bool> IsCancelButtonVisibleAsync()
         => await CancelButton.IsVisibleAsync();
+
+    /// <summary>Returns true when the re-dispatch card is present and visible on the page.</summary>
+    public async Task<bool> IsRedispatchCardVisibleAsync()
+        => await RedispatchCard.IsVisibleAsync();
+
+    /// <summary>Returns true when the initial "Re-dispatch" button is visible (i.e. confirm box not yet shown).</summary>
+    public async Task<bool> IsRedispatchButtonVisibleAsync()
+        => await RedispatchButton.IsVisibleAsync();
 
     /// <summary>
     /// Returns true when the "Live output" card is present on the page.
@@ -47,11 +73,60 @@ public sealed class RunDetailPage
     public async Task<bool> HasLiveOutputPanelAsync()
         => await _page.Locator(".cockpit-card:has(h2:has-text('Live output'))").IsVisibleAsync();
 
-    /// <summary>Clicks the sidebar's "Cancel Pipeline" button (present only while the run is active).</summary>
-    public async Task CancelAsync()
+    /// <summary>
+    /// Clicks the sidebar's "Cancel Pipeline" button.
+    ///
+    /// When <paramref name="confirm"/> is <c>true</c> (default), the method also clicks the
+    /// "Yes, cancel" confirm button that appears afterward, completing the full cancellation flow.
+    /// When <paramref name="confirm"/> is <c>false</c>, it clicks "No" to dismiss the confirm
+    /// prompt without cancelling.
+    /// </summary>
+    public async Task CancelAsync(bool confirm = true)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
         await CancelButton.ClickAsync();
+
+        // Wait for the confirm section to appear (the sidebar shows it after the initial click)
+        await CancelConfirmSection.WaitForAsync(new() { Timeout = 10_000 });
+
+        if (confirm)
+            await ConfirmCancelButton.ClickAsync();
+        else
+            await DismissCancelButton.ClickAsync();
+    }
+
+    /// <summary>
+    /// Clicks the "Re-dispatch" button and optionally confirms.
+    ///
+    /// When <paramref name="confirm"/> is <c>true</c>, the method clicks the initial trigger
+    /// button, waits for the confirm box to appear, then clicks "Confirm re-dispatch".
+    /// When <paramref name="confirm"/> is <c>false</c>, it clicks the trigger button, waits for
+    /// the confirm box, then clicks the "Cancel" dismiss button — leaving the run page unchanged.
+    /// </summary>
+    public async Task RedispatchAsync(bool confirm = true)
+    {
+        await RedispatchButton.WaitForAsync(new() { Timeout = 10_000 });
+        await RedispatchButton.ClickAsync();
+
+        // Wait for the confirm box to appear
+        await RedispatchConfirmButton.WaitForAsync(new() { Timeout = 10_000 });
+
+        if (confirm)
+        {
+            await RedispatchConfirmButton.ClickAsync();
+        }
+        else
+        {
+            // TODO [WARNING]: This locator uses a CSS class selector (.agent-detail-confirm .btn-cancel)
+            // rather than a data-testid attribute. All other confirm/dismiss buttons in this file use
+            // data-testid locators, making them robust to CSS refactoring. If the .agent-detail-confirm
+            // wrapper or .btn-cancel class is renamed or restructured in the Razor component, this locator
+            // will silently find nothing and ClickAsync() will throw a timeout — but only when
+            // confirm: false is passed. Align with the data-testid convention used elsewhere.
+            // Click the Cancel button inside the confirm box
+            var cancelInsideConfirm = _page.Locator(".agent-detail-confirm .btn-cancel");
+            await cancelInsideConfirm.ClickAsync();
+        }
     }
 
     /// <summary>
