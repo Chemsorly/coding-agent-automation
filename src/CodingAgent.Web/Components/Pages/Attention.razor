@@ -47,17 +47,17 @@
     {
         @foreach (var sec in _sections.Where(s => s.Rows.Count > 0))
         {
-            <div class="cockpit-card">
+            <div class="cockpit-card" data-testid="attention-section-@sec.TestId">
                 <div class="cockpit-card-header">
                     <span style="display: inline-flex; align-items: center; gap: 9px;">
                         <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: @sec.Color; background: @sec.Bg;"><Icon Name="@sec.Icon" Size="15" /></span>
                         <h2>@sec.Title</h2>
                     </span>
-                    <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@sec.Rows.Count</span>
+                    <span data-testid="attention-section-count-@sec.TestId" style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@sec.Rows.Count</span>
                 </div>
                 @foreach (var r in sec.Rows)
                 {
-                    <div class="cockpit-run-row" @onclick="() => OpenRun(r.RunId)">
+                    <div class="cockpit-run-row" data-testid="attention-row-@r.IssueIdentifier" @onclick="() => OpenRun(r.RunId)">
                         <div style="min-width: 0;">
                             <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@r.IssueIdentifier @r.IssueTitle</div>
                             <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">@sec.Subline(r)</div>
@@ -89,7 +89,7 @@
                     <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--text-muted); background: var(--surface-alt);"><Icon Name="lock" Size="15" /></span>
                     <h2>Blocked issues</h2>
                 </span>
-                <span style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@(_blockedLoading ? "checking…" : _blockedIssues.Count.ToString())</span>
+                <span data-testid="attention-blocked-count" style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@(_blockedLoading ? "checking…" : _blockedIssues.Count.ToString())</span>
             </div>
             @if (_blockedLoading)
             {
@@ -103,7 +103,7 @@
             {
                 @foreach (var b in _blockedIssues)
                 {
-                    <div class="cockpit-run-row" style="cursor: default;">
+                    <div class="cockpit-run-row" data-testid="attention-blocked-row-@b.Identifier" style="cursor: default;">
                         <div style="min-width: 0;">
                             <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@b.Identifier @b.Title</div>
                             <div style="font-size: 12px; color: var(--warning); margin-top: 2px;">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</div>
@@ -121,7 +121,7 @@
 
 @code {
     private sealed record Section(string Icon, string Color, string Bg, string Title,
-        List<PipelineRunSummary> Rows, Func<PipelineRunSummary, string> Subline);
+        List<PipelineRunSummary> Rows, Func<PipelineRunSummary, string> Subline, string TestId);
 
     private static string AttentionItemsLabel(int count) => count == 1 ? "1 item" : $"{count} items";
 
@@ -210,13 +210,13 @@
             _sections = new()
             {
                 new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", attn.NeedsRefinement.ToList(),
-                    _ => "Confidence gate: scope not ready — refine on the issue"),
+                    _ => "Confidence gate: scope not ready — refine on the issue", "needs-refinement"),
                 new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", attn.FailedRuns.ToList(),
                     r => string.IsNullOrEmpty(r.FailureReason)
                         ? (r.RetryCount > 0 ? $"Failed after {r.RetryCount} retries" : "Failed")
-                        : r.FailureReason),
+                        : r.FailureReason, "failed-runs"),
                 new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", attn.PlansToApprove.ToList(),
-                    _ => "Plan posted — approve by adding agent:epic-approved on the issue"),
+                    _ => "Plan posted — approve by adding agent:epic-approved on the issue", "plans-posted"),
             };
 
             State.SetAttentionCount(_sections.Sum(s => s.Rows.Count));
