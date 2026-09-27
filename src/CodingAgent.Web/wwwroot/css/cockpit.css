@@ -561,6 +561,16 @@
 .cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
 
+/* A table's first column lines up with its card title and its rows run edge to edge, in either card type:
+   in a .cockpit-card the outer cells take the header's 18px (the 10px cell padding left the text 8px left of
+   the title); in a padded .settings-section the table bleeds through the 20px card padding and the outer
+   cells take that 20px instead (the stacked paddings put the text 8–10px right of the title). */
+.cockpit .cockpit-card > .monitoring-table-wrap > table :is(th, td):first-child { padding-left: 18px; }
+.cockpit .cockpit-card > .monitoring-table-wrap > table :is(th, td):last-child { padding-right: 18px; }
+.cockpit .settings-section > .monitoring-table-wrap { margin-left: -20px; margin-right: -20px; }
+.cockpit .settings-section > .monitoring-table-wrap > table :is(th, td):first-child { padding-left: 20px; }
+.cockpit .settings-section > .monitoring-table-wrap > table :is(th, td):last-child { padding-right: 20px; }
+
 /* Lists inside section cards: wrap every cell except the actions column. */
 .cockpit .settings-section .monitoring-table td:not(:last-child) { white-space: normal; overflow-wrap: anywhere; }
 /* Settings page lists (profiles, quality gates, reviewers) wrap at word boundaries instead — anywhere split
