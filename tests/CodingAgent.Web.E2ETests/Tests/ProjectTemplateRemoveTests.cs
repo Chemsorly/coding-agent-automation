@@ -53,9 +53,8 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
 
         // Click the Templates tab
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
-        // TODO [WARNING]: Fixed-time wait is flaky — too short on slow CI runners, wasteful on fast ones.
-        // Replace with Page.WaitForSelectorAsync(".provider-form") or an equivalent stable selector.
-        await Page.WaitForTimeoutAsync(1000);
+        // Wait for the tab content to render before reading/asserting on it
+        await Page.WaitForSelectorAsync(".provider-form", new() { Timeout = 5_000 });
 
         // Verify template is visible before removal
         var tabContent = await Page.TextContentAsync(".provider-form");
@@ -63,10 +62,9 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
 
         // Click the ✕ button to remove the template from this project
         await Page.ClickAsync(".btn-icon-danger[title='Remove from project (moves to Default)']");
-        // TODO [WARNING]: Fixed-time wait is flaky after async MoveTemplateAsync + UI reload.
-        // Replace with a stable wait, e.g. Page.WaitForResponseAsync() or waiting for the
-        // success status toast to appear, to avoid reading stale DOM on slow CI runners.
-        await Page.WaitForTimeoutAsync(2000);
+        // Wait for the success status toast to appear — this confirms MoveTemplateAsync completed
+        // and the UI has re-rendered with the updated template list.
+        await Page.WaitForSelectorAsync(".inline-status-success", new() { Timeout = 15_000 });
 
         // Assert: template is no longer in Test Project's Templates tab
         var tabContentAfter = await Page.TextContentAsync(".provider-form");
@@ -75,8 +73,8 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
         // Assert: navigate to Default project Templates tab and verify template is there
         await settingsPage.SelectTreeNodeAsync("Default");
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
-        // TODO [WARNING]: Fixed-time wait is flaky. Replace with a stable selector wait.
-        await Page.WaitForTimeoutAsync(1000);
+        // Wait for the tab content to render before asserting
+        await Page.WaitForSelectorAsync(".provider-form", new() { Timeout = 5_000 });
 
         var defaultTabContent = await Page.TextContentAsync(".provider-form");
         Assert.Contains("E2E Remove Template", defaultTabContent);
@@ -105,8 +103,8 @@ public sealed class ProjectTemplateRemoveTests : E2ETestBase
 
         // Click the Templates tab
         await Page.ClickAsync(".tab-btn:has-text('Templates')");
-        // TODO [WARNING]: Fixed-time wait is flaky. Replace with a stable selector wait.
-        await Page.WaitForTimeoutAsync(1000);
+        // Wait for the tab content to render before reading/asserting on it
+        await Page.WaitForSelectorAsync(".provider-form", new() { Timeout = 5_000 });
 
         // Verify template is visible
         var tabContent = await Page.TextContentAsync(".provider-form");
