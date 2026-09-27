@@ -49,19 +49,18 @@ public static class JobSpecBuilder
         public string? TraceParent { get; init; }
 
         /// <summary>
-        /// Name of the per-Job K8s Secret that holds the derived agent API key (Spec 043 Req 8a).
+        /// Name of the per-Job K8s Secret that holds the per-job agent API key (Spec 043 Req 8a).
         /// When set, the Job container receives <c>AGENT_API_KEY</c> from this Secret instead of
-        /// mounting the master <c>agent-api-key</c> Secret. This prevents compromised agent pods
-        /// from holding the master key.
-        /// Null for non-work-item jobs (model-fetch, etc.) which are not yet migrated.
+        /// mounting the master <c>agent-api-key</c> Secret. This prevents work-item agent pods
+        /// from holding the master key — they receive only <c>HMAC-SHA256(masterKey, jobName)</c>
+        /// which cannot be used to compute credentials for any other job.
         ///
-        /// ⚠️ <b>Double-derivation footgun:</b> Do NOT set this for any pod whose agent code
-        /// calls <c>DeriveKey</c> internally (e.g., <c>HubConnectionManager</c>,
-        /// <c>WorkItemHttpClient</c>). Those agents derive the key themselves at runtime from
-        /// <c>AGENT_API_KEY</c> + <c>AGENT_ID</c>. Injecting a pre-derived key via this Secret
-        /// causes a second derivation and authentication failure. This property is intended only
-        /// for hypothetical future agent variants that accept a fully-formed key without
-        /// re-deriving it.
+        /// The value stored in this Secret is pre-computed by <c>DispatchLifecycleService</c>
+        /// before the K8s Job is created. <c>HubConnectionManager</c> and <c>WorkItemHttpClient</c>
+        /// use the key directly (no further derivation); the server-side <c>AgentApiKeyAuthHandler</c>
+        /// validates by computing <c>HMAC(masterKey, agentId)</c> and comparing with the presented token.
+        ///
+        /// Null for non-work-item jobs (model-fetch, consolidation) which are not yet migrated.
         /// </summary>
         public string? DerivedKeySecretName { get; init; }
     }
@@ -72,14 +71,6 @@ public static class JobSpecBuilder
     /// </summary>
     public static V1Job Build(JobTemplate template, BuildContext ctx)
     {
-        if (ctx.DerivedKeySecretName is not null && ctx.WorkItemId is not null)
-            throw new InvalidOperationException(
-                $"BuildContext.DerivedKeySecretName must not be set for work-item pods " +
-                $"(WorkItemId={ctx.WorkItemId}). Agent code (HubConnectionManager, WorkItemHttpClient) " +
-                $"re-derives the key internally from AGENT_API_KEY + AGENT_ID; injecting a pre-derived " +
-                $"key causes double-derivation and authentication failure (infinite SignalR reconnect loop). " +
-                $"See docs/internals/decisions.md — DerivedKeySecretName footgun.");
-
         var isKiroAgent = IsKiroAgent(template.ProviderType);
 
         var envVars = BuildEnvVars(template, ctx);

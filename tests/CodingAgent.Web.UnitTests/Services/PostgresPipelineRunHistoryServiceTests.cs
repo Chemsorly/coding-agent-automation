@@ -536,7 +536,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AddRunToHistory_RejectsConsolidationRun_Silently()
+    public async Task AddRunToHistory_PersistsConsolidationRun()
     {
         var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
@@ -553,13 +553,13 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         // Should not throw
         await _sut.AddRunToHistoryAsync(consolidationRun);
 
-        // Should not persist to DB
+        // Consolidation exclusion guard removed — consolidation runs ARE now persisted to DB
         using var db = new InMemoryPipelineDbContext(_dbOptions);
-        db.PipelineRuns.Should().BeEmpty();
+        db.PipelineRuns.Should().ContainSingle(r => r.RunId == Guid.Parse(consolidationRun.RunId));
     }
 
     [Fact]
-    public async Task AddRunToHistoryAsync_RejectsConsolidationRun_Silently()
+    public async Task AddRunToHistoryAsync_PersistsConsolidationRun()
     {
         var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
         {
@@ -575,8 +575,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
         await _sut.AddRunToHistoryAsync(consolidationRun);
 
+        // Consolidation exclusion guard removed — consolidation runs ARE now persisted to DB
         using var db = new InMemoryPipelineDbContext(_dbOptions);
-        db.PipelineRuns.Should().BeEmpty();
+        db.PipelineRuns.Should().ContainSingle(r => r.RunId == Guid.Parse(consolidationRun.RunId));
     }
 
     // ── Terminal Step Guard ──────────────────────────────────────────────

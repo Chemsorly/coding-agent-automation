@@ -28,15 +28,22 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// - True unregistered connections log at Warning.
 /// </summary>
 /// <remarks>
-/// Placed in [Collection("Metrics")] to prevent cross-talk through the process-global static
-/// <see cref="PipelineTelemetry.Meter"/>. Without serialization, parallel tests that also
-/// exercise <see cref="AgentAuthorizationFilter"/> emit measurements on the same instrument,
-/// which the raw <see cref="System.Diagnostics.Metrics.MeterListener"/> in these tests
-/// captures — causing spurious "2 items found" failures.
+/// <see cref="PipelineTelemetry.HubAuthRejections"/> is process-global, and classes outside
+/// [Collection("Metrics")] (e.g. <see cref="AgentAuthorizationFilterInvokeTests"/>) drive the filter
+/// into rejections in parallel — the collection only serializes classes that join it. The counter
+/// tests therefore tag their async flow via <see cref="TestFlow"/> and ignore measurements recorded
+/// on any other flow, instead of relying on serialization.
 /// </remarks>
 [Collection("Metrics")]
 public class AgentAuthorizationFilterObservabilityTests
 {
+    /// <summary>
+    /// Marks the async flow of the counter test that is listening. <see cref="MeterListener"/>
+    /// callbacks run synchronously on the flow that calls <c>Add</c>, so a measurement seen under
+    /// any other value was emitted by a test running in parallel.
+    /// </summary>
+    private static readonly AsyncLocal<object?> TestFlow = new();
+
     private readonly Mock<IAgentRegistryService> _registryMock;
     private readonly Mock<ILogger> _loggerMock;
     private readonly AgentAuthorizationFilter _filter;
@@ -63,6 +70,8 @@ public class AgentAuthorizationFilterObservabilityTests
         var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
 
         var measurements = new List<(long Value, string Reason)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var meter = new MeterListener();
         meter.InstrumentPublished += (instrument, listener) =>
         {
@@ -71,7 +80,7 @@ public class AgentAuthorizationFilterObservabilityTests
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (instrument.Name != "agent.hub.auth_rejections") return;
+            if (instrument.Name != "agent.hub.auth_rejections" || !ReferenceEquals(TestFlow.Value, flow)) return;
             var reason = "";
             foreach (var tag in tags)
             {
@@ -110,6 +119,8 @@ public class AgentAuthorizationFilterObservabilityTests
         var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
 
         var measurements = new List<(long Value, string Reason)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var meter = new MeterListener();
         meter.InstrumentPublished += (instrument, listener) =>
         {
@@ -118,7 +129,7 @@ public class AgentAuthorizationFilterObservabilityTests
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (instrument.Name != "agent.hub.auth_rejections") return;
+            if (instrument.Name != "agent.hub.auth_rejections" || !ReferenceEquals(TestFlow.Value, flow)) return;
             var reason = "";
             foreach (var tag in tags)
             {
@@ -140,6 +151,29 @@ public class AgentAuthorizationFilterObservabilityTests
 
         measurements.Should().ContainSingle(m => m.Reason == PipelineTelemetry.HubAuthRejectionReasons.ReconnectRace,
             "reconnect_race reason should be emitted when agentId query param is present");
+    }
+
+    /// <summary>
+    /// The <c>agentId</c> query parameter is caller-controlled: CR/LF must be escaped before it
+    /// reaches the reconnect-race Debug entry, or a crafted value forges extra log lines
+    /// (CodeQL cs/log-forging).
+    /// </summary>
+    [Fact]
+    public async Task ReconnectRace_AgentIdWithNewlines_LogsEscapedAgentIdAtDebug()
+    {
+        _registryMock.Setup(r => r.GetByConnectionId(It.IsAny<string>())).Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-race");
+        var ctx = MakeContextWithAgentIdQuery("conn-race", Uri.EscapeDataString("race-agent\r\n[ERR] forged entry"));
+        hub.Context = ctx;
+        var method = typeof(AgentHub).GetMethod(nameof(AgentHub.Heartbeat))!;
+        var invCtx = new HubInvocationContext(ctx, Mock.Of<IServiceProvider>(), hub, method, []);
+
+        var act = async () => await _filter.InvokeMethodAsync(invCtx, _ => ValueTask.FromResult((object?)null));
+
+        await act.Should().ThrowAsync<HubException>();
+        _loggerMock.Verify(l => l.Debug(
+            It.IsAny<string>(), nameof(AgentHub.Heartbeat), "conn-race", "race-agent\\r\\n[ERR] forged entry"), Times.Once);
     }
 
     [Fact]
@@ -166,6 +200,8 @@ public class AgentAuthorizationFilterObservabilityTests
             [new JobId("job-wrong"), new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow }]);
 
         var measurements = new List<(long Value, string Reason)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var meter = new MeterListener();
         meter.InstrumentPublished += (instrument, listener) =>
         {
@@ -174,7 +210,7 @@ public class AgentAuthorizationFilterObservabilityTests
         };
         meter.SetMeasurementEventCallback<long>((instrument, value, tags, _) =>
         {
-            if (instrument.Name != "agent.hub.auth_rejections") return;
+            if (instrument.Name != "agent.hub.auth_rejections" || !ReferenceEquals(TestFlow.Value, flow)) return;
             var reason = "";
             foreach (var tag in tags)
             {
@@ -325,12 +361,10 @@ public class AgentAuthorizationFilterObservabilityTests
     // constant's string value. Add a test that exercises GuardOperatorMethod with a non-UI-subscription
     // method and verifies the counter emits with reason=operator_forbidden. (Test Quality Review)
 
-    // TODO [WARNING]: No test verifies the log-level demotion behaviour introduced by this PR:
-    // - reconnect-race rejections should log at Debug (_logger.Debug called)
-    // - true unregistered connections should log at Warning (_logger.Warning called)
-    // The _loggerMock is never verified with Verify(...) calls for Debug/Warning in any test method.
-    // Add Moq Verify assertions for the correct log level in the NotRegistered and ReconnectRace tests.
-    // (Test Quality Review)
+    // TODO [WARNING]: No test verifies that true unregistered connections log at Warning
+    // (_logger.Warning called). The reconnect-race Debug path is covered by
+    // ReconnectRace_AgentIdWithNewlines_LogsEscapedAgentIdAtDebug; add a Moq Verify assertion
+    // for the Warning level in the NotRegistered test. (Test Quality Review)
 
     // TODO [WARNING]: The integration regression test (AgentHubGateTests: Report after forced reconnect
     // succeeds, not rejected) required by the issue spec was not added to

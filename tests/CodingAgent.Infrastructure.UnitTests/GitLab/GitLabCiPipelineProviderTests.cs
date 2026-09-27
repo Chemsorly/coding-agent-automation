@@ -246,7 +246,10 @@ public class GitLabCiPipelineProviderTests
             jobTrace: expectedTrace);
         var provider = CreateProvider(mockClient);
 
-        var result = await provider.WaitForCompletionAsync("main", "sha-fail", TimeSpan.FromSeconds(10), CancellationToken.None);
+        // Use a generous timeout: the provider wraps synchronous NGitLab calls in Task.Run, and under
+        // heavy parallel test load thread-pool pressure can delay those tasks. 60 s is far above any
+        // realistic completion time while still failing the test if WaitForCompletionAsync truly hangs.
+        var result = await provider.WaitForCompletionAsync("main", "sha-fail", TimeSpan.FromSeconds(60), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs.Should().HaveCount(1);

@@ -202,8 +202,11 @@ public class ConsolidationServicePropertyTests : IDisposable
             .ReturnsAsync(templates);
 
         var mockDist2 = new Mock<IWorkDistributor>();
-        mockDist2.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-2", ErrorMessage: null));
+        mockDist2
+            .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-2", ErrorMessage: null))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-3", ErrorMessage: null));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
@@ -218,10 +221,10 @@ public class ConsolidationServicePropertyTests : IDisposable
             .GetAwaiter().GetResult();
         first.Should().NotBeNull();
 
-        // Same type+template should be rejected
+        // Same type+template should be rejected (WorkItemId=null = 409 dedup path)
         var duplicate = sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None)
             .GetAwaiter().GetResult();
-        duplicate.Should().BeNull("same type+templateId is already running");
+        duplicate.Should().BeNull("same type+templateId is already running — DB-layer 409 dedup");
 
         // Different pair should succeed
         var differentType = useSameType

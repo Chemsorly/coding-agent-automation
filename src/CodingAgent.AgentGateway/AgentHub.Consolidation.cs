@@ -36,12 +36,13 @@ public sealed partial class AgentHub
         {
             _logger.Warning(
                 "ReportConsolidationComplete rejected — job {JobId} not assigned to agent {AgentId} (active: {ActiveJobId})",
-                result.JobId, agent.AgentId, agent.ActiveJobId);
+                SanitizeForLog(result.JobId), agent.AgentId, agent.ActiveJobId);
             return $"REJECTED: agentId={agent.AgentId}, activeJobId={agent.ActiveJobId}";
         }
 
+        // result.JobId is only checked above when the agent has an active job — sanitize it here too.
         _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
-            result.JobId, agent?.AgentId ?? "NULL", result.Success);
+            SanitizeForLog(result.JobId), agent?.AgentId ?? "NULL", result.Success);
 
         // Transition agent to Idle BEFORE delegating to slow I/O
         if (agent is not null)

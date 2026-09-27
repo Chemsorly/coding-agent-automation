@@ -58,11 +58,6 @@ public sealed class JobSpecBuilderTests
     public void WhenDerivedKeySecretName_Set_AgentApiKeyEnvVar_FromSecret_NoMasterMount()
     {
         var template = KiroTemplate();
-        // NOTE: workItemId: null is load-bearing here. Setting a non-null WorkItemId alongside
-        // DerivedKeySecretName would trigger the double-derivation guard added in Build() and cause this
-        // test to throw instead of asserting the derived-key env-var path. If copying this as a template
-        // for new "DerivedKeySecretName" tests, keep WorkItemId null. See also:
-        // Build_WhenDerivedKeySecretNameSetForWorkItemPod_ShouldThrow for the forbidden combination.
         var ctx = BaseCtx(workItemId: null) with
         {
             DerivedKeySecretName = "caa-derived-abc123"
@@ -91,17 +86,31 @@ public sealed class JobSpecBuilderTests
     }
 
     [Fact]
-    public void Build_WhenDerivedKeySecretNameSetForWorkItemPod_ShouldThrow()
+    public void Build_WhenDerivedKeySecretNameSetForWorkItemPod_ShouldSucceed()
     {
-        // Guard: DerivedKeySecretName + WorkItemId together → double-derivation footgun.
-        var ctx = BaseCtx(workItemId: Guid.NewGuid()) with
+        // Issue #3034: the double-derivation guard was removed. Work-item pods now receive a
+        // pre-computed per-job key (HMAC-SHA256(masterKey, jobName)) via DerivedKeySecretName,
+        // and HubConnectionManager uses it directly (keyIsPreDerived=true) without re-deriving.
+        var workItemId = Guid.NewGuid();
+        var ctx = BaseCtx(workItemId: workItemId) with
         {
-            DerivedKeySecretName = "caa-derived-abc123"
+            DerivedKeySecretName = "caa-key-aabbccdd"
         };
-        var ex = Assert.Throws<InvalidOperationException>(() => JobSpecBuilder.Build(KiroTemplate(), ctx));
-        ex.Message.Should().Contain("double-derivation");
-        ex.Message.Should().Contain("decisions.md");
-        ex.Message.Should().Contain(ctx.WorkItemId.ToString()!);
+
+        var job = JobSpecBuilder.Build(KiroTemplate(), ctx);
+
+        // Should build successfully with AGENT_API_KEY from the per-job Secret
+        var container = job.Spec.Template.Spec.Containers[0];
+        var env = container.Env;
+
+        var apiKeyEnv = env.SingleOrDefault(e => e.Name == "AGENT_API_KEY");
+        apiKeyEnv.Should().NotBeNull("AGENT_API_KEY must be set via SecretKeyRef for work-item pods");
+        apiKeyEnv!.ValueFrom!.SecretKeyRef!.Name.Should().Be("caa-key-aabbccdd");
+
+        // Master secret must NOT be mounted
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().NotContain(v => v.Name == "agent-api-key",
+            "work-item pods with DerivedKeySecretName must not mount the master Secret");
     }
 
     // ── Legacy path (no DerivedKeySecretName) ────────────────────────────────

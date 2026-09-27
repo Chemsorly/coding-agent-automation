@@ -264,7 +264,20 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_DuplicateRunning_ReturnsNull()
     {
-        // Validates: Requirement 3.7
+        // Validates: Requirement 3.7 — after _runningRuns removal (issue #3027), dedup is
+        // API-layer. The second trigger calls DistributeAsync and receives WorkItemId=null
+        // (simulating KubernetesWorkDistributor mapping 409 → Success=true, WorkItemId=null).
+        // TODO [WARNING]: SetupSequence is configured on the class-level _mockWorkDistributor alongside
+        // any default Setup registered in the constructor. In Moq, calling SetupSequence on an already-
+        // configured mock does not replace the default Setup — both coexist and the most-recently-added
+        // setup wins per call order. If test ordering changes or the constructor's default Setup
+        // changes, this may interact unpredictably. Low risk since each [Fact] gets a fresh instance
+        // via the constructor; noted as a latent brittleness. (review-findings-testqualityreviewer.md)
+        _mockWorkDistributor
+            .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-first", ErrorMessage: null, Queued: true))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
+
         var sut = CreateSut();
 
         var first = await sut.TriggerAsync(
@@ -273,7 +286,7 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         var second = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        second.Should().BeNull();
+        second.Should().BeNull("duplicate trigger must be rejected when WorkItemId=null (409 path)");
     }
 
     [Fact]
@@ -367,6 +380,11 @@ public sealed class ConsolidationServiceTests : IDisposable
         var second = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         second.Should().NotBeNull();
+        // TODO [WARNING]: The assertion above only verifies non-null return; it does not verify that
+        // 'second' has a different RunId from 'first'. A regression where TriggerAsync returns the
+        // existing completed run object instead of creating a new one would still pass. Add:
+        //   second!.RunId.Should().NotBe(first.RunId, "a new run must have a fresh RunId");
+        // to confirm a genuinely new run was created. (review-findings-testqualityreviewer.md)
     }
 
     [Theory]
@@ -702,34 +720,18 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Assert: persist failure is caught, rolled back, and null returned
         run.Should().BeNull("TriggerAsync must return null when PersistRunAsync throws");
 
-        // Assert: _runningRuns was evicted by RollbackRunAsync — a second trigger for the
-        // same (type, templateId) key must not be rejected as a duplicate.
-        // Use a working store (the normal _runsDir) so the second call can actually persist.
-        var sut2 = new ConsolidationService(
-            new ConsolidationServiceDependencies(
-                _logger,
-                _config,
-                _mockProjectStore.Object,
-                _mockRunHistory.Object,
-                new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "blocked-runs-retry")),
-                new InMemoryHarnessSuggestionStore(),
-                _mockProviderConfigStore.Object,
-                WorkDistributor: _mockWorkDistributor.Object));
-
-        // Verify the failed-persist path does not wedge _runningRuns: a fresh sut instance
-        // (same key) can be triggered. On the original sut, TryRemove ran so the key is gone.
+        // Assert: RollbackRunAsync was called — a second trigger for the same (type, templateId)
+        // key must be possible without hitting an in-process block.
+        // After _runningRuns removal (issue #3027), there is no in-memory dedup key to wedge;
+        // the second call simply attempts DistributeAsync again. The second call still uses the
+        // broken store and will fail again due to the persist error — this is the expected path.
         var run2 = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        // The second call on sut still uses the broken store and will fail again —
-        // the key assertion is that it did NOT return null due to the duplicate-run guard
-        // (which would mean _runningRuns was NOT evicted). The null here comes from persist
-        // failing again, not from the "already running" early-return path.
-        // We can distinguish the two paths: the "already running" path returns null immediately
-        // (no logging of the error), whereas the persist-fail path always logs a Serilog Error.
-        // A simpler observable check: the second call must not throw, and the result is null
-        // (persist-fail path), not null-from-duplicate-guard. This is sufficient regression protection.
-        run2.Should().BeNull("second call must also return null via persist-fail path, not duplicate-guard path — confirming _runningRuns was evicted");
-        _ = sut2; // sut2 constructed to prove a fresh instance of the same key is structurally sound
+        // The second call fails via persist-fail path (store is still broken), not via a
+        // duplicate-guard block (which no longer exists). Both paths return null, but the
+        // persist-fail path always logs a Serilog Error — no assertion needed beyond null.
+        run2.Should().BeNull("second call must also return null via persist-fail path");
+        _ = sut; // suppress unused variable warning
     }
 
     [Fact]
@@ -823,15 +825,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Assert: RollbackRunAsync calls ClearFeedbackDataForRun unconditionally
         // TODO: Strengthen assertion to verify the correct RunId was passed.
         // Currently uses It.IsAny<RunId>() because TriggerAsync returns null on failure,
-        // making the internally-generated RunId inaccessible post-call. To fix, capture the
-        // ConsolidationRun.RunId from the PrepareFeedbackDataAsync mock callback and assert
-        // that exact ID was passed here — this would catch a regression where the wrong ID
-        // (e.g. "" or a hardcoded value) is passed to ClearFeedbackDataForRun.
-        // TODO: Also verify that _runningRuns eviction (TryRemove) was executed as part of
-        // RollbackRunAsync. The current assertion only validates one of the three steps.
-        // Observable approach: confirm that a second TriggerAsync call for the same key
-        // succeeds rather than being rejected as a duplicate — this validates TryRemove
-        // without asserting on internal state.
+        // making the internally-generated RunId inaccessible post-call.
         mockFeedbackCache.Verify(
             c => c.ClearFeedbackDataForRun(It.IsAny<RunId>()),
             Times.Once,
@@ -852,7 +846,8 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task IsRunActive_AcceptsRunId_AndImplicitStringConversion()
     {
-        // Arrange: trigger a run so it's tracked in-memory
+        // Arrange: trigger a run so it's persisted in the store (Pending status = active)
+        // After _runningRuns removal (issue #3027), IsRunActive queries the store.
         var sut = CreateSut();
         var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
@@ -861,12 +856,13 @@ public sealed class ConsolidationServiceTests : IDisposable
         RunId runIdTyped = runIdStr; // explicit RunId from string via implicit conversion
 
         // Act + Assert: both ways of calling IsRunActive should work
-        sut.IsRunActive(runIdTyped).Should().BeTrue("RunId-typed call must work");
+        // The run is Pending (non-terminal) so IsRunActive must return true.
+        sut.IsRunActive(runIdTyped).Should().BeTrue("RunId-typed call must work; Pending run is active");
         sut.IsRunActive(runIdStr).Should().BeTrue("string literal implicit conversion must also work");
 
         // Act + Assert: GetActiveRunStartedAt accepts RunId
         var startedAt = sut.GetActiveRunStartedAt(runIdTyped);
-        startedAt.Should().NotBeNull("active run has a StartedAtUtc");
+        startedAt.Should().NotBeNull("active run has a StartedAtUtc in the store");
 
         var startedAtFromString = sut.GetActiveRunStartedAt(runIdStr);
         startedAtFromString.Should().Be(startedAt, "implicit conversion produces equivalent RunId");

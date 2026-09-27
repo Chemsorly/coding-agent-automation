@@ -184,6 +184,7 @@ public static class WorkItemQueryEndpoints
         {
             WorkItemPayload.TryDeserialize(w.Payload, out var req);
             var issueTitle = req?.IssueDetail?.Title;
+            var issueUrl = req?.IssueDetail?.Url;
             var initiatedBy = req?.InitiatedBy;
             return new ActiveWorkItemDto
             {
@@ -196,6 +197,7 @@ public static class WorkItemQueryEndpoints
                 K8sJobName = w.K8sJobName,
                 TimeoutSeconds = w.TimeoutSeconds,
                 IssueTitle = issueTitle,
+                IssueUrl = issueUrl,
                 InitiatedBy = initiatedBy
             };
             // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not

@@ -218,6 +218,15 @@ public class DispatchFeedbackComponentTests : BunitContext
     [Fact]
     public void BrowseIssues_DisabledWhenNoTemplateSelected()
     {
+        // Configure zero enabled templates so auto-preselect does not fire.
+        // With no selectable template, the browse buttons must be disabled.
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "DotNet Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false },
+                new() { Id = "t-2", Name = "Python Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
+            });
+
         var component = Render<AgentCoding>();
 
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));

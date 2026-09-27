@@ -2,6 +2,7 @@ using System.Diagnostics;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.AgentGateway;
@@ -95,7 +96,7 @@ internal sealed class RegularJobCompletionStrategy : IJobCompletionStrategy
 
         _logger.Information(
             "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
-            jobId.Value, payload.FinalStep, payload.PullRequestUrl ?? "none");
+            jobId.Value, payload.FinalStep, LogSanitizer.SanitizeForLog(payload.PullRequestUrl ?? "none"));
 
         _changeNotifier.NotifyChange();
         return runWasAlive;

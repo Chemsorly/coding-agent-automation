@@ -18,14 +18,6 @@ namespace CodingAgent.Infrastructure.UnitTests.GitHub;
 /// Key design: the counter is emitted INSIDE the Polly retry lambda, not in the outer
 /// catch blocks, so every attempt (including retried ones) increments the counter.
 /// </summary>
-/// <remarks>
-/// Placed in the <c>GitHubTelemetry</c> collection to serialize with
-/// <see cref="GitHubRateLimitGaugeTests"/>. This class subscribes to all instruments on the
-/// shared <c>CodingAgent.GitHub</c> meter (including the rate-limit observable gauge).
-/// Running concurrently with <c>GitHubRateLimitGaugeTests</c> can cause spurious
-/// <c>RecordObservableInstruments</c> triggers that race on the shared static volatile
-/// rate-limit fields in <see cref="GitHubTelemetry"/>.
-/// </remarks>
 [Collection("GitHubTelemetry")]
 public class GitHubApiRequestMetricsTests : IDisposable
 {
@@ -61,16 +53,6 @@ public class GitHubApiRequestMetricsTests : IDisposable
     }
 
     public void Dispose() => _listener.Dispose();
-    // TODO: This class does not call GitHubTelemetry.ResetRateLimitStore() in its constructor or
-    // Dispose. Since the mock returns null for GetLastApiInfo(), CaptureRateLimitInfo is a no-op
-    // and the volatile rate-limit fields are not written here, so there is no direct contamination
-    // of GitHubRateLimitGaugeTests. However, both classes are in the same assembly with no
-    // [Collection] serialization guard. If a future test in this class adds a non-null
-    // GetLastApiInfo() mock, it would write to the static volatile fields and could race with
-    // GitHubRateLimitGaugeTests.WhenNoCallMade_GaugeEmitsNoMeasurement (which relies on fields
-    // being -1 after ResetRateLimitStore()). Add GitHubTelemetry.ResetRateLimitStore() to both
-    // constructor and Dispose here as a precaution, or add [Collection("GitHubTelemetry")] to
-    // serialize this class against GitHubRateLimitGaugeTests.
 
     // ── Success ───────────────────────────────────────────────────────────────
 

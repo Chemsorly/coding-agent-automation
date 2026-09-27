@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog.Events;
 using ILogger = Serilog.ILogger;
 
@@ -108,7 +109,7 @@ public sealed class AgentOrphanRecoveryService(
     {
         _logger.Information(
             "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
-            agentId, activeJob.RunId);
+            agentId, LogSanitizer.SanitizeForLog(activeJob.RunId));
 
         // Still mark agent as busy with this job so it's tracked correctly.
         // ActiveJobId write is under SyncRoot (release-then-reacquire pattern: TransitionStatus
@@ -184,7 +185,7 @@ public sealed class AgentOrphanRecoveryService(
 
         _logger.Information(
             "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
-            activeJob.RunId, agentId, activeJob.IssueIdentifier, activeJob.CurrentStep);
+            LogSanitizer.SanitizeForLog(activeJob.RunId), agentId, LogSanitizer.SanitizeForLog(activeJob.IssueIdentifier), activeJob.CurrentStep);
 
         _changeNotifier.NotifyChange();
     }
@@ -527,7 +528,7 @@ public sealed class AgentOrphanRecoveryService(
         {
             _logger.Warning(
                 "TryReconstructRunFromDbAsync: runId '{RunId}' is not a valid GUID — cannot query WorkItem",
-                runId);
+                LogSanitizer.SanitizeForLog(runId));
             return null;
         }
 

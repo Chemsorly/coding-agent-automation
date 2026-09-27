@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgent.Pipeline;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
@@ -57,6 +58,31 @@ public sealed class PostgresPipelineRunHistoryServiceAsyncTests : IDisposable
         entities.Should().HaveCount(1);
         entities[0].IssueIdentifier.Should().Be("owner/repo#1");
         entities[0].IssueTitle.Should().Be("Async test run");
+    }
+
+    [Fact]
+    public async Task AddRunToHistoryAsync_ConsolidationRun_IsPersistedAfterGuardRemoval()
+    {
+        // Write guard removed: consolidation runs must now be persisted to pipeline history.
+        var runId = Guid.NewGuid().ToString();
+        var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "consolidation-test",
+            IssueTitle = "Brain consolidation run",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        consolidationRun.CurrentStep = PipelineStep.Completed;
+        consolidationRun.MarkCompleted();
+
+        await _sut.AddRunToHistoryAsync(consolidationRun);
+
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var entities = db.PipelineRuns.ToList();
+        entities.Should().HaveCount(1, "consolidation run must now be written to pipeline history (write guard removed)");
+        entities[0].IssueTitle.Should().Be("Brain consolidation run");
     }
 
     [Fact]
