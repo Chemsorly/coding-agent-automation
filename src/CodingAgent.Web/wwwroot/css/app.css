@@ -720,14 +720,11 @@ select option { background: var(--surface); color: var(--text); }
 .history-meta a:hover { text-decoration: underline; }
 
 /* About Page */
-/* TODO [WARNING]: about-content has max-width: 700px with no left margin, so the card stack
-   starts at the left edge of the cockpit-page padded region. Other cockpit pages have no
-   max-width constraint, making the About page appear narrower than peers. If the max-width
-   constraint is intentional for readability, add margin: 0 auto to centre it; otherwise
-   remove max-width to match the behaviour of every other cockpit page. */
-.about-content { display: flex; flex-direction: column; gap: 16px; max-width: 700px; }
-.about-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-.about-section-body { padding: 16px; }
+/* The cards fill the page width like every other cockpit page; the short cards sit side by side instead of in
+   one 700px column. min(100%, …) keeps a single column from overflowing on a phone. */
+.about-content { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 16px; }
+.about-section { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.about-section-body { padding: 16px 18px; }
 .about-section h2 { font-size: 1rem; font-weight: 600; margin-bottom: 0; color: var(--text); }
 .about-oneliner { font-size: 0.95rem; color: var(--text-muted); margin-bottom: 8px; }
 .about-description { font-size: 0.85rem; color: var(--text-muted); line-height: 1.5; }
@@ -908,9 +905,10 @@ select option { background: var(--surface); color: var(--text); }
 /* ===== Agent Chat Page ===== */
 .chat-setup { max-width: 600px; }
 .chat-description { color: var(--text-muted); margin-bottom: 16px; font-size: 0.85rem; }
-.chat-agent-select { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-.chat-agent-select label { font-weight: 500; white-space: nowrap; min-width: 160px; }
-.chat-select { flex: 1; background: var(--surface-alt); }
+/* The row wraps on a phone: the select can't shrink below its option text, so it moves under its label. */
+.chat-agent-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 16px; }
+.chat-agent-select label { font-size: 0.85rem; font-weight: 500; color: var(--text-muted); white-space: nowrap; min-width: 140px; }
+.chat-select { flex: 1 1 220px; min-width: 0; background: var(--surface-alt); }
 .btn-start-chat { padding: 10px 24px; background: var(--accent-fill); color: white; font-weight: 500; }
 .btn-start-chat:hover:not(:disabled) { opacity: 0.85; }
 .btn-start-chat:disabled { opacity: 0.4; cursor: not-allowed; }

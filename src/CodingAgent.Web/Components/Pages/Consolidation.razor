@@ -31,7 +31,7 @@
     }
 
     <!-- Per-Template Cards -->
-    <section class="settings-section" style="margin: 16px 20px;">
+    <section class="settings-section">
         <div class="cockpit-card-header"><h2><Icon Name="clipboard-list" Size="16" /> Template Consolidation</h2></div>
         @if (_isLoading)
         {
@@ -121,7 +121,7 @@
     </section>
 
     <!-- Global Harness Suggestions -->
-    <section class="settings-section" style="margin: 16px 20px;">
+    <section class="settings-section">
         <div class="cockpit-card-header"><h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2></div>
         @if (_isLoading)
         {
@@ -165,7 +165,7 @@
     </section>
 
     <!-- Run History -->
-    <section class="settings-section" style="margin: 16px 20px;">
+    <section class="settings-section">
         <div class="cockpit-card-header"><h2><Icon Name="scroll" Size="16" /> Run History (@(_isLoading ? "…" : _runHistory.Count.ToString()))</h2></div>
         @if (_isLoading)
         {

@@ -561,13 +561,15 @@
 .cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
 
-/* Settings lists (profiles, quality gates, reviewers): wrap every cell except the actions column, at word
-   boundaries — overflow-wrap: anywhere split names and label chips mid-word. Chips wrap as whole chips. */
-.cockpit .settings-section .monitoring-table td:not(:last-child) { white-space: normal; overflow-wrap: break-word; }
-.cockpit .settings-section .monitoring-table .sidebar-label { display: inline-block; margin: 1px 3px 1px 0; white-space: nowrap; }
-/* Header labels wrap too and cells are a little tighter, so the lists fit the content column at 1280px. */
-.cockpit .settings-section .monitoring-table th { white-space: normal; text-overflow: clip; }
-.cockpit .settings-section .monitoring-table :is(th, td) { padding-left: 8px; padding-right: 8px; }
+/* Lists inside section cards: wrap every cell except the actions column. */
+.cockpit .settings-section .monitoring-table td:not(:last-child) { white-space: normal; overflow-wrap: anywhere; }
+/* Settings page lists (profiles, quality gates, reviewers) wrap at word boundaries instead — anywhere split
+   names and label chips mid-word once a column got narrow. Chips wrap as whole chips; headers wrap and cells
+   are a little tighter, so the lists fit the content column at 1280px. */
+.cockpit .settings-content .monitoring-table td:not(:last-child) { overflow-wrap: break-word; }
+.cockpit .settings-content .monitoring-table .sidebar-label { display: inline-block; margin: 1px 3px 1px 0; white-space: nowrap; }
+.cockpit .settings-content .monitoring-table th { white-space: normal; text-overflow: clip; }
+.cockpit .settings-content .monitoring-table :is(th, td) { padding-left: 8px; padding-right: 8px; }
 
 /* ---- Settings re-shell (scoped tweaks so it sits cleanly in the new frame) -- */
 /* The page uses the shared .cockpit-page chrome. Drop the legacy full-height scroller from app.css: an
@@ -618,12 +620,13 @@
 }
 
 /* ---- Pipelines re-shell (Agent Coding page inside the new frame) ------------ */
-.cockpit .agent-header { padding: 22px 28px 4px; border: none; background: transparent; }
-.cockpit .agent-header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-/* Align the section content inset with the header (28px — the app-wide content inset). Without this,
-   .agent-main's 20px padding + the sections' own 20px margins push content to 40px, 12px past the h1. */
-.cockpit .agent-main { padding-left: 8px; padding-right: 8px; }
-/* Consolidation is a standalone page — its header is visible. */
+/* The page sits in .cockpit-page, which already provides the 28px inset and the 16px rhythm. .agent-main only
+   stacks its cards the same way; its legacy 20px padding pushed the cards past the h1 and away from the right. */
+.cockpit .agent-main { display: flex; flex-direction: column; gap: 16px; padding: 0; }
+
+/* A card title row inside a padded .settings-section spans the card edge to edge, like .cockpit-card-header in
+   a .cockpit-card, and its title lines up with the card body instead of sitting 18px further in. */
+.cockpit .settings-section > .cockpit-card-header:first-child { margin: -18px -20px 14px; padding: 14px 20px; }
 
 /* ---- RefreshBar — consistent refresh control (issue #2339) ---------------- */
 .refresh-bar {

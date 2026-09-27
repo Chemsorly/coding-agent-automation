@@ -110,7 +110,7 @@
                 OnCancelAdd="CancelAddForm" OnRemoveTemplate="RemoveTemplate" OnCancelDelete="CancelDelete" />
 
             <!-- ═══ Loop Controls ═══ -->
-            <section class="settings-section" style="margin: 0 20px 16px;">
+            <section class="settings-section">
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     @if (!LoopService.IsLoopActive)
                     {
@@ -143,9 +143,9 @@
             </section>
 
             <!-- ═══ Manual Dispatch ═══ -->
-            <section class="settings-section" style="margin: 0 20px 16px;">
+            <section class="settings-section">
                 <div class="cockpit-card-header"><h2>Manual Dispatch</h2></div>
-                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px;">
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                     <select value="@_manualDispatchTemplateId" @onchange="OnTemplateChanged" class="dispatch-template-select" data-testid="template-select" aria-label="Pipeline template">
                         <option value="">-- Select Template --</option>
                         @foreach (var t in _templates.Where(t => t.Enabled))
