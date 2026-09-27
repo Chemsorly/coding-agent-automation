@@ -15,10 +15,13 @@
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
-<div class="consolidation-page">
-    <header class="consolidation-header">
-        <h1>Consolidation</h1>
-    </header>
+<div class="cockpit-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Consolidation</h1>
+            <span class="cockpit-page-sub">Brain consolidation, refactoring detection, and harness suggestions</span>
+        </div>
+    </div>
 
     @if (!string.IsNullOrEmpty(_statusMessage))
     {
@@ -29,7 +32,7 @@
 
     <!-- Per-Template Cards -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="clipboard-list" Size="16" /> Template Consolidation</h2>
+        <div class="cockpit-card-header"><h2><Icon Name="clipboard-list" Size="16" /> Template Consolidation</h2></div>
         @if (_isLoading)
         {
             <div class="monitoring-empty">Loading...</div>
@@ -58,7 +61,7 @@
                                 @if (lastBrain != null)
                                 {
                                     <span class="consolidation-card-value">
-                                        @lastBrain.StartedAtUtc.ToLocalTime().ToString("g") —
+                                        @lastBrain.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") —
                                         <span class="consolidation-status consolidation-status-@lastBrain.Status.ToString().ToLowerInvariant()">@lastBrain.Status</span>
                                     </span>
                                 }
@@ -80,7 +83,7 @@
                                 @if (lastRefactoring != null)
                                 {
                                     <span class="consolidation-card-value">
-                                        @lastRefactoring.StartedAtUtc.ToLocalTime().ToString("g") —
+                                        @lastRefactoring.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") —
                                         <span class="consolidation-status consolidation-status-@lastRefactoring.Status.ToString().ToLowerInvariant()">@lastRefactoring.Status</span>
                                     </span>
                                 }
@@ -119,7 +122,7 @@
 
     <!-- Global Harness Suggestions -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2>
+        <div class="cockpit-card-header"><h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2></div>
         @if (_isLoading)
         {
             <div class="monitoring-empty">Loading...</div>
@@ -131,7 +134,7 @@
         else
         {
             <div class="consolidation-suggestions-meta">
-                Generated: @_harnessSuggestions.GeneratedAtUtc.ToLocalTime().ToString("g")
+                Generated: @_harnessSuggestions.GeneratedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                 — Based on @_harnessSuggestions.BasedOnRunCount runs
                 — Success rate: @_harnessSuggestions.SuccessRate.ToString("P1")
             </div>
@@ -163,7 +166,7 @@
 
     <!-- Run History -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="scroll" Size="16" /> Run History (@(_isLoading ? "…" : _runHistory.Count.ToString()))</h2>
+        <div class="cockpit-card-header"><h2><Icon Name="scroll" Size="16" /> Run History (@(_isLoading ? "…" : _runHistory.Count.ToString()))</h2></div>
         @if (_isLoading)
         {
             <div class="monitoring-empty">Loading...</div>
@@ -195,7 +198,7 @@
                             <tr>
                                 <td>@FormatRunType(run.Type)</td>
                                 <td>@(run.TemplateName ?? "Global")</td>
-                                <td>@run.StartedAtUtc.ToLocalTime().ToString("g")</td>
+                                <td>@run.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                                 <td>
                                     <span class="consolidation-status consolidation-status-@run.Status.ToString().ToLowerInvariant()">
                                         @run.Status
