@@ -221,11 +221,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
 
-        await _service.RecoverOrphanedStateAsync(message, agentId);
+        var result = await _service.RecoverOrphanedStateAsync(message, agentId);
 
         existingRun.AgentId.Should().Be(agentId);
         entry.ActiveJobId.Should().Be(runId);
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        _mockFacade.Verify(f => f.ReplaceRun(existingRun), Times.Once,
+            "the agent must be written back to the run — GetRun returns a copy under the distributed run service");
+        result.FirstPickupRun.Should().BeSameAs(existingRun,
+            "the run had no agent, so this is its first pickup and the hub moves its label to in-progress");
     }
 
     // ── Active job: run already in memory (owned by same agent) → idempotent
@@ -254,11 +258,14 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
 
-        await _service.RecoverOrphanedStateAsync(message, agentId);
+        var result = await _service.RecoverOrphanedStateAsync(message, agentId);
 
         existingRun.AgentId.Should().Be(agentId);
         entry.ActiveJobId.Should().Be(runId);
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        _mockFacade.Verify(f => f.ReplaceRun(It.IsAny<PipelineRun>()), Times.Never,
+            "a same-agent reconnect changes nothing on the run, so nothing is written back");
+        result.FirstPickupRun.Should().BeNull("a same-agent reconnect is not a first pickup");
     }
 
     // ── Active job: run already in memory (pod replacement — different agent reconnects) → updates AgentId
@@ -267,12 +274,8 @@ public sealed class AgentOrphanRecoveryServiceTests
     public async Task ActiveJob_RunInMemoryOwnedByDifferentAgent_UpdatesAgentId()
     {
         // Pod replacement: a new agent pod registers with the same RunId but a different AgentId.
-        // LinkAgentToExistingRun must update run.AgentId and link the new agent to the run.
-        // NOTE: This tests LinkAgentToExistingRun in isolation (RecoverOrphanedStateAsync called
-        // directly, without a preceding RegisterAgent call). In the combined production flow,
-        // RegisterAgent updates run.AgentId first, so by the time LinkAgentToExistingRun runs,
-        // existingRun.AgentId already matches — making it a no-op. The isolation test here
-        // verifies the service handles the case correctly when called independently.
+        // LinkAgentToExistingRun must update run.AgentId, write it back, and link the new agent to
+        // the run — registration records the agent on a run only here, after the claim is accepted.
         // entry.ActiveJobId is null so the inner trackedEntry.ActiveJobId is null lock guard is
         // satisfied, allowing TransitionStatus(Busy) to be called.
         const string agentId = "agent-1";
@@ -297,12 +300,15 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         var message = CreateMessage(agentId, CreateActiveJob(runId));
 
-        await _service.RecoverOrphanedStateAsync(message, agentId);
+        var result = await _service.RecoverOrphanedStateAsync(message, agentId);
 
         existingRun.AgentId.Should().Be(agentId, "pod replacement must update run.AgentId to the new agent");
         entry.ActiveJobId.Should().Be(runId, "the new agent must be linked to the run");
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
             "the new agent must be transitioned to Busy");
+        _mockFacade.Verify(f => f.ReplaceRun(existingRun), Times.Once, "the new agent must be written back to the run");
+        result.FirstPickupRun.Should().BeNull(
+            "pod replacement is not a first pickup — the label was moved to in-progress when the first pod picked the run up");
         // TODO: [WARNING] The acceptance criterion "A log entry is emitted when AgentId is updated due
         // to pod replacement" is not verified here. The _mockLogger is available in this test class;
         // a silent removal of the pod-replacement Information log line would not be caught by any test
@@ -484,6 +490,278 @@ public sealed class AgentOrphanRecoveryServiceTests
             r.RunType == PipelineRunType.Decomposition)), Times.Once);
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
     }
+
+    // ── Restored issue URL: reported by the agent, rendered by the UI as a link ─────────
+
+    [Theory]
+    [InlineData("https://github.com/org/repo/issues/42", "https://github.com/org/repo/issues/42")]
+    [InlineData("http://gitlab.internal/group/repo/-/issues/42", "http://gitlab.internal/group/repo/-/issues/42")]
+    [InlineData("javascript:alert(1)", null)]
+    [InlineData("issues/42", null)]
+    public async Task ActiveJob_RunNotInMemory_RestoresOnlyAnHttpIssueUrl(string reportedUrl, string? expectedUrl)
+    {
+        const string agentId = "agent-1";
+        const string runId = "run-issue-url";
+        var entry = CreateEntry(agentId);
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? restored = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
+
+        var activeJob = CreateActiveJob(runId) with { IssueUrl = reportedUrl };
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob), agentId);
+
+        restored.Should().NotBeNull();
+        restored!.IssueUrl.Should().Be(expectedUrl);
+    }
+
+    // ── Verified claims: WorkItem store available (the API host) ─────────
+
+    /// <summary>
+    /// An agent reporting an active job that is not a work item at all (an invented run) gets
+    /// nothing restored — no run, no ActiveJobId, so no [RequiresActiveJob] access.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_NoSuchWorkItem_IsIgnored()
+    {
+        const string agentId = "caa-aaaa1111";
+        const string runId = "run-invented";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, record: null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+        entry.ActiveJobId.Should().BeNull();
+    }
+
+    /// <summary>
+    /// An agent cannot take over a run whose work item belongs to another agent, even when it
+    /// knows the run ID.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_WorkItemOfAnotherAgent_RunIsNotTakenOver()
+    {
+        const string agentId = "caa-bbbb2222";
+        const string owner = "caa-cccc3333";
+        const string runId = "run-of-another-agent";
+        var existingRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = owner
+        };
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(owner));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns(existingRun);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        var result = await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        existingRun.AgentId.Should().Be(owner, "the run's work item belongs to another agent");
+        entry.ActiveJobId.Should().BeNull();
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+        _mockFacade.Verify(f => f.ReplaceRun(It.IsAny<PipelineRun>()), Times.Never);
+        result.FirstPickupRun.Should().BeNull("the hub must not move the issue label for a rejected claim");
+    }
+
+    /// <summary>
+    /// For the agent's own work item the run is restored, but its identity — issue and the provider
+    /// configs tokens are vended for — comes from the database, not from the agent's report.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_OwnWorkItem_RestoresRunWithIdentityFromTheDatabase()
+    {
+        const string agentId = "caa-dddd4444";
+        const string runId = "run-own";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(agentId));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+        PipelineRun? restored = null;
+        _mockFacade.Setup(f => f.AddRun(It.IsAny<PipelineRun>())).Callback<PipelineRun>(r => restored = r);
+
+        var claim = CreateActiveJob(runId) with
+        {
+            IssueIdentifier = "org/other#9",
+            IssueProviderConfigId = "ip-other",
+            RepoProviderConfigId = "rp-other",
+            BrainProviderConfigId = "brain-other",
+            PipelineProviderConfigId = "pipe-other",
+            ProjectId = Guid.NewGuid().ToString()
+        };
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, claim), agentId);
+
+        restored.Should().NotBeNull();
+        ((string)restored!.IssueIdentifier).Should().Be("org/repo#7");
+        restored.IssueProviderConfigId.Should().Be("ip-db");
+        restored.RepoProviderConfigId.Should().Be("rp-db");
+        restored.BrainProviderConfigId.Should().Be("brain-db");
+        restored.PipelineProviderConfigId.Should().Be("pipe-db");
+        restored.ProjectId.Should().Be("11111111-2222-3333-4444-555555555555");
+        restored.CurrentStep.Should().Be(PipelineStep.AnalyzingCode, "progress still comes from the agent");
+        entry.ActiveJobId.Should().Be(runId);
+    }
+
+    /// <summary>
+    /// Whether the claim is a consolidation run is decided by the work item's task type, not by the
+    /// agent's report.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_ConsolidationWorkItem_IsTrackedWithoutAPipelineRun()
+    {
+        const string agentId = "caa-eeee5555";
+        const string runId = "run-consolidation";
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(agentId, WorkItemTaskType.Consolidation));
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
+
+        // The agent claims an ordinary implementation run.
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+        entry.ActiveJobId.Should().Be(runId);
+    }
+
+    /// <summary>
+    /// An agent without an active job gets the run it is recorded on re-attached only when that
+    /// run's work item is its own.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedOrphanDetection_RunOfAnotherAgentsWorkItem_IsNotRestored()
+    {
+        const string agentId = "caa-ffff6666";
+        const string runId = "run-recorded-on-agent";
+        var trackedRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord("caa-0000aaaa"));
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([trackedRun]);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob: null), agentId);
+
+        entry.ActiveJobId.Should().BeNull();
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+    }
+
+    [Fact]
+    public async Task VerifiedOrphanDetection_OwnWorkItem_IsRestored()
+    {
+        const string agentId = "caa-1111bbbb";
+        const string runId = "run-own-orphan";
+        var trackedRun = new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var entry = CreateEntry(agentId);
+        WithWorkItemStore(runId, OwnedRecord(agentId));
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([trackedRun]);
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+
+        await _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob: null), agentId);
+
+        entry.ActiveJobId.Should().Be(runId);
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
+    /// <summary>
+    /// A work item that cannot be read is not taken as "not the agent's": registration fails with an
+    /// error the agent's SignalR retry pipeline retries ("Failed to ..."), instead of leaving the agent
+    /// registered without its run.
+    /// </summary>
+    [Fact]
+    public async Task VerifiedClaim_StoreUnavailable_FailsRegistrationWithARetryableError()
+    {
+        const string agentId = "caa-2222cccc";
+        const string runId = "run-store-down";
+        var entry = CreateEntry(agentId);
+        _mockFacade.SetupGet(f => f.CanVerifyWorkItems).Returns(true);
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection refused"));
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+
+        var act = () => _service.RecoverOrphanedStateAsync(CreateMessage(agentId, CreateActiveJob(runId)), agentId);
+
+        (await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>())
+            .Which.Message.Should().StartWith("Failed to ");
+        entry.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task VerifiedOrphanDetection_StoreUnavailable_FailsRegistrationWithARetryableError()
+    {
+        const string agentId = "caa-3333dddd";
+        var trackedRun = new PipelineRun
+        {
+            RunId = "run-orphan-store-down",
+            IssueIdentifier = "org/repo#42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = agentId
+        };
+        var entry = CreateEntry(agentId);
+        _mockFacade.SetupGet(f => f.CanVerifyWorkItems).Returns(true);
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection refused"));
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([trackedRun]);
+
+        var act = () => _service.RecoverOrphanedStateAsync(CreateMessage(agentId, activeJob: null), agentId);
+
+        (await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>())
+            .Which.Message.Should().StartWith("Failed to ");
+        entry.ActiveJobId.Should().BeNull();
+    }
+
+    private void WithWorkItemStore(string runId, WorkItemRunRecord? record)
+    {
+        _mockFacade.SetupGet(f => f.CanVerifyWorkItems).Returns(true);
+        _mockFacade.Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == runId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(record);
+    }
+
+    private static WorkItemRunRecord OwnedRecord(string k8sJobName, WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
+    {
+        TaskType = taskType,
+        K8sJobName = k8sJobName,
+        IssueIdentifier = "org/repo#7",
+        IssueProviderConfigId = "ip-db",
+        RepoProviderConfigId = "rp-db",
+        BrainProviderConfigId = "brain-db",
+        PipelineProviderConfigId = "pipe-db",
+        ProjectId = Guid.Parse("11111111-2222-3333-4444-555555555555")
+    };
 
     // ── Helpers ─────────────────────────────────────────────────────────
 
