@@ -52,92 +52,51 @@ public sealed class JobSpecBuilderTests
         Namespace = "default"
     };
 
-    // ── DerivedKeySecretName path ────────────────────────────────────────────
+    // ── Agent key (Spec 043 Req 8a) ──────────────────────────────────────────
 
-    [Fact]
-    public void WhenDerivedKeySecretName_Set_AgentApiKeyEnvVar_FromSecret_NoMasterMount()
+    /// <summary>
+    /// Every agent Job — work item or consolidation (WorkItemId set), chat or model fetch (null) —
+    /// reads its key from its own per-Job Secret as the AGENT_API_KEY env var, which the agent uses
+    /// as-is.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Build_AgentApiKeyComesFromThePerJobSecret(bool isWorkItem)
     {
-        var template = KiroTemplate();
-        var ctx = BaseCtx(workItemId: null) with
-        {
-            DerivedKeySecretName = "caa-derived-abc123"
-        };
-
-        var job = JobSpecBuilder.Build(template, ctx);
-
-        var container = job.Spec.Template.Spec.Containers[0];
-        var env = container.Env;
-
-        // AGENT_API_KEY must be from SecretKeyRef, not AGENT_API_KEY_FILE
-        var apiKeyEnv = env.SingleOrDefault(e => e.Name == "AGENT_API_KEY");
-        apiKeyEnv.Should().NotBeNull("AGENT_API_KEY must be set via SecretKeyRef");
-        apiKeyEnv!.ValueFrom.Should().NotBeNull();
-        apiKeyEnv.ValueFrom!.SecretKeyRef!.Name.Should().Be("caa-derived-abc123");
-        apiKeyEnv.ValueFrom.SecretKeyRef.Key.Should().Be("agent-api-key");
-
-        // AGENT_API_KEY_FILE must NOT be present
-        env.Should().NotContain(e => e.Name == "AGENT_API_KEY_FILE",
-            "derived key path must not emit AGENT_API_KEY_FILE");
-
-        // Master agent-api-key volume must NOT be mounted
-        var volumes = job.Spec.Template.Spec.Volumes;
-        volumes.Should().NotContain(v => v.Name == "agent-api-key",
-            "derived-key jobs must not mount master agent-api-key Secret");
-    }
-
-    [Fact]
-    public void Build_WhenDerivedKeySecretNameSetForWorkItemPod_ShouldSucceed()
-    {
-        // Issue #3034: the double-derivation guard was removed. Work-item pods now receive a
-        // pre-computed per-job key (HMAC-SHA256(masterKey, jobName)) via DerivedKeySecretName,
-        // and HubConnectionManager uses it directly (keyIsPreDerived=true) without re-deriving.
-        var workItemId = Guid.NewGuid();
-        var ctx = BaseCtx(workItemId: workItemId) with
-        {
-            DerivedKeySecretName = "caa-key-aabbccdd"
-        };
+        var ctx = BaseCtx(workItemId: isWorkItem ? Guid.NewGuid() : null);
 
         var job = JobSpecBuilder.Build(KiroTemplate(), ctx);
 
-        // Should build successfully with AGENT_API_KEY from the per-job Secret
-        var container = job.Spec.Template.Spec.Containers[0];
-        var env = container.Env;
-
-        var apiKeyEnv = env.SingleOrDefault(e => e.Name == "AGENT_API_KEY");
-        apiKeyEnv.Should().NotBeNull("AGENT_API_KEY must be set via SecretKeyRef for work-item pods");
-        apiKeyEnv!.ValueFrom!.SecretKeyRef!.Name.Should().Be("caa-key-aabbccdd");
-
-        // Master secret must NOT be mounted
-        var volumes = job.Spec.Template.Spec.Volumes;
-        volumes.Should().NotContain(v => v.Name == "agent-api-key",
-            "work-item pods with DerivedKeySecretName must not mount the master Secret");
+        var apiKeyEnv = job.Spec.Template.Spec.Containers[0].Env.Single(e => e.Name == "AGENT_API_KEY");
+        apiKeyEnv.ValueFrom!.SecretKeyRef!.Name.Should().Be("caa-key-caa-test-job");
+        apiKeyEnv.ValueFrom.SecretKeyRef.Key.Should().Be("agent-api-key");
     }
 
-    // ── Legacy path (no DerivedKeySecretName) ────────────────────────────────
-
-    [Fact]
-    public void WhenDerivedKeySecretName_Null_AgentApiKeyFile_Env_AndMasterMount()
+    /// <summary>
+    /// The chart Secret also holds the master key; a pod may read only its otel-headers entry.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Build_NeverExposesTheMasterKeyToThePod(bool isWorkItem)
     {
-        var template = GenericTemplate();
-        var ctx = BaseCtx() with
-        {
-            DerivedKeySecretName = null
-        };
+        var ctx = BaseCtx(workItemId: isWorkItem ? Guid.NewGuid() : null);
 
-        var job = JobSpecBuilder.Build(template, ctx);
+        var job = JobSpecBuilder.Build(GenericTemplate(), ctx);
 
-        var container = job.Spec.Template.Spec.Containers[0];
-        var env = container.Env;
-
-        // AGENT_API_KEY_FILE must be present
-        env.Should().Contain(e => e.Name == "AGENT_API_KEY_FILE");
-
-        // AGENT_API_KEY (env-var form) must NOT be present
-        env.Should().NotContain(e => e.Name == "AGENT_API_KEY");
-
-        // Master volume must be mounted
-        var volumes = job.Spec.Template.Spec.Volumes;
-        volumes.Should().Contain(v => v.Name == "agent-api-key");
+        var podSpec = job.Spec.Template.Spec;
+        var env = podSpec.Containers[0].Env;
+        env.Should().NotContain(e => e.Name == "AGENT_API_KEY_FILE",
+            "dispatched pods must not use the master-key file path");
+        env.Should().NotContain(
+            e => e.ValueFrom != null && e.ValueFrom.SecretKeyRef != null
+                && e.ValueFrom.SecretKeyRef.Name == ctx.AgentApiKeySecretName
+                && e.ValueFrom.SecretKeyRef.Key == "agent-api-key",
+            "no env var may read the master key from the chart Secret");
+        (podSpec.Volumes ?? []).Should().NotContain(
+            v => v.Secret != null && v.Secret.SecretName == ctx.AgentApiKeySecretName,
+            "the chart Secret holding the master key must not be mounted");
     }
 
     // ── OpenCode without config secret ───────────────────────────────────────

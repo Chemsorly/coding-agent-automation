@@ -54,15 +54,60 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
 
         if (payload is null) return null;
 
+        var ids = ReadPayloadProviderConfigIds(payload);
+        return (ids.Repo, ids.Brain);
+    }
+
+    /// <inheritdoc />
+    public async Task<CodingAgent.Pipeline.Models.WorkItemRunRecord?> GetWorkItemRunRecordAsync(
+        Guid workItemId, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var row = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Id == workItemId)
+            .Select(w => new
+            {
+                w.TaskType, w.K8sJobName, w.AssignedAgentId,
+                w.IssueIdentifier, w.IssueProviderConfigId, w.ProjectId, w.Payload
+            })
+            .FirstOrDefaultAsync(ct);
+
+        if (row is null)
+            return null;
+
+        var ids = row.Payload is null ? default : ReadPayloadProviderConfigIds(row.Payload);
+        return new CodingAgent.Pipeline.Models.WorkItemRunRecord
+        {
+            TaskType = row.TaskType,
+            K8sJobName = row.K8sJobName,
+            AssignedAgentId = row.AssignedAgentId,
+            IssueIdentifier = row.IssueIdentifier,
+            IssueProviderConfigId = row.IssueProviderConfigId,
+            RepoProviderConfigId = ids.Repo,
+            BrainProviderConfigId = ids.Brain,
+            PipelineProviderConfigId = ids.Pipeline,
+            ProjectId = row.ProjectId
+        };
+    }
+
+    /// <summary>
+    /// Reads the provider config IDs the dispatch request stored in a WorkItem's JSON payload.
+    /// </summary>
+    private static (string? Repo, string? Brain, string? Pipeline) ReadPayloadProviderConfigIds(string payload)
+    {
         using var doc = JsonDocument.Parse(payload);
         var root = doc.RootElement;
+        return (ReadString(root, "repoProviderConfigId"),
+                ReadString(root, "brainProviderConfigId"),
+                ReadString(root, "pipelineProviderConfigId"));
 
-        var repoConfigId = root.TryGetProperty("repoProviderConfigId", out var repoProp)
-            ? repoProp.GetString() : null;
-        var brainConfigId = root.TryGetProperty("brainProviderConfigId", out var brainProp)
-            ? brainProp.GetString() : null;
-
-        return (repoConfigId, brainConfigId);
+        static string? ReadString(JsonElement root, string name) =>
+            root.ValueKind == JsonValueKind.Object
+            && root.TryGetProperty(name, out var prop)
+            && prop.ValueKind == JsonValueKind.String
+                ? prop.GetString()
+                : null;
     }
 
     /// <inheritdoc />

@@ -138,7 +138,11 @@ public sealed class FakeAgentClient : IAsyncDisposable
                 // it here has a null ModelName in history for good.
                 ModelName = assignment.ProviderConfigs
                     .FirstOrDefault(c => c.Id == assignment.AgentProviderConfigId)?
-                    .Settings.GetValueOrDefault(ProviderSettingKeys.Model)
+                    .Settings.GetValueOrDefault(ProviderSettingKeys.Model),
+                // Mirrors ActiveJobStateFactory.Create: propagate the issue URL so that
+                // CreateRestoredPipelineRun can set PipelineRun.IssueUrl on re-registration
+                // (issue #3095). Null when IssueDetail is absent (decomposition runs).
+                IssueUrl = assignment.IssueDetail?.Url
             }
         }, ct);
 
@@ -606,7 +610,8 @@ public sealed class FakeAgentClient : IAsyncDisposable
         string workItemId,
         string issueIdentifier,
         string repoProviderConfigId,
-        string? brainProviderConfigId = null)
+        string? brainProviderConfigId = null,
+        string? issueUrl = null)
     {
         await BuildAndStartConnectionAsync(serverAddress, apiKey);
 
@@ -628,7 +633,12 @@ public sealed class FakeAgentClient : IAsyncDisposable
                 InitiatedBy = "k8s-e2e-test",
                 CurrentStep = PipelineStep.Created,
                 StartedAt = DateTimeOffset.UtcNow,
-                RunType = PipelineRunType.Implementation
+                // TODO: RunType is hard-coded to Implementation. If a future test re-uses this
+                // helper to simulate a Review or Decomposition re-registration, the restored run
+                // will be created as an Implementation run, silently masking the gap. Add a
+                // RunType parameter when that scenario needs coverage.
+                RunType = PipelineRunType.Implementation,
+                IssueUrl = issueUrl
             }
         });
     }

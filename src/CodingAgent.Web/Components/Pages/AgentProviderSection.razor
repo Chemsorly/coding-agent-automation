@@ -15,7 +15,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
-                    <span class="provider-detail">@p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "") · @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
+                    <span class="provider-detail">@{var execPath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "");}@if (!string.IsNullOrEmpty(execPath)){<text>@execPath · </text>}@(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
