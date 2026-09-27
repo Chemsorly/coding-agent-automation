@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Http.Connections;
@@ -276,18 +274,12 @@ public sealed class HubConnectionManager : IHubConnectionManager
     }
 
     /// <summary>
-    /// Derives a per-agent key from the master secret and agent ID using HMAC-SHA256.
-    /// Returns the raw key if agentId is empty (legacy fallback).
+    /// Derives a per-agent key from the master secret and agent ID (<see cref="AgentKeyDerivation"/>,
+    /// the derivation the server verifies against). Returns the raw key if agentId is empty
+    /// (legacy fallback).
     /// </summary>
     internal static string DeriveKey(string masterKey, string agentId)
-    {
-        if (string.IsNullOrEmpty(agentId))
-            return masterKey;
-
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(masterKey));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(agentId));
-        return Convert.ToHexString(hash).ToLowerInvariant();
-    }
+        => string.IsNullOrEmpty(agentId) ? masterKey : AgentKeyDerivation.DeriveAgentKey(masterKey, agentId);
 
     /// <summary>
     /// Retry policy that never gives up. Uses exponential backoff (2^n seconds, capped at 2 minutes)

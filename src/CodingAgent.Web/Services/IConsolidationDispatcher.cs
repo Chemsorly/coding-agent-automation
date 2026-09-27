@@ -12,7 +12,7 @@ namespace CodingAgent.Web.Services;
 /// either the Blazor page or the domain service owning dispatch infrastructure.
 /// </para>
 /// </summary>
-public interface IConsolidationDispatcher
+internal interface IConsolidationDispatcher
 {
     /// <summary>
     /// Dispatches the consolidation run to a K8s agent.
@@ -22,8 +22,8 @@ public interface IConsolidationDispatcher
     /// </para>
     /// <para>
     /// On permanent failure (no job template for the resolved agent selector) the run is
-    /// cascaded to <c>Failed</c> so it surfaces on the Consolidation monitoring page
-    /// rather than staying <c>Queued</c> forever.
+    /// cascaded to <c>Failed</c> so it is visible on the Consolidation monitoring page
+    /// (/consolidation) rather than staying <c>Queued</c> forever.
     /// </para>
     /// Never throws for runtime failures; logs and swallows them so the caller's status message
     /// is still shown. Throws <see cref="ArgumentNullException"/> if <paramref name="run"/> is null.

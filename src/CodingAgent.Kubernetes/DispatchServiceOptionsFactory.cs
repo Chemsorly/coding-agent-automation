@@ -35,13 +35,8 @@ public static class DispatchServiceOptionsFactory
         // (HMAC-SHA256(masterKey, jobName)) stored in per-job K8s Secrets (Spec 043 Req 8a).
         // Never injected into agent pods — only the per-job derived value enters pod memory.
         options.AgentApiKeyValue = configuration.GetValue<string>("AGENT_API_KEY") ?? "";
-        // TODO: When AgentApiKeyValue is empty, DispatchLifecycleService silently degrades to the
-        // legacy master-key-mount path for work-item pods (the vulnerability this change was designed
-        // to fix). In a K8s dispatch context, AgentApiKeyAuthHandler.ResolveApiKey generates a *random*
-        // master key when AGENT_API_KEY is unset, making the dispatch signer and the auth handler
-        // operate with different keys. Consider emitting a startup warning (or even throwing) here when
-        // running in K8s dispatch mode (e.g., Namespace is non-empty) and AgentApiKeyValue is absent,
-        // so operators are alerted immediately rather than discovering the degraded state via pod audits.
+        // Empty means no agent key can be issued: every Job dispatcher then fails the dispatch (and
+        // logs an error) instead of starting a pod that could not authenticate.
 
         return options;
     }

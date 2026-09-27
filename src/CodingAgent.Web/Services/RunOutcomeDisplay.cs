@@ -71,6 +71,8 @@ public static class RunOutcomeDisplay
     /// <summary>
     /// Success rate in percent over runs that reached an outcome (succeeded, failed or cancelled).
     /// Running and restarted runs are excluded: a restart is carried on by the re-dispatched run.
+    /// Consolidation runs are excluded: they have no issue-level success/failure semantics and
+    /// would skew the rate (issue #3025).
     /// Returns null when no run in <paramref name="runs"/> reached an outcome.
     /// </summary>
     public static int? SuccessRate(IEnumerable<PipelineRunSummary> runs)
@@ -78,7 +80,9 @@ public static class RunOutcomeDisplay
         ArgumentNullException.ThrowIfNull(runs);
 
         int succeeded = 0, decided = 0;
-        foreach (var outcome in runs.Select(r => Classify(r.FinalStep)))
+        foreach (var outcome in runs
+            .Where(r => r.RunType != PipelineRunType.Consolidation)
+            .Select(r => Classify(r.FinalStep)))
         {
             if (outcome is RunOutcome.Running or RunOutcome.Restarted)
                 continue;
