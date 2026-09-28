@@ -575,8 +575,8 @@ public sealed class PipelineLoopServiceQueueSweepTests : IAsyncDisposable
     [Fact]
     public async Task SweepPendingWorkItemsAsync_WhenTaskTypeIsDecomposition_IsSkipped()
     {
-        // Decomposition WorkItems are not swept: their eligibility source (decompositionQueues,
-        // projectLevelDecompositionQueues) is not yet folded into the sweep maps — skip to
+        // Decomposition WorkItems are not swept: their eligibility source (decompositionQueues)
+        // is not yet folded into the sweep maps — skip to
         // avoid incorrect cancellations (fail-open).
         var item = MakePendingItem("42", "ip-1", taskType: WorkItemTaskType.Decomposition);
         _sweepClientMock

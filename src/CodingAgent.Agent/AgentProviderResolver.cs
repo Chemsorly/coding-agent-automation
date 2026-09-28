@@ -36,12 +36,14 @@ internal sealed class AgentProviderResolver : IAgentProviderResolver
     public async Task<ResolvedProviders> ResolveAsync(
         JobAssignmentMessage job,
         IProviderFactory providerFactory,
+        IProviderFactory projectRepoFactory,
         ProviderConfig repoConfig,
         ProviderConfig agentConfig,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(projectRepoFactory);
         ArgumentNullException.ThrowIfNull(repoConfig);
         ArgumentNullException.ThrowIfNull(agentConfig);
 
@@ -58,7 +60,7 @@ internal sealed class AgentProviderResolver : IAgentProviderResolver
 
             brainProvider = await ResolveBrainProviderAsync(job, providerFactory, ct);
             pipelineProvider = await ResolvePipelineProviderAsync(job, providerFactory, ct);
-            additionalRepoProviders = ResolveAdditionalRepoProviders(job, providerFactory);
+            additionalRepoProviders = ResolveAdditionalRepoProviders(job, projectRepoFactory);
 
             await repoProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);

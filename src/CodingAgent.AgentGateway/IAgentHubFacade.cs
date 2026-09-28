@@ -152,6 +152,11 @@ public interface IAgentHubFacade
     Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct);
 
     /// <summary>
+    /// Loads a project by ID. Returns null if no project store is available or the project does not exist.
+    /// </summary>
+    Task<PipelineProject?> GetProjectByIdAsync(string projectId, CancellationToken ct);
+
+    /// <summary>
     /// Loads provider configurations of the specified kind.
     /// </summary>
     Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct);

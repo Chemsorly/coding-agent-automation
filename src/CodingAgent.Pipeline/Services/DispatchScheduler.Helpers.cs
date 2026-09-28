@@ -91,18 +91,4 @@ internal sealed partial class DispatchScheduler
         }
         return false;
     }
-
-    /// <summary>
-    /// Checks whether any project-level decomposition queue has eligible epics remaining.
-    /// </summary>
-    internal static bool HasEligibleProjectLevelDecomposition(
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> projectLevelQueues)
-    {
-        foreach (var kvp in projectLevelQueues)
-        {
-            if (kvp.Value.Count > 0)
-                return true;
-        }
-        return false;
-    }
 }

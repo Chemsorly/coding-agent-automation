@@ -28,6 +28,15 @@ public sealed record PipelineProject
     /// </summary>
     public string? EpicIssueProviderId { get; init; }
 
+    /// <summary>
+    /// Whether <paramref name="issueProviderId"/> is this project's epic tracker. Epics that live there are
+    /// project epics: their decomposition may create sub-issues in the tracker of every template in the
+    /// project. Epics in any other tracker are repo epics, limited to the tracker they live in.
+    /// </summary>
+    public bool IsEpicTracker(string? issueProviderId) =>
+        !string.IsNullOrEmpty(EpicIssueProviderId)
+        && string.Equals(EpicIssueProviderId, issueProviderId, StringComparison.Ordinal);
+
     // ── Behavioral overrides (null = inherit from global) ──────────────
 
     public int? MaxRetries { get; init; }

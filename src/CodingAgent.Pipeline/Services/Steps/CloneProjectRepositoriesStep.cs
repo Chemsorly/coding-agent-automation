@@ -47,13 +47,16 @@ public sealed class CloneProjectRepositoriesStep : IPipelineStep
 
         context.Callbacks.EmitOutputLine($"📦 Cloning {context.AdditionalRepoProviders.Count} additional project repo(s)...");
 
-        // Clone in parallel with concurrency cap
+        // Clone in parallel with concurrency cap. Folder names are assigned up front, because two
+        // template names can map to the same folder name (for example "web app" and "web_app").
         using var semaphore = new SemaphoreSlim(MaxParallelClones);
         var tasks = new List<Task>();
+        var usedFolderNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var (templateName, provider) in context.AdditionalRepoProviders)
         {
-            var cloneTask = CloneRepoAsync(templateName, provider, reposDir, context, semaphore, ct);
+            var folderName = UniqueFolderName(ToFolderName(templateName), usedFolderNames);
+            var cloneTask = CloneRepoAsync(templateName, folderName, provider, reposDir, context, semaphore, ct);
             tasks.Add(cloneTask);
         }
 
@@ -73,6 +76,7 @@ public sealed class CloneProjectRepositoriesStep : IPipelineStep
 
     private static async Task CloneRepoAsync(
         string templateName,
+        string folderName,
         IRepositoryProvider provider,
         string reposDir,
         PipelineStepContext context,
@@ -82,24 +86,24 @@ public sealed class CloneProjectRepositoriesStep : IPipelineStep
         await semaphore.WaitAsync(ct);
         try
         {
-            var targetDir = Path.Combine(reposDir, templateName);
-            Directory.CreateDirectory(targetDir);
+            var targetDir = Path.Combine(reposDir, folderName);
 
             using var timeoutCts = new CancellationTokenSource(CloneTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
 
             try
             {
+                Directory.CreateDirectory(targetDir);
                 await provider.CloneAsync(targetDir, linkedCts.Token);
 
                 // Mark the repo as cloned by setting LocalPath on the matching RepositoryTarget
                 var target = context.ProjectContext!.Repositories.FirstOrDefault(
                     r => string.Equals(r.TemplateName, templateName, StringComparison.Ordinal));
                 if (target is not null)
-                    target.LocalPath = $"repos/{templateName}";
+                    target.LocalPath = $"repos/{folderName}";
 
                 context.Logger.Information("Cloned additional repo '{TemplateName}' to '{TargetPath}'",
-                    templateName, $"repos/{templateName}");
+                    templateName, $"repos/{folderName}");
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
@@ -121,5 +125,35 @@ public sealed class CloneProjectRepositoriesStep : IPipelineStep
         {
             semaphore.Release();
         }
+    }
+
+    private const int MaxFolderNameLength = 100;
+
+    /// <summary>
+    /// The folder a project repository is cloned into, from its template name: every character other
+    /// than an ASCII letter, a digit, '-', '_' or '.' becomes '_', and leading or trailing dots are
+    /// removed. The result is always a single folder inside <c>repos/</c> (no separators, no "..").
+    /// </summary>
+    internal static string ToFolderName(string templateName)
+    {
+        var safe = new string(templateName
+                .Select(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.' ? c : '_')
+                .Take(MaxFolderNameLength)
+                .ToArray())
+            .Trim('.');
+
+        return safe.Length == 0 ? "_" : safe;
+    }
+
+    /// <summary>
+    /// <paramref name="folderName"/>, or the first of <c>folderName_2</c>, <c>folderName_3</c>, … that is
+    /// not in <paramref name="usedFolderNames"/>; the result is added to the set.
+    /// </summary>
+    internal static string UniqueFolderName(string folderName, HashSet<string> usedFolderNames)
+    {
+        var candidate = folderName;
+        for (var suffix = 2; !usedFolderNames.Add(candidate); suffix++)
+            candidate = $"{folderName}_{suffix}";
+        return candidate;
     }
 }

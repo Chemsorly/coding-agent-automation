@@ -24,6 +24,29 @@ Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync
 
 > **Context for the agent:** Both phases download existing issues for deduplication context. In addition to open issues (up to `MaxOpenIssuesForContext`), decomposition runs also include recently-closed sibling issues (up to ~25% of the context budget, lookback 30 days). This helps the agent avoid creating sub-issues that duplicate recently completed work.
 
+## Epic Scope: Repo Epics and Project Epics
+
+Every epic follows the same two-phase workflow. The only difference is its scope, and the scope comes from the tracker the epic lives in:
+
+| | Repo epic | Project epic |
+|---|---|---|
+| Lives in | The tracker of a template with `DecompositionEnabled` | The project's epic tracker (`EpicIssueProviderId`) |
+| May create sub-issues in | That template's tracker only | The tracker of every enabled template in the project |
+| Workspace | The template's repository | The executor's repository, plus the other enabled project repositories, cloned read-only into `repos/` |
+| Runs with the settings of | Its own template | The executor: the first enabled template with `DecompositionEnabled`, in project order. A manual dispatch from the epic drawer uses the drawer's template |
+
+- The run is bound to the tracker the epic lives in: the plan, the summary, the labels and the dedupe check all use the epic itself.
+- A project epic's sub-issue without a matching `targetRepository` goes to the executor's tracker. It is never created in the epic tracker, unless the epic tracker is also the executor's tracker. If the executor is missing from the project's repository list (for example because an earlier template has the same name), such a sub-issue is not created.
+- Template names are the routing keys: a template whose name is empty or already used by an earlier template in the project is left out of the repository list.
+- The other repositories get a read-only token and none of their secrets or setup steps. Only GitHub App repositories can get a read-only token; other repositories are listed for routing but not cloned.
+- The scope is decided again when the agent picks up the job, from the configuration at that time.
+- If the epic tracker is also a template's tracker, its epics are project epics, and each epic is queued once, with the executor. An epic tracker belongs to one project; if two projects share one, the first by name owns it.
+- Project epics wait in the executor's queue next to its repo epics, oldest first, in the same round-robin as all other templates. While the executor is not polled (for example because it is rate-limited), project epics wait.
+- The open-issue context for deduplication comes from the tracker the epic lives in. For a project epic that is the epic tracker, not the repository trackers, so a rerun of Phase 2 does not see the sub-issues an earlier, partly failed run already created.
+- Any project can have an epic tracker, including the Default project. Templates moved into a project (for example into Default, when their project is deleted) widen what its project epics can reach.
+
+See [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decomposition) for a cross-repo setup.
+
 ## Label State Machine
 
 | Current Label | Trigger | Next Label |

@@ -8,6 +8,8 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// <summary>
 /// Parameter object for <see cref="DispatchInfrastructure.PrepareDispatchCoreAsync"/>.
 /// Groups the 10 orchestration parameters to satisfy S107.
+/// <see cref="AdditionalRepoProviderIds"/> lists the other repositories a project epic's
+/// decomposition clones next to its own; null for every other run.
 /// </summary>
 internal sealed record DispatchCoreRequest(
     IReadOnlyList<string> RequiredLabels,
@@ -18,7 +20,8 @@ internal sealed record DispatchCoreRequest(
     string? BrainProviderId,
     string? PipelineProviderId,
     PipelineProject Project,
-    ILogger Logger);
+    ILogger Logger,
+    IReadOnlyList<string>? AdditionalRepoProviderIds = null);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchOrchestrationService.PrepareAsync"/>

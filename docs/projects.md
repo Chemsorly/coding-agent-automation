@@ -210,7 +210,7 @@ Templates within a project are ordered by their position in the `TemplateIds` li
 
 - **Poll sequence:** Templates are polled in list order within each project
 - **Cross-project ordering:** Projects are sorted alphabetically by name, then templates within each project by position
-- **Decomposition template selection:** The first decomposition-enabled template in the project is used for epic analysis
+- **Project epic executor:** The first enabled template with `DecompositionEnabled` runs the project's epics (the epics in its `EpicIssueProviderId` tracker)
 
 ## Use Case: Mono-Repo (Grouping + Settings)
 
@@ -250,24 +250,25 @@ flowchart TD
     A[Poll Cycle] --> B[Project has EpicIssueProviderId?]
     B -->|Yes| C[Poll Polarion for<br/>agent:epic / agent:epic-approved]
     C --> D{Epic found?}
-    D -->|Yes| E[Select first decomposition-enabled template]
-    E --> F[Clone that template's repo]
-    F --> G[Write .agent/project-context.md]
-    G --> H[Run decomposition agent]
-    H --> I[Agent proposes sub-issues with<br/>targetRepository field]
-    I --> J[CreateIssuesStep routes each issue]
-    
-    J --> K{targetRepository<br/>matches template?}
-    K -->|Yes| L[Create issue in that<br/>template's issue provider]
-    K -->|No match or null| M[Create issue in dispatching<br/>template's issue provider]
-    
-    L --> N[Issues labeled agent:next]
-    M --> N
+    D -->|Yes| E[Queue it with the first<br/>decomposition-enabled template]
+    E --> F[Run bound to the epic in Polarion]
+    F --> G[Clone the template's repo, and the<br/>other project repos read-only]
+    G --> H[Write .agent/project-context.md]
+    H --> I[Run decomposition agent]
+    I --> J[Agent proposes sub-issues with<br/>targetRepository field]
+    J --> K[CreateSubIssuesStep routes each issue]
+
+    K --> L{targetRepository<br/>matches template?}
+    L -->|Yes| M[Create issue in that<br/>template's issue provider]
+    L -->|No match or null| N[Create issue in the executor<br/>template's issue provider]
+
+    M --> O[Issues labeled agent:next]
+    N --> O
 ```
 
 ### Project Context File
 
-When decomposing from a project-level `EpicIssueProviderId`, the system generates `.agent/project-context.md` in the workspace:
+When decomposing a project epic (an epic in the project's `EpicIssueProviderId` tracker), the system generates `.agent/project-context.md` in the workspace. Repo epics get no project context, so their sub-issues stay in their own tracker:
 
 ```markdown
 # Project Context
@@ -307,17 +308,19 @@ a repository name below (case-sensitive).
 | `targetRepository` Value | Behavior |
 |--------------------------|----------|
 | Matches a template name in the project | Issue created in that template's issue provider |
-| Does not match any template | Warning logged, issue created in dispatching template's provider |
-| Null or empty | Issue created in dispatching template's provider (default) |
+| Does not match any template | Warning logged, issue created in the executor template's provider |
+| Null or empty | Issue created in the executor template's provider (default) |
 
-All created issues receive the `agent:next` and `agent:generated` labels regardless of routing target.
+All created issues receive the `agent:next` and `agent:generated` labels regardless of routing target. The gateway only accepts the trackers of the project's enabled templates, and only from a project epic's decomposition run. A template whose name is empty or already used by an earlier template in the project is left out of the project context.
 
-### Existing Per-Template Decomposition
+### Repo Epics and Project Epics
 
-The project-level epic flow coexists with existing per-template decomposition:
+Both kinds of epic use the same flow; only their scope differs:
 
-- **Without `EpicIssueProviderId`:** Each template with `DecompositionEnabled` polls its own issue provider for epics
-- **With `EpicIssueProviderId`:** The project additionally polls the centralized tracker
+- **Repo epics:** Each template with `DecompositionEnabled` polls its own issue provider for epics. Their sub-issues stay in that tracker.
+- **Project epics:** With `EpicIssueProviderId`, the project also polls the centralized tracker. Project epics may create sub-issues in every template's tracker.
+
+See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) for the full comparison.
 
 ## UI Management
 

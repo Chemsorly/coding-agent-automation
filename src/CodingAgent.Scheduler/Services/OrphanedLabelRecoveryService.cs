@@ -182,18 +182,23 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         var sweepCt = linked?.Token ?? ct;
 
         var templates = await _configClient.GetAllTemplatesAsync(sweepCt);
-        if (templates.Count == 0)
-        {
-            _logger.Information("Orphaned label recovery: no templates configured, skipping");
-            return;
-        }
+        var projects = await _configClient.GetProjectsAsync(sweepCt);
 
-        // Deduplicate issue provider config IDs
+        // The templates' trackers plus every enabled project's epic tracker, where project epics
+        // carry their labels. Deduplicated: an epic tracker may also be a template's tracker.
         var issueProviderIds = templates
             .Select(t => t.IssueProviderId)
-            .Where(id => !string.IsNullOrEmpty(id))
+            .Concat(projects.Where(p => p.Enabled).Select(p => p.EpicIssueProviderId))
+            .OfType<string>()
+            .Where(id => id.Length > 0)
             .Distinct()
             .ToList();
+
+        if (issueProviderIds.Count == 0)
+        {
+            _logger.Information("Orphaned label recovery: no trackers configured, skipping");
+            return;
+        }
 
         _logger.Information("Orphaned label recovery: scanning {Count} issue provider(s)", issueProviderIds.Count);
 
