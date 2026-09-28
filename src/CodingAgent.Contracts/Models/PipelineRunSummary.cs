@@ -197,4 +197,21 @@ public sealed class PipelineRunSummary
     /// Stored in the JSONB SummaryJson column; no DB migration needed.
     /// </summary>
     public string? ConsolidationResultSummary { get; init; }
+
+    /// <summary>
+    /// Consolidation template display name (e.g. "My Repo"), or null for global/harness-suggestions runs
+    /// and for runs persisted before this field was introduced.
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// </summary>
+    public string? ConsolidationTemplateName { get; init; }
+
+    /// <summary>
+    /// Work item ID associated with this run, or null for runs that were created before this field
+    /// was introduced or that have no backing WorkItem (e.g. backfilled ConsolidationRun rows with
+    /// null WorkItemId).
+    /// Stored in the JSONB SummaryJson column; no DB migration needed.
+    /// The <see cref="PipelineRunEntity.WorkItemId"/> column is the canonical DB-side value for new
+    /// runs; this field carries it through the API serialization path.
+    /// </summary>
+    public Guid? WorkItemId { get; init; }
 }

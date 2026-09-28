@@ -56,7 +56,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterInsightsServices(mock);
 
@@ -79,7 +79,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 5000), MakeRun("r2", tokens: 0)));
         RegisterInsightsServices(mock);
 
@@ -135,7 +135,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterOverviewServices(mock);
 
@@ -152,7 +152,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(
                 MakeRun("r1", tokens: 12345),
                 MakeRun("r2", tokens: 0)));
@@ -191,7 +191,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterRunsServices(mock);
 
@@ -208,7 +208,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 7777), MakeRun("r2", tokens: 0)));
         RegisterRunsServices(mock);
 

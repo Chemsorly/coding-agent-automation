@@ -166,7 +166,105 @@ public sealed class PostgresPipelineRunHistoryServiceAdditionalTests : IDisposab
         result.HasMore.Should().BeFalse("all items fit on the first page");
     }
 
+    // ── GetRunHistoryAsync with runType filter (new overload) ─────────────────
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_Consolidation_ReturnsOnlyConsolidationRuns()
+    {
+        using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#100", PipelineRunType.Implementation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#101", PipelineRunType.Consolidation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#102", PipelineRunType.Consolidation));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null, since: null,
+            runType: PipelineRunType.Consolidation);
+
+        result.Items.Should().HaveCount(2, "only Consolidation runs should be returned");
+        result.Items.Should().AllSatisfy(s => s.RunType.Should().Be(PipelineRunType.Consolidation));
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_NullRunType_ReturnsAllRunTypes()
+    {
+        using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#110", PipelineRunType.Implementation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#111", PipelineRunType.Consolidation));
+            db.SaveChanges();
+        }
+
+        // runType=null → all run types; since is set to force the filter path (not the no-filter fast path)
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null,
+            since: DateTimeOffset.UtcNow.AddDays(-1),
+            runType: null);
+
+        result.Items.Should().HaveCount(2, "null runType must return all run types");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_NoFiltersSet_FallsBackToUnfilteredPath()
+    {
+        // When all optional filters are null (no-filter fast path), return all rows.
+        using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#120", PipelineRunType.Implementation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#121", PipelineRunType.Review));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null, since: null,
+            runType: null);
+
+        result.Items.Should().HaveCount(2, "all-null filters must fall through to the unfiltered path");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_InvalidPage_ThrowsArgumentOutOfRangeException()
+    {
+        var act = async () => await _sut.GetRunHistoryAsync(
+            page: 0, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null, since: null,
+            runType: PipelineRunType.Consolidation);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_Consolidation_EmptyTable_ReturnsEmpty()
+    {
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null,
+            since: DateTimeOffset.UtcNow.AddDays(-1),
+            runType: PipelineRunType.Consolidation);
+
+        result.Items.Should().BeEmpty();
+        result.HasMore.Should().BeFalse();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static PipelineRunEntity CreateRunEntityWithRunType(Guid runId, string issueIdentifier, PipelineRunType runType) =>
+        new()
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = "Run title",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = DateTimeOffset.UtcNow,
+            RunType = runType,
+            IssueProviderConfigId = null,
+            SummaryJson = null
+        };
 
     private static PipelineRunEntity CreateRunEntity(Guid runId, string issueIdentifier, string title) =>
         new()

@@ -4,11 +4,13 @@ using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Serilog;
+using System.Text.Json;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Orchestration.Dispatch;
@@ -26,6 +28,7 @@ public class DatabaseMaintenanceService
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly IConsolidationService _consolidationService;
+    private readonly IPipelineRunHistoryService _pipelineRunHistoryService;
     private readonly DatabaseMaintenanceOptions _options;
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IPipelineConfigStore _configStore;
@@ -34,11 +37,13 @@ public class DatabaseMaintenanceService
         IDbContextFactory<PipelineDbContext> dbFactory,
         IConsolidationService consolidationService,
         IConfiguration configuration,
-        IPipelineConfigStore configStore)
+        IPipelineConfigStore configStore,
+        IPipelineRunHistoryService? pipelineRunHistoryService = null)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         _dbFactory = dbFactory;
         _consolidationService = consolidationService;
+        _pipelineRunHistoryService = pipelineRunHistoryService ?? NullPipelineRunHistoryService.Instance;
         _options = new DatabaseMaintenanceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
         _configStore = configStore;
@@ -52,7 +57,7 @@ public class DatabaseMaintenanceService
     // Scheduler-triggered path with no leader-gate coordination between them.
 
     /// <summary>
-    /// Executes all five sweep operations and returns a result with deletion counts.
+    /// Executes all sweep operations and returns a result with deletion/backfill counts.
     /// Used by the Scheduler's POST /api/scheduler/maintenance/retention-sweep endpoint.
     /// Callers are responsible for leader-gate checks before calling this method.
     /// </summary>
@@ -68,13 +73,16 @@ public class DatabaseMaintenanceService
         var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
-        // TODO: The return value (backfill count) is discarded here. All other sweeps capture their
-        // return values into RetentionSweepResult, and the API endpoint maps every field of that struct
-        // into the RetentionSweepResultDto response. Operators calling POST /api/scheduler/maintenance/retention-sweep
-        // cannot confirm how many orphaned rows were reconciled. Consider adding a ReconciliationRunsBackfilled
-        // field to RetentionSweepResult and capturing the return value, or document the intentional omission.
-        await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
-        return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi);
+        var reconciled = await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
+        // TODO [WARNING]: The backfill runs here as part of the scheduled maintenance sweep, but the page's
+        // data source has already switched to the pipeline-run read path as of this deployment. This means
+        // there is a window between deploy and the first sweep tick where historical ConsolidationRuns rows
+        // are absent from the Consolidation page (the "last run" cards and Run History appear empty/stale).
+        // Consider triggering the backfill once on startup (e.g. via IHostedService) or documenting
+        // that operators should manually trigger POST /api/scheduler/maintenance/retention-sweep immediately
+        // after deploy to eliminate the data-visibility gap. (review-findings correctness)
+        var backfilled = await RunSweepAsync(BackfillConsolidationRunsAsync, "BackfillConsolidationRuns", ct);
+        return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi, reconciled, backfilled);
     }
 
     private static async Task<int> RunSweepAsync(Func<CancellationToken, Task<int>> sweep, string name, CancellationToken ct)
@@ -100,7 +108,9 @@ public class DatabaseMaintenanceService
         int StalePipelineRunsDeleted,
         int StaleConsolidationRunsDeleted,
         int RetentionPipelineRunsDeleted,
-        int RetentionWorkItemsDeleted);
+        int RetentionWorkItemsDeleted,
+        int OrphanedPipelineRunsReconciled = 0,
+        int ConsolidationRunsBackfilled = 0);
 
     /// <summary>
     /// Terminal WorkItems older than retention period → DELETE (server-side).
@@ -418,5 +428,174 @@ public class DatabaseMaintenanceService
             Log.Warning(ex, "DatabaseMaintenanceService: ReconcileOrphanedPipelineRuns failed (non-fatal)");
             return 0;
         }
+    }
+
+    /// <summary>
+    /// Copies historical <c>ConsolidationRun</c> rows from the <c>ConsolidationRuns</c> table into
+    /// <c>PipelineRuns</c> as proper <see cref="PipelineRunType.Consolidation"/> entries.
+    /// Only terminal rows (Succeeded/Failed/Cancelled) are backfilled; non-terminal rows are skipped
+    /// because they represent runs that are either in-flight (and will generate their own PipelineRun
+    /// when they complete) or orphaned (handled by <see cref="IConsolidationService.CleanupOrphanedRunsAsync"/>).
+    ///
+    /// <para>
+    /// <b>Identity key is <c>ConsolidationRun.RunId</c> (from the <c>Data</c> JSONB blob)</b>, NOT
+    /// <c>ConsolidationRunEntity.Id</c> (the Postgres sequence PK). The two are different values.
+    /// The idempotency check compares the deserialized <c>run.RunId</c> against existing
+    /// <c>PipelineRuns.RunId</c> values — using <c>entity.Id</c> instead would silently produce
+    /// duplicate rows on every sweep cycle.
+    /// </para>
+    /// </summary>
+    /// <returns>The number of rows newly backfilled.</returns>
+    internal async Task<int> BackfillConsolidationRunsAsync(CancellationToken ct)
+    {
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+            // Step 1: load all ConsolidationRunEntity rows and deserialize their Data blobs.
+            var consolidationEntities = await db.ConsolidationRuns.AsNoTracking().ToListAsync(ct);
+
+            if (consolidationEntities.Count == 0)
+                return 0;
+
+            // Step 2: load existing PipelineRun RunIds for consolidation type — for the idempotency check.
+            var existingIds = (await db.PipelineRuns
+                .AsNoTracking()
+                .Where(r => r.RunType == PipelineRunType.Consolidation)
+                .Select(r => r.RunId)
+                .ToListAsync(ct))
+                .ToHashSet();
+
+            var backfilledCount = 0;
+
+            foreach (var entity in consolidationEntities)
+            {
+                if (ct.IsCancellationRequested)
+                    break;
+
+                // CRITICAL: use RunId from the Data JSONB blob, NOT entity.Id.
+                // ConsolidationRunEntity.Id is a Postgres-generated sequence PK that has no
+                // relationship to the logical run ID. The actual run identity is ConsolidationRun.RunId
+                // embedded in the Data blob.
+                if (string.IsNullOrEmpty(entity.Data))
+                {
+                    Log.Warning("DatabaseMaintenanceService: BackfillConsolidationRuns — entity {Id} has null/empty Data blob, skipping", entity.Id);
+                    continue;
+                }
+
+                ConsolidationRun run;
+                try
+                {
+                    run = JsonSerializer.Deserialize<ConsolidationRun>(entity.Data, PipelineJsonOptions.Default)!;
+                }
+                catch (JsonException ex)
+                {
+                    Log.Warning(ex, "DatabaseMaintenanceService: BackfillConsolidationRuns — entity {Id} Data blob is not valid JSON, skipping", entity.Id);
+                    continue;
+                }
+
+                if (run is null || string.IsNullOrEmpty(run.RunId))
+                {
+                    Log.Warning("DatabaseMaintenanceService: BackfillConsolidationRuns — entity {Id} deserialized to null or has empty RunId, skipping", entity.Id);
+                    continue;
+                }
+
+                // Skip non-terminal runs: they are either in-flight or orphaned.
+                if (run.Status is not (ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled))
+                    continue;
+
+                // Idempotency: skip if already present in PipelineRuns.
+                if (!Guid.TryParse(run.RunId, out var runGuid))
+                {
+                    Log.Warning("DatabaseMaintenanceService: BackfillConsolidationRuns — run {RunId} has non-GUID RunId, skipping", run.RunId);
+                    continue;
+                }
+
+                if (existingIds.Contains(runGuid))
+                    continue;
+
+                // Map ConsolidationRunStatus → PipelineStep.
+                var finalStep = run.Status switch
+                {
+                    ConsolidationRunStatus.Succeeded => PipelineStep.Completed,
+                    ConsolidationRunStatus.Failed => PipelineStep.Failed,
+                    ConsolidationRunStatus.Cancelled => PipelineStep.Cancelled,
+                    _ => PipelineStep.Failed  // unreachable: non-terminal runs are filtered above
+                };
+
+                // Construct the deterministic IssueIdentifier — matches the format used in
+                // ConsolidationService.TriggerAsync: "{type}:{templateId}" or "{type}:global".
+                var issueIdentifier = !string.IsNullOrEmpty(run.TemplateId)
+                    ? $"{run.Type}:{run.TemplateId}"
+                    : $"{run.Type}:global";
+
+                // WorkItemId: parse from the ConsolidationRun's WorkItemId field (may be null for old rows).
+                Guid? workItemId = Guid.TryParse(run.WorkItemId, out var wid) ? wid : null;
+
+                var summary = new PipelineRunSummary
+                {
+                    RunId = run.RunId,
+                    IssueIdentifier = issueIdentifier,
+                    IssueTitle = run.TemplateName ?? run.Type.ToString(),
+                    FinalStep = finalStep,
+                    StartedAtOffset = run.StartedAtUtc,
+                    CompletedAtOffset = run.CompletedAtUtc,
+                    RunType = PipelineRunType.Consolidation,
+                    InitiatedBy = ConsolidationConstants.InitiatedBy,
+                    ConsolidationType = run.Type,
+                    ConsolidationTemplateId = run.TemplateId,
+                    ConsolidationTemplateName = run.TemplateName,
+                    ConsolidationResultSummary = run.Summary,
+                    ProjectId = run.ProjectId,
+                    ProjectName = run.ProjectName,
+                    WorkItemId = workItemId
+                };
+
+                await _pipelineRunHistoryService.AddRunSummaryAsync(summary, ct);
+                // TODO [WARNING]: If AddRunSummaryAsync throws a transient exception, the outer catch at the
+                // bottom of this method will swallow it and return the count accumulated so far. The un-persisted
+                // row is NOT added to existingIds (the Add below only runs if this line succeeds), so it will be
+                // retried on the next sweep — no permanent data loss. However, backfilledCount is only incremented
+                // after AddRunSummaryAsync returns successfully, so the reported count accurately reflects only
+                // successfully written rows. If the outer catch fires mid-loop, the remaining un-processed rows
+                // are also silently skipped until the next sweep. This is acceptable for a maintenance sweep but
+                // consider per-item try/catch with logging if higher reliability is required. (DotNetSpecialist review)
+                existingIds.Add(runGuid); // prevent double-insertion within same sweep
+                backfilledCount++;
+            }
+
+            if (backfilledCount > 0)
+                Log.Information("DatabaseMaintenanceService: BackfillConsolidationRuns — backfilled {Count} rows into PipelineRuns", backfilledCount);
+
+            return backfilledCount;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DatabaseMaintenanceService: BackfillConsolidationRuns failed (non-fatal)");
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// No-op implementation of <see cref="IPipelineRunHistoryService"/> used when no real service
+    /// is injected (e.g. existing tests that construct <see cref="DatabaseMaintenanceService"/>
+    /// without the new parameter).
+    /// </summary>
+    private sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
+    {
+        public static readonly NullPipelineRunHistoryService Instance = new();
+
+        public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
+        public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
+        public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default) => Task.CompletedTask;
+        public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<PipelineRunSummary>>([]);
+        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default) => Task.FromResult(new PagedResult<PipelineRunSummary> { Items = [], Page = page, PageSize = pageSize, HasMore = false });
+        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default) => Task.FromResult(new PagedResult<PipelineRunSummary> { Items = [], Page = page, PageSize = pageSize, HasMore = false });
+        public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default) => Task.FromResult<PipelineRunSummary?>(null);
     }
 }

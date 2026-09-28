@@ -41,7 +41,7 @@ public class CockpitLayoutComponentTests : BunitContext
 
         // Run-history client: the top-bar attention-count query.
         _mockRunHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = Array.Empty<PipelineRunSummary>(),
@@ -300,6 +300,7 @@ public class CockpitLayoutComponentTests : BunitContext
                 It.IsAny<PipelineStep?>(),
                 projectId,
                 It.IsAny<DateTimeOffset?>(),
+                It.IsAny<PipelineRunType?>(),
                 It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
             "after a project change, GetRunHistoryAsync must be called with the selected projectId");

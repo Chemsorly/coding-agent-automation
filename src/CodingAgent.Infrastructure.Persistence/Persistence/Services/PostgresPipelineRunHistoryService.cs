@@ -153,6 +153,22 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, PipelineRunType? runType, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+
+        // When no filters are set, fall through to the simpler unfiltered paths.
+        if (since is null && finalStep is null && string.IsNullOrEmpty(projectId) && runType is null)
+            return await GetRunHistoryAsync(page, pageSize, feedbackOnly, ct).ConfigureAwait(false);
+
+        return feedbackOnly
+            ? await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, finalStep, projectId, since, runType, ct).ConfigureAwait(false)
+            : await GetRunHistoryPagedInternalAsync(page, pageSize, finalStep, projectId, since, runType, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
@@ -263,6 +279,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedWithFeedbackFilterInternalAsync(int page, int pageSize, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, CancellationToken ct)
+        => await GetRunHistoryPagedWithFeedbackFilterInternalAsync(page, pageSize, finalStep, projectId, since, runType: null, ct).ConfigureAwait(false);
+
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedWithFeedbackFilterInternalAsync(int page, int pageSize, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, PipelineRunType? runType, CancellationToken ct)
     {
         // Filter feedbackOnly at the DB query level using Postgres JSONB `?` (key-exists) operator.
         // Since "Feedback" is embedded in the SummaryJson JSONB column (not a standalone column),
@@ -270,8 +289,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // This ensures the page boundary is correctly applied after the feedback filter —
         // unlike the export endpoint (faithful port of legacy in-memory-post-paging behaviour).
         // Spec 045 reconciles the divergence.
-        // The optional outcome (FinalStep, int), project (ProjectId, text), and since (StartedAt, timestamp)
-        // filters are folded into the SAME SQL, so all filters apply before OFFSET/LIMIT.
+        // The optional outcome (FinalStep, int), project (ProjectId, text), since (StartedAt, timestamp),
+        // and runType (RunType, int) filters are folded into the SAME SQL, so all filters apply before OFFSET/LIMIT.
         // Filter values flow through EF DbParameters ({n}), so projectId is safe.
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
@@ -280,17 +299,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         if (finalStep is { } step) { sql += " AND \"FinalStep\" = {" + filterArgs.Count + "}"; filterArgs.Add((int)step); }
         if (!string.IsNullOrEmpty(projectId)) { sql += " AND \"ProjectId\" = {" + filterArgs.Count + "}"; filterArgs.Add(projectId); }
         if (since is { } sinceValue) { sql += " AND \"StartedAt\" >= {" + filterArgs.Count + "}"; filterArgs.Add(sinceValue); }
+        if (runType is { } rt) { sql += " AND \"RunType\" = {" + filterArgs.Count + "}"; filterArgs.Add((int)rt); }
         // TODO: [WARNING] filterArgs is List<object>, so sinceValue (DateTimeOffset) is boxed and EF Core
         // must infer the DB type (timestamptz) from the CLR type at runtime. Npgsql currently maps
         // DateTimeOffset → timestamp with time zone correctly, matching the StartedAt column type.
         // If the column were remapped to timestamp without time zone this would fail at runtime with
         // a type mismatch rather than a compile-time error. Prefer List<NpgsqlParameter> with an
         // explicit NpgsqlDbType.TimestampTz if the raw SQL path is extended. (DotNetSpecialist review finding #3077.)
-        // TODO: filterArgs index fragility — OFFSET/LIMIT indices are derived from filterArgs.Count
-        // immediately after the filter block. The `since` parameter shifts these indices by 1 relative
-        // to the original code. Any future addition of a filter here must continue appending to
-        // filterArgs before this line and must NOT insert args after it, or OFFSET/LIMIT will
-        // reference the wrong parameter slots. (DotNetSpecialist review finding #3077.)
+        // NOTE: filterArgs index fragility — OFFSET/LIMIT indices are derived from filterArgs.Count
+        // immediately after the filter block. Any future addition of a filter here must continue
+        // appending to filterArgs before this line and must NOT insert args after it.
         sql += " ORDER BY \"StartedAt\" DESC OFFSET {" + filterArgs.Count + "} LIMIT {" + (filterArgs.Count + 1) + "}";
 
         return await ScanPagedAsync(db, page, pageSize,
@@ -327,17 +345,22 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, CancellationToken ct)
+        => await GetRunHistoryPagedInternalAsync(page, pageSize, finalStep, projectId, since, runType: null, ct).ConfigureAwait(false);
+
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, PipelineRunType? runType, CancellationToken ct)
     {
-        // We need pageSize + 1 valid (non-consolidation) items to determine HasMore.
+        // We need pageSize + 1 valid (non-consolidation-ghost) items to determine HasMore.
         // Because consolidation ghost entries may exist in the table (defense-in-depth filter),
         // we over-fetch and loop until we have enough valid items or exhaust the table.
+        // When runType=Consolidation is set, ghost rows are excluded by the DB filter itself
+        // (ghosts have RunType != Consolidation), so over-fetching is minimised.
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
         return await ScanPagedAsync(db, page, pageSize,
             fetchBatch: async (db, offset, batchSize, innerCt) =>
             {
-                // Outcome (FinalStep), project (ProjectId), and since (StartedAt) filters run DB-side,
-                // before the page offset — so paging is correct across the whole history.
+                // Outcome (FinalStep), project (ProjectId), since (StartedAt), and runType (RunType)
+                // filters run DB-side, before the page offset — so paging is correct across history.
                 IQueryable<PipelineRunEntity> q = db.PipelineRuns.AsNoTracking();
                 if (finalStep is { } step)
                     q = q.Where(r => r.FinalStep == step);
@@ -345,6 +368,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                     q = q.Where(r => r.ProjectId == projectId);
                 if (since is { } sinceValue)
                     q = q.Where(r => r.StartedAt >= sinceValue);
+                if (runType is { } rt)
+                    q = q.Where(r => r.RunType == rt);
                 return await q
                     .OrderByDescending(r => r.StartedAt)
                     .Skip(offset)
@@ -381,6 +406,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.IssueProviderConfigId = entity.IssueProviderConfigId;
             existing.SummaryJson = entity.SummaryJson;
             existing.HarnessVersion = entity.HarnessVersion;
+            existing.WorkItemId = entity.WorkItemId;
         }
         else
         {
@@ -414,6 +440,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.IssueProviderConfigId = entity.IssueProviderConfigId;
                 retry.SummaryJson = entity.SummaryJson;
                 retry.HarnessVersion = entity.HarnessVersion;
+                retry.WorkItemId = entity.WorkItemId;
                 await db.SaveChangesAsync(ct).ConfigureAwait(false);
             }
         }
@@ -452,7 +479,11 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 ? ConsolidationConstants.ProviderConfigId
                 : null,
             SummaryJson = JsonSerializer.Serialize(summary, JsonOptions),
-            HarnessVersion = summary.HarnessVersion
+            HarnessVersion = summary.HarnessVersion,
+            // Propagate WorkItemId to the first-class column (additive/nullable — safe for old rows).
+            // For new runs RunId == WorkItemId by contract; for backfilled consolidation rows the
+            // WorkItemId carried through from the ConsolidationRun.WorkItemId field.
+            WorkItemId = summary.WorkItemId
         };
     }
 
