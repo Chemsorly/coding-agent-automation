@@ -87,9 +87,12 @@ public sealed class SchedulerEndpointTests
         var response = await _client.GetAsync("/api/work-items/counts-by-status");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<WorkItemCountDto[]>(JsonOpts);
+        var body = await response.Content.ReadFromJsonAsync<WorkItemCountsResponseDto>(JsonOpts);
         body.Should().NotBeNull();
-        // Empty DB → empty array (InMemory seeding didn't add any items for this test)
+        body!.Counts.Should().NotBeNull();
+        // Note: OldestPendingCreatedAt may be non-null if other tests in the collection seeded
+        // Pending items (the integration test DB is shared). We only verify that the response
+        // shape is correct and the endpoint responds with 200.
     }
 
     [Fact]
@@ -132,11 +135,15 @@ public sealed class SchedulerEndpointTests
 
         // Assert
         response.StatusCode.Should().Be(HttpStatusCode.OK);
-        var body = await response.Content.ReadFromJsonAsync<WorkItemCountDto[]>(JsonOpts);
+        var body = await response.Content.ReadFromJsonAsync<WorkItemCountsResponseDto>(JsonOpts);
         body.Should().NotBeNull();
         // At least two groups (Pending x2, Dispatched x1)
-        body!.Length.Should().BeGreaterThanOrEqualTo(1,
+        body!.Counts.Should().NotBeNull();
+        body.Counts.Length.Should().BeGreaterThanOrEqualTo(1,
             "seeded work items should produce at least one status group");
+        // Pending items exist → OldestPendingCreatedAt must be set
+        body.OldestPendingCreatedAt.Should().NotBeNull(
+            "two Pending items were seeded, so OldestPendingCreatedAt must be non-null");
     }
 
     [Fact]

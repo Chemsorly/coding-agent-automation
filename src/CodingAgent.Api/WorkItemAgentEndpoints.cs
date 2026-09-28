@@ -154,7 +154,7 @@ public static class WorkItemAgentEndpoints
         var item = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Id == id)
-            .Select(w => new { w.Status, w.Payload })
+            .Select(w => new { w.Status, w.Payload, w.DispatchedAt, w.FirstAssignmentAt })
             .FirstOrDefaultAsync(ct);
 
         if (item is null)
@@ -172,6 +172,64 @@ public static class WorkItemAgentEndpoints
 
         // TryDeserialize returned true, so requestNullable is guaranteed non-null here.
         var request = requestNullable!;
+
+        // ── Pod start time histogram (issue #2976) ─────────────────────────
+        // Record workdistribution.pod_start_seconds on the first GET /assignment per WorkItem.
+        // CAS-style conditional write prevents double-recording when an agent retries on network
+        // timeout. We use a tracked-entity update (NOT ExecuteUpdateAsync — not supported by the
+        // InMemory EF provider used in integration tests) with an optimistic-concurrency pattern:
+        // fetch the entity tracked, check FirstAssignmentAt is still null, update and save.
+        // Concurrent callers may both see null on the initial read (line above, AsNoTracking),
+        // but only one will succeed the SaveChangesAsync without a DbUpdateConcurrencyException.
+        // The DbUpdateConcurrencyException path silently skips recording (acceptable: the histogram
+        // fires exactly once in the common case; double-recording is statistically improbable).
+        // TODO [WARNING]: The once-per-item guarantee relies on RowVersion (xmin) raising
+        // DbUpdateConcurrencyException for the losing concurrent caller. xmin is a PostgreSQL
+        // system column and is NOT enforced by the EF InMemory provider used in integration tests.
+        // Under InMemory, both concurrent callers can SaveChangesAsync without an exception, causing
+        // pod_start_seconds to be recorded twice. The concurrency guard's correctness cannot be
+        // exercised by any current InMemory-backed test. Add a PostgreSQL-backed (or fake-transition)
+        // test for the double-fetch path to validate the once-per-item guarantee.
+        if (item.FirstAssignmentAt is null && item.DispatchedAt.HasValue)
+        {
+            await using var writeDb = await dbFactory.CreateDbContextAsync(ct);
+            var now = DateTimeOffset.UtcNow;
+            var tracked = await writeDb.WorkItems.FindAsync([id], ct);
+            // TODO [WARNING]: If FindAsync returns null here (work item deleted between the two reads),
+            // pod-start recording is silently skipped with no log output. WorkItems use status
+            // transitions rather than DELETEs, so this is an edge case, but a Log.Warning on the
+            // null path would make the gap observable in production.
+            if (tracked is { FirstAssignmentAt: null })
+            {
+                tracked.FirstAssignmentAt = now;
+                try
+                {
+                    await writeDb.SaveChangesAsync(ct);
+                    // Successfully wrote FirstAssignmentAt — this is the first assignment fetch.
+                    // TODO [WARNING]: podStartSeconds uses item.DispatchedAt from the initial
+                    // AsNoTracking read (snapshot before the CAS write) while 'now' is captured after
+                    // FindAsync. If clock skew between API replicas causes item.DispatchedAt to be in
+                    // the future relative to 'now', podStartSeconds will be negative. Negative histogram
+                    // observations corrupt p-quantile statistics. Consider clamping to 0:
+                    //   var podStartSeconds = Math.Max(0, (now - item.DispatchedAt.Value).TotalSeconds);
+                    // TODO [WARNING]: FirstAssignmentAt is never cleared on re-dispatch (retry/re-queue).
+                    // If a WorkItem fails and is re-queued, FirstAssignmentAt from the prior dispatch
+                    // lifecycle remains set, and pod_start_seconds is never recorded for subsequent
+                    // dispatches — a silent data gap for retry scenarios.
+                    var podStartSeconds = (now - item.DispatchedAt.Value).TotalSeconds;
+                    CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.PodStartSeconds.Record(podStartSeconds);
+                }
+                catch (Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException)
+                {
+                    // Another concurrent call beat us to it — skip recording to avoid double-count.
+                }
+            }
+        }
+        // TODO [WARNING]: No behavioral test verifies that pod_start_seconds is recorded on the
+        // first GET /assignment, that the value equals (firstAssignment - DispatchedAt), or that it
+        // fires exactly once per WorkItem. HistogramBucketBoundaryTests.PodStartSeconds_HasExpectedBucketBoundaries
+        // only asserts bucket boundaries. Add an integration test exercising this endpoint to lock
+        // in the measurement contract.
 
         // ── Backward-compatibility: detect payload schema ─────────────────
         // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.

@@ -73,6 +73,15 @@ public class WorkItemEntity
     public uint RowVersion { get; set; }
 
     /// <summary>
+    /// Timestamp of the agent's first <c>GET /assignment</c> call for this work item.
+    /// Set on the first call via a CAS UPDATE (WHERE FirstAssignmentAt IS NULL).
+    /// Null until the agent fetches its assignment for the first time.
+    /// Used by <c>WorkItemAgentEndpoints.GetAssignment</c> to record
+    /// <c>workdistribution.pod_start_seconds</c> exactly once per WorkItem.
+    /// </summary>
+    public DateTimeOffset? FirstAssignmentAt { get; set; }
+
+    /// <summary>
     /// Intra-queue dispatch priority. Higher values are dispatched first (ORDER BY PriorityWeight DESC, CreatedAt ASC).
     /// Manual dispatches receive 100; closed-loop dispatches receive 0 (the default).
     /// Allowed range: 0–1000.

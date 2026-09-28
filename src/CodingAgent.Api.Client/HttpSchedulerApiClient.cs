@@ -58,10 +58,10 @@ public sealed class HttpSchedulerApiClient : ISchedulerApiClient
         return result ?? new RetentionSweepResultDto(0, 0, 0, 0, 0);
     }
 
-    public async Task<WorkItemCountDto[]> GetWorkItemCountsAsync(CancellationToken ct = default)
+    public async Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default)
     {
-        var result = await _http.GetFromJsonAsync<WorkItemCountDto[]>(
+        var result = await _http.GetFromJsonAsync<WorkItemCountsResponseDto>(
             "/api/work-items/counts-by-status", PipelineJsonOptions.Default, ct);
-        return result ?? Array.Empty<WorkItemCountDto>();
+        return result ?? new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null);
     }
 }

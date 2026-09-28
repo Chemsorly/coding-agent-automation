@@ -19,24 +19,14 @@ public static class WorkDistributionTelemetry
 
     /// <summary>
     /// Histogram: time from WorkItem creation (Pending) to Dispatched.
+    /// Buckets extended to 86400 s (24 h) in issue #2976 to prevent p95 saturation at 3600 s.
     /// </summary>
     public static readonly Histogram<double> DispatchLatency =
         Meter.CreateHistogram<double>("workdistribution.dispatch_latency_seconds", "s",
             "Time from work item creation to dispatch",
             advice: new InstrumentAdvice<double>
             {
-                HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600]
-            });
-
-    /// <summary>
-    /// Histogram: time spent in Pending status before being dispatched.
-    /// </summary>
-    public static readonly Histogram<double> PendingDuration =
-        Meter.CreateHistogram<double>("workdistribution.workitems_pending_duration_seconds", "s",
-            "Duration work items spend in Pending status",
-            advice: new InstrumentAdvice<double>
-            {
-                HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600]
+                HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
             });
 
     /// <summary>
@@ -178,6 +168,31 @@ public static class WorkDistributionTelemetry
             unit: "{row}",
             description: "Number of WorkItems rows deleted by the retention sweep.");
 
+    /// <summary>
+    /// Counter: dispatch attempts for <c>POST /api/work-items/{id}/dispatch</c>.
+    /// Recorded at every outcome of <c>DispatchPendingWorkItem</c>.
+    /// Tags: <c>result</c> (dispatched | deferred | transient),
+    ///       <c>reason</c> (none | concurrency_limit | not_pending | no_template |
+    ///                      pvc_unavailable | lock_timeout | k8s_error).
+    /// Pre-initialized at API startup via <see cref="PreInitializeDispatchAttempts"/>.
+    /// </summary>
+    public static readonly Counter<long> DispatchAttempts =
+        Meter.CreateCounter<long>("workdistribution.dispatch.attempts", "{attempt}",
+            "Dispatch attempts by result and reason");
+
+    /// <summary>
+    /// Histogram: time from WorkItem dispatch to the agent's first <c>GET /assignment</c> call.
+    /// Recorded once per WorkItem (on first assignment fetch) in <c>WorkItemAgentEndpoints.GetAssignment</c>.
+    /// Buckets: 5, 10, 20, 30, 60, 120, 300, 600 seconds.
+    /// </summary>
+    public static readonly Histogram<double> PodStartSeconds =
+        Meter.CreateHistogram<double>("workdistribution.pod_start_seconds", "s",
+            "Time from WorkItem dispatch to first GET /assignment",
+            advice: new InstrumentAdvice<double>
+            {
+                HistogramBucketBoundaries = [5, 10, 20, 30, 60, 120, 300, 600]
+            });
+
     // ── Observable gauge backing state ──────────────────────────────────────
 
     // Single long encodes both "has been recorded" and "value":
@@ -191,6 +206,30 @@ public static class WorkDistributionTelemetry
     private static int _credentialPoolAvailable;
     private static int _credentialPoolClaimed;
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
+
+    // Backing field for the oldest-pending-age gauge.
+    // 0 = no Pending items; > 0 = Unix ms of the oldest Pending WorkItem's CreatedAt.
+    // A CreatedAt equal to Unix epoch (1970-01-01) would be treated as "no items" — not possible in practice.
+    private static long _oldestPendingMillis;
+
+    /// <summary>
+    /// Gauge: age in seconds of the oldest Pending work item.
+    /// Emits no measurement when there are no Pending items (sentinel value 0).
+    /// Updated by the Scheduler's <c>WorkItemCountsService</c> every 10 s.
+    /// </summary>
+    public static readonly ObservableGauge<double> PendingOldestAge =
+        Meter.CreateObservableGauge<double>(
+            "workdistribution.pending.oldest_age_seconds",
+            observeValues: () =>
+            {
+                var ms = Volatile.Read(ref _oldestPendingMillis);
+                return ms > 0
+                    ? [new Measurement<double>(
+                          (DateTimeOffset.UtcNow - DateTimeOffset.FromUnixTimeMilliseconds(ms)).TotalSeconds)]
+                    : [];
+            },
+            unit: "s",
+            description: "Age of the oldest Pending work item in seconds");
 
     static WorkDistributionTelemetry()
     {
@@ -244,8 +283,9 @@ public static class WorkDistributionTelemetry
     }
 
     /// <summary>
-    /// Records the dispatch latency and pending duration metrics for a work item.
+    /// Records the dispatch latency metric for a work item.
     /// Called by all dispatch paths after a work item transitions to Dispatched.
+    /// The duplicate <c>workitems_pending_duration_seconds</c> instrument was removed in issue #2976.
     /// </summary>
     /// <param name="dispatchedAt">
     /// The timestamp at which the work item was dispatched.
@@ -269,7 +309,64 @@ public static class WorkDistributionTelemetry
         var latency = (dispatchedAt - (originalEnqueuedAt ?? createdAt)).TotalSeconds;
         var tag = new KeyValuePair<string, object?>("agent_selector", agentSelector ?? "");
         DispatchLatency.Record(latency, tag);
-        PendingDuration.Record(latency, tag);
+    }
+
+    /// <summary>
+    /// Records a dispatch attempt on <see cref="DispatchAttempts"/>.
+    /// Called from <c>DispatchPendingWorkItem</c> at each outcome site.
+    /// </summary>
+    /// <param name="result">One of: <c>dispatched</c>, <c>deferred</c>, <c>transient</c>.</param>
+    /// <param name="reason">
+    /// One of: <c>none</c>, <c>not_pending</c>, <c>no_template</c>, <c>concurrency_limit</c>,
+    /// <c>pvc_unavailable</c>, <c>lock_timeout</c>, <c>k8s_error</c>.
+    /// </param>
+    public static void RecordDispatchAttempt(string result, string reason)
+    {
+        DispatchAttempts.Add(1,
+            new KeyValuePair<string, object?>("result", result),
+            new KeyValuePair<string, object?>("reason", reason));
+    }
+
+    /// <summary>
+    /// Updates the oldest-pending-age gauge backing field.
+    /// Called by the Scheduler's <c>WorkItemCountsService</c> after each poll cycle.
+    /// Pass <see langword="null"/> when there are no Pending items — the gauge emits no measurement.
+    /// </summary>
+    public static void UpdateOldestPendingAge(DateTimeOffset? oldestCreatedAt)
+    {
+        // Volatile.Write provides a release fence, matching the pattern used for _pollEpochMillis.
+        Volatile.Write(ref _oldestPendingMillis,
+            oldestCreatedAt.HasValue ? oldestCreatedAt.Value.ToUnixTimeMilliseconds() : 0L);
+    }
+
+    /// <summary>
+    /// Pre-initializes all valid <c>result × reason</c> tag combinations for
+    /// <see cref="DispatchAttempts"/> to zero, ensuring Prometheus <c>increase()</c> can see the
+    /// first real increment after a deploy.
+    ///
+    /// Must be called from the API process only (not from Scheduler, Job Controller, or Agent).
+    /// The convention is to call this from <c>Program.EmitPreInitCounters</c> in the API host.
+    /// </summary>
+    public static void PreInitializeDispatchAttempts()
+    {
+        // 7 valid combinations: dispatched/none + 3 deferred + 3 transient
+        DispatchAttempts.Add(0,
+            new KeyValuePair<string, object?>("result", "dispatched"),
+            new KeyValuePair<string, object?>("reason", "none"));
+
+        foreach (var reason in new[] { "concurrency_limit", "not_pending", "no_template" })
+        {
+            DispatchAttempts.Add(0,
+                new KeyValuePair<string, object?>("result", "deferred"),
+                new KeyValuePair<string, object?>("reason", reason));
+        }
+
+        foreach (var reason in new[] { "pvc_unavailable", "lock_timeout", "k8s_error" })
+        {
+            DispatchAttempts.Add(0,
+                new KeyValuePair<string, object?>("result", "transient"),
+                new KeyValuePair<string, object?>("reason", reason));
+        }
     }
 
     /// <summary>

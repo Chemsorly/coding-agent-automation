@@ -8,7 +8,8 @@ namespace CodingAgent.Web.UnitTests.Telemetry;
 /// <summary>
 /// Unit tests for <see cref="WorkDistributionTelemetry.RecordDispatchLatency"/>.
 /// Verifies the shared method's contract: correct timestamp selection, null-coalescing of
-/// AgentSelector, and that both histograms are recorded.
+/// AgentSelector, and that the dispatch_latency_seconds histogram is recorded.
+/// Note: the duplicate workitems_pending_duration_seconds histogram was removed in issue #2976.
 /// </summary>
 [Trait("Feature", "DispatchLatencyMetrics")]
 public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
@@ -43,13 +44,6 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
 
     public void Dispose() => _listener.Dispose();
 
-    // TODO [WARNING]: The MeterListener captures recordings from the shared static WorkDistributionTelemetry
-    // meter (a process-wide singleton). Tests in other collections that call RecordDispatchLatency or record
-    // to the same meter can inject entries into _recordings. [Collection("Metrics")] serializes tests within
-    // this class only. The .Contain(...) assertions tolerate phantom entries, but this structural fragility
-    // could mask double-recording bugs. Consider isolating the meter per test instance (e.g., a dedicated
-    // test Meter) if false-negative risk increases as the test suite grows. (review-findings.md line 17)
-
     [Fact]
     public void RecordDispatchLatency_UsesOriginalEnqueuedAt_WhenPresent()
     {
@@ -67,20 +61,8 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
             .Where(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds")
             .Select(r => r.Value)
             .ToList();
-        // TODO [WARNING]: Lower-bound-only assertion (`>= 55.0`) does not rule out absurdly large values
-        // from a buggy implementation (e.g., year-scale latency from UtcNow - epoch). Consider adding an
-        // upper bound (e.g., `v < 70.0`) or switching to fixed past timestamps like
-        // RecordDispatchLatency_UsesExplicitDispatchedAt to make the assertion falsifiable from both
-        // directions. (review-findings.md line 63)
         dispatchLatencies.Should().Contain(v => v >= 55.0,
             "latency should reflect OriginalEnqueuedAt (60s ago), not CreatedAt (10s ago)");
-
-        var pendingDurations = _recordings
-            .Where(r => r.InstrumentName == "workdistribution.workitems_pending_duration_seconds")
-            .Select(r => r.Value)
-            .ToList();
-        pendingDurations.Should().Contain(v => v >= 55.0,
-            "pending duration should reflect OriginalEnqueuedAt (60s ago), not CreatedAt (10s ago)");
     }
 
     [Fact]
@@ -99,20 +81,8 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
             .Where(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds")
             .Select(r => r.Value)
             .ToList();
-        // TODO [WARNING]: The assertion window `>= 10.0 && < 50.0` is fragile — a buggy implementation
-        // that records 0 (null OriginalEnqueuedAt used as anchor) could fall outside the window and pass
-        // accidentally; real-time clock skew could also push a correct value outside the bounds. Consider
-        // switching to fixed past timestamps (as in RecordDispatchLatency_UsesExplicitDispatchedAt) to
-        // make the anchor selection deterministic and the assertion exact. (review-findings.md line 93)
         dispatchLatencies.Should().Contain(v => v >= 10.0 && v < 50.0,
             "latency should fall back to CreatedAt (15s ago)");
-
-        var pendingDurations = _recordings
-            .Where(r => r.InstrumentName == "workdistribution.workitems_pending_duration_seconds")
-            .Select(r => r.Value)
-            .ToList();
-        pendingDurations.Should().Contain(v => v >= 10.0 && v < 50.0,
-            "pending duration should fall back to CreatedAt (15s ago)");
     }
 
     [Fact]
@@ -120,10 +90,6 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
     {
         // Arrange
         var now = DateTimeOffset.UtcNow;
-        // Count the number of dispatch_latency_seconds entries with an empty tag BEFORE this
-        // test's Act. _recordings is a shared ConcurrentBag that accumulates across all tests
-        // in this class; using AllSatisfy on the full bag causes spurious failures when prior
-        // tests recorded entries with non-empty agentSelector values.
         var emptyTagCountBefore = _recordings
             .Count(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds"
                         && r.TagValue == "");
@@ -141,7 +107,7 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
     }
 
     [Fact]
-    public void RecordDispatchLatency_RecordsBothHistograms()
+    public void RecordDispatchLatency_RecordsDispatchLatencyHistogram()
     {
         // Arrange
         var now = DateTimeOffset.UtcNow;
@@ -149,11 +115,12 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
         // Act
         WorkDistributionTelemetry.RecordDispatchLatency(now, null, now.AddSeconds(-10), "selector-a");
 
-        // Assert: both histograms must be recorded
+        // Assert: dispatch_latency_seconds must be recorded
         _recordings.Should().Contain(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds",
             "DispatchLatency histogram must be recorded");
-        _recordings.Should().Contain(r => r.InstrumentName == "workdistribution.workitems_pending_duration_seconds",
-            "PendingDuration histogram must be recorded");
+        // Note: workitems_pending_duration_seconds was removed in issue #2976.
+        _recordings.Should().NotContain(r => r.InstrumentName == "workdistribution.workitems_pending_duration_seconds",
+            "PendingDuration histogram was removed in issue #2976 — it must not be emitted");
     }
 
     [Fact]
@@ -169,20 +136,11 @@ public sealed class WorkDistributionTelemetryDispatchLatencyTests : IDisposable
         WorkDistributionTelemetry.RecordDispatchLatency(dispatchedAt, originalEnqueuedAt: null, createdAt, "test");
 
         // Assert: recorded latency must equal exactly (dispatchedAt - createdAt) = 30s ± 0.1s
-        // If the method called DateTimeOffset.UtcNow internally, the result would be ~year-long,
-        // not 30s — this test would catch that regression.
         var latencyRecordings = _recordings
             .Where(r => r.InstrumentName == "workdistribution.dispatch_latency_seconds")
             .Select(r => r.Value)
             .ToList();
         latencyRecordings.Should().Contain(v => Math.Abs(v - expectedLatency) < 0.1,
             $"recorded latency should be exactly {expectedLatency}s (dispatchedAt - createdAt), not a UtcNow-based value");
-
-        var pendingRecordings = _recordings
-            .Where(r => r.InstrumentName == "workdistribution.workitems_pending_duration_seconds")
-            .Select(r => r.Value)
-            .ToList();
-        pendingRecordings.Should().Contain(v => Math.Abs(v - expectedLatency) < 0.1,
-            $"pending duration should also be exactly {expectedLatency}s");
     }
 }

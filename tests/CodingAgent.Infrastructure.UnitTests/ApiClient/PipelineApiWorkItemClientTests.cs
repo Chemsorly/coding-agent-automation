@@ -537,29 +537,83 @@ public sealed class PipelineApiWorkItemClientTests : IDisposable
     // ── DispatchPendingAsync ──────────────────────────────────────────────
 
     [Fact]
-    public async Task DispatchPendingAsync_Success_ReturnsDispatched()
+    public async Task DispatchPendingAsync_200WithDispatchedTrue_ReturnsDispatched()
     {
+        // Issue #2976: 200 with dispatched:true (not 200 with no body) is the success response.
         var workItemId = Guid.NewGuid();
         _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
-            .RespondWith(Response.Create().WithStatusCode(200));
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":true,"reason":"none"}"""));
 
         var result = await _sut.DispatchPendingAsync(workItemId);
 
         result.Should().Be(DispatchPendingResult.Dispatched,
-            "200 OK must return Dispatched so the poller continues to the next item");
+            "200 OK with dispatched:true must return Dispatched so the poller continues to the next item");
     }
 
     [Fact]
-    public async Task DispatchPendingAsync_Conflict_ReturnsPermanentRejection()
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_ConcurrencyLimit_ReturnsPermanentRejection()
     {
         var workItemId = Guid.NewGuid();
         _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
-            .RespondWith(Response.Create().WithStatusCode(409));
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"concurrency_limit"}"""));
 
         var result = await _sut.DispatchPendingAsync(workItemId);
 
         result.Should().Be(DispatchPendingResult.PermanentRejection,
-            "409 Conflict must return PermanentRejection so the Scheduler poller stops dispatching this selector");
+            "200 with dispatched:false must return PermanentRejection (stop selector this cycle)");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_NotPending_ReturnsPermanentRejection()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"not_pending"}"""));
+
+        var result = await _sut.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.PermanentRejection,
+            "200 with dispatched:false (not_pending) must return PermanentRejection");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_NoTemplate_ReturnsPermanentRejection()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"no_template"}"""));
+
+        var result = await _sut.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.PermanentRejection,
+            "200 with dispatched:false (no_template) must return PermanentRejection");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_409_ThrowsHttpRequestException()
+    {
+        // Issue #2976: 409 is no longer an expected response from this endpoint.
+        // The client must surface it as an exception (via EnsureSuccessStatusCode).
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var act = () => _sut.DispatchPendingAsync(workItemId);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "409 is no longer an expected response; it must surface as an exception");
     }
 
     [Fact]

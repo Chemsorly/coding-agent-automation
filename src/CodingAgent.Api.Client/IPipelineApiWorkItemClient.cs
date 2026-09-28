@@ -74,11 +74,14 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     /// Claims the item (Pending→Dispatched) and creates the K8s Job atomically.
     /// Returns a <see cref="DispatchPendingResult"/> indicating the outcome:
     /// <list type="bullet">
-    ///   <item><see cref="DispatchPendingResult.Dispatched"/> — item dispatched successfully (200 OK).</item>
-    ///   <item><see cref="DispatchPendingResult.PermanentRejection"/> — item not Pending, concurrency limit reached,
-    ///     or no template for selector (409 Conflict). Do not retry this item in the current cycle.</item>
-    ///   <item><see cref="DispatchPendingResult.Transient"/> — PVC unavailable, advisory lock timeout, or K8s failure
-    ///     (503 Service Unavailable). Retry in the next poll cycle.</item>
+    ///   <item><see cref="DispatchPendingResult.Dispatched"/> — item dispatched successfully
+    ///     (200 OK with <c>{ "dispatched": true }</c>).</item>
+    ///   <item><see cref="DispatchPendingResult.PermanentRejection"/> — item not Pending, concurrency
+    ///     limit reached, or no template for selector
+    ///     (200 OK with <c>{ "dispatched": false, "reason": "..." }</c>). Do not retry this item in
+    ///     the current cycle.</item>
+    ///   <item><see cref="DispatchPendingResult.Transient"/> — PVC unavailable, advisory lock timeout,
+    ///     or K8s failure (503 Service Unavailable). Retry in the next poll cycle.</item>
     /// </list>
     /// Throws <see cref="System.Net.Http.HttpRequestException"/> for all other unexpected status codes.
     /// </summary>
@@ -96,9 +99,11 @@ public enum DispatchPendingResult
     Dispatched,
 
     /// <summary>
-    /// Permanent rejection (409 Conflict): item is not in Pending state, the concurrency limit for this
-    /// selector is reached, or no job template matches the selector. Do not retry in the current cycle;
-    /// the Scheduler poller treats this as a stop signal for the item's AgentSelector.
+    /// Permanent rejection: item is not in Pending state, the concurrency limit for this
+    /// selector is reached, or no job template matches the selector.
+    /// Returned when the API responds 200 with <c>{ "dispatched": false }</c>.
+    /// Do not retry in the current cycle; the Scheduler poller treats this as a stop signal
+    /// for the item's AgentSelector.
     /// </summary>
     PermanentRejection,
 

@@ -138,6 +138,7 @@ All counters with closed tag sets are pre-initialized to `0` at API process star
 - Histograms (`pipeline.run.duration`, `workdistribution.job_execution_duration_seconds`) cannot be pre-initialized and are left as-is.
 - `pipeline.run.outcomes` is pre-initialized with **75 series** (3-tag): 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
 - `workdistribution.workitems_terminated` is pre-initialized with **24 series**: 3 statuses × (1 none + 7 failure_reasons).
+- `workdistribution.dispatch.attempts` is pre-initialized with **7 series**: (dispatched/none) + (deferred × 3 reasons) + (transient × 3 reasons). See [Work Distribution Metrics](#work-distribution-metrics) for the full tag value table.
 
 ### Prompt Cache and Per-Phase Token Data
 
@@ -176,8 +177,8 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 | `quality_gate.process.duration` | 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600 |
 | `quality_gate.post_pr_ci.duration` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
 | `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
-| `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
-| `workdistribution.workitems_pending_duration_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
+| `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, **7200, 14400, 28800, 43200, 86400** (extended in #2976) |
+| `workdistribution.pod_start_seconds` | 5, 10, 20, 30, 60, 120, 300, 600 (added in #2976) |
 | `workdistribution.job_execution_duration_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `workdistribution.timeout_execution_age_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 
@@ -204,13 +205,15 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 
 ### Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/WorkDistributionTelemetry.cs`, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `ReconciliationService` in the Job Controller, and by `WorkItemCountsService` in the Scheduler (`workitems_by_status` gauge only — `WorkItemMetricsBackgroundService` was removed from the Pipeline API in Spec 047/048).
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/WorkDistributionTelemetry.cs`, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `ReconciliationService` in the Job Controller, and by `WorkItemCountsService` in the Scheduler (`workitems_by_status` and `pending.oldest_age_seconds` gauges — `WorkItemMetricsBackgroundService` was removed from the Pipeline API in Spec 047/048).
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
-| `workdistribution.dispatch_latency_seconds` | Histogram | s | — | Time from WorkItem creation (Pending) to Dispatched |
-| `workdistribution.workitems_pending_duration_seconds` | Histogram | s | — | Time spent in Pending status before dispatch |
-| `workdistribution.job_execution_duration_seconds` | Histogram | s | — | Total execution duration (Dispatched → terminal) |
+| `workdistribution.dispatch.attempts` | Counter | {attempt} | `result`, `reason` | Every dispatch attempt at `POST /api/work-items/{id}/dispatch` (pending-dispatch path). Pre-initialized at API startup for all 7 valid tag combinations. Prometheus: `workdistribution_dispatch_attempts_total`. |
+| `workdistribution.dispatch_latency_seconds` | Histogram | s | `agent_selector` | Time from WorkItem creation (Pending) to Dispatched. Buckets extended to 86400 s in issue #2976 to prevent p95 saturation. |
+| `workdistribution.pending.oldest_age_seconds` | ObservableGauge | s | — | Age in seconds of the oldest Pending WorkItem. Emits no measurement when there are no Pending items. Updated every 10 s by the Scheduler's `WorkItemCountsService`. Prometheus: `workdistribution_pending_oldest_age_seconds`. |
+| `workdistribution.pod_start_seconds` | Histogram | s | — | Time from WorkItem dispatch (`DispatchedAt`) to the agent's first `GET /assignment` call. Recorded once per WorkItem on the first assignment fetch. Prometheus: `workdistribution_pod_start_seconds`. |
+| `workdistribution.job_execution_duration_seconds` | Histogram | s | `status` | Total execution duration (Dispatched → terminal) |
 | `workdistribution.timeout_execution_age_seconds` | Histogram | s | — | Execution age at the moment a timeout is enforced. Canary: if p10 clusters near zero, the timeout anchor is wrong |
 | `workdistribution.workitems_terminated` | Counter | {item} | `status`, `failure_reason` | Work items reaching a terminal state |
 | `workdistribution.dispatcher_polls` | Counter | {poll} | — | Number of dispatch poll cycles executed |
@@ -220,8 +223,21 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 | `workdistribution.workitems_by_status` | ObservableGauge | {item} | `status`, `agent_selector` | Current count of WorkItems by status |
 | `workdistribution.timeout_canary_violations` | Counter | {violation} | — | Timeouts skipped due to canary invariant violation — any non-zero value indicates a timestamp bug |
 | `workdistribution.progress_write_failures` | Counter | {failure} | — | Failed `LastProgressAt` DB writes. Sustained non-zero rate means `ReconciliationService` sees stale values and may false-positive timeout agents |
+| `workdistribution.pvc_pool_exhaustions` | Counter | {event} | — | PVC pool exhaustion events — fires once per `POST /api/work-items/{id}/dispatch` call that finds no available PVC |
+| `workdistribution.agent_timeouts` | Counter | {job} | `agent_selector` | Agent jobs killed by the session timeout enforcer |
 | `pipeline.db_retention.pipeline_runs_deleted` | Counter | {row} | — | `PipelineRuns` rows deleted by the per-project retention sweep |
 | `pipeline.db_retention.work_items_deleted` | Counter | {row} | — | `WorkItems` rows deleted by the per-project retention sweep |
+
+**Removed in issue #2976:** `workdistribution.workitems_pending_duration_seconds` — this histogram recorded exactly the same value as `workdistribution.dispatch_latency_seconds` and has been removed. Update any Grafana panels or alert rules that referenced it to use `workdistribution_dispatch_latency_seconds_bucket` instead.
+
+#### `workdistribution.dispatch.attempts` tag values
+
+| Tag | Values |
+|-----|--------|
+| `result` | `dispatched` — K8s Job created and WorkItem transitioned to Dispatched. `deferred` — item not dispatched for an expected reason (backpressure). `transient` — transient failure; retry next poll cycle. |
+| `reason` | `none` (dispatched), `concurrency_limit` (max concurrent reached), `not_pending` (item already processed), `no_template` (no job template for selector), `pvc_unavailable` (no credential PVC), `lock_timeout` (advisory lock timed out), `k8s_error` (K8s Job creation failed) |
+
+**Counter pre-initialization:** All 7 valid `result × reason` combinations are pre-initialized to `0` at API startup via `WorkDistributionTelemetry.PreInitializeDispatchAttempts()`, called from `Program.EmitPreInitCounters`. This ensures Prometheus `increase()` is visible from the first increment after a deploy.
 
 ## Traces
 
