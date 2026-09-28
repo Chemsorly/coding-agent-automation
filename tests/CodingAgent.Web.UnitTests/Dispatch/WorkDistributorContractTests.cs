@@ -222,6 +222,36 @@ public class WorkDistributorAdditionalTests
     }
 
     [Fact]
+    public async Task Kubernetes_GetActiveDecompositionCountAsync_OnHttpRequestException_ReturnsZero()
+    {
+        // HttpRequestException from the API client (e.g. transient network error, non-2xx response)
+        // must be caught and return 0 so the gate falls back to disabled for this cycle.
+        var mockClient = new Mock<IPipelineApiWorkItemClient>();
+        mockClient.Setup(c => c.GetActiveDecompositionCountAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Simulated HTTP error", null, System.Net.HttpStatusCode.ServiceUnavailable));
+        var sut = new KubernetesWorkDistributor(mockClient.Object, Mock.Of<ILogger<KubernetesWorkDistributor>>());
+
+        var count = await sut.GetActiveDecompositionCountAsync(CancellationToken.None);
+
+        count.Should().Be(0, "HttpRequestException must be caught and return 0 (gate disabled)");
+    }
+
+    [Fact]
+    public async Task Kubernetes_GetActiveDecompositionCountAsync_OnUnexpectedException_ReturnsZero()
+    {
+        // Any non-HTTP exception (e.g. serialization failure) must also be caught and return 0
+        // so the gate falls back to disabled rather than crashing the loop cycle.
+        var mockClient = new Mock<IPipelineApiWorkItemClient>();
+        mockClient.Setup(c => c.GetActiveDecompositionCountAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated unexpected error"));
+        var sut = new KubernetesWorkDistributor(mockClient.Object, Mock.Of<ILogger<KubernetesWorkDistributor>>());
+
+        var count = await sut.GetActiveDecompositionCountAsync(CancellationToken.None);
+
+        count.Should().Be(0, "unexpected exceptions must be caught and return 0 (gate disabled)");
+    }
+
+    [Fact]
     public async Task Kubernetes_DistributeAsync_Success_ReturnsWorkItemId()
     {
         var sut = CreateKubernetes();
