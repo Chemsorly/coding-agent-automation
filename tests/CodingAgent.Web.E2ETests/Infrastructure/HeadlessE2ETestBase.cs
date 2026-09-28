@@ -457,7 +457,6 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     }
 
     /// <summary>
-    /// <summary>
     /// Polls <see cref="FakeKubernetesJobClient.ChatJobs"/> until a job with a
     /// <c>caa/chat-selector</c> label matching <paramref name="agentSelector"/> appears.
     /// </summary>
