@@ -121,6 +121,77 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
     }
 
     /// <summary>
+    /// Dispatches a PR review through the full pipeline:
+    /// <c>IDispatchOrchestrationService.PrepareReviewDistributionRequestAsync</c> → <c>IWorkDistributor.DistributeAsync</c>.
+    ///
+    /// <para>
+    /// Analogous to <see cref="DispatchIssueAsync"/> but for the PR review path. Unlike the
+    /// implementation path, <c>PrepareReviewDistributionRequestAsync</c> requires both a
+    /// <see cref="ReviewDispatchRequest"/> and a <see cref="PipelineProject"/> — this helper
+    /// fetches the default project from the config store.
+    /// </para>
+    ///
+    /// <para>
+    /// The caller is responsible for connecting a <see cref="FakeAgentClient"/> before calling
+    /// this method and for waiting on <c>fakeAgent.JobAssigned.Task</c> to receive the assignment.
+    /// The assignment message includes <c>LinkedIssueContexts</c> for PR review runs.
+    /// </para>
+    /// </summary>
+    /// <param name="prIdentifier">The PR number as a string (e.g., "101").</param>
+    /// <param name="prTitle">The PR title.</param>
+    /// <param name="prDescription">The PR body / description. Used by <c>FetchLinkedIssueContextsAsync</c> to extract closing keywords and issue URLs.</param>
+    /// <param name="prBranchName">The PR head branch name.</param>
+    /// <param name="prTargetBranch">The PR base/target branch name.</param>
+    /// <param name="projectId">Optional project ID; defaults to <see cref="WellKnownIds.DefaultProjectId"/>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The distribution result.</returns>
+    protected async Task<DistributionResult> DispatchPrReviewAsync(
+        string prIdentifier,
+        string prTitle,
+        string? prDescription = null,
+        string prBranchName = "feature/test-branch",
+        string prTargetBranch = "main",
+        string? projectId = null,
+        CancellationToken ct = default)
+    {
+        // TODO: Both services are resolved from the root IServiceProvider (Fixture.Factory.Services).
+        // If either IDispatchOrchestrationService or IWorkDistributor is registered as Scoped,
+        // resolving from the root container causes a DI lifetime mismatch (single instance outliving
+        // any request scope, with potential ObjectDisposedException on a disposed dependency). This
+        // mirrors the existing DispatchIssueAsync pattern. Verify both are Singleton/Transient; if
+        // either is Scoped, wrap the resolution and use in a CreateScope() block.
+        var orchService = Fixture.Factory.Services.GetRequiredService<IDispatchOrchestrationService>();
+        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
+
+        projectId ??= WellKnownIds.DefaultProjectId;
+        var project = await Fixture.ConfigStore.GetProjectByIdAsync(projectId, ct)
+            ?? throw new InvalidOperationException($"Project '{projectId}' not found in ConfigStore");
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = prIdentifier,
+            PrTitle = prTitle,
+            PrDescription = prDescription,
+            PrBranchName = prBranchName,
+            PrTargetBranch = prTargetBranch,
+            PrUrl = $"https://github.com/e2e-org/e2e-repo/pull/{prIdentifier}",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            InitiatedBy = "e2e-test"
+        };
+
+        var request = await orchService.PrepareReviewDistributionRequestAsync(reviewRequest, project, ct);
+        if (request is null)
+            return new DistributionResult(
+                Success: false,
+                WorkItemId: null,
+                ErrorMessage: $"Orchestration failed for PR '{prIdentifier}' " +
+                    "(issue not found, no matching profile, or dedup guard rejected).");
+
+        return await distributor.DistributeAsync(request, ct);
+    }
+
+    /// <summary>
     /// Distributes work through <c>IWorkDistributor</c> directly, skipping orchestration.
     /// Use when the test is about the WorkItem row and not about issue resolution.
     /// </summary>
@@ -385,7 +456,6 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             $"{(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s");
     }
 
-    /// <summary>
     /// <summary>
     /// Polls <see cref="FakeKubernetesJobClient.ChatJobs"/> until a job with a
     /// <c>caa/chat-selector</c> label matching <paramref name="agentSelector"/> appears.
