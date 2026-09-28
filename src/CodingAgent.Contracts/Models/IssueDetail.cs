@@ -25,6 +25,12 @@ public sealed class IssueDetail
     public string? Url { get; init; }
 
     /// <summary>Issue creation date, used for FIFO ordering in the pipeline loop.</summary>
+    // TODO [WARNING]: IssueDetail now has consecutive MessagePack keys 0–6. If a future field is
+    // added at key 5 on a different branch and later merged, the numbering will collide silently
+    // (MessagePack resolves duplicate keys by last-writer-wins, with no compile-time error).
+    // A missing key 6 in wire data produced by an older node (pre-CreatedAt) deserializes safely
+    // as null, which is the intended default for DateTime?. Structural observation only — no
+    // current bug — but worth tracking to preserve serialization stability across branches.
     [Key(6)]
     public DateTime? CreatedAt { get; init; }
 }

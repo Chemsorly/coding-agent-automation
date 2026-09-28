@@ -43,12 +43,20 @@ public sealed class FakeJobController : IAsyncDisposable
 
     /// <summary>
     /// Work item ids this controller has claimed, for test assertions.
-    /// ConcurrentBag is used because the background poll loop (running on a thread-pool thread)
-    /// calls Add() concurrently with test code reading the collection. A plain List&lt;Guid&gt;
-    /// would produce a data race: concurrent Add + enumeration can throw InvalidOperationException
-    /// or silently undercount.
+    ///
+    /// Backed by a <see cref="List{T}"/> protected by a lock so that:
+    /// <list type="bullet">
+    ///   <item>The background poll loop (running on a thread-pool thread) can call
+    ///         <see cref="ClaimedWorkItemIdsLock"/>-guarded adds concurrently with test code.</item>
+    ///   <item>Test code that needs indexed access (<c>[0]</c>, <c>[1]</c>) can read via
+    ///         <see cref="ClaimedWorkItemIds"/> under the same lock, or snapshot via
+    ///         <c>ClaimedWorkItemIds.ToList()</c>.</item>
+    /// </list>
+    /// Tests that need a stable snapshot (to avoid holding the lock across awaits) should call
+    /// <c>Fixture.JobController.ClaimedWorkItemIds.ToList()</c> or access individual indices
+    /// only after asserting the expected count is already reached.
     /// </summary>
-    public ConcurrentBag<Guid> ClaimedWorkItemIds { get; } = [];
+    public ThreadSafeList<Guid> ClaimedWorkItemIds { get; } = new();
 
     /// <summary>
     /// Clears ClaimedWorkItemIds between tests. Must be called from ResetAll() so assertions
@@ -338,4 +346,81 @@ public sealed class FakeJobController : IAsyncDisposable
         }
         _cts.Dispose();
     }
+}
+
+/// <summary>
+/// A <see cref="List{T}"/>-backed collection that is safe for concurrent <see cref="Add"/> calls
+/// from background threads and also supports indexed access (<c>[i]</c>), <see cref="Count"/>,
+/// <see cref="Clear"/>, and <see cref="ToList"/> from test code.
+///
+/// <para>
+/// <see cref="System.Collections.Concurrent.ConcurrentBag{T}"/> was used here previously, but it
+/// does not support indexing — <c>ClaimedWorkItemIds[0]</c> caused CS0021 compilation errors in
+/// tests that assert on dispatch order (e.g. <c>MonitoringInteractionTests</c>). A plain
+/// <c>List&lt;T&gt;</c> is unsafe for concurrent access. This wrapper satisfies both requirements
+/// with a minimal lock-per-operation approach, which is sufficient for the test harness
+/// (low contention, not a hot path).
+/// </para>
+///
+/// <para>
+/// TODO [WARNING]: <see cref="Count"/> and <c>this[int]</c> are each individually lock-protected
+/// but are not atomic together. A pattern like <c>for (int i = 0; i &lt; list.Count; i++) list[i]</c>
+/// acquires the lock twice per iteration; a concurrent <see cref="Add"/> or <see cref="Clear"/>
+/// between the <see cref="Count"/> read and the indexer read can produce
+/// <see cref="ArgumentOutOfRangeException"/>. Since <see cref="Clear"/> is called from
+/// <c>ResetAll()</c> on the test thread while the poll loop's <see cref="Add"/> runs on a
+/// background thread, the race is real (though narrow). Callers must always take a snapshot via
+/// <see cref="ToList()"/> before performing multiple indexed reads. Direct indexed access (e.g.
+/// <c>list[0]</c>, <c>list[1]</c> in separate statements) is only safe after the loop is stopped
+/// and no further <see cref="Add"/> calls can occur.
+/// </para>
+/// </summary>
+public sealed class ThreadSafeList<T> : IEnumerable<T>
+{
+    private readonly List<T> _inner = new();
+    private readonly object _lock = new();
+
+    /// <summary>Number of items currently in the list.</summary>
+    public int Count
+    {
+        get { lock (_lock) return _inner.Count; }
+    }
+
+    /// <summary>Returns the item at the given index.</summary>
+    public T this[int index]
+    {
+        get { lock (_lock) return _inner[index]; }
+    }
+
+    /// <summary>Appends an item. Safe to call from any thread.</summary>
+    public void Add(T item)
+    {
+        lock (_lock) _inner.Add(item);
+    }
+
+    /// <summary>Removes all items.</summary>
+    public void Clear()
+    {
+        lock (_lock) _inner.Clear();
+    }
+
+    /// <summary>Returns a stable snapshot of the current contents.</summary>
+    public List<T> ToList()
+    {
+        lock (_lock) return new List<T>(_inner);
+    }
+
+    /// <inheritdoc cref="Enumerable.Any{T}(IEnumerable{T})"/>
+    public bool Any()
+    {
+        lock (_lock) return _inner.Count > 0;
+    }
+
+    /// <summary>
+    /// Returns a snapshot enumerator. The snapshot is taken under the lock so the enumeration is
+    /// consistent, but the caller does not hold the lock during iteration.
+    /// </summary>
+    public IEnumerator<T> GetEnumerator() => ToList().GetEnumerator();
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
 }

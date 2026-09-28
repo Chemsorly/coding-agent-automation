@@ -23,8 +23,10 @@ namespace CodingAgent.Web.E2ETests.Infrastructure;
 /// hosts see it. A <see cref="FakeJobController"/> supplies the dispatch loop that Spec 043 moved
 /// into its own process.
 ///
-/// Start order matters: the API must be listening before the Blazor host builds, because the
-/// monolith reads <c>PipelineApi:BaseUrl</c> during configuration and fast-fails without it.
+/// Start order matters: the API must be listening before the Scheduler builds (it uses
+/// <c>PipelineApi:BaseUrl</c>), and both must be listening before the Blazor host builds, because
+/// the monolith reads <c>PipelineApi:BaseUrl</c> and <c>SchedulerApi:BaseUrl</c> during
+/// configuration and fast-fails without them.
 ///
 /// Playwright is started lazily by <see cref="GetBrowserAsync"/>. Tests that assert on state
 /// rather than on pages — the <see cref="HeadlessE2ETestBase"/> family — never call it, so they
@@ -39,6 +41,7 @@ public sealed class E2EFixture : IAsyncLifetime
     public E2EWebApplicationFactory Factory { get; } = new();
 
     private ApiE2EWebApplicationFactory? _apiFactory;
+    private SchedulerE2EWebApplicationFactory? _schedulerFactory;
     private FakeJobController? _jobController;
     private JobControllerE2EWebApplicationFactory? _realJobControllerFactory;
 
@@ -89,6 +92,14 @@ public sealed class E2EFixture : IAsyncLifetime
     /// </summary>
     public IServiceProvider ApiServices => _apiFactory?.Services
         ?? throw new InvalidOperationException("API host not started");
+
+    /// <summary>
+    /// The Scheduler host. <see cref="CodingAgent.Pipeline.Services.PipelineLoopService"/> lives
+    /// here — tests that drive the closed loop must resolve it from this factory rather than from
+    /// <see cref="Factory"/> (the Blazor host no longer hosts the loop service).
+    /// </summary>
+    public SchedulerE2EWebApplicationFactory SchedulerFactory => _schedulerFactory
+        ?? throw new InvalidOperationException("Scheduler host not started");
 
     /// <summary>
     /// Chat job dispatcher. Moved to the API host (Spec 044/045) so it polls the registry
@@ -160,6 +171,24 @@ public sealed class E2EFixture : IAsyncLifetime
         using (var apiClient = _apiFactory.CreateClient()) { }
 
         Factory.ApiBaseUrl = _apiFactory.ServerAddress;
+
+        // Build the Scheduler host after the API is listening, so PipelineApi__BaseUrl is
+        // resolvable. Must be built before the Blazor host because the Web app reads
+        // SchedulerApi__BaseUrl during configuration and fast-fails without it.
+        _schedulerFactory = new SchedulerE2EWebApplicationFactory(
+            Factory.DbName,
+            Factory.ConfigStore,
+            Factory.HistoryService,
+            Factory.FakeProviders,
+            Factory.FakeK8sClient,
+            ApiKey,
+            _apiFactory.ServerAddress);
+
+        // Force the Scheduler host to build and bind its Kestrel port.
+        using (var schedulerClient = _schedulerFactory.CreateClient()) { }
+
+        Factory.SchedulerBaseUrl = _schedulerFactory.ServerAddress;
+
         using var appClient = Factory.CreateClient();
 
         // The work-item client is registered in the monolith by AddPipelineApiClient and points at
@@ -198,6 +227,7 @@ public sealed class E2EFixture : IAsyncLifetime
     {
         Factory.ResetAll();
         _apiFactory?.ResetAll();
+        _schedulerFactory?.ResetAll();
         _jobController?.ForgetAllInFlight();
         // Clear claimed IDs so assertions in each test are not polluted by earlier test runs.
         // Without this, Assert.Single / Assert.Equal(2, ...) / Assert.Empty assertions on
@@ -219,12 +249,23 @@ public sealed class E2EFixture : IAsyncLifetime
     /// </summary>
     public async Task ResetAllAsync()
     {
-        var loop = Factory.Services.GetRequiredService<PipelineLoopService>();
-        loop.StopLoop();
+        // PipelineLoopService lives in the Scheduler host; stop it there.
+        if (_schedulerFactory is not null)
+        {
+            var loop = _schedulerFactory.LoopService;
+            loop.StopLoop();
 
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-        while (loop.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(25);
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            // TODO [WARNING]: This busy-wait has no CancellationToken, so callers cannot interrupt
+            // early (e.g. via xUnit's test timeout). If StopLoop() fails to drive IsLoopActive to
+            // false before the 10s deadline (e.g. the loop hangs in a long cycle under CI load),
+            // ResetAll() is still called with the loop technically active, leaving a stale iteration
+            // in flight when the next test begins. The deadline expiry is silent — consider logging
+            // a warning so test pollution is visible in CI output rather than manifesting as a
+            // confusing failure in the next test.
+            while (loop.IsLoopActive && DateTime.UtcNow < deadline)
+                await Task.Delay(25);
+        }
 
         ResetAll();
     }
@@ -293,8 +334,18 @@ public sealed class E2EFixture : IAsyncLifetime
             await _jobController.DisposeAsync();
 
         await Factory.DisposeAsync();
+        // TODO [WARNING]: _apiFactory is disposed before _schedulerFactory. The Scheduler host
+        // holds PipelineLoopService which maintains an HttpClient pointed at the API host. If the
+        // loop is still running when the API factory is disposed, in-flight HTTP requests from the
+        // Scheduler to the API receive ObjectDisposedException or HttpRequestException on background
+        // threads. The prior disposal order (Scheduler before API) was safer. Tests must call
+        // ResetAllAsync() (which stops the loop) before DisposeAsync to avoid this window; any
+        // test that does not properly stop the loop may surface background-thread exceptions as
+        // unrelated failures in teardown.
         if (_apiFactory is not null)
             await _apiFactory.DisposeAsync();
+        if (_schedulerFactory is not null)
+            await _schedulerFactory.DisposeAsync();
         if (_realJobControllerFactory is not null)
             await _realJobControllerFactory.DisposeAsync();
 

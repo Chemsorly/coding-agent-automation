@@ -71,6 +71,13 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     {
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
 
+        // TODO [WARNING]: `filtered` is the live Issues reference when labels is null/empty (the
+        // ternary below uses `Issues` directly). The subsequent `.Skip().Take().ToList()` snapshots
+        // `paged`, but `filtered.Count` is evaluated against the live list at a different point.
+        // If AddLabelsAsync (running on the FakeJobController poll thread) mutates Issues concurrently
+        // with a paging read on the PipelineLoopService background thread, `HasMore` and the item
+        // projection can observe different list states. Materialize `filtered` to a list up front
+        // (e.g. `.ToList()`) so both the Count and the Skip/Take operate on the same snapshot.
         var filtered = labels is { Count: > 0 }
             ? Issues.Where(i => labels.Any(l => i.Labels.Contains(l))).ToList()
             : Issues;
@@ -141,12 +148,6 @@ public sealed class InMemoryIssueProvider : IIssueProvider
             var existing = Issues[idx];
             var updated = new HashSet<string>(existing.Labels);
             updated.UnionWith(labels);
-            // TODO [WARNING]: CreatedAt is not propagated here. If the loop's dispatch path calls
-            // AddLabelsAsync (e.g. to swap agent:next → agent:in-progress) on an issue that was
-            // seeded with a CreatedAt value, the rebuilt IssueDetail has CreatedAt=null. On the next
-            // ListOpenIssuesAsync call the summary will carry a null CreatedAt, which SortByCreatedAtFifo
-            // treats as DateTime.MaxValue, silently breaking FIFO ordering for mutated issues in
-            // multi-cycle tests. Fix: add CreatedAt = existing.CreatedAt to the initializer below.
             Issues[idx] = new IssueDetail
             {
                 Description = existing.Description,
@@ -155,6 +156,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
                 Title = existing.Title,
                 Images = existing.Images,
                 Url = existing.Url,
+                CreatedAt = existing.CreatedAt,
             };
         }
         foreach (var label in labels)
@@ -169,8 +171,6 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         {
             var existing = Issues[idx];
             var updatedLabels = existing.Labels.Where(l => l != label).ToList();
-            // TODO [WARNING]: CreatedAt is not propagated here either (same issue as AddLabelsAsync above).
-            // Fix: add CreatedAt = existing.CreatedAt to the initializer below.
             Issues[idx] = new IssueDetail
             {
                 Description = existing.Description,
@@ -179,6 +179,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
                 Title = existing.Title,
                 Images = existing.Images,
                 Url = existing.Url,
+                CreatedAt = existing.CreatedAt,
             };
         }
         LabelChanges.Add((identifier.Value, label, false));
