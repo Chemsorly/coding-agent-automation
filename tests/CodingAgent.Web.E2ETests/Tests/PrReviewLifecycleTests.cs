@@ -210,9 +210,13 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         var activeRunId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "102").RunId;
 
         // Navigate to the run detail page and click the cancel button there.
+        // Cancel is a two-step UI flow: clicking cancel-pipeline-btn shows a confirmation prompt;
+        // confirm-cancel-pipeline-btn must then be clicked to actually issue the cancel.
         var runDetailPage = new RunDetailPage(Page, BaseUrl);
         await runDetailPage.NavigateAsync(activeRunId);
         await runDetailPage.CancelAsync();
+        // Click the confirmation button to complete the two-step cancel flow.
+        await Page.ClickAsync("[data-testid='confirm-cancel-pipeline-btn']");
 
         // Assert: the run ends up Cancelled in history
         // TODO: WaitForHistoryAsync throws TimeoutException rather than returning null when no matching
@@ -323,6 +327,19 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Lifecycle Template");
         await codingPage.ClickBrowsePrsAsync();
+
+        // Wait for the PR row to become clickable in the browser DOM: after the first run completes,
+        // the Blazor component renders pr-row-103 with class "drawer-issue-dispatched" and
+        // pointer-events:none until the server pushes a SignalR state update that clears IsBeingProcessed.
+        // Polling RunService alone is not sufficient — we must wait for the DOM class to clear.
+        await Page.WaitForFunctionAsync(
+            @"() => {
+                const row = document.querySelector('[data-testid=""pr-row-103""]');
+                return row && !row.classList.contains('drawer-issue-dispatched');
+            }",
+            null,
+            new() { Timeout = 15_000 });
+
         await codingPage.SelectPrAsync("103");
         await codingPage.ClickDispatchPrReviewAsync();
 
