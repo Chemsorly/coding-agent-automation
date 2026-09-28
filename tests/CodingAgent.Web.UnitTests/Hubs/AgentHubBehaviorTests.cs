@@ -530,6 +530,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
     public async Task ReportConsolidationComplete_Failed_UpdatesRunAsFailed()
     {
         var agent = CreateAgent();
+        agent.ActiveJobId = "crun-1"; // agent must have matching ActiveJobId to pass the ownership check
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var hub = CreateHubWithOrchestration();
@@ -545,6 +546,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
     public async Task ReportConsolidationComplete_WithSuggestions_PersistsAndIncrementsBadge()
     {
         var agent = CreateAgent();
+        agent.ActiveJobId = "crun-1"; // agent must have matching ActiveJobId to pass the ownership check
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var suggestions = new HarnessSuggestions
@@ -572,6 +574,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
     public async Task ReportConsolidationComplete_WithCreatedIssues_IncrementsBadge()
     {
         var agent = CreateAgent();
+        agent.ActiveJobId = "crun-1"; // agent must have matching ActiveJobId to pass the ownership check
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var hub = CreateHubWithOrchestration();

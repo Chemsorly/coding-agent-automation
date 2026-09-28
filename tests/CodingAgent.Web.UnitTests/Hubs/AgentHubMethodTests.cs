@@ -275,7 +275,7 @@ public sealed class AgentHubMethodTests
     }
 
     [Fact]
-    public async Task ReportConsolidationComplete_AgentNotFound_StillUpdatesRun()
+    public async Task ReportConsolidationComplete_AgentNotFound_ReturnsRejected()
     {
         _facade.Setup(f => f.GetByConnectionId(It.IsAny<string>())).Returns((AgentEntry?)null);
 
@@ -287,13 +287,14 @@ public sealed class AgentHubMethodTests
         };
 
         var hub = CreateHub();
-        await hub.ReportConsolidationComplete(result);
+        var returnValue = await hub.ReportConsolidationComplete(result);
 
-        // No agent → no transition, but HandleConsolidationCompleteAsync must still be called
+        // Null agent → REJECTED; no downstream processing, no status transition.
+        returnValue.Should().StartWith("REJECTED:");
         _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
         _mockConsolidationOps.Verify(
-            c => c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "job-99"), (AgentEntry?)null, It.IsAny<CancellationToken>()),
-            Times.Once);
+            c => c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
