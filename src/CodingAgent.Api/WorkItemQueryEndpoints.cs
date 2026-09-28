@@ -277,7 +277,8 @@ public static class WorkItemQueryEndpoints
     // ── GET /api/work-items/counts-by-status ─────────────────────────────────
 
     /// <summary>
-    /// Returns work item counts grouped by (Status, AgentSelector).
+    /// Returns work item counts grouped by (Status, AgentSelector) plus the oldest Pending item's
+    /// creation timestamp.
     /// Called by the Scheduler's WorkItemCountsService to feed Prometheus gauges.
     /// </summary>
     internal static async Task<IResult> GetCountsByStatus(
@@ -295,9 +296,20 @@ public static class WorkItemQueryEndpoints
             })
             .ToListAsync(ct);
 
-        return Results.Ok(counts.Select(c =>
-            new CodingAgent.Api.Client.WorkItemCountDto(c.Status, c.AgentSelector, c.Count))
-            .ToArray());
+        // Additional query for the oldest-pending-age gauge.
+        // Returns null when there are no Pending items — the gauge emits nothing in that case.
+        var oldestPendingCreatedAt = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.Status == WorkItemStatus.Pending)
+            .OrderBy(w => w.CreatedAt)
+            .Select(w => (DateTimeOffset?)w.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        var countsArray = counts
+            .Select(c => new CodingAgent.Api.Client.WorkItemCountDto(c.Status, c.AgentSelector, c.Count))
+            .ToArray();
+
+        return Results.Ok(new CodingAgent.Api.Client.WorkItemCountsResponseDto(countsArray, oldestPendingCreatedAt));
     }
 
     // ── GET /{id}/status ──────────────────────────────────────────────────

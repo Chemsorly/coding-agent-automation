@@ -284,10 +284,15 @@ Health endpoints:
 
 Key metrics (OpenTelemetry):
   workitems_by_status                    — gauge by status and agent_selector
-  workitems_pending_duration_seconds     — histogram
-  dispatch_latency_seconds               — histogram
+  dispatch_latency_seconds               — histogram (buckets extended to 86400 s in #2976)
+  dispatch_attempts_total                — counter by result and reason (added in #2976)
+  pending_oldest_age_seconds             — gauge (added in #2976)
+  pod_start_seconds                      — histogram (added in #2976)
   dispatcher_last_poll_epoch_seconds     — gauge (staleness detection)
   credential_pool_available              — gauge (PVC pool headroom)
+  {{- /* TODO [WARNING]: workitems_pending_duration_seconds was removed in issue #2976 (duplicate
+       of dispatch_latency_seconds). Update any Grafana panels or alert rules that referenced it
+       to use workdistribution_dispatch_latency_seconds_bucket instead. */ -}}
 
 ── Scaling ───────────────────────────────────────────────────────────────────
 

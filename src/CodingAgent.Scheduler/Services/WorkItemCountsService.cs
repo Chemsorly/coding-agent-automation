@@ -60,18 +60,27 @@ public sealed class WorkItemCountsService : BackgroundService
 
         try
         {
-            var counts = await _apiClient.GetWorkItemCountsAsync(ct);
+            var response = await _apiClient.GetWorkItemCountsAsync(ct);
             Volatile.Write(ref _cachedMeasurements,
-                counts.Select(c => new Measurement<long>(c.Count,
+                response.Counts.Select(c => new Measurement<long>(c.Count,
                     new KeyValuePair<string, object?>("status", c.Status),
                     new KeyValuePair<string, object?>("agent_selector", c.AgentSelector)))
-                      .ToList());
+                               .ToList());
+            // TODO [WARNING]: No test verifies that UpdateOldestPendingAge is called with
+            // response.OldestPendingCreatedAt on the success path, nor with null on the exception
+            // path (the catch block below). The gauge's observeValues conversion (ms > 0 → age in
+            // seconds; empty measurement when 0) is also entirely untested. Add a MeterListener-based
+            // test that seeds a non-null OldestPendingCreatedAt, ticks the poller, and asserts the
+            // gauge emits a plausible positive age; and one that asserts no measurement is emitted
+            // when the API returns null (no Pending items) or on the error path.
+            WorkDistributionTelemetry.UpdateOldestPendingAge(response.OldestPendingCreatedAt);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
             _logger.Warning(ex, "WorkItemCountsService: failed to fetch counts — resetting to empty");
             Volatile.Write(ref _cachedMeasurements, []);
+            WorkDistributionTelemetry.UpdateOldestPendingAge(null);
         }
     }
 }

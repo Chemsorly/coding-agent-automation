@@ -302,6 +302,9 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                     new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
             }
         }
+
+        // workdistribution.dispatch.attempts: 7 series (issue #2976)
+        WorkDistributionTelemetry.PreInitializeDispatchAttempts();
     }
 }
 

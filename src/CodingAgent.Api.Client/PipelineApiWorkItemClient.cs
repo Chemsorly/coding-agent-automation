@@ -234,20 +234,34 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
             $"/api/work-items/{workItemId}/dispatch",
             null,
             ct);
-        // Preserve the endpoint's intentional 409/503 distinction.
-        // 409 = permanent rejection (item not Pending, no template, concurrency limit —
-        // do NOT retry this selector this cycle).
         // 503 = transient failure (PVC exhausted, lock timeout, K8s failure — retry next poll cycle).
-        return response.StatusCode switch
-        {
-            System.Net.HttpStatusCode.OK => DispatchPendingResult.Dispatched,
-            System.Net.HttpStatusCode.Conflict => DispatchPendingResult.PermanentRejection,
-            System.Net.HttpStatusCode.ServiceUnavailable => DispatchPendingResult.Transient,
-            _ => throw new HttpRequestException(
-                $"Unexpected status {(int)response.StatusCode} dispatching work item {workItemId}",
-                inner: null,
-                statusCode: response.StatusCode)
-        };
+        if (response.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
+            return DispatchPendingResult.Transient;
+
+        // 409 is no longer expected from this endpoint (removed in issue #2976). Any unexpected
+        // status codes surface as HttpRequestException so they are visible in logs and traces.
+        // TODO [WARNING]: EnsureSuccessStatusCode() on a non-2xx response (e.g. from a misbehaving
+        // reverse proxy) throws HttpRequestException without draining the response body. For
+        // connection-pooled HttpClient, an unread body can leave the connection in an unclean state,
+        // preventing connection reuse and causing pool exhaustion under sustained error conditions.
+        // Consider reading/discarding the body before re-throwing, or switching to
+        // response.Content.ReadFromJsonAsync which drains the stream regardless.
+        response.EnsureSuccessStatusCode();
+
+        // 200 = either dispatched or deferred for an expected reason.
+        // Body must be read INSIDE the using scope — the response stream is disposed on scope exit.
+        // dispatched:true  → Dispatched (K8s Job created, WorkItem=Dispatched)
+        // dispatched:false → PermanentRejection (item not Pending, concurrency limit, no template)
+        var dto = await response.Content.ReadFromJsonAsync<DispatchPendingResponse>(
+            PipelineJsonOptions.Default, ct);
+        // TODO [WARNING]: If dto is null (empty body, wrong Content-Type, or malformed JSON),
+        // this silently maps to PermanentRejection, stopping dispatch for this selector for the
+        // cycle. A garbled success body is treated as backpressure rather than surfacing as an
+        // error, which could mask a server/serialization bug. Consider treating a null dto as
+        // Transient (retry next cycle) or throwing, to make the failure mode visible.
+        return dto?.Dispatched == true
+            ? DispatchPendingResult.Dispatched
+            : DispatchPendingResult.PermanentRejection;
     }
 
     // Internal DTOs for response deserialization
@@ -267,4 +281,11 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         public string IssueIdentifier { get; init; } = "";
         public string IssueProviderConfigId { get; init; } = "";
     }
+
+    /// <summary>
+    /// Shape of <c>POST /api/work-items/{id}/dispatch</c> 200 response body.
+    /// <c>Dispatched=true</c> means the item was dispatched; <c>false</c> means it was deferred
+    /// for an expected reason (concurrency limit, not Pending, no template).
+    /// </summary>
+    private sealed record DispatchPendingResponse(bool Dispatched, string? Reason);
 }
