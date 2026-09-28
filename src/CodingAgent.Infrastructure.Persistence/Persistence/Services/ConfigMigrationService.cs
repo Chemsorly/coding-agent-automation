@@ -316,8 +316,8 @@ public sealed class ConfigMigrationService
                 Name = project.Name,
                 Enabled = project.Enabled,
                 Description = project.Description,
-                Settings = SerializeToJson(project),
-                TemplateIds = project.TemplateIds.ToList()
+                // Membership is stored on the templates imported below, not in the project.
+                Settings = SerializeToJson(project with { TemplateIds = [] })
             });
 
             counts.Projects++;

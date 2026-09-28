@@ -285,7 +285,7 @@ public static class ConfigEndpoints
     /// <summary>
     /// GET /api/config/projects
     /// Returns all projects with their templates joined in (Req 6.3a).
-    /// Two store calls: LoadProjectsAsync + LoadAllTemplatesAsync, joined by project.TemplateIds.
+    /// Each project's TemplateIds are filled from its templates' own project, in TemplateOrder.
     /// Returning projects with empty template lists is a bug, not a simplification.
     /// </summary>
     internal static async Task<IResult> GetProjects(
@@ -356,14 +356,11 @@ public static class ConfigEndpoints
         return TypedResults.Ok(hasAny);
     }
 
-    internal static async Task<IResult> MoveTemplateFlat(
+    internal static Task<IResult> MoveTemplateFlat(
         [FromBody] MoveTemplateFlatRequest request,
         IProjectStore store,
         CancellationToken ct)
-    {
-        await store.MoveTemplateAsync(request.SourceProjectId, request.TargetProjectId, new TemplateId(request.TemplateId), ct);
-        return TypedResults.Ok();
-    }
+        => MoveTemplateToProjectAsync(request.SourceProjectId, request.TargetProjectId, request.TemplateId, store, ct);
 
     internal static async Task<IResult> GetAllTemplates(
         IProjectStore projectStore,
@@ -397,6 +394,13 @@ public static class ConfigEndpoints
         IProjectStore store,
         CancellationToken ct)
     {
+        if (await store.GetProjectByIdAsync(projectId, ct) is null)
+            return TypedResults.NotFound($"Project {projectId} does not exist.");
+
+        var conflict = await FindTemplateConflictAsync(template, projectId, store, ct);
+        if (conflict is not null)
+            return TypedResults.BadRequest(conflict);
+
         await store.SaveTemplateAsync(projectId, template, ct);
         return TypedResults.Ok();
     }
@@ -411,15 +415,45 @@ public static class ConfigEndpoints
         return TypedResults.Ok();
     }
 
-    internal static async Task<IResult> MoveTemplate(
+    internal static Task<IResult> MoveTemplate(
         string sourceProjectId,
         string templateId,
         string targetProjectId,
         IProjectStore store,
         CancellationToken ct)
+        => MoveTemplateToProjectAsync(sourceProjectId, targetProjectId, templateId, store, ct);
+
+    private static async Task<IResult> MoveTemplateToProjectAsync(
+        string sourceProjectId,
+        string targetProjectId,
+        string templateId,
+        IProjectStore store,
+        CancellationToken ct)
     {
+        if (await store.GetProjectByIdAsync(targetProjectId, ct) is null)
+            return TypedResults.NotFound($"Project {targetProjectId} does not exist.");
+
+        var template = (await store.LoadAllTemplatesAsync(ct)).FirstOrDefault(t => t.Id == templateId);
+        if (template is not null)
+        {
+            var conflict = await FindTemplateConflictAsync(template, targetProjectId, store, ct);
+            if (conflict is not null)
+                return TypedResults.BadRequest(conflict);
+        }
+
         await store.MoveTemplateAsync(sourceProjectId, targetProjectId, new TemplateId(templateId), ct);
         return TypedResults.Ok();
+    }
+
+    /// <summary>
+    /// Why the template cannot be saved into the project (<see cref="TemplateBindingRules"/>), or <c>null</c>.
+    /// </summary>
+    private static async Task<string?> FindTemplateConflictAsync(
+        PipelineJobTemplate template, string projectId, IProjectStore store, CancellationToken ct)
+    {
+        var templates = await store.LoadAllTemplatesAsync(ct);
+        var projects = await store.LoadProjectsAsync(ct);
+        return TemplateBindingRules.Validate(template, projectId, templates, projects);
     }
 
     // ── Key-value ──────────────────────────────────────────────────────────
@@ -542,8 +576,7 @@ public static class ConfigEndpoints
                 Name = e.Name,
                 Enabled = e.Enabled,
                 Description = e.Description,
-                Settings = e.Settings,
-                TemplateIds = e.TemplateIds
+                Settings = e.Settings
             }).ToListAsync(ct),
             JobTemplates = await db.PipelineJobTemplates.AsNoTracking().Select(e => new JobTemplateDto
             {
@@ -688,8 +721,7 @@ public static class ConfigEndpoints
                     Name = proj.Name,
                     Enabled = proj.Enabled,
                     Description = proj.Description,
-                    Settings = proj.Settings,
-                    TemplateIds = proj.TemplateIds ?? []
+                    Settings = proj.Settings
                 });
             }
 
@@ -814,7 +846,7 @@ public sealed class NamedConfigDto
     public string? Configuration { get; set; }
 }
 
-/// <summary>Project row.</summary>
+/// <summary>Project row. Its templates are the job templates whose ProjectId points to it; a templateIds list in older bundles is ignored.</summary>
 public sealed class ProjectDto
 {
     public Guid Id { get; set; }
@@ -822,7 +854,6 @@ public sealed class ProjectDto
     public bool Enabled { get; set; }
     public string? Description { get; set; }
     public string? Settings { get; set; }
-    public List<string>? TemplateIds { get; set; }
 }
 
 /// <summary>Pipeline job template row.</summary>

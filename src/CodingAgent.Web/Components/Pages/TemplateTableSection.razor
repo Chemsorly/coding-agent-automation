@@ -11,6 +11,20 @@
     }
     else
     {
+        var bindingConflicts = TemplateBindingRules.FindConflicts(Templates, Projects);
+        @if (bindingConflicts.Count > 0)
+        {
+            <div class="pipeline-warning-banner" role="status">
+                <strong>Template conflicts.</strong> A repository and an issue tracker each belong to one enabled template,
+                and names are unique within a project. Until a conflict is fixed, saving an enabled template that is part of it is refused.
+                <ul>
+                    @foreach (var conflict in bindingConflicts)
+                    {
+                        <li>@conflict</li>
+                    }
+                </ul>
+            </div>
+        }
         @foreach (var projectGroup in GetTemplatesByProject())
         {
             <div class="project-group" style="margin-bottom: 16px;">

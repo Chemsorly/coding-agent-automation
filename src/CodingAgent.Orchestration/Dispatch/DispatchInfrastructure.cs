@@ -89,7 +89,7 @@ public class DispatchInfrastructure
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
+            project, repoProviderId, providerConfigs, ct);
 
         return (providerConfigs, config);
     }
@@ -440,7 +440,7 @@ public class DispatchInfrastructure
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
+            project, repoProviderId, providerConfigs, ct);
 
         // ── Step 4: Carry forward staleness signals from issue context ──
         var forceRefresh = issueContext.ForceRefreshAnalysis;
