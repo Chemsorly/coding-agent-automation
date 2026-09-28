@@ -132,7 +132,7 @@ public record JobDistributionRequest
     /// <summary>Project context for cross-repo decomposition.</summary>
     public DecompositionProjectContext? ProjectContext { get; init; }
 
-    /// <summary>Source of decomposition request (e.g., epic issue URL).</summary>
+    /// <summary>Scope of a decomposition: "project-level" for a project epic, "template-level" for a repo epic.</summary>
     public string? DecompositionSource { get; init; }
 
     // --- Consolidation-specific ---

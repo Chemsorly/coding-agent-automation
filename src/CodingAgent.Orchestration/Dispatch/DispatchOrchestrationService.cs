@@ -452,59 +452,16 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         if (result is null) return null;
 
         var jobRequest = MapToRequest(result, WorkItemTaskType.Decomposition, request.PhaseType, _logger);
+
+        // The scope comes from the tracker the epic lives in. A project epic (in the project's epic
+        // tracker) may route sub-issues to every template's tracker, so it gets the project's repo list;
+        // a repo epic gets none, so its sub-issues stay in its own tracker.
+        var projectScope = request.Project.IsEpicTracker(request.IssueProviderId.Value);
         return jobRequest with
         {
-            DecompositionSource = request.DecompositionSource,
-            ProjectContext = await BuildDecompositionProjectContextAsync(request.Project, ct)
+            DecompositionSource = projectScope ? "project-level" : "template-level",
+            ProjectContext = projectScope ? await _infra.BuildProjectEpicContextAsync(request.Project, _logger, ct) : null
         };
-    }
-
-    /// <summary>
-    /// Builds a <see cref="DecompositionProjectContext"/> from the project's templates (1E-006).
-    /// Each enabled template becomes a <see cref="RepositoryTarget"/> entry so the agent knows
-    /// which repositories and issue providers are available for cross-repo sub-issue routing.
-    /// </summary>
-    [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(
-        Justification = "DI/config orchestration helper — tested indirectly via PrepareDecompositionDistributionRequestAsync integration path")]
-    private async Task<DecompositionProjectContext?> BuildDecompositionProjectContextAsync(
-        PipelineProject project, CancellationToken ct)
-    {
-        if (string.IsNullOrEmpty(project.Id) || project.TemplateIds is not { Count: > 0 })
-            return null;
-
-        try
-        {
-            var allTemplates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
-            var projectTemplates = allTemplates
-                .Where(t => project.TemplateIds.Contains(t.Id) && t.Enabled)
-                .ToList();
-
-            if (projectTemplates.Count == 0)
-                return null;
-
-            var repositories = projectTemplates.Select(t => new RepositoryTarget
-            {
-                TemplateName = t.Name,
-                IssueProviderId = t.IssueProviderId,
-                RepoProviderId = t.RepoProviderId,
-                Description = string.Empty,
-                DecompositionEnabled = t.DecompositionEnabled,
-                Labels = []
-            }).ToList();
-
-            return new DecompositionProjectContext
-            {
-                ProjectName = project.Name,
-                Repositories = repositories
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex,
-                "DispatchOrchestrationService: failed to build DecompositionProjectContext for project {ProjectId}; proceeding without it",
-                project.Id);
-            return null;
-        }
     }
 
     /// <summary>

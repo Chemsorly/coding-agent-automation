@@ -185,6 +185,65 @@ public class EpicDrawerServiceTests
         Assert.Contains("no longer exist", error);
     }
 
+    // ── DispatchDecompositionAsync — binding to the tracker the epic was listed from ──
+
+    [Fact]
+    public async Task DispatchDecompositionAsync_ProjectWithEpicTracker_BindsRunToEpicTracker()
+    {
+        // The drawer lists the project's epic tracker, so the run must be bound to it,
+        // while the drawer's template executes the epic.
+        var issueProviders = new List<ProviderConfig>
+        {
+            IssueProviders[0],
+            new() { Id = "epic-ip", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Epics" }
+        };
+        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" }, EpicIssueProviderId = "epic-ip" };
+        var capturedRequest = CaptureDecompositionRequest();
+
+        var (success, _, _) = await _service.DispatchDecompositionAsync(
+            MakeEpic("e-1", "agent:epic"), MakeTemplate(), issueProviders, RepoProviders, project);
+
+        Assert.True(success);
+        Assert.Equal("epic-ip", capturedRequest()!.IssueProviderId.Value);
+        Assert.Equal("rp-1", capturedRequest()!.RepoProviderId.Value);
+    }
+
+    [Fact]
+    public async Task DispatchDecompositionAsync_ProjectWithoutEpicTracker_BindsRunToTemplateTracker()
+    {
+        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" } };
+        var capturedRequest = CaptureDecompositionRequest();
+
+        var (success, _, _) = await _service.DispatchDecompositionAsync(
+            MakeEpic("e-1", "agent:epic"), MakeTemplate(), IssueProviders, RepoProviders, project);
+
+        Assert.True(success);
+        Assert.Equal("ip-1", capturedRequest()!.IssueProviderId.Value);
+    }
+
+    [Fact]
+    public async Task DispatchDecompositionAsync_ReturnsError_WhenEpicTrackerMissing()
+    {
+        var project = new PipelineProject { Id = "p-1", Name = "P", TemplateIds = new[] { "t-1" }, EpicIssueProviderId = "deleted-ip" };
+
+        var (success, error, _) = await _service.DispatchDecompositionAsync(
+            MakeEpic("e-1", "agent:epic"), MakeTemplate(), IssueProviders, RepoProviders, project);
+
+        Assert.False(success);
+        Assert.Contains("epic issue provider no longer exists", error);
+    }
+
+    private Func<DecompositionDispatchOrchestrationRequest?> CaptureDecompositionRequest()
+    {
+        DecompositionDispatchOrchestrationRequest? capturedRequest = null;
+        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(It.IsAny<DecompositionDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<DecompositionDispatchOrchestrationRequest, CancellationToken>((r, _) => capturedRequest = r)
+            .ReturnsAsync(CreateMinimalRequest(WorkItemTaskType.Decomposition));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
+        return () => capturedRequest;
+    }
+
     // ── DispatchFromEpicDrawerAsync ──
 
     [Fact]

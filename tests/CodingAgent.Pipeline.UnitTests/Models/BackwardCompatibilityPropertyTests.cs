@@ -60,7 +60,6 @@ public class BackwardCompatibilityPropertyTests
         Assert.Equal(originalConfig.StallWarningInterval, result.StallWarningInterval);
         Assert.Equal(originalConfig.MaxDecompositionSubIssues, result.MaxDecompositionSubIssues);
         Assert.Equal(originalConfig.MaxConcurrentDecompositions, result.MaxConcurrentDecompositions);
-        Assert.Equal(originalConfig.DecompositionTimeout, result.DecompositionTimeout);
         Assert.Equal(originalConfig.MaxOpenIssuesForContext, result.MaxOpenIssuesForContext);
         Assert.Equal(originalConfig.MaxRefactoringProposals, result.MaxRefactoringProposals);
         Assert.Equal(originalConfig.RefactoringReviewEnabled, result.RefactoringReviewEnabled);
@@ -135,7 +134,6 @@ public class PipelineConfigArbitraries
             from stallWarnMin in Gen.Choose(1, 10)
             from maxDecompSubIssues in Gen.Choose(1, 20)
             from maxConcurrentDecomp in Gen.Choose(1, 5)
-            from decompTimeoutMin in Gen.Choose(5, 30)
             from maxOpenIssues in Gen.Choose(10, 100)
             from maxRefactoring in Gen.Choose(1, 10)
             from refactoringReview in Gen.Elements(true, false)
@@ -168,7 +166,6 @@ public class PipelineConfigArbitraries
                 StallWarningInterval = TimeSpan.FromMinutes(stallWarnMin),
                 MaxDecompositionSubIssues = maxDecompSubIssues,
                 MaxConcurrentDecompositions = maxConcurrentDecomp,
-                DecompositionTimeout = TimeSpan.FromMinutes(decompTimeoutMin),
                 MaxOpenIssuesForContext = maxOpenIssues,
                 MaxRefactoringProposals = maxRefactoring,
                 RefactoringReviewEnabled = refactoringReview,

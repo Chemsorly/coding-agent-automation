@@ -64,6 +64,11 @@ public sealed class OrphanedLabelRecoveryServiceTests
                 new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "repo-1" }
             });
 
+        // Default: no project has an epic tracker.
+        _mockConfigClient
+            .Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+
         // Default: provider-1 config exists.
         _mockConfigClient
             .Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
@@ -606,6 +611,63 @@ public sealed class OrphanedLabelRecoveryServiceTests
                 It.IsAny<CancellationToken>()),
             Times.Once,
             "genuine orphan must still be swapped to agent:error after the dual-label refactor");
+    }
+
+    // ── Trackers swept: template trackers plus enabled projects' epic trackers (#3158) ──
+
+    private void SetupTrackers(IReadOnlyList<PipelineJobTemplate> templates, params PipelineProject[] projects)
+    {
+        _mockConfigClient
+            .Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates);
+        _mockConfigClient
+            .Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projects);
+    }
+
+    [Fact]
+    public async Task EpicTrackerOfAnEnabledProject_IsSwept()
+    {
+        // provider-1 is only a project's epic tracker: a project epic stuck in agent:in-progress there is recovered
+        SetupTrackers([], new PipelineProject { Id = "p1", Name = "P1", Enabled = true, EpicIssueProviderId = "provider-1" });
+        var epic = new IssueSummary { Identifier = "7", Title = "Stuck epic", Labels = [AgentLabels.InProgress] };
+        WireProviders(BuildProvider(epic).Object, EmptyProvider().Object);
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(
+                It.Is<ProviderConfigId>(p => p.Value == "provider-1"),
+                It.Is<IssueIdentifier>(i => i.Value == "7"),
+                AgentLabels.Error,
+                LabelTargetKind.Issue,
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task EpicTrackerOfADisabledProject_IsNotSwept()
+    {
+        SetupTrackers([], new PipelineProject { Id = "p1", Name = "P1", Enabled = false, EpicIssueProviderId = "provider-1" });
+        WireProviders(EmptyProvider().Object, EmptyProvider().Object);
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        _mockProviderFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task EpicTrackerThatIsAlsoATemplatesTracker_IsSweptOnce()
+    {
+        SetupTrackers(
+            [new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "repo-1" }],
+            new PipelineProject { Id = "p1", Name = "P1", Enabled = true, EpicIssueProviderId = "provider-1" });
+        WireProviders(EmptyProvider().Object, EmptyProvider().Object);
+
+        await CreateService().SweepOnceForTestAsync(CancellationToken.None);
+
+        // One tracker, four passes
+        _mockProviderFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Exactly(4));
     }
 
     /// <summary>

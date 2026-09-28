@@ -101,9 +101,9 @@ public class TemplatePolllerStaticMethodTests
         {
             [templateId.Value] = [MakePr(1)]
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            [templateId.Value] = [(MakeIssue("epic1"), PipelineRunType.DecompositionAnalysis)]
+            [templateId.Value] = [new EpicCandidate(MakeIssue("epic1"), PipelineRunType.DecompositionAnalysis, "ip-1")]
         };
 
         var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>
@@ -126,7 +126,7 @@ public class TemplatePolllerStaticMethodTests
         var templateId = new TemplateId("tpl-new");
         var issueQueues = new Dictionary<string, List<IssueSummary>>();
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
 
@@ -158,7 +158,7 @@ public class TemplatePolllerStaticMethodTests
             [templateId.Value] = [],
             [otherId] = [MakePr(1)]
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
             [templateId.Value] = [],
             [otherId] = []

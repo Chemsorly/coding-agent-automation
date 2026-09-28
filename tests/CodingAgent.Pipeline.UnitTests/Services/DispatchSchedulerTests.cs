@@ -140,30 +140,6 @@ public class DispatchSchedulerTests
         result.Should().BeFalse();
     }
 
-    [Fact]
-    public void HasEligibleProjectLevelDecomposition_EmptyDict_ReturnsFalse()
-    {
-        var queues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>();
-
-        var result = DispatchScheduler.HasEligibleProjectLevelDecomposition(queues);
-
-        result.Should().BeFalse();
-    }
-
-    [Fact]
-    public void HasEligibleProjectLevelDecomposition_WithItems_ReturnsTrue()
-    {
-        var template = CreateTemplate("t1");
-        var queues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
-        {
-            ["proj-1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis, template) }
-        };
-
-        var result = DispatchScheduler.HasEligibleProjectLevelDecomposition(queues);
-
-        result.Should().BeTrue();
-    }
-
     #endregion
 
     #region Fairness Test
@@ -186,9 +162,9 @@ public class DispatchSchedulerTests
         {
             ["t1"] = Enumerable.Range(1, 9).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = Enumerable.Range(1, 9).Select(i => (CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis)).ToList()
+            ["t1"] = Enumerable.Range(1, 9).Select(i => new EpicCandidate(CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis, "provider-t1")).ToList()
         };
 
         // Act — MinIssueSlots = 0 disables the floor (strict priority, original behavior)
@@ -203,7 +179,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -236,9 +211,9 @@ public class DispatchSchedulerTests
         {
             ["t1"] = Enumerable.Range(1, 9).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = Enumerable.Range(1, 9).Select(i => (CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis)).ToList()
+            ["t1"] = Enumerable.Range(1, 9).Select(i => new EpicCandidate(CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis, "provider-t1")).ToList()
         };
 
         // Act — MinIssueSlots = 1 (default) enables the floor
@@ -253,7 +228,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -305,8 +279,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -341,8 +314,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = new Dictionary<string, List<IssueSummary>>(),
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -381,8 +353,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -421,8 +392,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -474,8 +444,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -549,12 +518,12 @@ public class DispatchSchedulerTests
                 IsDraft = false
             }).ToList()
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
         if (decomps > 0)
         {
             decompQueues["t1"] = Enumerable.Range(1, decomps).Select(i =>
-                (new IssueSummary { Identifier = $"epic-{i}", Title = $"Epic {i}", Labels = new List<string>() },
-                 PipelineRunType.DecompositionAnalysis)).ToList();
+                new EpicCandidate(new IssueSummary { Identifier = $"epic-{i}", Title = $"Epic {i}", Labels = new List<string>() },
+                 PipelineRunType.DecompositionAnalysis, "provider-t1")).ToList();
         }
 
         var issueDispatched = 0;
@@ -633,7 +602,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -665,7 +633,7 @@ public class DispatchSchedulerTests
             ["t1"] = new() { CreateIssueSummary("issue-1"), CreateIssueSummary("issue-2"), CreateIssueSummary("issue-3") }
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>(); // No entry at all
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         // Act — should NOT throw KeyNotFoundException
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -679,7 +647,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -707,7 +674,7 @@ public class DispatchSchedulerTests
         {
             ["t1"] = new() // Empty list
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -721,7 +688,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -753,9 +719,9 @@ public class DispatchSchedulerTests
         {
             ["t1"] = Enumerable.Range(1, 10).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = Enumerable.Range(1, 10).Select(i => (CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis)).ToList()
+            ["t1"] = Enumerable.Range(1, 10).Select(i => new EpicCandidate(CreateIssueSummary($"epic-{i}"), PipelineRunType.DecompositionAnalysis, "provider-t1")).ToList()
         };
 
         // Act
@@ -770,7 +736,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -803,7 +768,7 @@ public class DispatchSchedulerTests
             ["t1"] = Enumerable.Range(1, 5).Select(i => CreateIssueSummary($"issue-{i}", labels: new[] { AgentLabels.Error })).ToList()
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         // Act — must terminate (no infinite loop)
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -817,7 +782,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -850,7 +814,7 @@ public class DispatchSchedulerTests
             ["t1"] = Enumerable.Range(1, 5).Select(i => CreateIssueSummary($"issue-{i}")).ToList()
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -864,7 +828,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -895,9 +858,9 @@ public class DispatchSchedulerTests
         {
             ["t1"] = Enumerable.Range(1, 2).Select(i => CreatePrSummary($"pr-{i}", i)).ToList()
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis, "provider-t1") }
         };
 
         // Act
@@ -912,7 +875,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -927,9 +889,9 @@ public class DispatchSchedulerTests
     }
 
     [Fact]
-    public async Task ProcessedCount_IncludesProjectLevelDecomposition()
+    public async Task ProcessedCount_IncludesProjectEpicInExecutorQueue()
     {
-        // Arrange: 2 issues + 1 project-level decomposition
+        // Arrange: 2 issues + 1 project epic queued under its executor template
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
@@ -939,10 +901,9 @@ public class DispatchSchedulerTests
             ["t1"] = new() { CreateIssueSummary("issue-1"), CreateIssueSummary("issue-2") }
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
-        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) }
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, "provider-epics") }
         };
 
         // Act
@@ -957,26 +918,21 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
             },
             CancellationToken.None, CancellationToken.None);
 
-        // Assert: 2 issues + 1 project-level decomp = 3
-        // TODO: [WARNING] Add assertion for _decompDispatchCount to verify the project-level decomp
-        // was actually dispatched (not just counted). The DispatchProjectLevelEpicAsync extraction
-        // changed how dispatched/failed propagate back to counters — a regression where
-        // additionalDecompDispatches is not incremented but processed still is would not be caught
-        // by ProcessedCount alone. Expected: _decompDispatchCount.Should().Be(1).
+        // Assert: 2 issues + 1 project epic = 3
         result.ProcessedCount.Should().Be(3);
+        _decompDispatchCount.Should().Be(1);
     }
 
     [Fact]
     public async Task ProcessedCount_FailureCountsAsProcessedAndFailed()
     {
-        // Arrange: project-level decomposition that throws on prepare
+        // Arrange: project epic whose dispatch throws on prepare
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
@@ -990,10 +946,9 @@ public class DispatchSchedulerTests
 
         var issueQueues = new Dictionary<string, List<IssueSummary>>();
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
-        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["p1"] = new() { (CreateIssueSummary("proj-epic-fail"), PipelineRunType.DecompositionAnalysis, template) }
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("proj-epic-fail"), PipelineRunType.DecompositionAnalysis, "provider-epics") }
         };
 
         // Act
@@ -1008,7 +963,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1039,7 +993,7 @@ public class DispatchSchedulerTests
         {
             ["t1"] = new() { CreatePrSummary("pr-1", 1), CreatePrSummary("pr-2", 2) }
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         var result = await _scheduler.DispatchFairRoundRobinAsync(
             new DispatchRoundRobinRequest
@@ -1052,7 +1006,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1088,9 +1041,9 @@ public class DispatchSchedulerTests
             ["t1"] = new() { CreateIssueSummary("issue-1") }
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis, "provider-t1") }
         };
 
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -1105,7 +1058,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1117,95 +1069,143 @@ public class DispatchSchedulerTests
     }
 
     /// <summary>
-    /// Project-level decomposition fallback fires when regular decomp queue is empty but
-    /// project-level queue has items and concurrency limit is not reached.
+    /// A project epic sits in its executor template's queue with the epic tracker it lives in:
+    /// the run is bound to that tracker and executes in the template's repository.
     /// </summary>
     [Fact]
-    public async Task FairRoundRobin_ProjectLevelDecomp_FallbackWhenRegularDecompEmpty()
+    public async Task FairRoundRobin_ProjectEpicInExecutorQueue_BindsRunToEpicTracker()
     {
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
+        var requests = CaptureDecompositionRequests();
 
-        var issueQueues = new Dictionary<string, List<IssueSummary>>();
-        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(); // empty regular
-        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) }
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, "provider-epics") }
         };
 
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            new DispatchRoundRobinRequest
-            {
-                PollableTemplates = pollable,
-                FlattenedTemplates = flattened,
-                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-                MaxRunsPerCycle = 10,
-                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-                IssueQueues = issueQueues,
-                PrQueues = prQueues,
-                DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
-                ReportStatus = _ => { },
-                ReportIssue = _ => { },
-                NotifyChange = () => { }
-            },
+            CreateDecompositionOnlyRequest(pollable, flattened, decompQueues, new HashSet<(IssueIdentifier, ProviderConfigId)>()),
             CancellationToken.None, CancellationToken.None);
 
-        result.ProcessedCount.Should().Be(1, "project-level decomp fallback should fire when regular decomp queue is empty");
-        _decompDispatchCount.Should().Be(1);
+        result.ProcessedCount.Should().Be(1);
+        requests.Should().ContainSingle();
+        requests[0].IssueProviderId.Value.Should().Be("provider-epics", "the run is bound to the tracker the epic lives in");
+        requests[0].RepoProviderId.Value.Should().Be("repo-t1", "the executor template's repository runs the epic");
     }
 
     /// <summary>
-    /// When regular decomp queue has items AND dispatches successfully in a turn, the project-level
-    /// decomp fallback does NOT fire in that same turn (decompMadeProgress=true guards the fallback).
-    /// On the next decomp turn, once regular is exhausted, project-level fires as fallback.
+    /// The already-active check uses each candidate's own tracker: an epic that is active in the
+    /// epic tracker is skipped, while the same number in the template's tracker is a different issue.
     /// </summary>
     [Fact]
-    public async Task FairRoundRobin_ProjectLevelDecomp_NotFiredInSameTurnAsRegularDecomp()
+    public async Task FairRoundRobin_ActiveCheck_UsesTheCandidatesTracker()
     {
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
+        var requests = CaptureDecompositionRequests();
 
-        var issueQueues = new Dictionary<string, List<IssueSummary>>();
-        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        // Regular decomp queue with 1 item
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+            ["t1"] = new()
+            {
+                new EpicCandidate(CreateIssueSummary("7"), PipelineRunType.DecompositionAnalysis, "provider-epics"),
+                new EpicCandidate(CreateIssueSummary("7"), PipelineRunType.DecompositionAnalysis, "provider-t1")
+            }
         };
-        // Project-level also has 1 item — should only fire AFTER regular is exhausted
-        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        var active = new HashSet<(IssueIdentifier, ProviderConfigId)>
         {
-            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) }
+            (new IssueIdentifier("7"), new ProviderConfigId("provider-epics"))
         };
 
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            new DispatchRoundRobinRequest
-            {
-                PollableTemplates = pollable,
-                FlattenedTemplates = flattened,
-                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-                MaxRunsPerCycle = 10,
-                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-                IssueQueues = issueQueues,
-                PrQueues = prQueues,
-                DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
-                ReportStatus = _ => { },
-                ReportIssue = _ => { },
-                NotifyChange = () => { }
-            },
+            CreateDecompositionOnlyRequest(pollable, flattened, decompQueues, active),
             CancellationToken.None, CancellationToken.None);
 
-        // Regular decomp fires first (decompMadeProgress=true → project-level blocked in same turn).
-        // Next decomp turn: regular is exhausted, project-level fires as fallback.
-        // Total: 2 dispatches, both from decomp queue.
-        result.ProcessedCount.Should().Be(2);
-        _decompDispatchCount.Should().Be(2, "regular decomp dispatches first, then project-level as fallback in the next turn");
+        result.ProcessedCount.Should().Be(1);
+        requests.Should().ContainSingle()
+            .Which.IssueProviderId.Value.Should().Be("provider-t1");
     }
+
+    /// <summary>
+    /// Regression coverage for #1863, ported from the removed project-level loop: when the stopping token
+    /// is cancelled during a decomposition dispatch, no other template's epic is prepared.
+    /// </summary>
+    [Fact]
+    public async Task WhenStoppingTokenCancelledDuringDecompositionDispatch_NoOtherEpicIsPrepared()
+    {
+        var t1 = CreateTemplate("t1");
+        var t2 = CreateTemplate("t2");
+        var project = CreateProject("p1");
+        var pollable = new List<PipelineJobTemplate> { t1, t2 };
+        var flattened = new List<(PipelineJobTemplate Template, PipelineProject Project)> { (t1, project), (t2, project) };
+        using var stoppingCts = new CancellationTokenSource();
+
+        // On the first call, cancel stoppingToken and throw OperationCanceledException to simulate shutdown
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((DecompositionDispatchOrchestrationRequest _, CancellationToken _) =>
+            {
+                stoppingCts.Cancel();
+                throw new OperationCanceledException("Simulated shutdown", stoppingCts.Token);
+            });
+
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
+        {
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis, "provider-t1") },
+            ["t2"] = new() { new EpicCandidate(CreateIssueSummary("epic-2"), PipelineRunType.DecompositionAnalysis, "provider-t2") }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            CreateDecompositionOnlyRequest(pollable, flattened, decompQueues, new HashSet<(IssueIdentifier, ProviderConfigId)>()),
+            stoppingCts.Token, CancellationToken.None);
+
+        _mockDispatchOrchestration.Verify(
+            d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        result.ProcessedCount.Should().Be(0);
+        result.FailedCount.Should().Be(0);
+    }
+
+    private List<DecompositionDispatchOrchestrationRequest> CaptureDecompositionRequests()
+    {
+        var requests = new List<DecompositionDispatchOrchestrationRequest>();
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DecompositionDispatchOrchestrationRequest req, CancellationToken _) =>
+            {
+                requests.Add(req);
+                return CreateMinimalJobDistributionRequest(req.EpicIdentifier);
+            });
+        return requests;
+    }
+
+    private static DispatchRoundRobinRequest CreateDecompositionOnlyRequest(
+        IReadOnlyList<PipelineJobTemplate> pollable,
+        IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattened,
+        Dictionary<string, List<EpicCandidate>> decompQueues,
+        HashSet<(IssueIdentifier, ProviderConfigId)> activeIssueIdentifiers) => new()
+    {
+        PollableTemplates = pollable,
+        FlattenedTemplates = flattened,
+        Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+        MaxRunsPerCycle = 10,
+        ActiveIssueIdentifiers = activeIssueIdentifiers,
+        IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+        PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+        DecompositionQueues = decompQueues,
+        ReportStatus = _ => { },
+        ReportIssue = _ => { },
+        NotifyChange = () => { }
+    };
 
     /// <summary>
     /// AllQueuesEmpty — TrySelectHighestPriorityQueue returns found=false, loop breaks immediately, ProcessedCount=0.
@@ -1227,8 +1227,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = new Dictionary<string, List<IssueSummary>>(),
                 PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1268,8 +1267,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1369,7 +1367,7 @@ public class DispatchSchedulerTests
         {
             ["t1"] = new() { CreatePrSummary("pr-1", 1) }
         };
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>();
 
         var result = await _scheduler.DispatchFairRoundRobinAsync(
             new DispatchScheduler.DispatchRoundRobinRequest
@@ -1382,7 +1380,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1410,9 +1407,9 @@ public class DispatchSchedulerTests
             ["t1"] = new() { CreateIssueSummary("issue-1") }
         };
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
         {
-            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis, "provider-t1") }
         };
 
         var result = await _scheduler.DispatchFairRoundRobinAsync(
@@ -1426,7 +1423,6 @@ public class DispatchSchedulerTests
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompQueues,
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1436,125 +1432,6 @@ public class DispatchSchedulerTests
         result.ProcessedCount.Should().Be(1);
         _decompDispatchCount.Should().Be(1, "Decomposition has higher priority than Implementation (Issue)");
         _issueDispatchCount.Should().Be(0);
-    }
-
-    #endregion
-
-    #region StoppingToken Cancellation — Project-Level Decomp Loop (#1863)
-
-    /// <summary>
-    /// Regression test for #1863: when stoppingToken is cancelled during the first project-level
-    /// dispatch call, the loop must break after that project and not iterate the remaining ones.
-    /// Without the fix (adding stoppingToken.IsCancellationRequested to limitReached),
-    /// PrepareDecompositionDistributionRequestAsync would be called 3 times instead of once.
-    /// </summary>
-    [Fact]
-    public async Task WhenStoppingTokenCancelledDuringDispatch_ProjectLevelDecompLoop_BreaksAfterFirstProject()
-    {
-        var template = CreateTemplate("t1");
-        var project = CreateProject("p1");
-        var (pollable, flattened) = BuildTemplateLists(template, project);
-
-        using var stoppingCts = new CancellationTokenSource();
-
-        // On the first call, cancel stoppingToken and throw OperationCanceledException to simulate shutdown
-        _mockDispatchOrchestration
-            .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
-                It.IsAny<CancellationToken>()))
-            .Returns((DecompositionDispatchOrchestrationRequest req, CancellationToken ct) =>
-            {
-                stoppingCts.Cancel();
-                throw new OperationCanceledException("Simulated shutdown", stoppingCts.Token);
-            });
-
-        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
-        {
-            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) },
-            ["p2"] = new() { (CreateIssueSummary("proj-epic-2"), PipelineRunType.DecompositionAnalysis, template) },
-            ["p3"] = new() { (CreateIssueSummary("proj-epic-3"), PipelineRunType.DecompositionAnalysis, template) },
-        };
-
-        var result = await _scheduler.DispatchFairRoundRobinAsync(
-            new DispatchRoundRobinRequest
-            {
-                PollableTemplates = pollable,
-                FlattenedTemplates = flattened,
-                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-                MaxRunsPerCycle = 10,
-                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
-                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
-                ReportStatus = _ => { },
-                ReportIssue = _ => { },
-                NotifyChange = () => { }
-            },
-            stoppingCts.Token, CancellationToken.None);
-
-        // The loop must break after the first project — only 1 dispatch attempt, not 3.
-        // After the fix, the second iteration's limitReached check sees stoppingToken.IsCancellationRequested=true and breaks.
-        // Note: The mock is configured to match any PrepareDecompositionDistributionRequestAsync call, so a
-        // second call (for p2 or p3) would also throw and increment the count, making Times.Once reliable.
-        _mockDispatchOrchestration.Verify(
-            d => d.PrepareDecompositionDistributionRequestAsync(
-                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
-                It.IsAny<CancellationToken>()),
-            Times.Once);
-
-        // No successful dispatches
-        result.ProcessedCount.Should().Be(0);
-    }
-
-    /// <summary>
-    /// Regression test for #1863: when stoppingToken is pre-cancelled before the call,
-    /// the limitReached check at the top of the first foreach iteration fires immediately
-    /// and no dispatch is attempted.
-    /// </summary>
-    [Fact]
-    public async Task WhenStoppingTokenPreCancelled_ProjectLevelDecompLoop_NoDispatchAttempted()
-    {
-        var template = CreateTemplate("t1");
-        var project = CreateProject("p1");
-        var (pollable, flattened) = BuildTemplateLists(template, project);
-
-        using var stoppingCts = new CancellationTokenSource();
-        stoppingCts.Cancel(); // pre-cancel before the call
-
-        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
-        {
-            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) },
-            ["p2"] = new() { (CreateIssueSummary("proj-epic-2"), PipelineRunType.DecompositionAnalysis, template) },
-        };
-
-        var result = await _scheduler.DispatchFairRoundRobinAsync(
-            new DispatchRoundRobinRequest
-            {
-                PollableTemplates = pollable,
-                FlattenedTemplates = flattened,
-                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-                MaxRunsPerCycle = 10,
-                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
-                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
-                ReportStatus = _ => { },
-                ReportIssue = _ => { },
-                NotifyChange = () => { }
-            },
-            stoppingCts.Token, CancellationToken.None);
-
-        // limitReached fires on first iteration, no dispatch attempted
-        _mockDispatchOrchestration.Verify(
-            d => d.PrepareDecompositionDistributionRequestAsync(
-                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
-                It.IsAny<CancellationToken>()),
-            Times.Never);
-
-        result.ProcessedCount.Should().Be(0);
-        result.FailedCount.Should().Be(0);
     }
 
     #endregion
@@ -1665,8 +1542,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1719,8 +1595,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }
@@ -1767,8 +1642,7 @@ public class DispatchSchedulerTests
                 ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
-                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
-                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
                 ReportStatus = _ => { },
                 ReportIssue = _ => { },
                 NotifyChange = () => { }

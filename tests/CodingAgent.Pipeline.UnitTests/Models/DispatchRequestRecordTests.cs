@@ -106,6 +106,5 @@ public class DispatchRequestRecordTests
         req.EpicTitle.Should().Be("Build the thing");
         req.PhaseType.Should().Be(PipelineRunType.Decomposition);
         req.BrainProviderId.Should().BeNull();
-        req.DecompositionSource.Should().BeNull();
     }
 }

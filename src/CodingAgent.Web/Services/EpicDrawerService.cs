@@ -57,10 +57,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         var ct = _epicDrawer.CancellationToken;
         try
         {
-            var parentProject = GetParentProject(template.Id);
-            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId)
-                ? parentProject.EpicIssueProviderId
-                : template.IssueProviderId;
+            var epicProviderId = EpicTrackerFor(template, GetParentProject(template.Id));
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == epicProviderId);
             if (providerConfig == null) { _epicDrawer.Loading = false; return "Epic issue provider not found."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
@@ -97,10 +94,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
         var ct = _epicDrawer.CancellationToken;
         try
         {
-            var parentProject = GetParentProject(template.Id);
-            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId)
-                ? parentProject.EpicIssueProviderId
-                : template.IssueProviderId;
+            var epicProviderId = EpicTrackerFor(template, GetParentProject(template.Id));
             var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == epicProviderId);
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
@@ -127,6 +121,15 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     private PipelineProject? GetParentProject(string templateId)
         => _cachedProjects?.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
 
+    /// <summary>
+    /// The tracker the drawer lists epics from: the project's epic tracker when it has one, otherwise the
+    /// template's own tracker. Dispatch binds the run to the same tracker; the template executes the epic.
+    /// </summary>
+    private static string EpicTrackerFor(PipelineJobTemplate template, PipelineProject? parentProject)
+        => !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId)
+            ? parentProject.EpicIssueProviderId
+            : template.IssueProviderId;
+
     // ── Dispatch ──
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
@@ -138,6 +141,10 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
     {
         if (!issueProviders.Any(p => p.Id == template.IssueProviderId) || !repoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
+
+        var epicProviderId = EpicTrackerFor(template, parentProject);
+        if (!issueProviders.Any(p => p.Id == epicProviderId))
+            return (false, "The project's epic issue provider no longer exists.", null);
 
         var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
@@ -151,7 +158,7 @@ public sealed class EpicDrawerService : IEpicDrawerService, IDisposable
                     EpicIdentifier = issue.Identifier,
                     EpicTitle = issue.Title ?? "",
                     PhaseType = phaseType,
-                    IssueProviderId = template.IssueProviderId,
+                    IssueProviderId = epicProviderId,
                     RepoProviderId = template.RepoProviderId,
                     BrainProviderId = template.BrainProviderId,
                     InitiatedBy = DrawerDispatchHelper.ManualInitiator,
