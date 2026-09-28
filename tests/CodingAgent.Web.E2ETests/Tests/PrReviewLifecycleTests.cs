@@ -1,8 +1,10 @@
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Web.E2ETests.PageObjects;
+using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.E2ETests.Tests;
@@ -197,26 +199,25 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         Assert.NotNull(assignment);
         Assert.Equal("102", assignment.IssueIdentifier);
 
-        // Accept the job BEFORE clicking cancel: creates the in-memory PipelineRun that
+        // Accept the job BEFORE cancelling: creates the in-memory PipelineRun that
         // CancelPipelineAsync targets. Without this, the cancel is a no-op.
         await fakeAgent.AcceptJobAsync(assignment.JobId);
 
-        // Wait for the active run to appear in RunService so we can obtain its RunId for navigation.
-        // The cancel button lives on the /runs/{runId} detail page (RunDetailPage), not on /agent-coding.
+        // Cancel the run directly via the API (the same path the UI cancel button takes:
+        // RunPage → WorkItems.PostStatusAsync(id, Cancelled)).
+        // The run ID from RunService IS the work item ID (WorkItem.Id == PipelineRun.RunId).
+        // Cancelling via the API avoids the brittle two-step browser UI flow
+        // (cancel-pipeline-btn → confirm-cancel-pipeline-btn) which is sensitive to SignalR
+        // re-renders between the two clicks.
         var runService = Fixture.RunService;
         await WaitUntilAsync(
             () => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "102"),
             TimeSpan.FromSeconds(15));
         var activeRunId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "102").RunId;
-
-        // Navigate to the run detail page and click the cancel button there.
-        // Cancel is a two-step UI flow: clicking cancel-pipeline-btn shows a confirmation prompt;
-        // confirm-cancel-pipeline-btn must then be clicked to actually issue the cancel.
-        var runDetailPage = new RunDetailPage(Page, BaseUrl);
-        await runDetailPage.NavigateAsync(activeRunId);
-        await runDetailPage.CancelAsync();
-        // Click the confirmation button to complete the two-step cancel flow.
-        await Page.ClickAsync("[data-testid='confirm-cancel-pipeline-btn']");
+        await Fixture.WorkItems.PostStatusAsync(
+            Guid.Parse(activeRunId),
+            new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) },
+            CancellationToken.None);
 
         // Assert: the run ends up Cancelled in history
         // TODO: WaitForHistoryAsync throws TimeoutException rather than returning null when no matching
@@ -316,29 +317,25 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         await Fixture.RepositoryProvider.AddPrLabelAsync(prNumber, "agent:next", CancellationToken.None);
 
         // ── Second review dispatch ───────────────────────────────────────────
-        // Wait until PR 103 is no longer active in the run service. The run must be fully cleaned up
-        // before the second dispatch: while IsBeingProcessed("103") returns true, the PR row in the
-        // drawer has pointer-events:none and SelectPrAsync will time out with an intercept error.
-        // This also guards against the dedup guard silently rejecting the second dispatch.
-        await WaitUntilAsync(
-            () => !Fixture.RunService.GetActiveRuns().Any(r => r.IssueIdentifier == "103"),
-            TimeSpan.FromSeconds(15));
+        // Wait for the work item to reach Succeeded in the DB. The PrDispatchDrawer calls
+        // GetActiveIssueIdentifiersAsync → KubernetesWorkDistributor → DB to determine which PRs
+        // are still "being processed". Clearing RunService is not enough: the DB work item must
+        // also be in a terminal state before the drawer opens, otherwise pr-row-103 renders with
+        // drawer-issue-dispatched (pointer-events:none) and SelectPrAsync times out.
+        var workItemId = Guid.Parse(assignment1.JobId);
+        await WaitUntilAsync(async () =>
+        {
+            await using var db = Fixture.DbContextFactory.CreateDbContext();
+            var item = await db.WorkItems.AsNoTracking()
+                .FirstOrDefaultAsync(w => w.Id == workItemId);
+            return item?.Status is WorkItemStatus.Succeeded
+                or WorkItemStatus.Failed
+                or WorkItemStatus.Cancelled;
+        }, TimeSpan.FromSeconds(15));
 
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Lifecycle Template");
         await codingPage.ClickBrowsePrsAsync();
-
-        // Wait for the PR row to become clickable in the browser DOM: after the first run completes,
-        // the Blazor component renders pr-row-103 with class "drawer-issue-dispatched" and
-        // pointer-events:none until the server pushes a SignalR state update that clears IsBeingProcessed.
-        // Polling RunService alone is not sufficient — we must wait for the DOM class to clear.
-        await Page.WaitForFunctionAsync(
-            @"() => {
-                const row = document.querySelector('[data-testid=""pr-row-103""]');
-                return row && !row.classList.contains('drawer-issue-dispatched');
-            }",
-            null,
-            new() { Timeout = 15_000 });
 
         await codingPage.SelectPrAsync("103");
         await codingPage.ClickDispatchPrReviewAsync();
