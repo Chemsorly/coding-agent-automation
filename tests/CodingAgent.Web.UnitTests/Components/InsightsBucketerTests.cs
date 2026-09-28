@@ -11,7 +11,12 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class InsightsBucketerTests
 {
     // Fixed reference point: 2026-09-23 15:30:00 UTC
+    // windowEnd for hourly windows = 15:00 UTC (truncated to current hour).
+    // Trailing partial bucket = [15:00, 15:30).
     private static readonly DateTimeOffset Now = new(2026, 9, 23, 15, 30, 0, TimeSpan.Zero);
+
+    // Fixed reference point at an exact hour boundary (no trailing bucket should be added).
+    private static readonly DateTimeOffset NowOnHourBoundary = new(2026, 9, 23, 15, 0, 0, TimeSpan.Zero);
 
     // ── helpers ──────────────────────────────────────────────────────────
 
@@ -44,84 +49,165 @@ public class InsightsBucketerTests
     // ── 1-hour window ─────────────────────────────────────────────────────
 
     /// <summary>
-    /// 1h window → exactly 1 hourly bucket. A run in that bucket is counted.
-    /// With now = 15:30 UTC, windowEnd = 15:00 (truncated to hour), windowStart = 14:00.
-    /// The single bucket covers [14:00, 15:00).
+    /// 1h window with now=15:30 → 2 buckets: [14:00,15:00) plus trailing [15:00,15:30).
+    /// A run at 14:30 is counted in the first bucket.
     /// </summary>
     [Fact]
     public void BuildBuckets_1hWindow_Returns1HourlyBucket()
     {
-        // now = 15:30 UTC. The single 1h bucket covers [14:00, 15:00).
+        // now = 15:30 UTC. Regular bucket: [14:00, 15:00). Trailing: [15:00, 15:30).
         var run = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 30, 0, TimeSpan.Zero));
 
         var result = InsightsBucketer.BuildBuckets([run], windowHours: 1, Now);
 
-        result.Should().HaveCount(1, "1h window must produce exactly 1 bucket");
+        result.Should().HaveCount(2, "1h window produces 1 regular bucket plus 1 trailing partial bucket");
         result[0].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
-            "the bucket SlotStart must be 1 hour before the truncated-to-hour now");
+            "the first bucket SlotStart must be 1 hour before the truncated-to-hour now");
         result[0].Succeeded.Should().Be(1, "the run at 14:30 must be counted in the [14:00,15:00) bucket");
         result[0].Total.Should().Be(1);
+        // Trailing bucket: [15:00, 15:30) — the run at 14:30 is NOT in it.
+        result[1].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 15, 0, 0, TimeSpan.Zero),
+            "the trailing bucket starts at the current hour start (windowEnd)");
+        result[1].Total.Should().Be(0, "the run at 14:30 is not in the trailing [15:00,15:30) bucket");
     }
 
-    /// <summary>A run started before the 1h window start is excluded.</summary>
+    /// <summary>A run started before the 1h window start is excluded from all buckets.</summary>
     [Fact]
     public void BuildBuckets_1hWindow_RunOutsideWindow_IsExcluded()
     {
-        // now = 15:30; bucket covers [14:00, 15:00). A run at 13:59 is outside.
+        // now = 15:30; regular bucket covers [14:00, 15:00). A run at 13:59 is outside.
         var run = MakeRun(new DateTimeOffset(2026, 9, 23, 13, 59, 0, TimeSpan.Zero));
 
         var result = InsightsBucketer.BuildBuckets([run], windowHours: 1, Now);
 
-        result.Should().HaveCount(1);
-        result[0].Total.Should().Be(0, "run started before the 1h window start must not be counted");
+        result.Should().HaveCount(2, "1h window produces 2 buckets even when all runs are outside");
+        result.Sum(b => b.Total).Should().Be(0, "run started before the 1h window start must not be counted");
+    }
+
+    /// <summary>
+    /// A run started in the current partial hour (>= windowEnd, &lt; now) must appear
+    /// in the trailing bucket and count in the total.
+    /// </summary>
+    [Fact]
+    public void BuildBuckets_1hWindow_TrailingPartialBucket_CountsCurrentHourRuns()
+    {
+        // now = 15:30. Run at 15:20 is inside [15:00, 15:30).
+        var run = MakeRun(new DateTimeOffset(2026, 9, 23, 15, 20, 0, TimeSpan.Zero));
+
+        var result = InsightsBucketer.BuildBuckets([run], windowHours: 1, Now);
+
+        result.Should().HaveCount(2, "1h window produces 1 regular + 1 trailing partial bucket");
+        // Regular bucket [14:00, 15:00): run at 15:20 is NOT here.
+        result[0].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero));
+        result[0].Total.Should().Be(0, "the run at 15:20 is not in the regular [14:00,15:00) bucket");
+        // Trailing bucket [15:00, 15:30): run at 15:20 IS here.
+        result[1].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 15, 0, 0, TimeSpan.Zero),
+            "trailing bucket starts at windowEnd (current hour start)");
+        result[1].Succeeded.Should().Be(1, "the run at 15:20 must be in the trailing [15:00,15:30) bucket");
+        result[1].Total.Should().Be(1);
     }
 
     // ── 6-hour window ─────────────────────────────────────────────────────
 
-    /// <summary>6h window → exactly 6 hourly buckets with correct slot assignment.</summary>
+    /// <summary>
+    /// 6h window with now=15:30 → 7 buckets (6 regular + 1 trailing [15:00,15:30)).
+    /// run2 at 15:00 was previously excluded; after the fix it is in the trailing bucket.
+    /// </summary>
     [Fact]
     public void BuildBuckets_6hWindow_Returns6HourlyBuckets()
     {
-        // now = 15:30 UTC → window start = 09:00 UTC. Buckets: [09,10), [10,11), ..., [14,15)
+        // now = 15:30 UTC → windowEnd = 15:00, windowStart = 09:00. Regular buckets: [09,10)...[14,15).
         var run1 = MakeRun(new DateTimeOffset(2026, 9, 23, 13, 0, 0, TimeSpan.Zero));
         var run2 = MakeRun(new DateTimeOffset(2026, 9, 23, 15, 0, 0, TimeSpan.Zero), PipelineStep.Failed);
         var runOutside = MakeRun(new DateTimeOffset(2026, 9, 23, 8, 59, 0, TimeSpan.Zero));
 
         var result = InsightsBucketer.BuildBuckets([run1, run2, runOutside], windowHours: 6, Now);
 
-        result.Should().HaveCount(6, "6h window must produce exactly 6 hourly buckets");
+        result.Should().HaveCount(7, "6h window produces 6 regular buckets plus 1 trailing partial bucket");
         result[0].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 9, 0, 0, TimeSpan.Zero),
             "first bucket must start 6 h before the current hour");
-        result[^1].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero));
 
-        // run1 is in the [13:00, 14:00) bucket (index 4 of 6)
-        var bucket13 = result.Single(b => b.SlotStart.Hour == 13);
+        // run1 at 13:00 is in the [13:00, 14:00) bucket (index 4 of 7)
+        var bucket13 = result.Single(b => b.SlotStart.Hour == 13 && b.SlotStart.Date == new DateOnly(2026, 9, 23).ToDateTime(TimeOnly.MinValue));
         bucket13.Succeeded.Should().Be(1);
 
-        // run2 is in the [15:00, 16:00) bucket… but the window is [09:00, 15:00), so:
-        // wait — now = 15:30, window end = now's hour = 15:00 truncated + 6 = last bucket is [14:00, 15:00)
-        // run2 at 15:00 is inside [15:00, 16:00) which is OUTSIDE the 6h window
-        result.Sum(b => b.Total).Should().Be(1,
-            "only run1 (13:00) is inside [09:00,15:00); run2 at 15:00 and runOutside at 08:59 are outside");
+        // runOutside at 08:59 is before [09:00, so it must not appear in any bucket.
+        result[0].Total.Should().Be(0, "runOutside at 08:59 is before windowStart 09:00");
+
+        // Trailing bucket [15:00, 15:30): run2 at 15:00 is now counted here (fix for #3077).
+        var trailingBucket = result[^1];
+        trailingBucket.SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 15, 0, 0, TimeSpan.Zero),
+            "trailing bucket SlotStart is windowEnd = 15:00");
+        trailingBucket.Failed.Should().Be(1, "run2 at 15:00 must be in the trailing [15:00,15:30) bucket");
+        trailingBucket.Total.Should().Be(1);
+
+        result.Sum(b => b.Total).Should().Be(2,
+            "run1 (13:00) is in regular bucket; run2 (15:00) is in trailing bucket; runOutside (08:59) is excluded");
     }
 
     // ── 24-hour window ────────────────────────────────────────────────────
 
-    /// <summary>24h window → exactly 24 hourly buckets. A run from 25 h ago is excluded.</summary>
+    /// <summary>24h window → 25 buckets (24 regular + 1 trailing). A run from 25 h ago is excluded.</summary>
     [Fact]
     public void BuildBuckets_24hWindow_Returns24HourlyBuckets()
     {
-        // now = 15:30 UTC on 2026-09-23 → window covers [15:00 on 2026-09-22, 15:00 on 2026-09-23)
+        // now = 15:30 UTC on 2026-09-23 → windowEnd=15:00, windowStart=15:00 on 2026-09-22.
         var runInWindow = MakeRun(new DateTimeOffset(2026, 9, 22, 20, 0, 0, TimeSpan.Zero));
         var runOutside = MakeRun(new DateTimeOffset(2026, 9, 22, 14, 0, 0, TimeSpan.Zero)); // 25h before now's hour
 
         var result = InsightsBucketer.BuildBuckets([runInWindow, runOutside], windowHours: 24, Now);
 
-        result.Should().HaveCount(24, "24h window must produce exactly 24 hourly buckets");
+        result.Should().HaveCount(25, "24h window produces 24 regular buckets plus 1 trailing partial bucket");
         result[0].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 22, 15, 0, 0, TimeSpan.Zero),
             "first bucket covers [15:00 yesterday, 16:00 yesterday)");
         result.Sum(b => b.Total).Should().Be(1,
             "only runInWindow is inside the 24h range; runOutside (25h ago) must be excluded");
+    }
+
+    /// <summary>
+    /// A run started at exactly windowEnd (15:00:00) is in the trailing bucket, not in any regular bucket.
+    /// (a) Not in the last regular bucket [14:00, 15:00) — the &lt; upper bound excludes it.
+    /// (b) In the trailing bucket [15:00, 15:30) — the >= lower bound includes it.
+    /// </summary>
+    [Fact]
+    public void BuildBuckets_HourlyWindow_RunAtExactCurrentHourStart_IsInTrailingBucket_NotPreviousBucket()
+    {
+        // now = 15:30, 24h window. Run at exactly 15:00:00.
+        var run = MakeRun(new DateTimeOffset(2026, 9, 23, 15, 0, 0, TimeSpan.Zero));
+
+        var result = InsightsBucketer.BuildBuckets([run], windowHours: 24, Now);
+
+        result.Should().HaveCount(25);
+
+        // (a) The last regular bucket covers [14:00, 15:00) — run at 15:00 is excluded by < upper bound.
+        var lastRegular = result[^2];
+        lastRegular.SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero),
+            "the last regular bucket spans [14:00, 15:00)");
+        lastRegular.Total.Should().Be(0, "run at exactly 15:00 must NOT be in the [14:00, 15:00) bucket");
+
+        // (b) The trailing bucket covers [15:00, 15:30) — run at 15:00 is included by >= lower bound.
+        var trailing = result[^1];
+        trailing.SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 15, 0, 0, TimeSpan.Zero),
+            "the trailing bucket starts at windowEnd = 15:00");
+        trailing.Total.Should().Be(1, "run at exactly 15:00 must be in the trailing [15:00, 15:30) bucket");
+    }
+
+    /// <summary>
+    /// When now is at an exact hour boundary, windowEnd == now and the trailing bucket
+    /// would be a zero-duration range — no trailing bucket should be added.
+    /// </summary>
+    [Fact]
+    public void BuildBuckets_HourlyWindow_WhenNowIsExactHourBoundary_NoTrailingBucket()
+    {
+        // now = 15:00:00 exactly. windowEnd = 15:00. now == windowEnd → no trailing bucket.
+        var run = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 30, 0, TimeSpan.Zero));
+
+        var result = InsightsBucketer.BuildBuckets([run], windowHours: 1, NowOnHourBoundary);
+
+        result.Should().HaveCount(1,
+            "when now == windowEnd there is no partial current-hour duration, so no trailing bucket");
+        result[0].SlotStart.Should().Be(new DateTimeOffset(2026, 9, 23, 14, 0, 0, TimeSpan.Zero));
+        result[0].Total.Should().Be(1);
     }
 
     // ── 7-day window ──────────────────────────────────────────────────────
@@ -210,7 +296,7 @@ public class InsightsBucketerTests
 
         var result = InsightsBucketer.BuildBuckets([run], windowHours: 6, Now);
 
-        result.Should().HaveCount(6);
+        result.Should().HaveCount(7, "6h window with trailing bucket");
         result[0].SlotStart.Hour.Should().Be(9);
         result[0].Total.Should().Be(1, "run at exactly the slot start is inclusive");
     }
@@ -221,19 +307,21 @@ public class InsightsBucketerTests
     [Fact]
     public void BuildBuckets_MixedOutcomes_CountedSeparatelyPerBucket()
     {
-        // now = 15:30 UTC; 1h window → bucket covers [14:00, 15:00).
-        // Place all three runs in that bucket.
+        // now = 15:30 UTC; 1h window → regular bucket covers [14:00, 15:00).
+        // Place all three runs in that regular bucket.
         var completed = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 5, 0, TimeSpan.Zero), PipelineStep.Completed);
         var failed = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 10, 0, TimeSpan.Zero), PipelineStep.Failed);
         var cancelled = MakeRun(new DateTimeOffset(2026, 9, 23, 14, 15, 0, TimeSpan.Zero), PipelineStep.Cancelled);
 
         var result = InsightsBucketer.BuildBuckets([completed, failed, cancelled], windowHours: 1, Now);
 
-        result.Should().HaveCount(1);
+        // 2 buckets: regular [14:00,15:00) + trailing [15:00,15:30)
+        result.Should().HaveCount(2, "1h window now produces 2 buckets");
         result[0].Succeeded.Should().Be(1);
         result[0].Failed.Should().Be(1);
         result[0].Cancelled.Should().Be(1);
         result[0].Total.Should().Be(3);
+        result[1].Total.Should().Be(0, "trailing bucket is empty (no runs started in [15:00,15:30))");
     }
 
     /// <summary>
@@ -249,10 +337,12 @@ public class InsightsBucketerTests
 
         var result = InsightsBucketer.BuildBuckets([merged, closed, restarted], windowHours: 1, Now);
 
-        result.Should().HaveCount(1);
+        // 2 buckets: regular [14:00,15:00) + trailing [15:00,15:30)
+        result.Should().HaveCount(2, "1h window now produces 2 buckets");
         result[0].Succeeded.Should().Be(1);
         result[0].Cancelled.Should().Be(1);
         result[0].Restarted.Should().Be(1);
         result[0].Total.Should().Be(3);
+        result[1].Total.Should().Be(0, "trailing bucket is empty (no runs started in [15:00,15:30))");
     }
 }

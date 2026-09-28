@@ -80,12 +80,11 @@ internal static class InsightsBucketer
         // Runs in the current partial hour (e.g. 15:30–16:00 when now=15:30) are excluded from
         // the chart. The x-axis rightmost label therefore reads "14:00 UTC" (one hour before now)
         // rather than "now", which may confuse users who expect "last 24h" to include recent minutes.
-        // Fix: add a trailing partial-hour bucket [windowEnd, now) to capture the current hour's runs.
         var windowEnd = new DateTimeOffset(now.UtcDateTime.Year, now.UtcDateTime.Month,
             now.UtcDateTime.Day, now.UtcDateTime.Hour, 0, 0, TimeSpan.Zero);
         var windowStart = windowEnd.AddHours(-windowHours);
 
-        return Enumerable.Range(0, windowHours)
+        var buckets = Enumerable.Range(0, windowHours)
             .Select(i =>
             {
                 var slotStart = windowStart.AddHours(i);
@@ -95,6 +94,25 @@ internal static class InsightsBucketer
                 return ToBucket(slotStart, slotItems);
             })
             .ToList();
+
+        // Add a trailing partial bucket [windowEnd, now) to capture runs started in the current
+        // unfinished hour. These runs are included in the headline figures (pre-filter uses the
+        // same windowStart with no upper bound) but had no chart bar before this fix (#3077).
+        // Guard: when now == windowEnd (caller is at an exact hour boundary) the range is empty —
+        // skip the bucket rather than adding a zero-duration slot with no possible runs.
+        // TODO: the upper bound of the trailing bucket uses the `now` snapshot captured in LoadAsync
+        // *before* the async GetRunHistoryAsync call. After a slow API response, real clock time will
+        // have advanced past the snapshot, so a run whose StartedAtOffset is between the snapshot and
+        // actual wall-clock time could appear in the trailing bucket even though it is after `now`.
+        // This is minor and self-corrects on the next reload; the direction of the discrepancy is
+        // documented here for awareness (InsightsBucketer.cs review finding #3077).
+        if (now > windowEnd)
+        {
+            var trailingItems = items.Where(r => r.StartedAtOffset >= windowEnd && r.StartedAtOffset < now);
+            buckets.Add(ToBucket(windowEnd, trailingItems));
+        }
+
+        return buckets;
     }
 
     private static IReadOnlyList<TimeBucket> BuildDailyBuckets(
