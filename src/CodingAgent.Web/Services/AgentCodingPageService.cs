@@ -204,9 +204,17 @@ public class AgentCodingPageService
         if (string.IsNullOrWhiteSpace(form.Name)) return (false, "Name is required.");
         if (string.IsNullOrEmpty(form.IssueProviderId)) return (false, "Issue Provider is required.");
         if (string.IsNullOrEmpty(form.RepoProviderId)) return (false, "Repo Provider is required.");
-        if (Templates.Any(t => t.IssueProviderId == form.IssueProviderId && t.RepoProviderId == form.RepoProviderId))
-            return (false, "A template with the same Issue Provider + Repo Provider combination already exists.");
-        return (true, null);
+
+        // A new template is enabled, so it must meet the binding rules the API enforces on save.
+        var candidate = new PipelineJobTemplate
+        {
+            Id = string.Empty, Name = form.Name.Trim(),
+            IssueProviderId = form.IssueProviderId, RepoProviderId = form.RepoProviderId,
+            Enabled = true
+        };
+        var projectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
+        var conflict = TemplateBindingRules.Validate(candidate, projectId, Templates, Projects);
+        return conflict is null ? (true, null) : (false, conflict);
     }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> AddTemplateAsync(TemplateTableSection.TemplateFormModel form)
@@ -250,8 +258,8 @@ public class AgentCodingPageService
             var sourceProject = Projects.FirstOrDefault(p => p.Id == sourceProjectId);
             var targetProject = Projects.FirstOrDefault(p => p.Id == targetProjectId);
             if (sourceProject == null || targetProject == null) return (true, null, null);
-            await _configClient.SaveProjectAsync(sourceProject with { TemplateIds = sourceProject.TemplateIds.Where(id => id != templateId.Value).ToList() }, CancellationToken.None);
-            await _configClient.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(templateId.Value).ToList() }, CancellationToken.None);
+            // The template's own project is the only membership record, so a move is one call.
+            await _configClient.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.Value, CancellationToken.None);
             Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
             return (true, null, $"Moved \"{Templates.FirstOrDefault(t => t.Id == templateId.Value)?.Name ?? templateId.Value}\" to {targetProject.Name}.");
         }

@@ -645,7 +645,7 @@ internal sealed class TemplatePoller
 
     /// <summary>
     /// Selects the executor of a project's epics (the epics in its epic tracker).
-    /// Returns the first decomposition-enabled template in the project (by TemplateIds position).
+    /// Returns the first decomposition-enabled template in the project (TemplateIds are in TemplateOrder, by name).
     /// Returns null if no decomposition-enabled template exists.
     /// </summary>
     internal static PipelineJobTemplate? SelectDecompositionTemplate(

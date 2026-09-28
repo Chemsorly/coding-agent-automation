@@ -44,6 +44,8 @@ Projects are persisted in PostgreSQL (the `Projects` table). Configuration is ma
 
 The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
+A project does not store its templates: each template names the project it belongs to. The API returns a project's templates as a read-only `TemplateIds` list, ordered by name; saving a project ignores that list.
+
 ### Example: Mono-Repo Project (Settings Only)
 
 ```json
@@ -52,10 +54,6 @@ The JSON bundle produced by `GET /api/config/export` includes a `projects` array
   "Name": "Backend Services",
   "Description": "Java microservices with extended timeouts",
   "Enabled": true,
-  "TemplateIds": [
-    "template-id-1",
-    "template-id-2"
-  ],
   "EpicIssueProviderId": null,
   "MaxRetries": 5,
   "AgentTimeout": "00:45:00",
@@ -77,11 +75,6 @@ The JSON bundle produced by `GET /api/config/export` includes a `projects` array
   "Name": "Platform Product",
   "Description": "Cross-repo product with Polarion epic tracking",
   "Enabled": true,
-  "TemplateIds": [
-    "frontend-template-id",
-    "backend-template-id",
-    "shared-libs-template-id"
-  ],
   "EpicIssueProviderId": "polarion-provider-id",
   "MaxDecompositionSubIssues": 8,
   "MaxConcurrentDecompositions": 3
@@ -183,32 +176,44 @@ The Default project behaves identically to any other project: you can rename it,
 
 ## Template Management
 
-Every template belongs to exactly one project. There is no "unassigned" state.
+Every template belongs to exactly one project. There is no "unassigned" state. The template records its project, and that is the only record of membership.
+
+### Template Rules
+
+A template binds one repository to one implementation tracker. Among **enabled** templates:
+
+- a repository belongs to one template;
+- an issue tracker belongs to one template;
+- a name is unique within its project, ignoring case, because a project epic routes each sub-issue by template name.
+
+Saving or moving an enabled template that breaks a rule is refused with the reason. Disabled templates are not checked, so one of two conflicting templates can always be switched off. A project's epic tracker may also be the tracker of one of its templates.
+
+Templates saved before these rules were enforced keep working. The **Pipelines** page lists any conflicts above the template table, and an enabled template that is part of one cannot be saved until the conflict is fixed, for example by disabling, moving or removing the other template.
 
 ### Moving Templates Between Projects
 
 Templates can be moved between projects with the "Move to…" action, available in two places: each template row on the **Pipelines** page, and the project's **Templates** tab (Settings → Projects → *project*). When a template moves:
 
-- It is removed from the source project's `TemplateIds` list
-- It is appended to the destination project's `TemplateIds` list
+- Its project changes, so it leaves the source project's list and appears in the destination project's list
 - The template itself is unchanged — only project ownership moves
+- The move is refused if an enabled template in the destination project already has the same name
 
 ### Deleting a Project
 
 When a non-Default project is deleted:
 
-1. All templates in that project are moved to the Default project (appended at the end)
+1. All templates in that project are moved to the Default project
 2. The project record is removed from the database
 
 This ensures no template is ever orphaned.
 
 ### Template Ordering
 
-Templates within a project are ordered by their position in the `TemplateIds` list. This order determines:
+Templates within a project are ordered by name, ignoring case. There is no manual order. The order determines:
 
-- **Poll sequence:** Templates are polled in list order within each project
-- **Cross-project ordering:** Projects are sorted alphabetically by name, then templates within each project by position
-- **Project epic executor:** The first enabled template with `DecompositionEnabled` runs the project's epics (the epics in its `EpicIssueProviderId` tracker)
+- **Poll sequence:** Templates are polled in this order within each project
+- **Cross-project ordering:** Projects are sorted alphabetically by name, then templates within each project by name
+- **Project epic executor:** The first enabled template with `DecompositionEnabled` runs the project's epics (the epics in its `EpicIssueProviderId` tracker). To choose it, rename it or enable decomposition only on that template
 
 ## Use Case: Mono-Repo (Grouping + Settings)
 
@@ -327,7 +332,7 @@ Projects are managed in the **Settings** page under the "Projects" group in the 
 | Tab | Contents |
 |-----|----------|
 | **Overview** | Name, description, enabled toggle, EpicIssueProviderId dropdown |
-| **Templates** | Ordered list with add/remove/reorder controls and a "Move to…" action |
+| **Templates** | The project's templates by name, with add/remove controls and a "Move to…" action |
 | **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
 | **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*" |
 | **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |

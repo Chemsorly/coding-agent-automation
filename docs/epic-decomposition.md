@@ -33,11 +33,11 @@ Every epic follows the same two-phase workflow. The only difference is its scope
 | Lives in | The tracker of a template with `DecompositionEnabled` | The project's epic tracker (`EpicIssueProviderId`) |
 | May create sub-issues in | That template's tracker only | The tracker of every enabled template in the project |
 | Workspace | The template's repository | The executor's repository, plus the other enabled project repositories, cloned read-only into `repos/` |
-| Runs with the settings of | Its own template | The executor: the first enabled template with `DecompositionEnabled`, in project order. A manual dispatch from the epic drawer uses the drawer's template |
+| Runs with the settings of | Its own template | The executor: the first enabled template with `DecompositionEnabled`, by template name (see [Template Ordering](projects.md#template-ordering)). A manual dispatch from the epic drawer uses the drawer's template |
 
 - The run is bound to the tracker the epic lives in: the plan, the summary, the labels and the dedupe check all use the epic itself.
 - A project epic's sub-issue without a matching `targetRepository` goes to the executor's tracker. It is never created in the epic tracker, unless the epic tracker is also the executor's tracker. If the executor is missing from the project's repository list (for example because an earlier template has the same name), such a sub-issue is not created.
-- Template names are the routing keys: a template whose name is empty or already used by an earlier template in the project is left out of the repository list.
+- Template names are the routing keys, so they must be unique within a project (see [Template Rules](projects.md#template-rules)). A template saved before that rule, whose name is empty or already used by an earlier template in the project, is left out of the repository list.
 - The other repositories get a read-only token and none of their secrets or setup steps. Only GitHub App repositories can get a read-only token; other repositories are listed for routing but not cloned.
 - The scope is decided again when the agent picks up the job, from the configuration at that time.
 - If the epic tracker is also a template's tracker, its epics are project epics, and each epic is queued once, with the executor. An epic tracker belongs to one project; if two projects share one, the first by name owns it.

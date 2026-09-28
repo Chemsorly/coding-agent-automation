@@ -19,7 +19,11 @@ public sealed record PipelineProject
     /// <summary>Whether this project is active for polling. Default true.</summary>
     public bool Enabled { get; init; } = true;
 
-    /// <summary>Ordered list of template IDs belonging to this project.</summary>
+    /// <summary>
+    /// The IDs of the templates in this project, in <see cref="TemplateOrder"/>. A template's own project is
+    /// the only membership record: the store fills this list when it loads the project, and saving a project
+    /// ignores it. To change membership, save the template into a project or move it.
+    /// </summary>
     public IReadOnlyList<string> TemplateIds { get; init; } = [];
 
     /// <summary>

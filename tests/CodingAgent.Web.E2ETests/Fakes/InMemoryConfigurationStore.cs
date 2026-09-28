@@ -25,6 +25,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     private readonly List<ReviewerConfiguration> _reviewerConfigs = new();
     private readonly List<PipelineProject> _projects = new();
     private readonly List<PipelineJobTemplate> _templates = new();
+    private readonly Dictionary<string, string> _templateProjects = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
 
     public void Reset()
@@ -43,6 +44,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         _reviewerConfigs.Clear();
         _projects.Clear();
         _templates.Clear();
+        _templateProjects.Clear();
         SeedDefaults();
     }
 
@@ -184,28 +186,33 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
-    // Projects
+    // Projects. As in the database store, a template's own project is the only membership record:
+    // PipelineProject.TemplateIds is derived on load, in TemplateOrder, and ignored on save.
     public Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.ToList());
+        Task.FromResult<IReadOnlyList<PipelineProject>>(_projects.Select(WithMembers).ToList());
 
     public Task<PipelineProject?> GetProjectByIdAsync(string id, CancellationToken ct) =>
-        Task.FromResult(_projects.FirstOrDefault(p => p.Id == id));
+        Task.FromResult(_projects.Where(p => p.Id == id).Select(WithMembers).FirstOrDefault());
 
     public Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
     {
         _projects.RemoveAll(p => p.Id == project.Id);
-        _projects.Add(project);
+        _projects.Add(project with { TemplateIds = [] });
         return Task.CompletedTask;
     }
 
     public Task DeleteProjectAsync(string id, CancellationToken ct)
     {
         _projects.RemoveAll(p => p.Id == id);
+
+        // The deleted project's templates move to the Default project.
+        foreach (var templateId in _templateProjects.Where(kv => kv.Value == id).Select(kv => kv.Key).ToList())
+            _templateProjects[templateId] = WellKnownIds.DefaultProjectId;
         return Task.CompletedTask;
     }
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadTemplatesForProjectAsync(string projectId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_templates.ToList());
+        Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(MembersOf(projectId).ToList());
 
     public Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(_templates.ToList());
@@ -214,51 +221,34 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     {
         _templates.RemoveAll(t => t.Id == template.Id);
         _templates.Add(template);
-
-        // Ensure project has the template ID
-        var project = _projects.FirstOrDefault(p => p.Id == projectId);
-        if (project != null && !project.TemplateIds.Contains(template.Id))
-        {
-            _projects.Remove(project);
-            _projects.Add(project with { TemplateIds = project.TemplateIds.Append(template.Id).ToList() });
-        }
+        _templateProjects[template.Id] = projectId;
         return Task.CompletedTask;
     }
 
     public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
     {
-        var templateIdValue = templateId.Value;
-        _templates.RemoveAll(t => t.Id == templateIdValue);
-
-        var project = _projects.FirstOrDefault(p => p.Id == projectId);
-        if (project != null)
-        {
-            _projects.Remove(project);
-            _projects.Add(project with { TemplateIds = project.TemplateIds.Where(id => id != templateIdValue).ToList() });
-        }
+        _templates.RemoveAll(t => t.Id == templateId.Value);
+        _templateProjects.Remove(templateId.Value);
         return Task.CompletedTask;
     }
 
     public Task MoveTemplateAsync(ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
     {
-        var templateIdValue = templateId.Value;
-        var source = _projects.FirstOrDefault(p => p.Id == sourceProjectId.Value);
-        if (source is not null)
-        {
-            _projects.Remove(source);
-            _projects.Add(source with { TemplateIds = source.TemplateIds.Where(id => id != templateIdValue).ToList() });
-        }
-
-        var target = _projects.FirstOrDefault(p => p.Id == targetProjectId.Value);
-        if (target is not null && !target.TemplateIds.Contains(templateIdValue))
-        {
-            _projects.Remove(target);
-            _projects.Add(target with { TemplateIds = target.TemplateIds.Append(templateIdValue).ToList() });
-        }
-
+        // A template must always point at a project that exists, or it would drop out of every project.
+        if (_projects.Any(p => p.Id == targetProjectId.Value) && _templateProjects.ContainsKey(templateId.Value))
+            _templateProjects[templateId.Value] = targetProjectId.Value;
         return Task.CompletedTask;
     }
 
-    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct)
-        => Task.FromResult(_templates.Any(t => t.Enabled));
+    public Task<bool> HasEnabledTemplatesAsync(CancellationToken ct) =>
+        Task.FromResult(_templates.Any(t => t.Enabled));
+
+    private PipelineProject WithMembers(PipelineProject project) =>
+        project with { TemplateIds = MembersOf(project.Id).Select(t => t.Id).ToList() };
+
+    private IEnumerable<PipelineJobTemplate> MembersOf(string projectId) =>
+        TemplateOrder.ByName(
+            _templates.Where(t => _templateProjects.GetValueOrDefault(t.Id) == projectId),
+            t => t.Name,
+            t => t.Id);
 }

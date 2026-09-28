@@ -89,7 +89,7 @@ public class DispatchInfrastructure
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
+            project, repoProviderId, providerConfigs, ct);
 
         return (providerConfigs, config);
     }
@@ -263,9 +263,10 @@ public class DispatchInfrastructure
     }
 
     /// <summary>
-    /// Lists the project's enabled templates as routing targets, in project order. A template's name is
+    /// Lists the project's enabled templates as routing targets, in project order (by name). A template's name is
     /// the routing key the agent writes (<c>targetRepository</c>), so a template is left out when its name
-    /// is empty or an earlier template in the project already uses it.
+    /// is empty or an earlier template in the project already uses it (possible only for templates saved before
+    /// <see cref="TemplateBindingRules"/> were enforced).
     /// </summary>
     internal static List<RepositoryTarget> BuildRepositoryTargets(
         PipelineProject project, IReadOnlyList<PipelineJobTemplate> allTemplates, ILogger logger)
@@ -519,7 +520,7 @@ public class DispatchInfrastructure
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
+            project, repoProviderId, providerConfigs, ct);
 
         // ── Step 4: Carry forward staleness signals from issue context ──
         var forceRefresh = issueContext.ForceRefreshAnalysis;

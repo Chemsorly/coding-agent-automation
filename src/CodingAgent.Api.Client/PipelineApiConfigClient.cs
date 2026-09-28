@@ -207,7 +207,7 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             template,
             PipelineJsonOptions.Default,
             ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureAcceptedAsync(response, ct);
     }
 
     public async Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct = default)
@@ -225,6 +225,23 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
             new { SourceProjectId = sourceProjectId.Value, TargetProjectId = targetProjectId.Value, TemplateId = templateId },
             PipelineJsonOptions.Default,
             ct);
+        await EnsureAcceptedAsync(response, ct);
+    }
+
+    /// <summary>
+    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/>, but when the API refuses the request
+    /// (400 or 404), the exception message is the API's reason, for example a template binding conflict,
+    /// so the UI can show it.
+    /// </summary>
+    private static async Task EnsureAcceptedAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.StatusCode is System.Net.HttpStatusCode.BadRequest or System.Net.HttpStatusCode.NotFound)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var reason = body.StartsWith('"') ? System.Text.Json.JsonSerializer.Deserialize<string>(body) : body;
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(reason) ? $"The API returned {(int)response.StatusCode}." : reason);
+        }
+
         response.EnsureSuccessStatusCode();
     }
 

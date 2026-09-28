@@ -212,59 +212,38 @@ public sealed class DatabaseStartupService
         JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
 
     /// <summary>
-    /// Finds templates that are not listed in their owning project's <c>TemplateIds</c> (or whose
-    /// project no longer exists) and reparents them to the Default project. Idempotent — safe to
-    /// run at every startup.
+    /// Finds templates whose project no longer exists and moves them to the Default project, so every
+    /// template belongs to a project. A template's own project is the only membership record.
+    /// Idempotent — safe to run at every startup.
     /// </summary>
     internal async Task ClaimOrphanedTemplatesAsync(CancellationToken ct)
     {
-        // TODO [WARNING]: This method performs SaveChangesAsync on the Default project row without
-        // holding the distributed lock (unlike SeedDefaultReviewerConfigsIfNeededAsync which uses
-        // MigrationLockKey). ProjectEntity.RowVersion is a concurrency token, and InitializeAsync
-        // runs on every replica at startup. Two replicas can concurrently load the same orphan and
-        // the same Default project row, both attempt SaveChangesAsync, and the second will throw
-        // DbUpdateConcurrencyException which propagates out of InitializeAsync and aborts that
-        // replica's startup. Consider wrapping the repair in _lockProvider.AcquireAsync(MigrationLockKey, ct)
-        // (same as SeedDefaultReviewerConfigsIfNeededAsync), or catch/retry DbUpdateConcurrencyException here.
+        // TODO [WARNING]: This method performs SaveChangesAsync on template rows without holding the
+        // distributed lock (unlike SeedDefaultReviewerConfigsIfNeededAsync which uses MigrationLockKey).
+        // PipelineJobTemplateEntity.RowVersion is a concurrency token, and InitializeAsync runs on every
+        // replica at startup. Two replicas can concurrently load the same orphan, both attempt
+        // SaveChangesAsync, and the second will throw DbUpdateConcurrencyException which propagates out of
+        // InitializeAsync and aborts that replica's startup. Consider wrapping the repair in
+        // _lockProvider.AcquireAsync(MigrationLockKey, ct), or catch/retry DbUpdateConcurrencyException here.
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var allTemplates = await db.PipelineJobTemplates.ToListAsync(ct);
         if (allTemplates.Count == 0)
             return;
 
-        var allProjects = await db.Projects.ToDictionaryAsync(p => p.Id, ct);
+        var projectIds = (await db.Projects.Select(p => p.Id).ToListAsync(ct)).ToHashSet();
         var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
 
-        if (!allProjects.TryGetValue(defaultGuid, out var defaultProject))
+        if (!projectIds.Contains(defaultGuid))
         {
             _logger.Warning("ClaimOrphanedTemplatesAsync: Default project not found — skipping orphan repair");
             return;
         }
 
         var repairedCount = 0;
-        // TODO [WARNING]: O(N*M) complexity — defaultProject.TemplateIds is List<string>, so
-        // .Contains() is O(M) per call inside an O(N) loop over allTemplates. Build a HashSet<string>
-        // from defaultProject.TemplateIds once before the loop (as SaveProjectAsync does with newIdSet)
-        // to reduce this to O(N) total.
-        // TODO [WARNING]: This repair unconditionally reparents every orphan to Default, even when the
-        // template's FK still points to a live non-Default project (owningProject exists but doesn't
-        // list the template). The original issue suggests re-attaching to the owning project when it
-        // exists, and moving to Default only when the project is gone. If always-to-Default is the
-        // intended policy, this is a deliberate simplification.
-
-        foreach (var template in allTemplates)
+        foreach (var template in allTemplates.Where(t => !projectIds.Contains(t.ProjectId)))
         {
-            var isOrphaned = !allProjects.TryGetValue(template.ProjectId, out var owningProject)
-                || !owningProject.TemplateIds.Contains(template.Id.ToString());
-
-            if (!isOrphaned)
-                continue;
-
-            var templateIdStr = template.Id.ToString();
             template.ProjectId = defaultGuid;
-
-            if (!defaultProject.TemplateIds.Contains(templateIdStr))
-                defaultProject.TemplateIds.Add(templateIdStr);
 
             _logger.Information(
                 "ClaimOrphanedTemplatesAsync: reparented orphaned template {TemplateId} to Default project",
@@ -275,29 +254,11 @@ public sealed class DatabaseStartupService
 
         if (repairedCount > 0)
         {
-            ResyncSettingsJson(defaultProject);
             await db.SaveChangesAsync(ct);
             _logger.Information(
                 "ClaimOrphanedTemplatesAsync: repaired {Count} orphaned template(s)",
                 repairedCount);
         }
-    }
-
-    private static void ResyncSettingsJson(ProjectEntity entity)
-    {
-        if (entity.Settings is null)
-            return;
-
-        var project = JsonSerializer.Deserialize<PipelineProject>(entity.Settings, PipelineJsonOptions.Default);
-        if (project is null)
-            return;
-
-        var synced = project with
-        {
-            Id = entity.Id.ToString(),
-            TemplateIds = entity.TemplateIds
-        };
-        entity.Settings = JsonSerializer.Serialize(synced, PipelineJsonOptions.Default);
     }
 }
 
