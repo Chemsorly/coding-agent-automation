@@ -274,6 +274,64 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task ConfirmDistributionLabelAsync_Review_LabelsThePullRequestInTheRepository()
+    {
+        SetupStandardMocks();
+        var service = CreateService();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "5",
+            IssueProviderConfigId = "repo-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Review,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
+        };
+
+        await service.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync("repo-1", "5", AgentLabels.InProgress,
+                LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Never, "labelling issue #5 would label an unrelated issue wherever pull requests are numbered separately");
+    }
+
+    [Fact]
+    public async Task RevertFailedDistributionAsync_Review_RequeuesThePullRequestNotAnIssue()
+    {
+        // A review work item created before reviews were keyed by their repository still carries the
+        // tracker; its label still belongs on the pull request.
+        SetupStandardMocks();
+        var service = CreateService();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "5",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Review,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
+        };
+
+        await service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync("repo-1", "5", AgentLabels.Next,
+                LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync("issue-1", It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never, "a failed review dispatch must not put agent:next on the tracker's issue #5");
+    }
+
+    [Fact]
     public async Task ConfirmDistributionLabelAsync_LabelSwapThrows_IsSwallowed()
     {
         // Characterization test: non-OCE exceptions from SwapLabelAsync must not propagate.
@@ -811,6 +869,45 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_IdentifiesThePullRequestByItsRepository_AndNeverReadsItFromTheTracker()
+    {
+        // In GitLab, issue #42 and merge request !42 are different things, so the tracker's #42 is unrelated.
+        SetupStandardMocks();
+        var tracker = new Mock<IIssueProvider>();
+        tracker
+            .Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Unrelated issue", Description = "Not the PR", Labels = [] });
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(tracker.Object);
+        var service = CreateService();
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "42",
+            PrBranchName = "feature/pages",
+            PrTitle = "Add pagination",
+            PrDescription = "Pages the API",
+            PrAuthor = "dev-user",
+            PrUrl = "https://gitlab.example.com/group/repo/-/merge_requests/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        var result = await service.PrepareReviewDistributionRequestAsync(reviewRequest, TestProject, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.IssueIdentifier.Value.Should().Be("42");
+        result.IssueProviderConfigId.Should().Be("repo-1", "a pull request is identified by its repository and number");
+        result.IssueDetail!.Title.Should().Be("Add pagination");
+        result.IssueDetail.Description.Should().Be("Pages the API");
+        result.IssueDetail.Url.Should().Be(reviewRequest.PrUrl);
+        tracker.Verify(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task PrepareReviewDistributionRequestAsync_SetsRunTypeOnInMemoryPipelineRun()
     {
         // Regression test: the in-memory PipelineRun (registered in OrchestratorRunService)
@@ -1061,22 +1158,14 @@ public class DispatchOrchestrationServiceTests
         result!.LinkedIssueContexts.Should().BeNullOrEmpty(
             "a PR with no closing-keyword references or issue URLs must not populate LinkedIssueContexts");
 
-        // Verify the provider factory was called exactly once — for the dispatch issue fetch only.
-        // A second CreateIssueProvider call would indicate FetchLinkedIssueContextsAsync failed
-        // to early-return and proceeded to the fetch loop despite having no issue references.
-        // (The dispatch path calls CreateIssueProvider once via BuildIssueContextAsync;
-        // FetchLinkedIssueContextsAsync must NOT call it a second time when allIssueNumbers is empty.)
-        // TODO: [WARNING] This Times.Once assertion is only meaningful if _mockProviderFactory is the
-        // same factory instance used by both BuildIssueContextAsync (dispatch path) and
-        // FetchLinkedIssueContextsAsync (linked-issue path). Confirm that _infra.ProviderFactory in the
-        // production code resolves to _mockProviderFactory in the test DI setup. If the two paths use
-        // different factory instances, this verify does not prove early-return; it only proves the dispatch
-        // path fired. The acceptance criterion asked for Times.Never (factory not called at all for linked
-        // issues), which would be a stronger signal if achievable without a separate factory instance.
+        // A review's context comes from the pull request, never from the tracker, so the tracker is
+        // only read for linked issues — and a PR without references links none. A CreateIssueProvider
+        // call would mean FetchLinkedIssueContextsAsync failed to early-return, or the review read
+        // the tracker for its own number.
         _mockProviderFactory.Verify(
             f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()),
-            Times.Once,
-            "CreateIssueProvider must be called exactly once (for dispatch issue fetch), never for linked-issue fetch when no references found");
+            Times.Never,
+            "a review never reads the tracker for its pull request, and no references means no linked-issue fetch");
 
         // Additionally verify that GetIssueAsync was never called for any issue other than the
         // dispatch issue "42" — confirming no linked-issue fetch occurred.

@@ -101,7 +101,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             new DispatchCoreRequest(
                 requiredLabels, issueIdentifier, issueProviderId,
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
-                project, _logger),
+                project, _logger, PullRequest: request.PullRequest),
             ct);
         if (preparation is null)
             return null;
@@ -264,15 +264,27 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         var requiredLabels = await ResolveRequiredLabelsInternalAsync(reviewRequest.RepoProviderId, ct);
 
+        // A pull request is identified by its repository and number, an issue by its tracker and number.
+        // In GitLab, and whenever the tracker is a different system than the repository, pull request !N and
+        // issue #N are different things, so the review's work item is keyed by the repository and its context
+        // comes from the pull request. The tracker is only read for the issues the pull request links to.
+        var pullRequest = new IssueDetail
+        {
+            Identifier = reviewRequest.PrIdentifier,
+            Title = reviewRequest.PrTitle,
+            Description = reviewRequest.PrDescription ?? "",
+            Labels = [],
+            Url = reviewRequest.PrUrl
+        };
         var result = await PrepareAsync(
             new OrchestratorPreparationRequest(
                 reviewRequest.PrIdentifier,
-                reviewRequest.IssueProviderId,
+                reviewRequest.RepoProviderId,
                 reviewRequest.RepoProviderId,
                 reviewRequest.BrainProviderId,
                 null, // pipelineProviderId
                 reviewRequest.InitiatedBy,
-                requiredLabels, project, PipelineRunType.Review),
+                requiredLabels, project, PipelineRunType.Review, pullRequest),
             ct);
 
         if (result is null) return null;
@@ -583,9 +595,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
             request.IssueIdentifier);
 
+        var (providerConfigId, targetKind) = LabelTarget(request);
         return _infra.LabelService.TrySwapLabelAsync(new LabelSwapContext(
-            request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress,
-            LabelTargetKind.Issue, _logger,
+            providerConfigId, request.IssueIdentifier, AgentLabels.InProgress,
+            targetKind, _logger,
             "DispatchOrchestrationService.ConfirmDistributionLabelAsync", ct)
         {
             SwallowCancellation = swallowCancellation
@@ -599,14 +612,25 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // cancelled the revert should stop, not silently succeed.
         _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
             request.IssueIdentifier);
+        var (providerConfigId, targetKind) = LabelTarget(request);
         return _infra.LabelService.TrySwapLabelAsync(
-            request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next,
-            LabelTargetKind.Issue, _logger,
+            providerConfigId, request.IssueIdentifier, AgentLabels.Next,
+            targetKind, _logger,
             "DispatchOrchestrationService.RevertFailedDistributionAsync", ct);
         // Note: in-memory run cleanup is no longer done here. The run is owned by the API's
         // IOrchestratorRunService; the API will remove it when the WorkItem transitions to a
         // terminal state via POST /api/work-items/{id}/status (Req 1a.1 Option A).
     }
+
+    /// <summary>
+    /// Where a work item's labels live: a review's on its pull request in the repository, every other
+    /// work item's on its issue in the tracker. Labelling issue #N for a review would label an unrelated
+    /// issue wherever pull requests and issues are numbered separately, as in GitLab.
+    /// </summary>
+    private static (string ProviderConfigId, LabelTargetKind TargetKind) LabelTarget(JobDistributionRequest request) =>
+        request.TaskType == WorkItemTaskType.Review
+            ? (request.RepoProviderConfigId, LabelTargetKind.PullRequest)
+            : (request.IssueProviderConfigId, LabelTargetKind.Issue);
 
     /// <summary>
     /// Parses a project ID string to <see cref="Guid"/>. Returns <c>null</c> and logs a warning

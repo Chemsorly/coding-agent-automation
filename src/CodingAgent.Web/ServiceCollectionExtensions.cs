@@ -125,7 +125,8 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IConsolidationWorkspaceManager>(),
                 sp.GetRequiredService<IConsolidationFeedbackCache>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
-                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>())));
+                SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
+                PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
 
         services.AddSingleton<IConsolidationRunTracker>(sp =>
             (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());

@@ -26,6 +26,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
     private readonly IConsolidationSelectorResolver? _selectorResolver;
+    private readonly IPipelineConfigStore? _pipelineConfigStore;
 
     /// <inheritdoc />
     public event Action? OnChange;
@@ -83,6 +84,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _projectStore = deps.ProjectStore;
         _workDistributor = deps.WorkDistributor;
         _selectorResolver = deps.SelectorResolver;
+        _pipelineConfigStore = deps.PipelineConfigStore;
     }
 
     /// <inheritdoc />
@@ -131,38 +133,50 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         var templateIdValue = templateId?.Value;
 
         // ── 1. Resolve template + project ────────────────────────────────────
-        string? templateName;
-        string? projectName = null;
-        string? projectId = null;
+        PipelineJobTemplate? template = null;
+        PipelineProject? project = null;
         ProviderConfig? repoConfig = null;
-        string repoProviderId = "";
-        string? brainProviderId = null;
 
         if (templateId is not null)
         {
-            var (template, resolvedProjectName, resolvedProjectId) = await _templateResolver.ResolveTemplateWithProjectAsync(templateIdValue!, ct);
+            (template, project) = await _templateResolver.ResolveTemplateAndProjectAsync(templateIdValue!, ct);
             if (template is null)
             {
                 _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateIdValue);
                 return null;
             }
-            templateName = template.Name;
-            projectName = resolvedProjectName;
-            projectId = resolvedProjectId;
 
             // Resolve repo ProviderConfig (for selector resolution).
             repoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
                 template.RepoProviderId, ProviderKind.Repository, ct);
-
-            // Resolve repoProviderId and brainProviderId for the JobDistributionRequest payload.
-            // AgentTokenRefreshService reads RepoProviderConfigId directly from WorkItems.Payload
-            // (JSONB) and will fail with HubException if it is empty for template-scoped runs.
-            repoProviderId = template.RepoProviderId ?? "";
-            brainProviderId = template.BrainProviderId;
         }
-        else
+
+        var templateName = template?.Name ?? "Global";
+        var projectName = project?.Name;
+        var projectId = project?.Id;
+
+        // Resolve repoProviderId and brainProviderId for the JobDistributionRequest payload.
+        // AgentTokenRefreshService reads RepoProviderConfigId directly from WorkItems.Payload
+        // (JSONB) and will fail with HubException if it is empty for template-scoped runs.
+        var repoProviderId = template?.RepoProviderId ?? "";
+        var brainProviderId = template?.BrainProviderId;
+
+        // The configuration the job runs with: the live global settings with the project's overrides,
+        // as the agent resolves them at claim time. The bootstrap _config is only a fallback for hosts
+        // without a configuration store (tests); it never reflects saved settings.
+        var globalConfig = _pipelineConfigStore is not null
+            ? await _pipelineConfigStore.LoadPipelineConfigAsync(ct)
+            : _config;
+        var config = PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
+
+        // Brain consolidation writes to the brain, so it does not run from a template whose brain is read-only.
+        if (type == ConsolidationRunType.BrainConsolidation && template is not null
+            && ConsolidationTemplateFilter.IsBrainReadOnly(template, project, globalConfig))
         {
-            templateName = "Global";
+            _logger.Warning(
+                "Consolidation run rejected: the brain of template {TemplateName} is read-only, so brain consolidation does not run from it",
+                templateName);
+            return null;
         }
 
         // ── 2. Guard: WorkDistributor required ───────────────────────────────
@@ -182,7 +196,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         IReadOnlyList<string>? selectorLabels;
         if (_selectorResolver is not null)
         {
-            selectorLabels = await _selectorResolver.ResolveAsync(repoConfig, _config, ct);
+            selectorLabels = await _selectorResolver.ResolveAsync(repoConfig, config, ct);
             if (selectorLabels is null)
             {
                 // Null = startup race (no profiles available yet). Treat as transient failure.
@@ -197,7 +211,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             // Fallback when no resolver is injected (tests, or legacy call sites).
             // Use LabelResolver which reads from repoConfig + DefaultRequiredAgentLabels.
-            selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, _config);
+            selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config);
         }
 
         // ── 4. Build the ConsolidationRun and persist it BEFORE dispatch ─────
@@ -207,7 +221,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // the Scheduler dispatches it, the agent starts, but no ConsolidationRun row exists.
         // (DotNetSpecialist CRITICAL finding — dispatch-before-persist ordering)
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch, _config);
+        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch);
         run.TraceParent = traceContext?.GetValueOrDefault("traceparent");
 
         // ── 5. Prepare feedback data (harness suggestions path) ───────────────
@@ -232,13 +246,17 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // Dispatch runs after a successful persist so that any dispatch failure can be
         // compensated: the persisted run row is deleted and the dedup key is cleared.
         //
-        // IssueIdentifier format: "{type}:{templateId|global}" (issue #3027).
+        // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
+        // the brain for brain consolidation, the template (and so its repository) for a refactoring scan,
+        // "global" for harness suggestions. Many templates can share one brain, and two consolidations of
+        // one brain would race to push to it, so templates that share a brain share the key.
         // This deterministic format feeds the partial unique index on
         // (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses in
         // PipelineDbContext.OnModelCreating, providing cross-replica dedup.
-        var issueIdentifier = templateIdValue is not null
-            ? $"{type}:{templateIdValue}"
-            : $"{type}:global";
+        var scope = type == ConsolidationRunType.BrainConsolidation && !string.IsNullOrEmpty(brainProviderId)
+            ? brainProviderId
+            : templateIdValue ?? "global";
+        var issueIdentifier = $"{type}:{scope}";
 
         var request = new JobDistributionRequest
         {
@@ -249,7 +267,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             InitiatedBy = ConsolidationConstants.InitiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
             AgentSelector = AgentSelectorKey.From(selectorLabels),
-            TimeoutSeconds = (int)_config.AgentTimeout.TotalSeconds,
+            TimeoutSeconds = (int)config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = templateIdValue,
             // Use run.RunId (not a fresh Guid) so the workspace path is consistent with what
@@ -546,8 +564,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         string templateName,
         string? projectName,
         string? projectId,
-        bool autoDispatch,
-        PipelineConfiguration config) => new()
+        bool autoDispatch) => new()
         {
             RunId = Guid.NewGuid().ToString(),
             Type = type,

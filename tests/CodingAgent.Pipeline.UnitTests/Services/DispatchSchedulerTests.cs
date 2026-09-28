@@ -1436,6 +1436,110 @@ public class DispatchSchedulerTests
 
     #endregion
 
+    #region Identity per tracker and per repository (#3145)
+
+    [Fact]
+    public async Task IssueRound_ADependencyIsCheckedInTheIssuesOwnTracker()
+    {
+        // Two templates on different trackers each have an issue #30 that depends on #12. #12 is closed
+        // in tracker a and open in tracker b, so only a's issue is ready. Issue numbers are unique only
+        // within a tracker: an answer about #12 in one tracker says nothing about #12 in another.
+        var trackerA = new Mock<IIssueProvider>();
+        trackerA.Setup(p => p.IsIssueClosedAsync("12", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var trackerB = new Mock<IIssueProvider>();
+        trackerB.Setup(p => p.IsIssueClosedAsync("12", It.IsAny<CancellationToken>())).ReturnsAsync(false);
+        _cacheManager.IssueProviders["provider-ta"] = trackerA.Object;
+        _cacheManager.IssueProviders["provider-tb"] = trackerB.Object;
+
+        var dispatched = new List<string>();
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDistributionRequestAsync(
+                It.IsAny<ImplementationDispatchOrchestrationRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ImplementationDispatchOrchestrationRequest req, CancellationToken _) =>
+            {
+                dispatched.Add($"{req.IssueProviderId.Value}#{req.IssueIdentifier.Value}");
+                return CreateMinimalJobDistributionRequest(req.IssueIdentifier);
+            });
+        var scheduler = new DispatchScheduler(
+            _mockOrchestration.Object, _mockDispatchOrchestration.Object,
+            new DependencyChecker(Serilog.Core.Logger.None), _cacheManager, Serilog.Core.Logger.None);
+
+        var templateA = CreateTemplate("ta");
+        var templateB = CreateTemplate("tb");
+        var project = CreateProject("p1");
+        IssueSummary DependsOn12() => new() { Identifier = "30", Title = "Needs #12", Labels = [], Description = "Depends on #12" };
+
+        await scheduler.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = [templateA, templateB],
+                FlattenedTemplates = [(templateA, project), (templateB, project)],
+                Config = new PipelineConfiguration { MinIssueSlots = 0 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>> { ["ta"] = [DependsOn12()], ["tb"] = [DependsOn12()] },
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        dispatched.Should().Equal("provider-ta#30");
+        trackerB.Verify(p => p.IsIssueClosedAsync("12", It.IsAny<CancellationToken>()), Times.Once,
+            "tracker b is asked about its own #12 instead of reusing tracker a's answer");
+    }
+
+    [Fact]
+    public async Task PrRound_AnActiveIssueWithTheSameNumber_DoesNotBlockThePullRequest()
+    {
+        // Issue #5 is being implemented. Pull request !5 is a different thing: a pull request is identified
+        // by its repository and number, an issue by its tracker and number.
+        var template = CreateTemplate("t1");
+        var (pollable, flattened) = BuildTemplateLists(template, CreateProject("p1"));
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            PrOnlyRequest(pollable, flattened, active: ((IssueIdentifier)"5", (ProviderConfigId)template.IssueProviderId)),
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1);
+        _prDispatchCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task PrRound_AnActiveReviewOfThePullRequest_SkipsIt()
+    {
+        var template = CreateTemplate("t1");
+        var (pollable, flattened) = BuildTemplateLists(template, CreateProject("p1"));
+
+        await _scheduler.DispatchFairRoundRobinAsync(
+            PrOnlyRequest(pollable, flattened, active: ((IssueIdentifier)"5", (ProviderConfigId)template.RepoProviderId)),
+            CancellationToken.None, CancellationToken.None);
+
+        _prDispatchCount.Should().Be(0, "the review work item of pull request !5 is keyed by the repository");
+    }
+
+    private static DispatchScheduler.DispatchRoundRobinRequest PrOnlyRequest(
+        IReadOnlyList<PipelineJobTemplate> pollable,
+        IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattened,
+        (IssueIdentifier, ProviderConfigId) active) => new()
+    {
+        PollableTemplates = pollable,
+        FlattenedTemplates = flattened,
+        Config = new PipelineConfiguration { MinIssueSlots = 0 },
+        MaxRunsPerCycle = 5,
+        ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)> { active },
+        IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+        PrQueues = new Dictionary<string, List<PullRequestSummary>> { [pollable[0].Id] = [CreatePrSummary("5", 5)] },
+        DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+        ReportStatus = _ => { },
+        ReportIssue = _ => { },
+        NotifyChange = () => { }
+    };
+
+    #endregion
+
     #region Helpers
 
     private static PipelineJobTemplate CreateTemplate(

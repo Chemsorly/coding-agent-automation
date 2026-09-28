@@ -53,7 +53,16 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
             Directory.Delete(_workspacePath, recursive: true);
     }
 
-    private BrainConsolidationExecutor CreateExecutor() => new(_mockLogger.Object);
+    private BrainConsolidationExecutor CreateExecutor()
+    {
+        // The brain update service pushes through the brain provider (its merge is tested separately).
+        var brainUpdateService = new Mock<IBrainUpdateService>();
+        brainUpdateService
+            .Setup(x => x.PushConsolidationAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .Returns((string path, string _, IRepositoryProvider provider, CancellationToken ct, int _) =>
+                provider.PushBranchAsync(path, provider.BaseBranch, ct));
+        return new(_mockLogger.Object, brainUpdateService.Object);
+    }
 
     private ConsolidationJobMessage CreateJob(bool reviewEnabled = true) => new()
     {

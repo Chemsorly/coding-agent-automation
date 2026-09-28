@@ -135,7 +135,7 @@ All settings below are nullable on the project. When `null`, the global default 
 | Setting | Type | Description |
 |---------|------|-------------|
 | `BlacklistedPaths` | list? | Paths excluded from agent commits |
-| `BrainReadOnly` | bool? | If true, brain is synced pre-run but not written post-run |
+| `BrainReadOnly` | bool? | If true, brain is synced pre-run but not written post-run, and brain consolidation does not run from the project's templates |
 
 ### Refactoring Settings
 

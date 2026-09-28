@@ -48,6 +48,7 @@
                 {
                     var supportsBrain = ConsolidationTemplateFilter.SupportsBrainConsolidation(template);
                     var supportsRefactoring = ConsolidationTemplateFilter.SupportsRefactoringDetection(template);
+                    var brainReadOnly = _readOnlyBrainTemplates.Contains(template.Id);
                     var lastBrain = _lastRuns.GetValueOrDefault((ConsolidationRunType.BrainConsolidation, template.Id));
                     var lastRefactoring = _lastRuns.GetValueOrDefault((ConsolidationRunType.RefactoringDetection, template.Id));
 
@@ -68,6 +69,10 @@
                                 else
                                 {
                                     <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                                @if (brainReadOnly)
+                                {
+                                    <span class="consolidation-card-value consolidation-muted">— read-only for this template</span>
                                 }
                             }
                             else
@@ -101,7 +106,8 @@
                         <div class="consolidation-card-actions">
                             @if (supportsBrain)
                             {
-                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.BrainConsolidation, template.Id)"
+                                <button class="btn-trigger" disabled="@(brainReadOnly || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
+                                        title="@(brainReadOnly ? BrainReadOnlyHint : null)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
                                     <Icon Name="brain" Size="14" /> Brain Consolidation
                                 </button>
@@ -278,8 +284,18 @@
 }
 
 @code {
+    private const string BrainReadOnlyHint =
+        "The brain is read-only for this template. Trigger brain consolidation from a template that writes to this brain.";
+
     private IReadOnlyList<PipelineJobTemplate> _templates = [];
     private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
+
+    // Brain consolidation works on a brain, and several templates can share one: the last run and the
+    // running state shown for a template are those of its brain. Keyed by template id, all templates.
+    private Dictionary<string, string> _brainByTemplate = new(StringComparer.Ordinal);
+
+    // Templates whose brain is read-only: brain consolidation does not run from them.
+    private HashSet<string> _readOnlyBrainTemplates = new(StringComparer.Ordinal);
     private IReadOnlyList<ConsolidationRun> _runHistory = [];
     private bool _anyRunCancellable;
     private HarnessSuggestions? _harnessSuggestions;
@@ -340,11 +356,19 @@
                 .Select(tid => templateLookup[tid])
                 .Where(t => t.Enabled)
                 .ToList();
+
+            _brainByTemplate = allTemplates
+                .Where(t => !string.IsNullOrEmpty(t.BrainProviderId))
+                .ToDictionary(t => t.Id, t => t.BrainProviderId!, StringComparer.Ordinal);
+
+            await LoadReadOnlyBrainTemplatesAsync(projects);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load templates for consolidation page");
             _templates = [];
+            _brainByTemplate = new(StringComparer.Ordinal);
+            _readOnlyBrainTemplates = new(StringComparer.Ordinal);
         }
 
         try
@@ -373,27 +397,60 @@
             _harnessSuggestions = null;
         }
 
-        // Load last runs per template per type
+        // Last runs per template and type, from the history loaded above. A template's last brain
+        // consolidation is the last one of its brain, whichever template it was triggered from.
         _lastRuns.Clear();
         foreach (var template in _templates)
         {
-            try
+            foreach (var type in new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection })
             {
-                var lastBrain = await ConsolidationService.GetLastRunAsync(
-                    ConsolidationRunType.BrainConsolidation, template.Id, CancellationToken.None);
-                _lastRuns[(ConsolidationRunType.BrainConsolidation, template.Id)] = lastBrain;
-
-                var lastRefactoring = await ConsolidationService.GetLastRunAsync(
-                    ConsolidationRunType.RefactoringDetection, template.Id, CancellationToken.None);
-                _lastRuns[(ConsolidationRunType.RefactoringDetection, template.Id)] = lastRefactoring;
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Failed to load last runs for template {TemplateId}", template.Id);
+                _lastRuns[(type, template.Id)] = _runHistory
+                    .Where(r => r.Type == type && IsSameScope(r, template.Id))
+                    .MaxBy(r => r.StartedAtUtc);
             }
         }
 
         _isLoading = false;
+    }
+
+    /// <summary>
+    /// Loads which templates have a read-only brain: the template's own flag, or the global setting with
+    /// the project's override. On failure no button is disabled; the trigger still refuses the run.
+    /// </summary>
+    private async Task LoadReadOnlyBrainTemplatesAsync(IReadOnlyList<PipelineProject> projects)
+    {
+        try
+        {
+            var globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+            _readOnlyBrainTemplates = _templates
+                .Where(ConsolidationTemplateFilter.SupportsBrainConsolidation)
+                .Where(t => ConsolidationTemplateFilter.IsBrainReadOnly(
+                    t, projects.FirstOrDefault(p => p.TemplateIds.Contains(t.Id)), globalConfig))
+                .Select(t => t.Id)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load the configuration for brain read-only checks on the consolidation page");
+            _readOnlyBrainTemplates = new(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="run"/> worked on what the template's consolidation of the same type works on:
+    /// the same brain for brain consolidation, the same template otherwise.
+    /// </summary>
+    private bool IsSameScope(ConsolidationRun run, string? templateId)
+    {
+        if (run.TemplateId == templateId)
+            return true;
+
+        return run.Type == ConsolidationRunType.BrainConsolidation
+            && templateId is not null
+            && run.TemplateId is not null
+            && _brainByTemplate.TryGetValue(templateId, out var brain)
+            && _brainByTemplate.TryGetValue(run.TemplateId, out var runBrain)
+            && string.Equals(brain, runBrain, StringComparison.Ordinal);
     }
 
     private async Task OpenRefactoringModal(string templateId, string templateName)
@@ -491,7 +548,7 @@
     private bool IsRunning(ConsolidationRunType type, string? templateId)
     {
         return _runHistory.Any(r => r.Type == type
-            && r.TemplateId == templateId
+            && IsSameScope(r, templateId)
             && (r.Status == ConsolidationRunStatus.Running
                 || r.Status == ConsolidationRunStatus.Pending));
     }

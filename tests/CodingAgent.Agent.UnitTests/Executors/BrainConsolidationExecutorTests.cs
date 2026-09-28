@@ -8,24 +8,35 @@ namespace CodingAgent.Agent.UnitTests.Executors;
 
 /// <summary>
 /// Unit tests for <see cref="BrainConsolidationExecutor"/>.
-/// Tests: commits and pushes on success, marks failed on push conflict.
+/// Tests: commits and pushes on success, marks failed when the push fails, refuses a read-only brain.
+/// The merge of a rejected push is tested in BrainUpdateServiceConsolidationMergeTests.
 /// </summary>
 public class BrainConsolidationExecutorTests
 {
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly Mock<IRepositoryProvider> _mockBrainProvider = new();
     private readonly Mock<IAgentProvider> _mockAgentProvider = new();
+    private readonly Mock<IBrainUpdateService> _mockBrainUpdateService = new();
 
-    private BrainConsolidationExecutor CreateExecutor() => new(_mockLogger.Object);
+    public BrainConsolidationExecutorTests()
+    {
+        // The brain update service pushes through the brain provider; a push it cannot merge fails like the provider's.
+        _mockBrainUpdateService
+            .Setup(x => x.PushConsolidationAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()))
+            .Returns((string path, string _, IRepositoryProvider provider, CancellationToken ct, int _) =>
+                provider.PushBranchAsync(path, provider.BaseBranch, ct));
+    }
 
-    private static ConsolidationJobMessage CreateJob(string? jobId = null) => new()
+    private BrainConsolidationExecutor CreateExecutor() => new(_mockLogger.Object, _mockBrainUpdateService.Object);
+
+    private static ConsolidationJobMessage CreateJob(string? jobId = null, bool brainReadOnly = false) => new()
     {
         JobId = jobId ?? Guid.NewGuid().ToString(),
         Type = ConsolidationRunType.BrainConsolidation,
         TemplateId = "template-1",
         TemplateName = "Test Template",
         ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration(),
+        PipelineConfiguration = new PipelineConfiguration { BrainReadOnly = brainReadOnly },
         LastSuccessfulRunUtc = DateTime.UtcNow.AddDays(-7)
     };
 
@@ -66,10 +77,33 @@ public class BrainConsolidationExecutorTests
         _mockBrainProvider.Verify(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Once);
         _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.Is<string>(m => m.Contains(job.JobId)), It.IsAny<CancellationToken>()), Times.Once);
         _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), (BranchName)"main", It.IsAny<CancellationToken>()), Times.Once);
+        // The push goes through the consolidation merge, with the commit's message.
+        _mockBrainUpdateService.Verify(x => x.PushConsolidationAsync(
+            It.IsAny<string>(), It.Is<string>(m => m.Contains(job.JobId)), _mockBrainProvider.Object,
+            It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Once);
     }
 
     [Fact]
-    public async Task ExecuteAsync_PushConflict_MarksRunAsFailed()
+    public async Task ExecuteAsync_BrainReadOnly_DoesNotCloneOrRunTheAgent()
+    {
+        // Arrange: the configuration resolved at claim time makes the brain read-only for the template
+        var executor = CreateExecutor();
+        var job = CreateJob(brainReadOnly: true);
+
+        // Act
+        var result = await executor.ExecuteAsync(job, _mockBrainProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("read-only");
+        _mockBrainProvider.Verify(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
+        _mockBrainUpdateService.Verify(x => x.PushConsolidationAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<int>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PushStillRejected_MarksRunAsFailed()
     {
         // Arrange
         var executor = CreateExecutor();

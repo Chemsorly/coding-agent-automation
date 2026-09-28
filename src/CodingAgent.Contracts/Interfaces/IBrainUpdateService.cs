@@ -14,6 +14,14 @@ public interface IBrainUpdateService
     Task<BrainSyncResult> CommitAndPushAsync(string brainPath, RunId runId, string issueIdentifier, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
 
     /// <summary>
+    /// Pushes a committed brain consolidation to the brain's base branch. When other runs pushed to the
+    /// brain since the consolidation cloned it, the push is retried on top of their changes: the
+    /// consolidated files are kept, and the lines those runs added to them are appended, so nothing they
+    /// learned is lost; the next consolidation folds those lines in. Throws when the push still fails.
+    /// </summary>
+    Task PushConsolidationAsync(string brainPath, string commitMessage, IRepositoryProvider brainProvider, CancellationToken ct, int maxPushRetries = 3);
+
+    /// <summary>
     /// Ensures a .gitignore entry exists in the given content. Pure string manipulation.
     /// </summary>
     static string EnsureGitignoreEntry(string gitignoreContent, string entry)

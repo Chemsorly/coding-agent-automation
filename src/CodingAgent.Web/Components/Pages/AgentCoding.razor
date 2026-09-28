@@ -188,7 +188,7 @@
 
 <PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"
     PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
-    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.IssueProviderId ?? ""))"
+    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.RepoProviderId ?? ""))"
     AvailableLabels="_prDrawerLabels" SelectedLabels="_prDrawerSelectedLabels"
     OnToggleLabel="PrDrawerToggleLabel" OnClearLabels="PrDrawerClearLabels"
     OnClose="ClosePrDrawer" OnNextPage="PrDrawerNextPage" OnPrevPage="PrDrawerPrevPage" OnDispatch="DispatchPrReviewFromDrawer">

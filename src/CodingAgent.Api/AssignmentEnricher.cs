@@ -241,7 +241,8 @@ public class AssignmentEnricher
             PipelineProviderId: identity.PipelineProviderConfigId,
             Project: project,
             Logger: _logger,
-            AdditionalRepoProviderIds: projectContext?.Repositories.Select(r => r.RepoProviderId).OfType<string>().ToList());
+            AdditionalRepoProviderIds: projectContext?.Repositories.Select(r => r.RepoProviderId).OfType<string>().ToList(),
+            PullRequest: identity.TaskType == WorkItemTaskType.Review ? ReviewedPullRequest(identity) : null);
 
         var core = await _infra.PrepareDispatchCoreAsync(coreRequest, ct);
         if (core is null)
@@ -281,6 +282,19 @@ public class AssignmentEnricher
             AnalysisRefreshCount = refreshCount,
         };
     }
+
+    /// <summary>
+    /// The pull request a review is about, as it was dispatched. A review's subject is a pull request in the
+    /// repository, so its context never comes from the tracker, where #N may be an unrelated issue.
+    /// </summary>
+    private static IssueDetail ReviewedPullRequest(JobDistributionRequest identity) => new()
+    {
+        Identifier = identity.IssueIdentifier,
+        Title = identity.IssueDetail?.Title ?? "",
+        Description = identity.ReviewPrDescription ?? "",
+        Labels = [],
+        Url = identity.LinkedPullRequest?.Url
+    };
 
     /// <summary>Whether <paramref name="issueProviderConfigId"/> is the tracker of an enabled template of the project.</summary>
     private async Task<bool> IsTemplateTrackerAsync(PipelineProject project, string issueProviderConfigId, CancellationToken ct)

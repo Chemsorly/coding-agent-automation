@@ -158,10 +158,10 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
         _mockWorkDistributor.Verify(
             d => d.DistributeAsync(
                 It.Is<JobDistributionRequest>(r =>
-                    r.IssueIdentifier == $"{ConsolidationRunType.BrainConsolidation}:{Template.Id}"),
+                    r.IssueIdentifier == $"{ConsolidationRunType.BrainConsolidation}:{Template.BrainProviderId}"),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            $"IssueIdentifier must be '{ConsolidationRunType.BrainConsolidation}:{Template.Id}' for cross-replica dedup (issue #3027)");
+            $"IssueIdentifier must be '{ConsolidationRunType.BrainConsolidation}:{Template.BrainProviderId}' for cross-replica dedup (issue #3027): one brain consolidation per brain");
     }
 
     // ── Test B: Config-error trigger creates no WorkItem ─────────────────────

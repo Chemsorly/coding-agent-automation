@@ -32,6 +32,17 @@ public sealed class ConsolidationTemplateResolver
     public async Task<(PipelineJobTemplate? Template, string? ProjectName, string? ProjectId)> ResolveTemplateWithProjectAsync(
         TemplateId templateId, CancellationToken ct)
     {
+        var (template, project) = await ResolveTemplateAndProjectAsync(templateId, ct);
+        return (template, project?.Name, project?.Id);
+    }
+
+    /// <summary>
+    /// Resolves a template by ID and returns it with its owning project, or (null, null) when the
+    /// template is not in an enabled project.
+    /// </summary>
+    public async Task<(PipelineJobTemplate? Template, PipelineProject? Project)> ResolveTemplateAndProjectAsync(
+        TemplateId templateId, CancellationToken ct)
+    {
         // TODO [WARNING]: LoadProjectsAsync and LoadAllTemplatesAsync are two separate async calls with no
         // transactional consistency guarantee. If a project is deleted (or its TemplateIds updated) between
         // the two calls, a template in the lookup may have no owning project, returning (null, null, null)
@@ -49,10 +60,10 @@ public sealed class ConsolidationTemplateResolver
             // reproducing the original null-ProjectId bug with no diagnostic. Consider validating that project.Id
             // is a non-empty, valid GUID here (or at the store/model level) and skipping/logging invalid projects.
             if (project.TemplateIds.Contains(templateId.Value) && templateLookup.TryGetValue(templateId.Value, out var template))
-                return (template, project.Name, project.Id);
+                return (template, project);
         }
 
-        return (null, null, null);
+        return (null, null);
     }
 
     /// <summary>

@@ -15,21 +15,26 @@ namespace CodingAgent.Agent.Executors;
 /// </summary>
 public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 {
+    private readonly IBrainUpdateService _brainUpdateService;
+
     protected override string WorkspaceSuffix => "brain";
     protected override string ExecutorName => "Brain consolidation";
 
-    public BrainConsolidationExecutor(Serilog.ILogger logger) : base(logger)
+    public BrainConsolidationExecutor(Serilog.ILogger logger, IBrainUpdateService brainUpdateService) : base(logger)
     {
+        ArgumentNullException.ThrowIfNull(brainUpdateService);
+        _brainUpdateService = brainUpdateService;
     }
 
     /// <summary>
     /// Executes the brain consolidation workflow:
-    /// 1. Clone brain repo into temp workspace
+    /// 1. Clone brain repo into temp workspace (refused when the brain is read-only for the template)
     /// 2. Build 4-phase consolidation prompt
     /// 3. Execute agent with prompt in the cloned workspace
     /// 4. Produce diff summary and run adversarial review (if enabled)
     /// 5. Commit all changes via brainProvider.CommitAllAsync()
-    /// 6. Push via brainProvider.PushBranchAsync() to base branch
+    /// 6. Push to the base branch via IBrainUpdateService.PushConsolidationAsync(), which merges the
+    ///    lines other runs pushed to the brain in the meantime instead of failing
     /// 7. Parse agent output for metrics, format summary
     /// 8. Return ConsolidationJobResult with success and summary
     /// </summary>
@@ -46,6 +51,19 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
         var invalid = ValidateJobId(job);
         if (invalid is not null) return invalid;
+
+        // The trigger refuses a read-only brain; this covers a setting changed after the trigger. The
+        // configuration is resolved at claim time: global, the project's override, then the template's flag.
+        if (job.PipelineConfiguration.BrainReadOnly)
+        {
+            Logger.Warning("Brain consolidation run {RunId} not started: the brain is read-only for its template", job.JobId);
+            return new ConsolidationJobResult
+            {
+                JobId = job.JobId,
+                Success = false,
+                ErrorMessage = "The brain is read-only for this template, so brain consolidation does not run from it."
+            };
+        }
 
         var workspacePath = ResolveWorkspacePath(job);
 
@@ -119,12 +137,13 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
             // 6. Commit all changes (AFTER review/refinement completes)
             Logger.Information("Committing brain consolidation changes for run {RunId}", job.JobId);
+            var commitMessage = $"Brain consolidation run {job.JobId}";
             using (var commitActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Commit"))
             {
                 commitActivity?.SetTag("pipeline.run_id", job.JobId);
                 try
                 {
-                    await brainProvider.CommitAllAsync(workspacePath, $"Brain consolidation run {job.JobId}", ct);
+                    await brainProvider.CommitAllAsync(workspacePath, commitMessage, ct);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -143,14 +162,16 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 }
             }
 
-            // 7. Push to base branch
+            // 7. Push to base branch. Many repositories feed one brain, so their runs may have pushed
+            //    lessons since the clone; the push then merges those lines in instead of failing.
             Logger.Information("Pushing brain consolidation changes for run {RunId}", job.JobId);
             using (var pushActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.Push"))
             {
                 pushActivity?.SetTag("pipeline.run_id", job.JobId);
                 try
                 {
-                    await brainProvider.PushBranchAsync(workspacePath, brainProvider.BaseBranch, ct);
+                    await _brainUpdateService.PushConsolidationAsync(
+                        workspacePath, commitMessage, brainProvider, ct, job.PipelineConfiguration.BrainPushMaxRetries);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

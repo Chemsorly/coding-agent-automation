@@ -183,6 +183,14 @@ excludes terminal statuses (Succeeded=3, Failed=4, Cancelled=5). Any attempt to 
 second active `WorkItem` for the same issue is rejected by Postgres at the constraint
 level, regardless of which API replica makes the insert.
 
+The pair identifies the work item's subject, which lives in one provider: an issue or epic
+by its tracker and number, a review's pull request by its repository and number. So for
+review work items `IssueProviderConfigId` holds the repository. GitLab numbers issues and
+merge requests separately (issue #5 and merge request !5 are different things), and a
+tracker can be a different system than the repository, so keying a review by the tracker
+would let a live issue block its same-numbered pull request, or the other way round.
+Provider config ids are unique across provider kinds, so the two never collide.
+
 > This is the primary backstop. The guards below reduce the probability of hitting it.
 
 ### Defense 2 — `IsIssueBeingProcessed` in-process check

@@ -390,6 +390,40 @@ public sealed class AssignmentEnricherTests
         infra.CapturedRequest.RepoProviderId.Value.Should().Be("repo-77");
         infra.CapturedRequest.RequiredLabels.Should().Contain("dotnet");
         infra.CapturedRequest.AdditionalRepoProviderIds.Should().BeNull("only a project epic clones other repositories");
+        infra.CapturedRequest.PullRequest.Should().BeNull("only a review is about a pull request");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_Review_TakesItsContextFromThePullRequestItWasDispatchedWith()
+    {
+        // A review's subject is a pull request in the repository. In GitLab, and whenever the tracker is a
+        // different system, the tracker's #5 is an unrelated issue, so the context never comes from it.
+        var identity = MakeIdentity("dotnet") with
+        {
+            IssueIdentifier = new IssueIdentifier("5"),
+            IssueProviderConfigId = "repo-prov-1",
+            TaskType = WorkItemTaskType.Review,
+            RunType = PipelineRunType.Review,
+            IssueDetail = new IssueDetail { Identifier = "5", Title = "Add pagination", Description = "", Labels = [] },
+            ReviewPrDescription = "Pages the API",
+            LinkedPullRequest = new LinkedPullRequest
+            {
+                Url = "https://gitlab.example.com/group/repo/-/merge_requests/5",
+                BranchName = "feature/pages",
+                IsDraft = false,
+                Number = 5
+            }
+        };
+        var (infra, _, enricher) = MakeEnricher();
+
+        await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
+
+        var pullRequest = infra.CapturedRequest!.PullRequest;
+        pullRequest.Should().NotBeNull();
+        pullRequest!.Identifier.Should().Be("5");
+        pullRequest.Title.Should().Be("Add pagination");
+        pullRequest.Description.Should().Be("Pages the API");
+        pullRequest.Url.Should().Be("https://gitlab.example.com/group/repo/-/merge_requests/5");
     }
 
     [Fact]

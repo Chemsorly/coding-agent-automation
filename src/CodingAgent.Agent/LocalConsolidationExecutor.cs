@@ -32,11 +32,13 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 {
     private readonly ConsolidationProviderResolver _resolver;
     private readonly Serilog.ILogger _logger;
+    private readonly IBrainUpdateService _brainUpdateService;
 
     public LocalConsolidationExecutor(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        IBrainUpdateService? brainUpdateService = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -44,6 +46,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 
         _resolver = new ConsolidationProviderResolver(orchestrator, httpClientFactory, logger);
         _logger = logger;
+        _brainUpdateService = brainUpdateService ?? new CodingAgent.Infrastructure.Git.BrainUpdateService(logger);
     }
 
     /// <summary>
@@ -151,7 +154,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 
         await using var providers = resolution.Providers!;
 
-        var executor = new BrainConsolidationExecutor(_logger);
+        var executor = new BrainConsolidationExecutor(_logger, _brainUpdateService);
         return await executor.ExecuteAsync(job, providers.BrainProvider, providers.AgentProvider, ct,
             line => _logger.Information("Consolidation output: {Line}", line));
     }
