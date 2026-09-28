@@ -113,6 +113,40 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
         });
     }
 
+    /// <summary>
+    /// Full overload that also respects the <paramref name="since"/> date filter, matching the
+    /// DB-side <c>StartedAt >= since</c> semantics of <c>PostgresPipelineRunHistoryService</c>.
+    /// Without this override the default interface implementation ignores <paramref name="since"/>
+    /// and returns all runs regardless of the time window, causing Insights E2E assertions to fail.
+    /// </summary>
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(
+        int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep,
+        string? projectId, DateTimeOffset? since, CancellationToken ct = default)
+    {
+        IEnumerable<PipelineRunSummary> filtered = _history.Where(r => r.FinalStep.IsTerminal());
+        if (feedbackOnly)
+            filtered = filtered.Where(r => r.Feedback != null);
+        if (finalStep is { } step)
+            filtered = filtered.Where(r => r.FinalStep == step);
+        if (!string.IsNullOrEmpty(projectId))
+            filtered = filtered.Where(r => r.ProjectId == projectId);
+        if (since is { } sinceValue)
+            filtered = filtered.Where(r => r.StartedAtOffset >= sinceValue);
+
+        var list = filtered.ToList();
+        var items = list.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        });
+    }
+
     public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
     public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default)
