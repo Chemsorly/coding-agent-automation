@@ -121,55 +121,65 @@ public class ProviderConfigBuilderTests
         result[3].Id.Should().Be(PipelineProviderId);
     }
 
-    [Fact]
-    public async Task BuildAsync_WithAdditionalRepoProviderIds_IncludesAdditionalRepoConfigs()
-    {
-        var additionalRepoId = "repo-2";
-        var additionalRepoConfig = CreateConfig(additionalRepoId, ProviderKind.Repository);
+    // ── PrepareProviderConfigsAsync — a project epic's other repositories are clone-only ──
 
+    /// <summary>Token vending that passes configs through and records what was prepared how.</summary>
+    private (List<ProviderConfig> JobConfigs, List<ProviderConfig> CloneConfigs) CapturePreparedConfigs()
+    {
+        var jobConfigs = new List<ProviderConfig>();
+        var cloneConfigs = new List<ProviderConfig>();
+        _mockTokenVending
+            .Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _) => { jobConfigs.AddRange(configs); return configs; });
+        _mockTokenVending
+            .Setup(t => t.PrepareReadOnlyCloneConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<ProviderConfig> configs, CancellationToken _) => { cloneConfigs.AddRange(configs); return configs; });
+        return (jobConfigs, cloneConfigs);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WithAdditionalRepoProviderIds_PreparesThemAsCloneOnlyConfigs()
+    {
+        var additionalRepoConfig = CreateConfig("repo-2", ProviderKind.Repository);
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { CreateConfig(RepoProviderId, ProviderKind.Repository), additionalRepoConfig });
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { CreateConfig(AgentProviderId, ProviderKind.Agent) });
+        var (jobConfigs, cloneConfigs) = CapturePreparedConfigs();
 
-        var result = await _infra.BuildAgentProviderConfigsAsync(
+        var result = await _infra.PrepareProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
-            additionalRepoProviderIds: new[] { additionalRepoId });
+            additionalRepoProviderIds: new[] { "repo-2" });
 
-        result.Should().HaveCount(3);
-        result.Should().Contain(c => c.Id == additionalRepoId);
+        jobConfigs.Select(c => c.Id).Should().Equal(RepoProviderId, AgentProviderId);
+        cloneConfigs.Select(c => c.Id).Should().Equal("repo-2");
+        result.Select(c => c.Id).Should().Equal(RepoProviderId, AgentProviderId, "repo-2");
     }
 
     [Fact]
-    public async Task BuildAsync_WithDuplicateAdditionalRepoId_DeduplicatesCorrectly()
+    public async Task PrepareAsync_AdditionalIds_SkipThePrimaryRepoTheBrainDuplicatesAndEmptyIds()
     {
         SetupConfigStore();
+        var (_, cloneConfigs) = CapturePreparedConfigs();
 
-        // Pass the primary repo ID again as an additional — should be deduplicated
-        var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
-            additionalRepoProviderIds: new[] { RepoProviderId, RepoProviderId });
+        await _infra.PrepareProviderConfigsAsync(
+            RepoProviderId, AgentProviderId, BrainProviderId, null, _logger, CancellationToken.None,
+            additionalRepoProviderIds: new[] { RepoProviderId, BrainProviderId, null!, "", RepoProviderId });
 
-        // Should only have repo + agent, not duplicated repos
-        result.Should().HaveCount(2);
-        result.Count(c => c.Id == RepoProviderId).Should().Be(1);
+        cloneConfigs.Should().BeEmpty("the job's own repository and brain already have job configs");
     }
 
-    // TODO: This test name is misleading — production code uses string.IsNullOrEmpty() which does NOT
-    // filter whitespace. The whitespace entry "  " is not actually skipped by the guard; it passes
-    // through but doesn't match any config in the store (required: false → null). Consider either
-    // adding a whitespace guard in production code or renaming this test to reflect the actual behavior.
     [Fact]
-    public async Task BuildAsync_WithNullAdditionalRepoId_SkipsNullEntries()
+    public async Task PrepareAsync_WithoutAdditionalRepoProviderIds_PreparesNoCloneConfigs()
     {
         SetupConfigStore();
+        CapturePreparedConfigs();
 
-        var result = await _infra.BuildAgentProviderConfigsAsync(
-            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
-            additionalRepoProviderIds: new[] { null!, "", "  " });
+        await _infra.PrepareProviderConfigsAsync(
+            RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
 
-        // Null/empty entries are skipped — only repo + agent
-        result.Should().HaveCount(2);
+        _mockTokenVending.Verify(t => t.PrepareReadOnlyCloneConfigsAsync(
+            It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

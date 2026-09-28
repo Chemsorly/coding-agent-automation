@@ -198,7 +198,39 @@ public class AssignmentEnricher
             return null;
         }
 
-        // ── Step 2: Prepare dispatch core (QGs, reviewers, issue context, provider configs, pipeline config) ──
+        // ── Step 2: Re-derive a decomposition's scope from the current configuration ──
+        // Only a project epic (in its project's epic tracker) gets the project's repo list. The scope is
+        // taken from the configuration at claim time, not from the payload, so a WorkItem queued before
+        // a configuration change or a deploy gets the scope its epic has now.
+        DecompositionProjectContext? projectContext = null;
+        if (identity.TaskType == WorkItemTaskType.Decomposition)
+        {
+            if (project.IsEpicTracker(identity.IssueProviderConfigId))
+            {
+                projectContext = await _infra.BuildProjectEpicContextAsync(project, _logger, ct);
+                if (projectContext is null)
+                {
+                    // Without the repo list the project epic's sub-issues would land in the epic tracker
+                    _logger.Error(
+                        "AssignmentEnricher: project epic {IssueIdentifier} has no usable repository list in project {ProjectId}; cannot enrich assignment",
+                        identity.IssueIdentifier, project.Id);
+                    return null;
+                }
+            }
+            else if (!await IsTemplateTrackerAsync(project, identity.IssueProviderConfigId, ct))
+            {
+                // Neither the project's epic tracker nor a template's tracker, for example because the project
+                // was deleted or its epic tracker changed after the WorkItem was queued: the epic's sub-issues
+                // would land in a tracker nothing polls.
+                _logger.Error(
+                    "AssignmentEnricher: epic {IssueIdentifier} is in neither the epic tracker nor a template tracker of project {ProjectId}; cannot enrich assignment",
+                    identity.IssueIdentifier, project.Id);
+                return null;
+            }
+        }
+
+        // ── Step 3: Prepare dispatch core (QGs, reviewers, issue context, provider configs, pipeline config) ──
+        // A project epic's other repositories get clone-only provider configs so the agent can read them.
         var coreRequest = new DispatchCoreRequest(
             RequiredLabels: selectorLabels,
             IssueIdentifier: identity.IssueIdentifier,
@@ -208,7 +240,8 @@ public class AssignmentEnricher
             BrainProviderId: identity.BrainProviderConfigId,
             PipelineProviderId: identity.PipelineProviderConfigId,
             Project: project,
-            Logger: _logger);
+            Logger: _logger,
+            AdditionalRepoProviderIds: projectContext?.Repositories.Select(r => r.RepoProviderId).OfType<string>().ToList());
 
         var core = await _infra.PrepareDispatchCoreAsync(coreRequest, ct);
         if (core is null)
@@ -222,11 +255,12 @@ public class AssignmentEnricher
         var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
             forceRefresh, stalenessSignal, refreshCount) = core.Value;
 
-        // ── Step 3: Build enriched JobDistributionRequest from identity + fresh data ──
+        // ── Step 4: Build enriched JobDistributionRequest from identity + fresh data ──
         return identity with
         {
             // Fresh-fetched mutable fields
             ProviderConfigs = providerConfigs,
+            ProjectContext = projectContext,
             PipelineConfiguration = config,
             QualityGateConfigs = resolvedQgcs,
             ReviewerConfigs = resolvedReviewerConfigs,
@@ -246,6 +280,13 @@ public class AssignmentEnricher
             StalenessSignal = stalenessSignal,
             AnalysisRefreshCount = refreshCount,
         };
+    }
+
+    /// <summary>Whether <paramref name="issueProviderConfigId"/> is the tracker of an enabled template of the project.</summary>
+    private async Task<bool> IsTemplateTrackerAsync(PipelineProject project, string issueProviderConfigId, CancellationToken ct)
+    {
+        var templates = await _projectStore.LoadTemplatesForProjectAsync(project.Id, ct);
+        return templates.Any(t => t.Enabled && t.IssueProviderId == issueProviderConfigId);
     }
 
     /// <summary>

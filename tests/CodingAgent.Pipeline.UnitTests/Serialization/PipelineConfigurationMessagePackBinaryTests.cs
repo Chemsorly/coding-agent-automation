@@ -118,7 +118,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.MaxDecompositionSubIssues.Should().Be(15);
         deserialized.MaxDecompositionSubIssueFiles.Should().Be(8);
         deserialized.MaxConcurrentDecompositions.Should().Be(4);
-        deserialized.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(30));
         deserialized.MaxOpenIssuesForContext.Should().Be(100);
         deserialized.RefactoringOutcomeLookback.Should().Be(TimeSpan.FromDays(180));
         deserialized.MaxIssueImages.Should().Be(20);
@@ -209,7 +208,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         MaxDecompositionSubIssues = 15,
         MaxDecompositionSubIssueFiles = 8,
         MaxConcurrentDecompositions = 4,
-        DecompositionTimeout = TimeSpan.FromMinutes(30),
         MaxOpenIssuesForContext = 100,
         RefactoringOutcomeLookback = TimeSpan.FromDays(180),
         MaxIssueImages = 20,

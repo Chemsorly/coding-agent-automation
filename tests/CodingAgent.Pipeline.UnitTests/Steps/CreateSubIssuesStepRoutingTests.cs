@@ -35,6 +35,45 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
             Directory.Delete(_workspacePath, recursive: true);
     }
 
+    #region ResolveExecutorIssueProviderId — default target of a project epic's sub-issues
+
+    private static DecompositionProjectContext ApiAndWebProject() => new()
+    {
+        ProjectName = "Shop",
+        Repositories =
+        [
+            new RepositoryTarget { TemplateName = "api", Description = "", IssueProviderId = "issue-api", RepoProviderId = "repo-api" },
+            new RepositoryTarget { TemplateName = "web", Description = "", IssueProviderId = "issue-web", RepoProviderId = "repo-web" }
+        ]
+    };
+
+    [Fact]
+    public void ResolveExecutorIssueProviderId_ProjectEpic_ReturnsTheExecutorTemplatesTracker()
+    {
+        // The run executes in repo-api (and is bound to the project's epic tracker).
+        var result = CreateSubIssuesStep.ResolveExecutorIssueProviderId(ApiAndWebProject(), "repo-api");
+
+        result.Should().Be("issue-api", "sub-issues without a target never go to the epic tracker");
+    }
+
+    [Fact]
+    public void ResolveExecutorIssueProviderId_NoProjectContext_ReturnsNull()
+    {
+        var result = CreateSubIssuesStep.ResolveExecutorIssueProviderId(null, "repo-api");
+
+        result.Should().BeNull("a repo epic's sub-issues stay in its own tracker");
+    }
+
+    [Fact]
+    public void ResolveExecutorIssueProviderId_ExecutorNotInProjectContext_ReturnsNull()
+    {
+        var result = CreateSubIssuesStep.ResolveExecutorIssueProviderId(ApiAndWebProject(), "repo-other");
+
+        result.Should().BeNull();
+    }
+
+    #endregion
+
     #region ResolveTargetIssueProviderId — target resolved → correct provider used (Req 7.3)
 
     [Fact]
@@ -360,15 +399,15 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
     public async Task ExecuteAsync_WithProjectContext_DefaultRouting_StillAppliesLabels()
     {
         // Arrange — sub-issue without targetRepository, but project context is present
-        // (verifies labels are applied when routing falls back to default even with project context)
+        // (verifies labels are applied when routing falls back to the executor's tracker)
         WriteSubIssueFile("01-feature.json", "Add auth", "Auth module");
 
         IReadOnlyList<string>? capturedLabels = null;
-        _issueOps.Setup(x => x.CreateIssueAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+        _issueOps.Setup(x => x.CreateIssueForProviderAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<CancellationToken>()))
-            .Callback<string, string, IReadOnlyList<string>, CancellationToken>(
-                (_, _, labels, _) => capturedLabels = labels)
+            .Callback<string, string, string, IReadOnlyList<string>, CancellationToken>(
+                (_, _, _, labels, _) => capturedLabels = labels)
             .ReturnsAsync(new CreatedIssueResult { Identifier = "103", Url = "https://example.com/103" });
 
         var run = CreateRun();
@@ -471,7 +510,12 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
         };
     }
 
-    private PipelineStepContext BuildContextWithProjectContext(PipelineRun run)
+    /// <summary>
+    /// A project epic's context. The executor ("backend-api") is the template whose repository the run
+    /// (CreateRun) executes in, "rp"; <paramref name="executorRepoProviderId"/> can move it elsewhere.
+    /// </summary>
+    private PipelineStepContext BuildContextWithProjectContext(
+        PipelineRun run, string executorRepoProviderId = "rp")
     {
         return new PipelineStepContext
         {
@@ -501,7 +545,8 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
                         Description = "Backend REST API service",
                         DecompositionEnabled = true,
                         Available = true,
-                        IssueProviderId = "provider-backend-001"
+                        IssueProviderId = "provider-backend-001",
+                        RepoProviderId = executorRepoProviderId
                     },
                     new RepositoryTarget
                     {
@@ -509,7 +554,8 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
                         Description = "React web frontend",
                         DecompositionEnabled = true,
                         Available = true,
-                        IssueProviderId = "provider-frontend-002"
+                        IssueProviderId = "provider-frontend-002",
+                        RepoProviderId = "rp-frontend"
                     }
                 ]
             }
@@ -636,16 +682,12 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_JsonWithUnresolvableTargetRepository_FallsBackToDefault()
+    public async Task ExecuteAsync_JsonWithUnresolvableTargetRepository_FallsBackToExecutorTracker()
     {
         // Arrange — targetRepository does not match any template name
         WriteSubIssueFileWithTargetRepository(
             "01-unknown.json", "Some feature", "Implementation details", "nonexistent-repo");
-
-        _issueOps.Setup(x => x.CreateIssueAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CreatedIssueResult { Identifier = "203", Url = "https://example.com/203" });
+        var capturedProviderId = CaptureCreateIssueForProvider("203");
 
         var run = CreateRun();
         var context = BuildContextWithProjectContext(run);
@@ -654,25 +696,19 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — fell back to default CreateIssueAsync (not routed)
+        // Assert — the project epic's default is the executor's tracker, never its own (the epic tracker)
+        capturedProviderId().Should().Be("provider-backend-001");
         _issueOps.Verify(x => x.CreateIssueAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
-        _issueOps.Verify(x => x.CreateIssueForProviderAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task ExecuteAsync_JsonWithoutTargetRepository_UsesDefaultProvider()
+    public async Task ExecuteAsync_JsonWithoutTargetRepository_ProjectEpic_UsesExecutorTracker()
     {
-        // Arrange — no targetRepository field in JSON (backward compatible)
+        // Arrange — no targetRepository field in JSON
         WriteSubIssueFile("01-simple.json", "Simple feature", "Basic implementation");
-
-        _issueOps.Setup(x => x.CreateIssueAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CreatedIssueResult { Identifier = "204", Url = "https://example.com/204" });
+        var capturedProviderId = CaptureCreateIssueForProvider("204");
 
         var run = CreateRun();
         var context = BuildContextWithProjectContext(run);
@@ -681,13 +717,69 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — default path used (CreateIssueAsync, not CreateIssueForProviderAsync)
+        // Assert — the executor's tracker, through the cross-provider call
+        capturedProviderId().Should().Be("provider-backend-001");
         _issueOps.Verify(x => x.CreateIssueAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProjectEpicWithoutExecutorInContext_CreatesNoIssue()
+    {
+        // Arrange — the run's repository is not in the project context, so there is no target tracker
+        WriteSubIssueFile("01-simple.json", "Simple feature", "Basic implementation");
+
+        var run = CreateRun();
+        var context = BuildContextWithProjectContext(run, executorRepoProviderId: "rp-elsewhere");
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert — nothing lands in the epic tracker
+        _issueOps.Verify(x => x.CreateIssueAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Never);
         _issueOps.Verify(x => x.CreateIssueForProviderAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+        context.Run.SubIssueResults.Should().ContainSingle().Which.Success.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RepoEpicWithoutProjectContext_UsesItsOwnTracker()
+    {
+        // Arrange — a repo epic has no project context: its sub-issues stay in its own tracker
+        WriteSubIssueFile("01-simple.json", "Simple feature", "Basic implementation");
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "206", Url = "https://example.com/206" });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        // Act
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Assert
+        _issueOps.Verify(x => x.CreateIssueAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    private Func<string?> CaptureCreateIssueForProvider(string createdIdentifier)
+    {
+        string? capturedProviderId = null;
+        _issueOps.Setup(x => x.CreateIssueForProviderAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, IReadOnlyList<string>, CancellationToken>(
+                (providerId, _, _, _, _) => capturedProviderId = providerId)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = createdIdentifier, Url = $"https://example.com/{createdIdentifier}" });
+        return () => capturedProviderId;
     }
 
     [Fact]
@@ -720,13 +812,11 @@ public class CreateSubIssuesStepRoutingTests : IDisposable
         // Act
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Assert — two routed, one default
-        routedProviderIds.Should().HaveCount(2);
-        routedProviderIds.Should().Contain("provider-backend-001");
-        routedProviderIds.Should().Contain("provider-frontend-002");
+        // Assert — two routed by name, the untargeted one to the executor's tracker (backend-api)
+        routedProviderIds.Should().Equal("provider-backend-001", "provider-frontend-002", "provider-backend-001");
         _issueOps.Verify(x => x.CreateIssueAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     #endregion

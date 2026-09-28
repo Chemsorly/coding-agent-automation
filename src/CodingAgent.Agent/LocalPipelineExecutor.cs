@@ -125,6 +125,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         using var issueOpsDisposable = issueOps; // ensure _tokenCacheLock is disposed after the job completes
         var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
+        // The project repositories a project epic clones next to its own use the token vended into
+        // their own config: the proxy's token refresh covers only this job's primary repository.
+        var projectRepoFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
         IRepositoryProvider? brainProvider = null;
@@ -134,7 +138,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         try
         {
-            var resolved = await _providerResolver.ResolveAsync(job, providerFactory, repoConfig, agentConfig, ct);
+            var resolved = await _providerResolver.ResolveAsync(job, providerFactory, projectRepoFactory, repoConfig, agentConfig, ct);
             repoProvider = resolved.RepoProvider;
             agentProvider = resolved.AgentProvider;
             brainProvider = resolved.BrainProvider;

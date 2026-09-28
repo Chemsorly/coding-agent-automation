@@ -37,8 +37,10 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
         var cut = Render<PipelineDecompositionSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Max Sub-Issues Per Epic", cut.Markup);
-        Assert.Contains("Decomposition Timeout", cut.Markup);
+        Assert.Contains("Max Files Per Sub-Issue", cut.Markup);
         Assert.Contains("Advanced settings", cut.Markup);
+        // Decomposition runs with the general Agent Timeout; it has no timeout of its own.
+        Assert.DoesNotContain("Decomposition Timeout", cut.Markup);
     }
 
     [Fact]
@@ -47,7 +49,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
         var cut = Render<PipelineDecompositionSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(3, hints.Count); // advanced fields hidden by default
+        Assert.Equal(2, hints.Count); // advanced fields hidden by default
     }
 
     [Fact]
@@ -57,8 +59,8 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration
             {
                 MaxDecompositionSubIssues = 8,
+                MaxDecompositionSubIssueFiles = 25,
                 MaxConcurrentDecompositions = 4,
-                DecompositionTimeout = TimeSpan.FromMinutes(30),
                 MaxOpenIssuesForContext = 100
             });
 
@@ -67,7 +69,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
 
         var inputs = cut.FindAll("input[type='number']");
         Assert.Contains(inputs, i => i.GetAttribute("value") == "8");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "30");
+        Assert.Contains(inputs, i => i.GetAttribute("value") == "25");
     }
 
     [Fact]
@@ -118,8 +120,8 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
 
         Assert.NotNull(saved);
         Assert.Equal(10, saved!.MaxDecompositionSubIssues);
+        Assert.Equal(12, saved.MaxDecompositionSubIssueFiles);
         Assert.Equal(2, saved.MaxConcurrentDecompositions);
-        Assert.Equal(TimeSpan.FromMinutes(15), saved.DecompositionTimeout);
         Assert.Equal(50, saved.MaxOpenIssuesForContext);
     }
 }

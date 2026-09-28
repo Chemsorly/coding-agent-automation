@@ -100,7 +100,6 @@ public class PipelineConfigurationTests
             MaxDecompositionSubIssues = 15,
             MaxDecompositionSubIssueFiles = 8,
             MaxConcurrentDecompositions = 4,
-            DecompositionTimeout = TimeSpan.FromMinutes(30),
             MaxOpenIssuesForContext = 100,
             RefactoringOutcomeLookback = TimeSpan.FromDays(180),
             MaxIssueImages = 20,
@@ -143,7 +142,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(78,
+        keyPropertyCount.Should().Be(77,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -213,7 +212,6 @@ public class PipelineConfigurationTests
         config.MaxDecompositionSubIssues.Should().Be(10);
         config.MaxDecompositionSubIssueFiles.Should().Be(12);
         config.MaxConcurrentDecompositions.Should().Be(2);
-        config.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(15));
         config.MaxOpenIssuesForContext.Should().Be(50);
         config.RefactoringOutcomeLookback.Should().Be(TimeSpan.FromDays(90));
         config.AnalysisCommitThreshold.Should().Be(PipelineConstants.DefaultAnalysisCommitThreshold);

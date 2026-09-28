@@ -386,7 +386,6 @@ public class HubMessageSerializationTests
                 MaxRefactoringProposals = 5,
                 MaxDecompositionSubIssues = 8,
                 MaxConcurrentDecompositions = 3,
-                DecompositionTimeout = TimeSpan.FromMinutes(20),
                 MaxOpenIssuesForContext = 25,
                 BrainReadOnly = true
             },
@@ -760,7 +759,6 @@ public class HubMessageSerializationTests
                 MaxRefactoringProposals = 3,
                 MaxDecompositionSubIssues = 5,
                 MaxConcurrentDecompositions = 2,
-                DecompositionTimeout = TimeSpan.FromMinutes(15),
                 MaxOpenIssuesForContext = 10,
                 BrainReadOnly = false
             },
@@ -825,7 +823,6 @@ public class HubMessageSerializationTests
         deserialized.PipelineConfiguration.MaxRefactoringProposals.Should().Be(3);
         deserialized.PipelineConfiguration.MaxDecompositionSubIssues.Should().Be(5);
         deserialized.PipelineConfiguration.MaxConcurrentDecompositions.Should().Be(2);
-        deserialized.PipelineConfiguration.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(15));
         deserialized.PipelineConfiguration.MaxOpenIssuesForContext.Should().Be(10);
         deserialized.PipelineConfiguration.BrainReadOnly.Should().BeFalse();
 

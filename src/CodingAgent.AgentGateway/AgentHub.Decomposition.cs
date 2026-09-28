@@ -42,9 +42,9 @@ public sealed partial class AgentHub
         if (run is null)
             throw new HubException($"No active run found for job {jobId.Value}");
 
-        // TODO: Thread a SignalR connection-lifetime CancellationToken through both async I/O calls
-        // below (LoadProviderConfigsAsync and LoadTemplatesForProjectAsync) instead of using
-        // CancellationToken.None. If the agent disconnects during the scope-check phase, these awaits
+        // TODO: Thread a SignalR connection-lifetime CancellationToken through the async I/O calls
+        // below (LoadProviderConfigsAsync and the scope check's project and template loads) instead of
+        // using CancellationToken.None. If the agent disconnects during the scope-check phase, these awaits
         // will run to completion against a now-dead connection context. This method is the only
         // location in the decomposition file with multiple uncancellable async I/O calls.
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
@@ -52,15 +52,13 @@ public sealed partial class AgentHub
         if (issueConfig is null)
             throw new HubException($"Issue provider config '{SanitizeForLog(issueProviderConfigId)}' not found for cross-repo routing in job {jobId.Value}");
 
-        // Scope check: ensure the requested provider belongs to the run's project.
-        // Fast path: the run's own provider is always in scope — no template lookup needed.
-        // Backward compat: when ProjectId is null/empty (legacy runs), any system-wide provider is accepted.
-        if (issueProviderConfigId != run.IssueProviderConfigId && !string.IsNullOrEmpty(run.ProjectId))
+        // Scope check: the run's own tracker is always in scope. Any other tracker is in scope only for
+        // a project epic (see IsInProjectEpicScopeAsync); a repo epic, or a run without a project, may
+        // create issues only in its own tracker.
+        if (issueProviderConfigId != run.IssueProviderConfigId
+            && !await IsInProjectEpicScopeAsync(run, issueProviderConfigId))
         {
-            var templates = await _facade.LoadTemplatesForProjectAsync(run.ProjectId, CancellationToken.None);
-            var allowedProviders = templates.Select(t => t.IssueProviderId).ToHashSet();
-            if (!allowedProviders.Contains(issueProviderConfigId))
-                throw new HubException($"Provider '{issueProviderConfigId}' is not part of the run's project '{run.ProjectId}'");
+            throw new HubException($"Provider '{SanitizeForLog(issueProviderConfigId)}' is not in the scope of job {jobId.Value}: only a project epic may create issues in the trackers of its project's templates");
         }
 
         await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
@@ -76,6 +74,26 @@ public sealed partial class AgentHub
                 jobId.Value, issueProviderConfigId);
             throw new HubException($"Failed to create issue for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="run"/> may create an issue in <paramref name="issueProviderConfigId"/>, a tracker
+    /// other than its own. Only a project epic's decomposition may: a <see cref="PipelineRunType.Decomposition"/>
+    /// run bound to its project's epic tracker, creating the issue in the tracker of an enabled template of
+    /// that project. Other runs bound to the same tracker (for example when it is also a template's tracker)
+    /// may not.
+    /// </summary>
+    private async Task<bool> IsInProjectEpicScopeAsync(PipelineRun run, string issueProviderConfigId)
+    {
+        if (run.RunType != PipelineRunType.Decomposition || string.IsNullOrEmpty(run.ProjectId))
+            return false;
+
+        var project = await _facade.GetProjectByIdAsync(run.ProjectId, CancellationToken.None);
+        if (project is null || !project.IsEpicTracker(run.IssueProviderConfigId))
+            return false;
+
+        var templates = await _facade.LoadTemplatesForProjectAsync(run.ProjectId, CancellationToken.None);
+        return templates.Any(t => t.Enabled && t.IssueProviderId == issueProviderConfigId);
     }
 
     /// <summary>

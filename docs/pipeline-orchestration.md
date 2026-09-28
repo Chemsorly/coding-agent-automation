@@ -576,9 +576,9 @@ The epic decomposition pipeline is a two-phase workflow that transforms high-lev
 
 ### Project Context in Decomposition
 
-When a project has an `EpicIssueProviderId` configured, epics from that provider are decomposed with **cross-repository routing**. Sub-issues can specify a `targetRepository` to route creation to a different template's issue provider.
+When a project has an `EpicIssueProviderId` configured, epics from that provider are project epics and are decomposed with **cross-repository routing**. Sub-issues can specify a `targetRepository` to route creation to a different template's issue provider, and the other project repositories are cloned into the workspace. Epics in a template's own tracker are repo epics: their sub-issues stay in that tracker. Both kinds are queued in one round-robin, and each run is bound to the tracker its epic lives in.
 
-See [Projects — Cross-Repo Decomposition](projects.md#cross-repository-decomposition) for the full workflow and configuration details.
+See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) and [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decomposition) for the full workflow and configuration details.
 
 ### Overview
 
@@ -663,8 +663,9 @@ stateDiagram-v2
 | `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
 | `MaxDecompositionSubIssueFiles` | `int` | `12` | Maximum files a single sub-issue may create or modify (range: 1–30) |
 | `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
-| `DecompositionTimeout` | `TimeSpan` | `15 min` | Timeout for each decomposition phase |
 | `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |
+
+Decomposition has no timeout of its own: each agent call, including the adversarial review, runs with `AgentTimeout`, like every other agent call.
 
 ### Partial Failure Handling
 

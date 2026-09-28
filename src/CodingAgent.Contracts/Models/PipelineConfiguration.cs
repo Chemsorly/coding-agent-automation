@@ -481,12 +481,7 @@ public sealed record PipelineConfiguration
     [ProjectOverridable(Order = 19)]
     public int MaxConcurrentDecompositions { get; init; } = 2;
 
-    /// <summary>
-    /// Timeout for each decomposition phase. Default: 15 minutes.
-    /// </summary>
-    [Key(23)]
-    [ProjectOverridable(Order = 20)]
-    public TimeSpan DecompositionTimeout { get; init; } = TimeSpan.FromMinutes(15);
+    // Key(23) retired — DecompositionTimeout removed; decomposition calls use AgentTimeout. Do NOT reuse this Key index
 
     /// <summary>
     /// Maximum open issues downloaded for deduplication context. Default: 50.

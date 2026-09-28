@@ -32,4 +32,13 @@ public interface ITokenVendingService
     /// <returns>Cloned configs with the repo config's private key replaced by a short-lived token.</returns>
     Task<IReadOnlyList<ProviderConfig>> PrepareAgentConfigsAsync(
         IReadOnlyList<ProviderConfig> configs, string repoConfigId, CancellationToken ct, bool includeIssuePermission = false);
+
+    /// <summary>
+    /// Prepares the configs of repositories the agent only clones (a project epic's other project
+    /// repositories): a <c>contents: read</c> token replaces the GitHub App private key, and the
+    /// repository's secrets and setup steps are removed. Configs that cannot get a read-only token
+    /// (no GitHub App credentials, or minting fails) are left out, so those repositories are not cloned.
+    /// </summary>
+    Task<IReadOnlyList<ProviderConfig>> PrepareReadOnlyCloneConfigsAsync(
+        IReadOnlyList<ProviderConfig> configs, CancellationToken ct);
 }

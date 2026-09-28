@@ -88,7 +88,6 @@ public class ApplyProjectOverridesTests
         result.StallWarningInterval.Should().Be(config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(config.MaxDecompositionSubIssues);
         result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
-        result.DecompositionTimeout.Should().Be(config.DecompositionTimeout);
         result.MaxOpenIssuesForContext.Should().Be(config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(config.RefactoringReviewEnabled);
@@ -267,17 +266,6 @@ public class ApplyProjectOverridesTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxConcurrentDecompositions.Should().Be(4);
-    }
-
-    [Fact]
-    public void DecompositionTimeout_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default();
-        var project = TestPipelineConfig.WithProject() with { DecompositionTimeout = TimeSpan.FromMinutes(25) };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(25));
     }
 
     [Fact]

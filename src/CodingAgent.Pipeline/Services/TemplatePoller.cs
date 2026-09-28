@@ -29,7 +29,7 @@ internal sealed class TemplatePoller
     /// </summary>
     internal async Task<(Dictionary<string, List<IssueSummary>> IssueQueues,
                           Dictionary<string, List<PullRequestSummary>> PrQueues,
-                          Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues,
+                          Dictionary<string, List<EpicCandidate>> DecompositionQueues,
                           Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues,
                           Dictionary<string, bool> AgentDonePrTruncated)>
         PollTemplateQueuesAsync(
@@ -43,7 +43,7 @@ internal sealed class TemplatePoller
     {
         var issueQueues = new Dictionary<string, List<IssueSummary>>();
         var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+        var decompositionQueues = new Dictionary<string, List<EpicCandidate>>();
         var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
         var agentDonePrTruncated = new Dictionary<string, bool>();
 
@@ -95,7 +95,7 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
         Dictionary<string, bool> agentDonePrTruncated,
         CancellationToken ct)
@@ -272,10 +272,10 @@ internal sealed class TemplatePoller
     private async Task PollDecompositionQueueAsync(
         PipelineJobTemplate template,
         int maxPagesToFetch,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         CancellationToken ct)
     {
-        decompositionQueues[template.Id] = new List<(IssueSummary, PipelineRunType)>();
+        decompositionQueues[template.Id] = new List<EpicCandidate>();
         if (!template.DecompositionEnabled) return;
 
         try
@@ -299,12 +299,15 @@ internal sealed class TemplatePoller
             // Poll for agent:epic issues (Phase 1 candidates)
             var epicIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.Epic, maxPagesToFetch, ct);
             foreach (var epic in epicIssues)
-                decompositionQueues[template.Id].Add((epic, PipelineRunType.DecompositionAnalysis));
+                decompositionQueues[template.Id].Add(new EpicCandidate(epic, PipelineRunType.DecompositionAnalysis, template.IssueProviderId));
 
             // Poll for agent:epic-approved issues (Phase 2 candidates)
             var approvedIssues = await FetchEpicIssuesAsync(decompProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
             foreach (var approved in approvedIssues)
-                decompositionQueues[template.Id].Add((approved, PipelineRunType.Decomposition));
+                decompositionQueues[template.Id].Add(new EpicCandidate(approved, PipelineRunType.Decomposition, template.IssueProviderId));
+
+            // Every decomposition queue is oldest first, across both phases
+            decompositionQueues[template.Id].SortByCreatedAtFifo();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
@@ -321,7 +324,7 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
         Dictionary<string, bool> agentDonePrTruncated)
     {
@@ -343,7 +346,7 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
         Dictionary<string, bool> agentDonePrTruncated)
     {
@@ -368,7 +371,7 @@ internal sealed class TemplatePoller
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
         Dictionary<string, bool> agentDonePrTruncated)
     {
@@ -386,34 +389,46 @@ internal sealed class TemplatePoller
     }
 
     /// <summary>
-    /// Project-level epic polling — polls EpicIssueProviderId for each enabled project
-    /// that has the field set and at least one decomposition-enabled template.
+    /// Adds project epics to the decomposition queues. For each enabled project with an
+    /// <see cref="PipelineProject.EpicIssueProviderId"/>, polls that tracker and appends its epics to the
+    /// queue of the project's executor template (the first decomposition-enabled template), so project
+    /// epics and repo epics share one round-robin. Each candidate carries the epic tracker, which the run
+    /// is bound to. Must run after <see cref="PollTemplateQueuesAsync"/>, which creates the queues.
+    /// Projects are visited in name order; when two projects share an epic tracker, the first one owns it.
     /// </summary>
-    internal async Task<Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>>
-        PollProjectLevelEpicsAsync(
-            IReadOnlyList<PipelineProject> projects,
-            IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup,
-            int maxPagesToFetch,
-            CancellationToken ct)
+    internal async Task AddProjectEpicsAsync(
+        IReadOnlyList<PipelineProject> projects,
+        IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup,
+        int maxPagesToFetch,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
+        CancellationToken ct)
     {
-        var projectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>();
+        var claimedEpicTrackers = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
+        foreach (var project in projects
+                     .Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId))
+                     .OrderBy(p => p.Name, StringComparer.Ordinal)
+                     .ThenBy(p => p.Id, StringComparer.Ordinal))
         {
             if (ct.IsCancellationRequested) break;
 
-            await PollSingleProjectEpicsAsync(project, templateLookup, maxPagesToFetch, projectLevelDecompositionQueues, ct);
-        }
+            if (!claimedEpicTrackers.Add(project.EpicIssueProviderId!))
+            {
+                _logger.Warning("Project '{ProjectName}': epic tracker '{EpicProviderId}' is already the epic tracker of another project, skipping project epic polling",
+                    project.Name, project.EpicIssueProviderId);
+                continue;
+            }
 
-        return projectLevelDecompositionQueues;
+            await AddSingleProjectEpicsAsync(project, templateLookup, maxPagesToFetch, decompositionQueues, ct);
+        }
     }
 
-    /// <summary>Polls epic issues for a single project and adds results to the queue dictionary.</summary>
-    private async Task PollSingleProjectEpicsAsync(
+    /// <summary>Polls one project's epic tracker and appends its epics to the executor template's queue.</summary>
+    private async Task AddSingleProjectEpicsAsync(
         PipelineProject project,
         IReadOnlyDictionary<string, PipelineJobTemplate> templateLookup,
         int maxPagesToFetch,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> projectLevelDecompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         CancellationToken ct)
     {
         var epicProviderId = project.EpicIssueProviderId!;
@@ -421,41 +436,62 @@ internal sealed class TemplatePoller
         // Validate that EpicIssueProviderId references an existing provider config in the cache
         if (!_cacheManager.IssueProviders.TryGetValue(epicProviderId, out var epicProvider))
         {
-            _logger.Warning("Project '{ProjectName}': EpicIssueProviderId '{EpicProviderId}' not found in provider cache, skipping project-level epic polling",
+            _logger.Warning("Project '{ProjectName}': EpicIssueProviderId '{EpicProviderId}' not found in provider cache, skipping project epic polling",
                 project.Name, epicProviderId);
             return;
         }
 
-        // Select the first decomposition-enabled template in the project
-        var decompositionTemplate = SelectDecompositionTemplate(project, templateLookup);
-        if (decompositionTemplate is null)
+        // The first decomposition-enabled template in the project executes the project's epics
+        var executor = SelectDecompositionTemplate(project, templateLookup);
+        if (executor is null)
         {
-            _logger.Warning("Project '{ProjectName}': no decomposition-enabled template found, skipping project-level epic polling",
+            _logger.Warning("Project '{ProjectName}': no decomposition-enabled template found, skipping project epic polling",
                 project.Name);
+            return;
+        }
+
+        // The epic tracker may also be a template's own tracker. Its epics are this project's epics, so
+        // drop the copies that template's own poll queued before anything below can fail: if the poll
+        // fails, or the executor is not polled, the epics wait a cycle instead of running under that template.
+        foreach (var (templateId, queue) in decompositionQueues)
+        {
+            if (queue.RemoveAll(c => c.IssueProviderId == epicProviderId) > 0 && !project.TemplateIds.Contains(templateId))
+            {
+                _logger.Warning("Project '{ProjectName}': template '{TemplateId}' of another project uses the epic tracker '{EpicProviderId}' as its own tracker; its epics are handled as this project's epics",
+                    project.Name, templateId, epicProviderId);
+            }
+        }
+
+        // The scheduler only dispatches the queues of templates polled this cycle; while the executor is
+        // not polled (for example rate-limited), the project's epics wait with it.
+        if (!decompositionQueues.TryGetValue(executor.Id, out var executorQueue))
+        {
+            _logger.Information("Project '{ProjectName}': executor template '{TemplateName}' was not polled this cycle, project epics wait",
+                project.Name, executor.Name);
             return;
         }
 
         try
         {
-            var projectQueue = new List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>();
+            var projectEpics = new List<EpicCandidate>();
 
             // Poll for agent:epic issues (Phase 1 candidates)
             var epicIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.Epic, maxPagesToFetch, ct);
             foreach (var epic in epicIssues)
-                projectQueue.Add((epic, PipelineRunType.DecompositionAnalysis, decompositionTemplate));
+                projectEpics.Add(new EpicCandidate(epic, PipelineRunType.DecompositionAnalysis, epicProviderId));
 
             // Poll for agent:epic-approved issues (Phase 2 candidates)
             var approvedIssues = await FetchEpicIssuesAsync(epicProvider, AgentLabels.EpicApproved, maxPagesToFetch, ct);
             foreach (var approved in approvedIssues)
-                projectQueue.Add((approved, PipelineRunType.Decomposition, decompositionTemplate));
+                projectEpics.Add(new EpicCandidate(approved, PipelineRunType.Decomposition, epicProviderId));
 
-            if (projectQueue.Count > 0)
-                projectLevelDecompositionQueues[project.Id] = projectQueue;
+            executorQueue.AddRange(projectEpics);
+            executorQueue.SortByCreatedAtFifo();
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Project '{ProjectName}' project-level epic polling failed: {Error}",
+            _logger.Warning(ex, "Project '{ProjectName}' project epic polling failed: {Error}",
                 project.Name, ex.Message);
         }
     }
@@ -596,19 +632,19 @@ internal sealed class TemplatePoller
         TemplateId templateId,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<EpicCandidate>> decompositionQueues,
         Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
         Dictionary<string, bool> agentDonePrTruncated)
     {
         issueQueues[templateId.Value] = new List<IssueSummary>();
         prQueues[templateId.Value] = new List<PullRequestSummary>();
-        decompositionQueues[templateId.Value] = new List<(IssueSummary, PipelineRunType)>();
+        decompositionQueues[templateId.Value] = new List<EpicCandidate>();
         agentDonePrQueues[templateId.Value] = new List<PullRequestSummary>();
         agentDonePrTruncated[templateId.Value] = false;
     }
 
     /// <summary>
-    /// Selects the repository template for a project-level epic decomposition dispatch.
+    /// Selects the executor of a project's epics (the epics in its epic tracker).
     /// Returns the first decomposition-enabled template in the project (TemplateIds are in TemplateOrder, by name).
     /// Returns null if no decomposition-enabled template exists.
     /// </summary>

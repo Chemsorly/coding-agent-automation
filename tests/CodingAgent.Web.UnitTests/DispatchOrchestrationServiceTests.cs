@@ -1594,16 +1594,130 @@ public class DispatchOrchestrationServiceTests
                 RepoProviderId = "repo-1",
                 BrainProviderId = null,
                 InitiatedBy = "decomp-loop",
-                Project = TestProject,
-                DecompositionSource = "https://github.com/org/repo/issues/100"
+                Project = TestProject
             },
             CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.TaskType.Should().Be(WorkItemTaskType.Decomposition);
         result.RunType.Should().Be(PipelineRunType.Decomposition);
-        result.DecompositionSource.Should().Be("https://github.com/org/repo/issues/100");
+        result.DecompositionSource.Should().Be("template-level", "TestProject has no epic tracker, so this is a repo epic");
+        result.ProjectContext.Should().BeNull("a repo epic may only create sub-issues in its own tracker");
         result.IssueIdentifier.Value.Should().Be("epic-1");
+    }
+
+    [Fact]
+    public async Task PrepareDecompositionDistributionRequestAsync_EpicInProjectEpicTracker_GetsTheProjectsRepoList()
+    {
+        SetupStandardMocks();
+        SetupEpicInTracker("epic-1");
+        _mockProviderConfigStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ScopeTemplate("t-api", "issue-api", "repo-1"), ScopeTemplate("t-web", "issue-web", "repo-web") });
+        var project = TestProject with { EpicIssueProviderId = "issue-1", TemplateIds = ["t-api", "t-web"] };
+
+        DispatchOrchestrationService iface = CreateService();
+        var result = await iface.PrepareDecompositionDistributionRequestAsync(
+            EpicRequest("epic-1", issueProviderId: "issue-1", project), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.DecompositionSource.Should().Be("project-level");
+        result.ProjectContext.Should().NotBeNull();
+        result.ProjectContext!.Repositories.Select(r => r.IssueProviderId).Should().Equal("issue-api", "issue-web");
+    }
+
+    [Fact]
+    public async Task PrepareDecompositionDistributionRequestAsync_EpicInTemplateTrackerOfMultiRepoProject_GetsNoRepoList()
+    {
+        SetupStandardMocks();
+        SetupEpicInTracker("epic-1");
+        _mockProviderConfigStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ScopeTemplate("t-api", "issue-1", "repo-1"), ScopeTemplate("t-web", "issue-web", "repo-web") });
+        var project = TestProject with { EpicIssueProviderId = "issue-epics", TemplateIds = ["t-api", "t-web"] };
+
+        DispatchOrchestrationService iface = CreateService();
+        var result = await iface.PrepareDecompositionDistributionRequestAsync(
+            EpicRequest("epic-1", issueProviderId: "issue-1", project), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.DecompositionSource.Should().Be("template-level");
+        result.ProjectContext.Should().BeNull("a repo epic stays in its own tracker even in a multi-repo project");
+    }
+
+    [Fact]
+    public void BuildRepositoryTargets_KeepsProjectOrder_SkipsDisabledDuplicateAndEmptyNames()
+    {
+        var project = TestProject with { TemplateIds = ["t3", "t1", "t2", "t4", "t5", "t7"] };
+        var templates = new[]
+        {
+            ScopeTemplate("t1", "issue-1", "repo-1") with { Name = "api" },
+            ScopeTemplate("t2", "issue-2", "repo-2") with { Name = "api" },            // duplicate name: the earlier t1 keeps it
+            ScopeTemplate("t3", "issue-3", "repo-3") with { Name = "web" },
+            ScopeTemplate("t4", "issue-4", "repo-4") with { Name = "owner/repo" },     // routing keys may contain '/'
+            ScopeTemplate("t5", "issue-5", "repo-5") with { Name = "docs", Enabled = false },
+            ScopeTemplate("t6", "issue-6", "repo-6") with { Name = "other-project" },  // not in the project
+            ScopeTemplate("t7", "issue-7", "repo-7") with { Name = " " }               // no usable routing key
+        };
+
+        var targets = DispatchInfrastructure.BuildRepositoryTargets(project, templates, Serilog.Core.Logger.None);
+
+        targets.Select(t => t.TemplateName).Should().Equal("web", "api", "owner/repo");
+        targets.Select(t => t.IssueProviderId).Should().Equal("issue-3", "issue-1", "issue-4");
+    }
+
+    private static PipelineJobTemplate ScopeTemplate(string id, string issueProviderId, string repoProviderId) => new()
+    {
+        Id = id,
+        Name = id,
+        IssueProviderId = issueProviderId,
+        RepoProviderId = repoProviderId,
+        Enabled = true,
+        DecompositionEnabled = true
+    };
+
+    private static DecompositionDispatchOrchestrationRequest EpicRequest(
+        string epicId, string issueProviderId, PipelineProject project) => new()
+    {
+        EpicIdentifier = epicId,
+        EpicTitle = "Epic",
+        PhaseType = PipelineRunType.Decomposition,
+        IssueProviderId = issueProviderId,
+        RepoProviderId = "repo-1",
+        BrainProviderId = null,
+        InitiatedBy = "decomp-loop",
+        Project = project
+    };
+
+    private void SetupEpicInTracker(string epicId)
+    {
+        _mockProviderConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderConfig
+            {
+                Id = "repo-1",
+                DisplayName = "Repo",
+                ProviderType = "github",
+                Kind = ProviderKind.Repository,
+                RequiredLabels = ["dotnet"]
+            });
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync(epicId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = epicId,
+                Title = "Epic",
+                Description = "## Requirements\nSplit it",
+                Labels = ["agent:epic-approved"]
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync(epicId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
     }
 
     [Fact]

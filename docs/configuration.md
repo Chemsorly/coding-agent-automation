@@ -15,7 +15,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `maxRetries` | 3 | Max retry attempts when quality gates fail |
 | `maxAnalysisRetries` | 2 | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
 | `issuePageSize` | 25 | Number of issues fetched per page when polling the issue provider |
-| `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
+| `agentTimeout` | 00:30:00 | Maximum time for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
 | `ciNotStartedTimeout` | 00:10:00 | How long to wait for CI runs to appear before concluding CI never started. Triggers re-push instead of burning the full `externalCiTimeout` |
@@ -74,7 +74,6 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 | `maxDecompositionSubIssues` | 10 | Maximum sub-issues the decomposition agent may propose per epic (range: 1–20) |
 | `maxDecompositionSubIssueFiles` | 12 | Maximum files a single decomposition sub-issue may create or modify (range: 1–30). Controls scope per sub-issue to keep each one within single-agent capacity |
 | `maxConcurrentDecompositions` | 2 | Maximum decomposition runs (across both phases) executing simultaneously |
-| `decompositionTimeout` | 00:15:00 | Timeout for decomposition phases (separate from `agentTimeout`) |
 | `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
 
 ### Consolidation Dispatch

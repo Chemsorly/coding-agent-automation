@@ -44,12 +44,12 @@ public sealed class AgentHubIssueProxyTests
         return hub;
     }
 
-    private static PipelineRun CreateRun(string jobId = "job-1") => new()
+    private static PipelineRun CreateRun(string jobId = "job-1", string issueProviderConfigId = "issue-cfg-1") => new()
     {
         RunId = jobId,
         IssueIdentifier = "org/repo#42",
         IssueTitle = "Test Issue",
-        IssueProviderConfigId = "issue-cfg-1",
+        IssueProviderConfigId = issueProviderConfigId,
         RepoProviderConfigId = "repo-cfg-1"
     };
 
@@ -413,7 +413,7 @@ public sealed class AgentHubIssueProxyTests
     [Fact]
     public async Task RequestCreateIssueForProvider_Success_ReturnsCreatedIssue()
     {
-        var run = CreateRun();
+        var run = CreateRun(issueProviderConfigId: "cross-repo-cfg");
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var config = new ProviderConfig { Id = "cross-repo-cfg", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Cross" };
@@ -436,7 +436,7 @@ public sealed class AgentHubIssueProxyTests
     [Fact]
     public async Task RequestCreateIssueForProvider_ProviderThrows_WrapsAsHubException()
     {
-        var run = CreateRun();
+        var run = CreateRun(issueProviderConfigId: "cfg-fail");
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var config = new ProviderConfig { Id = "cfg-fail", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Fail" };
@@ -513,7 +513,7 @@ public sealed class AgentHubIssueProxyTests
     [Fact]
     public async Task RequestCreateIssueForProvider_ProviderInProjectTemplates_Succeeds()
     {
-        // Test A: provider belongs to the run's project via a template — allowed
+        // Test A: provider belongs to the run's project via a template — allowed for a project epic's decomposition
         var run = new PipelineRun
         {
             RunId = "job-1",
@@ -521,6 +521,7 @@ public sealed class AgentHubIssueProxyTests
             IssueTitle = "Test Issue",
             IssueProviderConfigId = "own-cfg",
             RepoProviderConfigId = "repo-cfg-1",
+            RunType = PipelineRunType.Decomposition,
             ProjectId = "proj-1"
         };
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
@@ -536,7 +537,10 @@ public sealed class AgentHubIssueProxyTests
             .ReturnsAsync(new List<ProviderConfig> { config });
         _mockFacade.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
 
-        // The project has a template whose IssueProviderId matches the requested provider
+        // The run is bound to the project's epic tracker (a project epic), and the project has a
+        // template whose IssueProviderId matches the requested provider
+        _mockFacade.Setup(f => f.GetProjectByIdAsync("proj-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = "proj-1", Name = "Project", EpicIssueProviderId = "own-cfg" });
         var template = new PipelineJobTemplate { Id = "tmpl-1", Name = "Cross Repo", IssueProviderId = "cross-repo-cfg", RepoProviderId = "repo-cfg-2" };
         _mockFacade.Setup(f => f.LoadTemplatesForProjectAsync("proj-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
@@ -602,21 +606,23 @@ public sealed class AgentHubIssueProxyTests
         _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { config });
 
-        // But the project's templates only reference own-cfg, not other-project-cfg
+        // A project epic, but the project's templates only reference own-cfg, not other-project-cfg
+        _mockFacade.Setup(f => f.GetProjectByIdAsync("proj-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = "proj-1", Name = "Project", EpicIssueProviderId = "own-cfg" });
         var template = new PipelineJobTemplate { Id = "tmpl-1", Name = "Own Template", IssueProviderId = "own-cfg", RepoProviderId = "repo-cfg-1" };
         _mockFacade.Setup(f => f.LoadTemplatesForProjectAsync("proj-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
 
         var hub = CreateHub();
         var act = () => hub.RequestCreateIssueForProvider("job-1", "other-project-cfg", "title", "body", new[] { "bug" });
-        await act.Should().ThrowAsync<HubException>().WithMessage("*not part of the run's project*");
+        await act.Should().ThrowAsync<HubException>().WithMessage("*not in the scope*");
         _mockFacade.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
     }
 
     [Fact]
-    public async Task RequestCreateIssueForProvider_NullProjectId_AnyProviderAccepted()
+    public async Task RequestCreateIssueForProvider_NullProjectId_OtherProviderRejected()
     {
-        // Test D: run.ProjectId is null — backward-compat fallback, any system-wide provider is accepted
+        // Test D: run.ProjectId is null — the run may only create issues in its own tracker
         var run = new PipelineRun
         {
             RunId = "job-1",
@@ -624,26 +630,21 @@ public sealed class AgentHubIssueProxyTests
             IssueTitle = "Test Issue",
             IssueProviderConfigId = "own-cfg",
             RepoProviderConfigId = "repo-cfg-1",
-            ProjectId = null   // legacy run — no project assigned
+            ProjectId = null   // no project assigned
         };
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var config = new ProviderConfig { Id = "any-other-cfg", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Any" };
-        var mockProvider = new Mock<IIssueProvider>();
-        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        var expected = new CreatedIssueResult { Identifier = "any/repo#5", Url = "https://example.com/5" };
-        mockProvider.Setup(p => p.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expected);
-
         _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig> { config });
-        _mockFacade.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
 
         var hub = CreateHub();
-        var result = await hub.RequestCreateIssueForProvider("job-1", "any-other-cfg", "title", "body", Array.Empty<string>());
+        var act = () => hub.RequestCreateIssueForProvider("job-1", "any-other-cfg", "title", "body", Array.Empty<string>());
 
-        result.Should().Be(expected);
-        // Null ProjectId must never trigger template lookup
+        await act.Should().ThrowAsync<HubException>().WithMessage("*not in the scope*");
+        _mockFacade.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
+        // Null ProjectId must never trigger project or template lookups
+        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockFacade.Verify(f => f.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

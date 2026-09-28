@@ -86,7 +86,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
                 {
                     Prompt = analysisPrompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.DecompositionTimeout,
+                    Timeout = config.AgentTimeout,
                     UseResume = false
                 },
                 run, config, "Decomposition analysis agent", context.Callbacks.NotifyChange, logger, ct,
@@ -139,7 +139,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             new AdversarialReviewConfig
             {
                 Enabled = true,
-                AgentTimeout = config.DecompositionTimeout
+                AgentTimeout = config.AgentTimeout
             },
             line => context.Callbacks.EmitOutputLine(line),
             logger,

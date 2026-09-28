@@ -89,7 +89,6 @@ public class DecompositionAnalysisStepFailureReasonTests : IDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AgentTimeout = TimeSpan.FromMinutes(30),
-                DecompositionTimeout = TimeSpan.FromMinutes(15),
                 StallPollInterval = TimeSpan.FromSeconds(30),
                 StallWarningInterval = TimeSpan.FromMinutes(2),
                 MaxDecompositionSubIssues = 10,
