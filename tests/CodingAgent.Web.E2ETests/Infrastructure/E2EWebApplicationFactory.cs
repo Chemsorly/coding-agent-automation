@@ -191,6 +191,14 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // (and so startup does not retry against an unreachable API for ten minutes).
             ReplaceService<IPipelineApiConfigClient>(services, ApiConfigClient);
 
+            // Replace GitLabValidationService with a no-op fake so provider form saves with dummy
+            // credentials succeed without making real HTTP calls to gitlab.com. The Settings page
+            // injects GitLabValidationService as non-nullable, but IssueProviderSection guards with
+            // "if (GitLabValidator is not null)" — the fake bypasses network calls while preserving
+            // that null-guard path intact.
+            ReplaceService<CodingAgent.Infrastructure.GitLab.GitLabValidationService>(
+                services, new Fakes.FakeGitLabValidationService());
+
             // LeaderElectionService is a hosted service taking IKubernetes; without a stub the host
             // dies at startup wherever no kubeconfig exists.
             E2ETestDefaults.InstallKubernetesStub(services);
