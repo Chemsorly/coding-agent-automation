@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -5,6 +6,9 @@ namespace CodingAgent.Web.E2ETests.PageObjects;
 /// <summary>
 /// Page object for the /agent-chat page.
 /// Encapsulates navigation and interactions for interactive agent chat sessions.
+///
+/// Flow: SelectTemplateAsync → LaunchChatPodAsync → (test connects fake agent) →
+/// WaitForChatWindowAsync → SendPromptAsync → GetResponseTextAsync → EndChatAsync.
 /// </summary>
 public sealed class AgentChatPage
 {
@@ -17,18 +21,58 @@ public sealed class AgentChatPage
         _baseUrl = baseUrl;
     }
 
-    /// <summary>Navigates to the /agent-chat page and waits for it to render.</summary>
+    /// <summary>
+    /// Navigates to the /agent-chat page and waits for the Blazor circuit to become interactive.
+    /// Uses <see cref="BlazorPageExtensions.WaitForInteractiveAsync"/> on <c>.btn-start-chat</c>
+    /// to confirm the circuit is live and event handlers are attached, rather than a fixed sleep.
+    /// </summary>
     public async Task NavigateAsync()
     {
         await _page.GotoAsync($"{_baseUrl}/agent-chat");
+        // Pre-circuit guard: wait for the h1 (present in pre-rendered HTML).
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(3000);
+        // Wait for Blazor circuit to activate and @onclick to be attached to the launch button.
+        // .btn-start-chat is always in the pre-rendered DOM and has @onclick, so _blazorEvents_*
+        // appearing on it confirms the circuit is interactive.
+        await _page.WaitForInteractiveAsync(".btn-start-chat");
     }
 
-    /// <summary>Clicks the Start Chat button.</summary>
-    public async Task StartChatAsync()
+    /// <summary>
+    /// Selects an agent type from the <c>#template-select</c> dropdown by its option value
+    /// (e.g. <c>"kiro,dotnet"</c>). Must be called before <see cref="LaunchChatPodAsync"/>.
+    /// </summary>
+    public async Task SelectTemplateAsync(string labelValue)
+    {
+        await _page.SelectOptionAsync("#template-select", new SelectOptionValue { Value = labelValue });
+    }
+
+    /// <summary>
+    /// Clicks the "Launch Chat Pod" button (<c>.btn-start-chat</c>).
+    /// The button must not be disabled — call <see cref="SelectTemplateAsync"/> first.
+    /// Does NOT wait for the chat window; the caller is responsible for connecting the fake agent
+    /// and then calling <see cref="WaitForChatWindowAsync"/> once the dispatch completes.
+    /// </summary>
+    public async Task LaunchChatPodAsync()
     {
         await _page.ClickAsync(".btn-start-chat");
+    }
+
+    /// <summary>
+    /// Waits for the chat window header bar to appear, indicating <c>_isChatActive = true</c>
+    /// and <c>StartChat()</c> has completed. Call this after the fake agent has connected.
+    /// </summary>
+    public async Task WaitForChatWindowAsync(int timeoutMs = 35_000)
+    {
+        await _page.WaitForSelectorAsync(".chat-header-bar", new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
+    /// Waits for the launch error element (<c>.agent-detail-warning</c>) to appear.
+    /// Used by Scenario 3 (pod never connects) to assert the timeout error message is rendered.
+    /// </summary>
+    public async Task WaitForLaunchErrorAsync(int timeoutMs = 40_000)
+    {
+        await _page.WaitForSelectorAsync(".agent-detail-warning", new() { Timeout = timeoutMs });
     }
 
     /// <summary>Types a prompt and clicks Send.</summary>
@@ -67,11 +111,14 @@ public sealed class AgentChatPage
         await _page.ClickAsync(".btn-end-chat");
     }
 
-    /// <summary>Checks if the Start Chat button is disabled.</summary>
+    /// <summary>
+    /// Checks if the Launch Chat Pod button is disabled.
+    /// Returns <c>true</c> before a template is selected (empty <c>_selectedTemplateLabels</c>)
+    /// or while a launch is in progress (<c>_launching = true</c>).
+    /// </summary>
     public async Task<bool> IsStartButtonDisabledAsync()
     {
         return await _page.EvaluateAsync<bool>(
             "() => document.querySelector('.btn-start-chat')?.disabled === true");
     }
-
 }

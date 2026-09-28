@@ -13,6 +13,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.Services;
 using CodingAgent.Web.TestUtilities;
+using Microsoft.AspNetCore.Components.Server;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
@@ -230,6 +231,13 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
             // Reduce shutdown timeout for faster test teardown
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+
+            // Scenario 4 (AgentChat idle cleanup): tear down the Blazor Server circuit
+            // immediately when the browser disconnects, so DisposeAsync fires within seconds
+            // rather than after the 3-minute production default.
+            // Without this, a test that closes the browser context would wait 3 minutes for
+            // DisposeAsync → DisposeK8sChatAsync → TerminateChatSessionAsync to fire.
+            services.Configure<CircuitOptions>(o => o.DisconnectedCircuitRetentionPeriod = TimeSpan.Zero);
         });
     }
 
