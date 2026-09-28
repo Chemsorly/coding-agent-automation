@@ -32,13 +32,13 @@ public class InsightsPageComponentTests : BunitContext
                 It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs.ToList(), Page = 1, PageSize = 500, HasMore = false });
 
-    private static PipelineRunSummary Run(PipelineStep finalStep, IReadOnlyList<GateOutcome>? gates = null, long tokens = 0) => new()
+    private static PipelineRunSummary Run(PipelineStep finalStep, IReadOnlyList<GateOutcome>? gates = null, long tokens = 0, DateTimeOffset? startedAt = null) => new()
     {
         RunId = Guid.NewGuid().ToString(),
         IssueIdentifier = "1",
         IssueTitle = "t",
         FinalStep = finalStep,
-        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+        StartedAtOffset = startedAt ?? DateTimeOffset.UtcNow.AddMinutes(-5),
         CompletedAtOffset = DateTimeOffset.UtcNow,
         TotalTokens = tokens,
         QualityGateOutcomes = gates?.ToList() ?? [],
@@ -109,14 +109,18 @@ public class InsightsPageComponentTests : BunitContext
     [InlineData("0", "All runs", 1)]
     public void TimeWindow_DailyWindows_UseDailyBucketsAndDateLabels(string windowValue, string windowLabel, int expectedBuckets)
     {
-        Returns(Run(PipelineStep.Completed), Run(PipelineStep.Failed));
+        // Pin StartedAtOffset to noon today UTC so the run is always in the current UTC day,
+        // regardless of when the test runs (avoids midnight-boundary flakiness where -5 min
+        // would place the run in the previous UTC day, producing 2 buckets for "All").
+        var todayNoon = new DateTimeOffset(DateTimeOffset.UtcNow.UtcDateTime.Date, TimeSpan.Zero).AddHours(12);
+        Returns(Run(PipelineStep.Completed, startedAt: todayNoon), Run(PipelineStep.Failed, startedAt: todayNoon));
         var cut = Render<Insights>();
 
         cut.Find("select[aria-label='Time window']").Change(windowValue);
 
         cut.FindAll(".cockpit-stat-l").Select(l => l.TextContent.Trim())
             .Should().Contain($"Success rate · {windowLabel}");
-        // One bar column per day; the runs started minutes ago, so "All" spans just today.
+        // One bar column per day; the runs are pinned to today noon, so "All" spans just today.
         var columns = cut.FindAll("[title$='run(s)']");
         columns.Should().HaveCount(expectedBuckets);
         // Month name is culture-dependent ("Sep", "Sept.", "Sep."), so only the shape is asserted.
