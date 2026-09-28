@@ -24,10 +24,12 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Wait for the Blazor Server circuit to establish and for event handlers to be attached.
-        // 3000 ms matches the pattern used by AgentCodingPage.NavigateAsync and is generous enough
-        // for slow ARM CI runners where SignalR negotiation and the first hub round-trip take longer.
-        await _page.WaitForTimeoutAsync(3000);
+        // Wait for data-testid="run-page-interactive" which is set only from OnAfterRenderAsync
+        // (never from SSR prerendering). This guarantees the Blazor circuit has connected and
+        // @onclick handlers are active before any button click is dispatched.
+        await _page.WaitForSelectorAsync(
+            "[data-testid='run-page-interactive']",
+            new() { Timeout = 15_000 });
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>

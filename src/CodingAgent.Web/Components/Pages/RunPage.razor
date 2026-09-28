@@ -25,7 +25,7 @@
 
 <PageTitle>Run - Coding Agent</PageTitle>
 
-<div class="cockpit-page">
+<div class="cockpit-page" data-testid="@(_interactive ? "run-page-interactive" : "run-page-loading")">
     <a href="runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
 
     @if (_loading)
@@ -347,6 +347,13 @@
 
     private static bool IsActive(PipelineRunSummary r) => RunOutcomeDisplay.IsActive(r.FinalStep);
 
+    /// <summary>
+    /// Set to true in OnAfterRenderAsync(firstRender) — only true once the interactive circuit has
+    /// hydrated the component. Used by E2E tests as a stable wait target: the data-testid
+    /// "run-page-interactive" appears only after the circuit is ready to handle events.
+    /// </summary>
+    private bool _interactive;
+
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
@@ -400,11 +407,18 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
-        // Fire as a background task so SubscribeLiveAsync's HubConnection.StartAsync (SignalR negotiation)
-        // does not block the circuit's event queue — without this, any @onclick that arrives while the
-        // hub is connecting is dequeued only after StartAsync completes, causing noticeable UI latency.
         if (_isLive && !_subscribed)
-            _ = Task.Run(SubscribeLiveAsync);
+            await SubscribeLiveAsync();
+
+        if (firstRender)
+        {
+            // Signal to E2E tests that the interactive circuit is ready: this flag is only set
+            // after OnAfterRenderAsync fires (which never runs during SSR prerendering), so the
+            // data-testid="run-page-interactive" attribute is a reliable indicator that @onclick
+            // handlers are active and button clicks will be processed by the circuit.
+            _interactive = true;
+            StateHasChanged();
+        }
 
         if (_scrollOnRender)
         {
