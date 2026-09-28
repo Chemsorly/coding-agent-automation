@@ -118,20 +118,20 @@ public sealed class AgentHubConsolidationTests
     // ── ReportConsolidationComplete — agent not found (null agent) ───────
 
     [Fact]
-    public async Task ReportConsolidationComplete_AgentNull_StillUpdatesRunStatus()
+    public async Task ReportConsolidationComplete_AgentNull_ReturnsRejected()
     {
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
 
         var hub = CreateHub();
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true, Summary = "Done" };
 
-        await hub.ReportConsolidationComplete(result);
+        var returnValue = await hub.ReportConsolidationComplete(result);
 
-        // Run status must still be updated even when agent is not found.
-        // No token data available (null result fields) → totalTokens must be 0.
+        // Null agent (narrow race after disconnect) — must be rejected, run must not be updated.
+        returnValue.Should().StartWith("REJECTED:");
         _mockConsolidationOps.Verify(c =>
-            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-1"), (AgentEntry?)null, It.IsAny<CancellationToken>()),
-            Times.Once);
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     [Fact]
@@ -148,22 +148,17 @@ public sealed class AgentHubConsolidationTests
     }
 
     [Fact]
-    public async Task ReportConsolidationComplete_AgentNull_ReturnsDebugInfo()
+    public async Task ReportConsolidationComplete_AgentNull_ReturnsRejectedString()
     {
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
-        // T10: IHubConsolidationOperations.HandleConsolidationCompleteAsync owns the debug info contract
-        _mockConsolidationOps
-            .Setup(c => c.HandleConsolidationCompleteAsync(
-                It.IsAny<ConsolidationJobResult>(), null, It.IsAny<CancellationToken>()))
-            .ReturnsAsync("agentFound=False");
 
         var hub = CreateHub();
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
 
         var returnValue = await hub.ReportConsolidationComplete(result);
 
-        // Return value contains debug info and includes agentFound=False
-        returnValue.Should().Contain("agentFound=False");
+        // Null agent → REJECTED (hub returns the rejection string, not the downstream debug info)
+        returnValue.Should().StartWith("REJECTED:");
     }
 
     // ── ReportConsolidationComplete — no HarnessSuggestions ─────────────
@@ -259,9 +254,10 @@ public sealed class AgentHubConsolidationTests
     }
 
     [Fact]
-    public async Task ReportConsolidationComplete_NullActiveJobId_ProceedsNormally()
+    public async Task ReportConsolidationComplete_NullActiveJobId_ReturnsRejected()
     {
-        // Agent with null ActiveJobId — the mismatch check only fires when both are non-null
+        // Agent present but idle (ActiveJobId = null) — duplicate report or stale retry.
+        // Must be rejected; downstream processing must not fire.
         var agent = CreateAgent();
         agent.ActiveJobId = null;
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
@@ -271,11 +267,10 @@ public sealed class AgentHubConsolidationTests
 
         var returnValue = await hub.ReportConsolidationComplete(result);
 
-        // Must not start with REJECTED
-        returnValue.Should().NotStartWith("REJECTED");
+        returnValue.Should().StartWith("REJECTED:");
         _mockConsolidationOps.Verify(c =>
-            c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-1"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
-            Times.Once);
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── ReportConsolidationComplete — token usage sum ────────────────────
@@ -330,5 +325,82 @@ public sealed class AgentHubConsolidationTests
         _mockConsolidationOps.Verify(c =>
             c.HandleConsolidationCompleteAsync(It.Is<ConsolidationJobResult>(r => r.JobId == "crun-notok"), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    // ── ReportConsolidationComplete — null ActiveJobId rejection (new regression guards) ───
+
+    [Fact]
+    public async Task ReportConsolidationComplete_NullActiveJobId_DoesNotCallHandleConsolidationCompleteAsync()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = null;
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub();
+        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
+
+        await hub.ReportConsolidationComplete(result);
+
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "idle agent must not trigger harness/badge/run writes");
+    }
+
+    [Fact]
+    public async Task ReportConsolidationComplete_NullActiveJobId_DoesNotTransitionAgentToIdle()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = null;
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub();
+        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
+
+        await hub.ReportConsolidationComplete(result);
+
+        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
+            "no status transition on a rejected report");
+        agent.ActiveJobId.Should().BeNull("ActiveJobId must remain null — it was not changed by the rejection");
+    }
+
+    [Fact]
+    public async Task ReportConsolidationComplete_SecondReport_SameAgent_ReturnsRejected()
+    {
+        // Simulates a duplicate/retry: agent.ActiveJobId is already null because the first report
+        // was accepted and cleared it. The second call must be rejected entirely.
+        var agent = CreateAgent();
+        agent.ActiveJobId = null; // first report already cleared this
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        var hub = CreateHub();
+        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
+
+        var returnValue = await hub.ReportConsolidationComplete(result);
+
+        returnValue.Should().StartWith("REJECTED:",
+            "a second report from an idle agent must be rejected regardless of the JobId");
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "duplicate report must not trigger downstream processing");
+    }
+
+    // ── ReportConsolidationComplete — null agent rejection (new regression guards) ─────────
+
+    [Fact]
+    public async Task ReportConsolidationComplete_AgentNull_DoesNotCallHandleConsolidationCompleteAsync()
+    {
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+
+        var hub = CreateHub();
+        var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
+
+        await hub.ReportConsolidationComplete(result);
+
+        _mockConsolidationOps.Verify(c =>
+            c.HandleConsolidationCompleteAsync(It.IsAny<ConsolidationJobResult>(), It.IsAny<AgentEntry?>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "null agent (disconnect race) must not trigger harness/badge/run writes");
     }
 }

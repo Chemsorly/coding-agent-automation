@@ -6,7 +6,7 @@
 {
     <div class="first-run-banner" role="alert" aria-live="polite">
         <span class="first-run-banner-message">
-            No job templates configured. Go to <a href="settings"><strong>Settings → Job Templates</strong></a> to set up your first template before the pipeline can dispatch work.
+            No job templates configured. Go to <a href="pipelines"><strong>Pipelines → Pipeline Job Templates</strong></a> to set up your first template before the pipeline can dispatch work.
         </span>
         <button class="first-run-banner-dismiss" @onclick="DismissAsync" aria-label="Dismiss banner">Dismiss</button>
     </div>
@@ -28,14 +28,17 @@
         _dismissed = dismissedValue == "true";
 
         var currentPath = new Uri(Navigation.Uri).AbsolutePath.TrimEnd('/');
-        var onSettings = string.Equals(currentPath, "/settings", StringComparison.OrdinalIgnoreCase);
+        // Suppress the banner when the user is already on the Pipelines page.
+        // AgentCoding.razor registers both /pipelines and /agent-coding as valid routes.
+        var onPipelines = string.Equals(currentPath, "/pipelines", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(currentPath, "/agent-coding", StringComparison.OrdinalIgnoreCase);
 
-        // show = noEnabledTemplates AND route != "/settings" AND (notDismissed OR noEnabledTemplates)
+        // show = noEnabledTemplates AND route != "/pipelines|/agent-coding" AND (notDismissed OR noEnabledTemplates)
         // Req 8.2: the third clause is intentionally redundant when noEnabledTemplates is true —
         // dismissal never suppresses the banner when there are no templates.
         var noEnabledTemplates = !hasEnabled;
         _show = noEnabledTemplates
-                && !onSettings
+                && !onPipelines
                 && (!_dismissed || noEnabledTemplates);
     }
 
