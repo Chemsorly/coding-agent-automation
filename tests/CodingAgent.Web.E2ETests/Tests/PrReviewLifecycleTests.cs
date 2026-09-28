@@ -201,8 +201,18 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         // CancelPipelineAsync targets. Without this, the cancel is a no-op.
         await fakeAgent.AcceptJobAsync(assignment.JobId);
 
-        // Click the cancel button on the Work page
-        await codingPage.ClickCancelAsync();
+        // Wait for the active run to appear in RunService so we can obtain its RunId for navigation.
+        // The cancel button lives on the /runs/{runId} detail page (RunDetailPage), not on /agent-coding.
+        var runService = Fixture.RunService;
+        await WaitUntilAsync(
+            () => runService.GetActiveRuns().Any(r => r.IssueIdentifier == "102"),
+            TimeSpan.FromSeconds(15));
+        var activeRunId = runService.GetActiveRuns().First(r => r.IssueIdentifier == "102").RunId;
+
+        // Navigate to the run detail page and click the cancel button there.
+        var runDetailPage = new RunDetailPage(Page, BaseUrl);
+        await runDetailPage.NavigateAsync(activeRunId);
+        await runDetailPage.CancelAsync();
 
         // Assert: the run ends up Cancelled in history
         // TODO: WaitForHistoryAsync throws TimeoutException rather than returning null when no matching
@@ -273,6 +283,13 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         var assignment1 = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal("103", assignment1.IssueIdentifier);
 
+        // Reset BEFORE AcceptAndCompleteJobAsync to close the race window: if the pipeline emits a
+        // secondary internal message that triggers OnAssignJob after CompleteJobAsync but before
+        // ResetJobAssigned(), the new TCS would replace an already-resolved one and the subsequent
+        // JobAssigned.Task.WaitAsync below would time out. Resetting first ensures the TCS is fresh
+        // when the second assignment arrives. See ConflictRestartIntegrationTests:220 for precedent.
+        fakeAgent.ResetJobAssigned();
+
         await fakeAgent.AcceptAndCompleteJobAsync(assignment1.JobId);
 
         var run1 = await WaitForHistoryAsync(r => r.IssueIdentifier == "103");
@@ -295,15 +312,13 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         await Fixture.RepositoryProvider.AddPrLabelAsync(prNumber, "agent:next", CancellationToken.None);
 
         // ── Second review dispatch ───────────────────────────────────────────
-        // TODO: ResetJobAssigned() is called after AcceptAndCompleteJobAsync. If the pipeline emits
-        // a secondary internal message that triggers OnAssignJob before ResetJobAssigned() executes,
-        // the new TCS replaces an already-resolved one and the subsequent JobAssigned.Task.WaitAsync
-        // below will time out (30 s). Move ResetJobAssigned() to before AcceptAndCompleteJobAsync
-        // to close this race window (see ConflictRestartIntegrationTests:220 for precedent).
-        // Also: if the dedup guard fires because run 1 cleanup hasn't completed when the second
-        // dispatch arrives, PrepareReviewDistributionRequestAsync returns null and the UI success
-        // banner still shows — the test then hangs on JobAssigned with no diagnostic output.
-        fakeAgent.ResetJobAssigned();
+        // Wait until PR 103 is no longer active in the run service. The run must be fully cleaned up
+        // before the second dispatch: while IsBeingProcessed("103") returns true, the PR row in the
+        // drawer has pointer-events:none and SelectPrAsync will time out with an intercept error.
+        // This also guards against the dedup guard silently rejecting the second dispatch.
+        await WaitUntilAsync(
+            () => !Fixture.RunService.GetActiveRuns().Any(r => r.IssueIdentifier == "103"),
+            TimeSpan.FromSeconds(15));
 
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Lifecycle Template");
