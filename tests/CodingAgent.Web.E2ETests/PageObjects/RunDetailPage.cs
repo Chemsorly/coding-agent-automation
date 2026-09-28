@@ -87,31 +87,9 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm = true)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
+        await CancelButton.ClickAsync();
 
-        // Retry loop: click the cancel button and wait for the confirm section to appear.
-        // On slow CI runners the Blazor Server circuit may still be processing earlier events
-        // (hub subscription, snapshot push) when the first click arrives, causing the @onclick
-        // to be dropped. A brief wait followed by a second click reliably triggers the section.
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            await CancelButton.ClickAsync();
-
-            // Wait up to 3 s for the confirm section; break early if it appears.
-            try
-            {
-                await CancelConfirmSection.WaitForAsync(new() { Timeout = 3_000 });
-                break; // confirm section appeared — proceed
-            }
-            catch (TimeoutException) when (attempt < 2)
-            {
-                // Section didn't appear yet; the button may have been in the DOM from
-                // server-side prerender before the Blazor circuit finished hydrating.
-                // Wait briefly and retry.
-                await _page.WaitForTimeoutAsync(1000);
-            }
-        }
-
-        // Final check: the confirm section must now be visible.
+        // Wait for the confirm section to appear (the sidebar shows it after the initial click)
         await CancelConfirmSection.WaitForAsync(new() { Timeout = 10_000 });
 
         if (confirm)
@@ -131,24 +109,9 @@ public sealed class RunDetailPage
     public async Task RedispatchAsync(bool confirm = true)
     {
         await RedispatchButton.WaitForAsync(new() { Timeout = 10_000 });
+        await RedispatchButton.ClickAsync();
 
-        // Retry loop: same circuit-hydration race as CancelAsync.
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            await RedispatchButton.ClickAsync();
-
-            try
-            {
-                await RedispatchConfirmButton.WaitForAsync(new() { Timeout = 3_000 });
-                break;
-            }
-            catch (TimeoutException) when (attempt < 2)
-            {
-                await _page.WaitForTimeoutAsync(1000);
-            }
-        }
-
-        // Final check: confirm button must now be visible.
+        // Wait for the confirm box to appear
         await RedispatchConfirmButton.WaitForAsync(new() { Timeout = 10_000 });
 
         if (confirm)

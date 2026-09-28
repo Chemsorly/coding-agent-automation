@@ -400,8 +400,11 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
+        // Fire as a background task so SubscribeLiveAsync's HubConnection.StartAsync (SignalR negotiation)
+        // does not block the circuit's event queue — without this, any @onclick that arrives while the
+        // hub is connecting is dequeued only after StartAsync completes, causing noticeable UI latency.
         if (_isLive && !_subscribed)
-            await SubscribeLiveAsync();
+            _ = Task.Run(SubscribeLiveAsync);
 
         if (_scrollOnRender)
         {

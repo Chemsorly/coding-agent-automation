@@ -279,23 +279,9 @@ public sealed class RunPageCancelAndRedispatchTests : E2ETestBase
         var runPage = new RunDetailPage(Page, BaseUrl);
         await runPage.NavigateAsync(runId);
 
-        // Open the confirm section — use retry loop for the same circuit-hydration race
-        // as CancelAsync/RedispatchAsync: prerendered button may be visible before the circuit
-        // finishes hydrating, making the first click a no-op.
+        // Open the confirm section
         await runPage.CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            await runPage.CancelButton.ClickAsync();
-            try
-            {
-                await runPage.CancelConfirmSection.WaitForAsync(new() { Timeout = 3_000 });
-                break;
-            }
-            catch (TimeoutException) when (attempt < 2)
-            {
-                await Page.WaitForTimeoutAsync(1000);
-            }
-        }
+        await runPage.CancelButton.ClickAsync();
         await runPage.CancelConfirmSection.WaitForAsync(new() { Timeout = 10_000 });
 
         // Double-click "Yes, cancel" as fast as Playwright allows
