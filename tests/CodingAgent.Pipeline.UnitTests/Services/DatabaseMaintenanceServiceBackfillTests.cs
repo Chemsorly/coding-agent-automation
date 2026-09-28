@@ -100,20 +100,20 @@ public class DatabaseMaintenanceServiceBackfillTests : IDisposable
         string? summary = "test summary",
         string? projectId = null,
         string? workItemId = null) => new()
-    {
-        RunId = Guid.NewGuid().ToString(),
-        Type = type,
-        TemplateId = templateId,
-        TemplateName = templateName,
-        StartedAtUtc = DateTimeOffset.UtcNow.AddHours(-2),
-        CompletedAtUtc = status is ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = type,
+            TemplateId = templateId,
+            TemplateName = templateName,
+            StartedAtUtc = DateTimeOffset.UtcNow.AddHours(-2),
+            CompletedAtUtc = status is ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled
             ? DateTimeOffset.UtcNow.AddHours(-1)
             : null,
-        Status = status,
-        Summary = summary,
-        ProjectId = projectId,
-        WorkItemId = workItemId
-    };
+            Status = status,
+            Summary = summary,
+            ProjectId = projectId,
+            WorkItemId = workItemId
+        };
 
     // ── CRITICAL: identity key is ConsolidationRun.RunId from Data blob, NOT entity.Id ──
 
