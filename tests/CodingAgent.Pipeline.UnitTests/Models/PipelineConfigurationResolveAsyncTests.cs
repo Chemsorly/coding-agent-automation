@@ -57,7 +57,6 @@ public class PipelineConfigurationResolveAsyncTests
             ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
             project,
             "repo-1",
-            "brain-1",
             providerConfigs,
             CancellationToken.None);
 
@@ -89,7 +88,6 @@ public class PipelineConfigurationResolveAsyncTests
             ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
             project,
             "repo-1",
-            null,
             providerConfigs,
             CancellationToken.None);
 
@@ -131,7 +129,6 @@ public class PipelineConfigurationResolveAsyncTests
             ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
             null!, // TODO: null! bypasses non-nullable parameter — this relies on ApplyProjectOverrides being defensive. Consider making the parameter nullable or adding a dedicated null-handling test.
             "repo-1",
-            null,
             providerConfigs,
             CancellationToken.None);
 

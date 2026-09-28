@@ -515,76 +515,24 @@ public class PostgresConfigurationStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task DeleteProjectAsync_WithFkOnlyOrphans_MovesOrphansToDefault()
+    public async Task DeleteProjectAsync_TemplateRowsSeededInTheDatabase_MoveToDefault()
     {
-        // Arrange: a template whose FK points to the project but is NOT in TemplateIds
+        // Arrange: a template row that points at the project, written without the store
         var defaultId = WellKnownIds.DefaultProjectId;
         var projectGuid = Guid.NewGuid();
         var projectId = projectGuid.ToString();
         var defaultGuid = Guid.Parse(defaultId);
         var templateGuid = Guid.NewGuid();
-        var templateIdStr = templateGuid.ToString();
-
-        // Seed directly via DB to create FK-only orphan (FK set but not in TemplateIds)
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", TemplateIds = [] });
-            db.Projects.Add(new ProjectEntity { Id = projectGuid, Name = "Source", TemplateIds = [] }); // no TemplateIds entry
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-            {
-                Id = templateGuid,
-                ProjectId = projectGuid, // FK points here but TemplateIds is empty
-                Name = "FkOrphan"
-            });
-            await db.SaveChangesAsync();
-        }
-
-        // Act
-        await _store.DeleteProjectAsync(projectId, CancellationToken.None);
-
-        // Assert: FK-only orphan moved to Default
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var templateEntity = await db.PipelineJobTemplates.FindAsync(templateGuid);
-            templateEntity.Should().NotBeNull();
-            templateEntity!.ProjectId.Should().Be(defaultGuid, "FK-only orphan must be reparented to Default");
-
-            var defaultProject = await db.Projects.FindAsync(defaultGuid);
-            defaultProject!.TemplateIds.Should().Contain(templateIdStr,
-                "FK-only orphan ID must be added to Default's TemplateIds");
-        }
-    }
-
-    [Fact]
-    public async Task DeleteProjectAsync_DefaultProjectTemplateIds_Deduped_WhenTemplateAlreadyInDefault()
-    {
-        // Arrange: a template already listed in Default's TemplateIds and with FK pointing to project being deleted
-        var defaultId = WellKnownIds.DefaultProjectId;
-        var projectGuid = Guid.NewGuid();
-        var projectId = projectGuid.ToString();
-        var defaultGuid = Guid.Parse(defaultId);
-        var templateGuid = Guid.NewGuid();
-        var templateIdStr = templateGuid.ToString();
 
         await using (var db = new InMemoryPipelineDbContext(_dbOptions))
         {
-            db.Projects.Add(new ProjectEntity
-            {
-                Id = defaultGuid,
-                Name = "Default",
-                TemplateIds = [templateIdStr] // already listed
-            });
-            db.Projects.Add(new ProjectEntity
-            {
-                Id = projectGuid,
-                Name = "Source",
-                TemplateIds = [templateIdStr]
-            });
+            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default" });
+            db.Projects.Add(new ProjectEntity { Id = projectGuid, Name = "Source" });
             db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
             {
                 Id = templateGuid,
                 ProjectId = projectGuid,
-                Name = "T1"
+                Name = "Seeded"
             });
             await db.SaveChangesAsync();
         }
@@ -592,10 +540,16 @@ public class PostgresConfigurationStoreTests : IDisposable
         // Act
         await _store.DeleteProjectAsync(projectId, CancellationToken.None);
 
-        // Assert: template ID appears exactly once in Default's TemplateIds (no duplicate)
+        // Assert: the template moved to Default and is listed there
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var templateEntity = await db.PipelineJobTemplates.FindAsync(templateGuid);
+            templateEntity.Should().NotBeNull();
+            templateEntity!.ProjectId.Should().Be(defaultGuid, "the template must be reparented to Default");
+        }
+
         var defaultProject = await CreateFreshStore().GetProjectByIdAsync(defaultId, CancellationToken.None);
-        defaultProject!.TemplateIds.Count(id => id == templateIdStr).Should().Be(1,
-            "dedup logic must prevent adding a template ID that is already in Default's TemplateIds");
+        defaultProject!.TemplateIds.Should().Equal(templateGuid.ToString());
     }
 
     [Fact]
@@ -713,7 +667,6 @@ public class PostgresConfigurationStoreTests : IDisposable
                 Id = Guid.Parse(projectId),
                 Name = "P",
                 Enabled = true,
-                TemplateIds = [templateId]
             });
             db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
             {
@@ -806,7 +759,6 @@ public class PostgresConfigurationStoreTests : IDisposable
                 Id = Guid.Parse(projectId),
                 Name = "P",
                 Enabled = true,
-                TemplateIds = [templateId]
             });
             db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
             {
@@ -979,8 +931,6 @@ public class PostgresConfigurationStoreTests : IDisposable
 
     // ── DeserializeProject correctness (stale Settings JSON) ────────────
 
-    // TODO: Add tests for SaveTemplateAsync → GetProjectByIdAsync path (stale JSON without ResyncSettingsJson)
-    // and LoadProjectsAsync (bulk-load path with cache layer).
     [Fact]
     public async Task MoveTemplateAsync_ProjectReturnsUpdatedTemplateIds_EvenWithStaleJson()
     {
@@ -999,7 +949,7 @@ public class PostgresConfigurationStoreTests : IDisposable
         };
         await _store.SaveTemplateAsync(sourceId, template, CancellationToken.None);
 
-        // Act: move template (this updates TemplateIds column but historically left JSON stale)
+        // Act: move template (only the template row changes; the Settings JSON is not rewritten)
         await _store.MoveTemplateAsync(sourceId, targetId, template.Id, CancellationToken.None);
 
         // Assert: loading projects must reflect the move regardless of JSON state
@@ -1029,8 +979,7 @@ public class PostgresConfigurationStoreTests : IDisposable
                 Id = entityId,
                 Name = "Test",
                 Enabled = true,
-                Settings = staleJson,
-                TemplateIds = []
+                Settings = staleJson
             });
             await db.SaveChangesAsync();
         }
@@ -1047,291 +996,176 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.Id.Should().NotBe(staleJsonId);
     }
 
-    // ── SaveProjectAsync orphan guard ────────────────────────────────────
+    // ── Membership: the template's own project is the only record ─────────
 
     [Fact]
-    public async Task EfInMemory_CanUpdateFkOnTrackedEntity()
+    public async Task SaveProjectAsync_IgnoresTemplateIds_MembershipComesFromTheTemplates()
     {
-        // Minimal sanity check: EF InMemory correctly persists ProjectId FK update.
-        var sourceGuid = Guid.NewGuid();
-        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
-        var templateGuid = Guid.NewGuid();
-
-        // Seed
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            db.Projects.Add(new ProjectEntity { Id = sourceGuid, Name = "Source", TemplateIds = [templateGuid.ToString()] });
-            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", TemplateIds = [] });
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity { Id = templateGuid, ProjectId = sourceGuid, Name = "T1" });
-            await db.SaveChangesAsync();
-        }
-
-        // Simulate the guard: update FK
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var templates = await db.PipelineJobTemplates
-                .Where(t => t.Id == templateGuid && t.ProjectId == sourceGuid)
-                .ToListAsync();
-            templates.Should().HaveCount(1, "template should be found");
-            templates[0].ProjectId = defaultGuid;
-            await db.SaveChangesAsync();
-        }
-
-        // Verify
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var t = await db.PipelineJobTemplates.FindAsync(templateGuid);
-            t!.ProjectId.Should().Be(defaultGuid, "EF InMemory must persist ProjectId FK update");
-        }
-    }
-
-    [Fact]
-    public async Task EfInMemory_CanUpdateFkAndProjectEntityInSameSaveChanges()
-    {
-        // Verifies the guard's SaveChanges call persists both FK updates and project TemplateIds
-        // changes within the same db context and SaveChangesAsync call.
-        var sourceGuid = Guid.NewGuid();
-        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
-        var templateGuid = Guid.NewGuid();
-        var templateIdStr = templateGuid.ToString();
-
-        // Seed
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            db.Projects.Add(new ProjectEntity { Id = sourceGuid, Name = "Source", TemplateIds = [templateIdStr] });
-            db.Projects.Add(new ProjectEntity { Id = defaultGuid, Name = "Default", TemplateIds = [] });
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity { Id = templateGuid, ProjectId = sourceGuid, Name = "T1" });
-            await db.SaveChangesAsync();
-        }
-
-        // Simulate SaveProjectAsync's else branch exactly:
-        // 1. Load entity (has TemplateIds=[templateIdStr])
-        // 2. Detect dropped IDs (templateIdStr is dropped)
-        // 3. Load default project, update template FK, add to Default.TemplateIds
-        // 4. Set entity.Settings and entity.TemplateIds = [] (new empty list)
-        // 5. SaveChangesAsync
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var entity = await db.Projects.FirstOrDefaultAsync(e => e.Id == sourceGuid);
-            entity.Should().NotBeNull();
-
-            // Step 2
-            var droppedGuids = entity!.TemplateIds
-                .Where(id => Guid.TryParse(id, out _))
-                .Select(Guid.Parse)
-                .ToList();
-            droppedGuids.Should().HaveCount(1);
-
-            // Step 3
-            var defaultProject = await db.Projects.FirstOrDefaultAsync(e => e.Id == defaultGuid);
-            var orphanedTemplates = await db.PipelineJobTemplates
-                .Where(t => droppedGuids.Contains(t.Id) && t.ProjectId == sourceGuid)
-                .ToListAsync();
-            orphanedTemplates.Should().HaveCount(1);
-
-            foreach (var t in orphanedTemplates)
-            {
-                t.ProjectId = defaultGuid;
-                defaultProject!.TemplateIds = [.. defaultProject.TemplateIds, t.Id.ToString()];
-            }
-
-            // Step 4
-            entity.Settings = null;
-            entity.TemplateIds = new List<string>();
-
-            // Step 5
-            await db.SaveChangesAsync();
-        }
-
-        // Verify
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var t = await db.PipelineJobTemplates.FindAsync(templateGuid);
-            t!.ProjectId.Should().Be(defaultGuid, "FK must be updated to Default");
-
-            var defProject = await db.Projects.FindAsync(defaultGuid);
-            defProject!.TemplateIds.Should().Contain(templateIdStr);
-        }
-    }
-
-    [Fact]
-    public async Task SaveProjectAsync_DroppingTemplateId_MovesTemplateToDefault()
-    {
-        // Arrange: create a project with a template
-        var projectId = Guid.NewGuid().ToString();
-        var defaultId = WellKnownIds.DefaultProjectId;
-
-        await _store.SaveProjectAsync(new PipelineProject
-        {
-            Id = defaultId,
-            Name = "Default",
-            Enabled = true
-        }, CancellationToken.None);
-        await _store.SaveProjectAsync(new PipelineProject
-        {
-            Id = projectId,
-            Name = "Source"
-        }, CancellationToken.None);
-
+        // Arrange: the template belongs to "Home"; "Other" is saved with a list that claims it
+        var homeId = Guid.NewGuid().ToString();
+        var otherId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = homeId, Name = "Home" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(),
-            Name = "T1",
-            IssueProviderId = "ip",
-            RepoProviderId = "rp"
+            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
         };
-        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+        await _store.SaveTemplateAsync(homeId, template, CancellationToken.None);
 
-        // Verify SaveTemplateAsync actually persisted TemplateIds (prerequisite for guard)
-        {
-            var sourceGuid = Guid.Parse(projectId);
-            await using var diagDb = new InMemoryPipelineDbContext(_dbOptions);
-            var sourceEntity = await diagDb.Projects.FindAsync(sourceGuid);
-            sourceEntity.Should().NotBeNull();
-            sourceEntity!.TemplateIds.Should().Contain(template.Id,
-                "SaveTemplateAsync must have added the template ID to Source TemplateIds");
-        }
+        // Act
+        await _store.SaveProjectAsync(
+            new PipelineProject { Id = otherId, Name = "Other", TemplateIds = [template.Id] }, CancellationToken.None);
+        await _store.SaveProjectAsync(
+            new PipelineProject { Id = homeId, Name = "Home", TemplateIds = [] }, CancellationToken.None);
 
-        // Act: save the project with an empty TemplateIds (drops the template)
-        await _store.SaveProjectAsync(new PipelineProject
-        {
-            Id = projectId,
-            Name = "Source",
-            TemplateIds = []
-        }, CancellationToken.None);
-
-        // Assert via raw DB: template FK moved to Default
-        var templateGuid = Guid.Parse(template.Id);
-        var defaultGuid = Guid.Parse(defaultId);
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var templateEntity = await db.PipelineJobTemplates.FindAsync(templateGuid);
-            templateEntity.Should().NotBeNull();
-            templateEntity!.ProjectId.Should().Be(defaultGuid, "guard must update the FK to Default");
-
-            var defaultEntity = await db.Projects.FindAsync(defaultGuid);
-            defaultEntity.Should().NotBeNull();
-            defaultEntity!.TemplateIds.Should().Contain(template.Id, "guard must add to Default's TemplateIds");
-        }
-
-        // Assert via store: template is gone from original project
-        var fromSource = await CreateFreshStore().LoadTemplatesForProjectAsync(projectId, CancellationToken.None);
-        fromSource.Should().BeEmpty("template must be removed from the source project");
-
-        // Assert via store: template moved to Default
-        var fromDefault = await CreateFreshStore().LoadTemplatesForProjectAsync(defaultId, CancellationToken.None);
-        fromDefault.Should().ContainSingle(t => t.Id == template.Id,
-            "orphaned template must be reparented to Default project");
-
-        // Assert: Default project's TemplateIds includes the template
-        var defaultProject = await CreateFreshStore().GetProjectByIdAsync(defaultId, CancellationToken.None);
-        defaultProject!.TemplateIds.Should().Contain(template.Id);
+        // Assert: saving projects changed nothing about membership
+        var store = CreateFreshStore();
+        (await store.GetProjectByIdAsync(homeId, CancellationToken.None))!.TemplateIds.Should().Equal(template.Id);
+        (await store.GetProjectByIdAsync(otherId, CancellationToken.None))!.TemplateIds.Should().BeEmpty();
+        (await store.LoadTemplatesForProjectAsync(homeId, CancellationToken.None)).Should().ContainSingle(t => t.Id == template.Id);
     }
 
     [Fact]
-    public async Task SaveProjectAsync_DefaultProject_DroppingId_NoOrphanCreated()
+    public async Task SaveProjectAsync_DoesNotStoreAMembershipListInTheSettings()
     {
-        // The orphan guard is intentionally skipped when saving the Default project itself
-        // (to avoid the EF identity-map issue where entity == defaultProject). Orphaned templates
-        // from Default are handled by ClaimOrphanedTemplatesAsync at startup.
-        // This test verifies the guard skip logic: dropping from Default's TemplateIds leaves
-        // the template with FK=Default but not listed — the startup repair re-attaches it.
-        // TODO [WARNING]: This test name ("NoOrphanCreated") is misleading — the template IS transiently
-        // orphaned from TemplateIds after this save; the test asserts the broken state and relies on
-        // ClaimOrphanedTemplatesAsync (not invoked here) to repair it. Consider renaming to
-        // SaveProjectAsync_DefaultProject_GuardSkipped_StartupRepairRequiredToReattach, or add a call to
-        // ClaimOrphanedTemplatesAsync after the save and assert the template is re-listed to prove
-        // the full round-trip works.
-        var defaultId = WellKnownIds.DefaultProjectId;
+        var projectId = Guid.NewGuid().ToString();
 
-        await _store.SaveProjectAsync(new PipelineProject
+        await _store.SaveProjectAsync(
+            new PipelineProject { Id = projectId, Name = "P", TemplateIds = ["a", "b"] }, CancellationToken.None);
+
+        await using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var entity = await db.Projects.FindAsync(Guid.Parse(projectId));
+        var stored = System.Text.Json.JsonSerializer.Deserialize<PipelineProject>(entity!.Settings!, PipelineJsonOptions.Default);
+        stored!.TemplateIds.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadProjectsAsync_StaleTemplateIdsInSettingsJson_AreIgnored()
+    {
+        // Arrange: Settings JSON saved before membership moved to the templates still lists a template
+        // that belongs to another project.
+        var projectGuid = Guid.NewGuid();
+        var otherGuid = Guid.NewGuid();
+        var ownTemplate = Guid.NewGuid();
+        var foreignTemplate = Guid.NewGuid();
+        var staleJson = System.Text.Json.JsonSerializer.Serialize(
+            new PipelineProject { Id = projectGuid.ToString(), Name = "P", TemplateIds = [foreignTemplate.ToString()] },
+            PipelineJsonOptions.Default);
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
         {
-            Id = defaultId,
-            Name = "Default",
-            Enabled = true
-        }, CancellationToken.None);
+            db.Projects.Add(new ProjectEntity { Id = projectGuid, Name = "P", Enabled = true, Settings = staleJson });
+            db.Projects.Add(new ProjectEntity { Id = otherGuid, Name = "Other", Enabled = true });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity { Id = ownTemplate, ProjectId = projectGuid, Name = "Own" });
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity { Id = foreignTemplate, ProjectId = otherGuid, Name = "Foreign" });
+            await db.SaveChangesAsync();
+        }
 
+        // Act
+        var projects = await CreateFreshStore().LoadProjectsAsync(CancellationToken.None);
+
+        // Assert
+        projects.Single(p => p.Id == projectGuid.ToString()).TemplateIds.Should().Equal(ownTemplate.ToString());
+        projects.Single(p => p.Id == otherGuid.ToString()).TemplateIds.Should().Equal(foreignTemplate.ToString());
+    }
+
+    [Fact]
+    public async Task LoadProjectsAsync_ListsEachProjectsTemplatesByName()
+    {
+        var projectId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = projectId, Name = "P" }, CancellationToken.None);
+        var names = new[] { "beta", "Alpha", "gamma", "alpha" };
+        var ids = new Dictionary<string, string>();
+        foreach (var (name, index) in names.Select((n, i) => (n, i)))
+        {
+            var template = new PipelineJobTemplate
+            {
+                Id = Guid.NewGuid().ToString(), Name = name, IssueProviderId = $"ip{index}", RepoProviderId = $"rp{index}"
+            };
+            ids[name] = template.Id;
+            await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+        }
+
+        var store = CreateFreshStore();
+        var project = (await store.LoadProjectsAsync(CancellationToken.None)).Single(p => p.Id == projectId);
+        var templates = await store.LoadTemplatesForProjectAsync(projectId, CancellationToken.None);
+
+        // Case-insensitive by name; for names equal except for case, "Alpha" sorts before "alpha" (ordinal).
+        var expected = new[] { ids["Alpha"], ids["alpha"], ids["beta"], ids["gamma"] };
+        project.TemplateIds.Should().Equal(expected);
+        templates.Select(t => t.Id).Should().Equal(expected);
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_FromDefaultToXThenToY_ListsItOnlyUnderTheTarget()
+    {
+        // Regression for #3143: a move must leave the template in exactly one project.
+        var defaultId = WellKnownIds.DefaultProjectId;
+        var xId = Guid.NewGuid().ToString();
+        var yId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = defaultId, Name = "Default" }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject { Id = xId, Name = "X" }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject { Id = yId, Name = "Y" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(),
-            Name = "T1",
-            IssueProviderId = "ip",
-            RepoProviderId = "rp"
+            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
         };
         await _store.SaveTemplateAsync(defaultId, template, CancellationToken.None);
 
-        // Act: save Default with empty TemplateIds (guard is skipped for Default)
-        await _store.SaveProjectAsync(new PipelineProject
+        await _store.MoveTemplateAsync(defaultId, xId, template.Id, CancellationToken.None);
+        await AssertOnlyListedUnderAsync(xId);
+
+        await _store.MoveTemplateAsync(xId, yId, template.Id, CancellationToken.None);
+        await AssertOnlyListedUnderAsync(yId);
+
+        async Task AssertOnlyListedUnderAsync(string targetId)
         {
-            Id = defaultId,
-            Name = "Default",
-            TemplateIds = []
-        }, CancellationToken.None);
+            var store = CreateFreshStore();
+            var listing = (await store.LoadProjectsAsync(CancellationToken.None))
+                .Where(p => p.TemplateIds.Contains(template.Id))
+                .Select(p => p.Id);
+            listing.Should().Equal(targetId);
+            (await store.LoadTemplatesForProjectAsync(targetId, CancellationToken.None)).Should().ContainSingle(t => t.Id == template.Id);
 
-        // Assert: the guard was skipped — Default's TemplateIds is now empty as requested.
-        // The template FK still points to Default, so ClaimOrphanedTemplatesAsync will re-attach it.
-        var defaultProject = await CreateFreshStore().GetProjectByIdAsync(defaultId, CancellationToken.None);
-        defaultProject!.TemplateIds.Should().BeEmpty(
-            "guard is skipped for Default to avoid identity-map conflict; startup repair re-attaches");
-
-        // The template FK still points to Default (not orphaned at the FK level)
-        await using var db = new InMemoryPipelineDbContext(_dbOptions);
-        var templateGuid = Guid.Parse(template.Id);
-        var templateEntity = await db.PipelineJobTemplates.FindAsync(templateGuid);
-        templateEntity!.ProjectId.Should().Be(Guid.Parse(defaultId),
-            "FK still points to Default — startup repair can re-list it");
+            await using var db = new InMemoryPipelineDbContext(_dbOptions);
+            (await db.PipelineJobTemplates.FindAsync(Guid.Parse(template.Id)))!.ProjectId.Should().Be(Guid.Parse(targetId));
+        }
     }
 
     [Fact]
-    public async Task SaveProjectAsync_DroppingTemplateId_DefaultProjectTemplateIdsAreDeduped()
+    public async Task MoveTemplateAsync_ToAMissingProject_LeavesTheTemplateWhereItIs()
     {
-        // Guard: if the template ID is already in Default's TemplateIds, it must not be duplicated.
-        var projectId = Guid.NewGuid().ToString();
-        var defaultId = WellKnownIds.DefaultProjectId;
-        var templateId = Guid.NewGuid().ToString();
-
-        await _store.SaveProjectAsync(new PipelineProject
-        {
-            Id = defaultId,
-            Name = "Default",
-            Enabled = true
-        }, CancellationToken.None);
-        await _store.SaveProjectAsync(new PipelineProject
-        {
-            Id = projectId,
-            Name = "Source"
-        }, CancellationToken.None);
-
+        var sourceId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = sourceId, Name = "Source" }, CancellationToken.None);
         var template = new PipelineJobTemplate
         {
-            Id = templateId,
-            Name = "T1",
-            IssueProviderId = "ip",
-            RepoProviderId = "rp"
+            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
         };
-        await _store.SaveTemplateAsync(projectId, template, CancellationToken.None);
+        await _store.SaveTemplateAsync(sourceId, template, CancellationToken.None);
 
-        // Pre-pollute Default's TemplateIds with the same ID (simulates pre-existing stale state)
-        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        await _store.MoveTemplateAsync(sourceId, Guid.NewGuid().ToString(), template.Id, CancellationToken.None);
+
+        (await CreateFreshStore().GetProjectByIdAsync(sourceId, CancellationToken.None))!
+            .TemplateIds.Should().Equal(template.Id);
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_ToAnotherProject_MovesIt()
+    {
+        var firstId = Guid.NewGuid().ToString();
+        var secondId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = firstId, Name = "First" }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject { Id = secondId, Name = "Second" }, CancellationToken.None);
+        var template = new PipelineJobTemplate
         {
-            var defaultGuid = Guid.Parse(defaultId);
-            var defEntity = await db.Projects.FindAsync(defaultGuid);
-            if (defEntity is not null && !defEntity.TemplateIds.Contains(templateId))
-                defEntity.TemplateIds.Add(templateId);
-            await db.SaveChangesAsync();
-        }
+            Id = Guid.NewGuid().ToString(), Name = "T1", IssueProviderId = "ip1", RepoProviderId = "rp1"
+        };
 
-        // Act: save source with empty TemplateIds — guard should reparent but not duplicate
-        await _store.SaveProjectAsync(new PipelineProject
-        {
-            Id = projectId,
-            Name = "Source",
-            TemplateIds = []
-        }, CancellationToken.None);
+        await _store.SaveTemplateAsync(firstId, template, CancellationToken.None);
+        await _store.SaveTemplateAsync(secondId, template, CancellationToken.None);
 
-        var defaultProject = await CreateFreshStore().GetProjectByIdAsync(defaultId, CancellationToken.None);
-        defaultProject!.TemplateIds.Count(id => id == templateId).Should().Be(1,
-            "template ID must appear exactly once in Default's TemplateIds — no duplicates");
+        var projects = await CreateFreshStore().LoadProjectsAsync(CancellationToken.None);
+        projects.Single(p => p.Id == firstId).TemplateIds.Should().BeEmpty();
+        projects.Single(p => p.Id == secondId).TemplateIds.Should().Equal(template.Id);
     }
 
     // ── Helper: InMemoryDbContextFactory ────────────────────────────────

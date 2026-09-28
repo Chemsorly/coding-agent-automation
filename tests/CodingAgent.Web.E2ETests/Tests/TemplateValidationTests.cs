@@ -116,7 +116,7 @@ public sealed class TemplateValidationTests : E2ETestBase
         // Assert: duplicate validation error is shown
         var errorMsg = await Page.TextContentAsync("div.provider-form .settings-status.status-error");
         Assert.NotNull(errorMsg);
-        Assert.Contains("already exists", errorMsg);
+        Assert.Contains("already used", errorMsg);
     }
 
     [Fact]

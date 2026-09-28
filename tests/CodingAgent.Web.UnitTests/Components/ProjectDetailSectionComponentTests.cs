@@ -271,6 +271,33 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         Assert.Contains("Template One", options[1].TextContent);
     }
 
+    [Fact]
+    public void TemplatesTab_ListsByName_WithoutReorderButtons()
+    {
+        // Templates are ordered by name, so the tab has no manual order to change.
+        var projectA = new PipelineProject { Id = "pA", Name = "Project A", TemplateIds = ["t1", "t2"] };
+        var templates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "t1", Name = "Api", IssueProviderId = "ip1", RepoProviderId = "rp1" },
+            new() { Id = "t2", Name = "Web", IssueProviderId = "ip2", RepoProviderId = "rp2" }
+        };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("pA", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projectA);
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { projectA });
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "pA")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Templates")).Click();
+
+        Assert.Equal(["Api", "Web"], cut.FindAll(".template-row .template-name").Select(e => e.TextContent));
+        Assert.Empty(cut.FindAll("button[title='Move up'], button[title='Move down']"));
+        Assert.Contains("Listed by name", cut.Markup);
+    }
+
     // TODO: This method (and AddTemplate_ReloadsDataAfterMove, AddTemplate_WhenSourceProjectNotFound_ShowsError)
     // is declared async Task but does not use await. The bUnit .Click() method is synchronous and internally
     // processes async handlers, so the tests work correctly, but the async modifier creates CS1998 warnings.

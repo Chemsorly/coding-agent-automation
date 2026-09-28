@@ -916,8 +916,8 @@ public class AgentCodingPageComponentTests : BunitContext
         var (valid, error) = pageService.ValidateAddTemplate(new TemplateTableSection.TemplateFormModel
         {
             Name = "My Template",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-2" // different combo — no duplicate
+            IssueProviderId = "ip-2",
+            RepoProviderId = "rp-2" // tracker and repository unused by the existing template
         });
 
         Assert.True(valid);
@@ -1208,13 +1208,13 @@ public class AgentCodingPageComponentTests : BunitContext
 
         await component.InvokeAsync(async () =>
         {
-            // Set _addForm with valid data — use "rp-2" to avoid duplicate with existing "ip-1"/"rp-1" template
+            // Set _addForm with valid data — "ip-2"/"rp-2" are unused by the existing "ip-1"/"rp-1" template
             var addFormField = typeof(AgentCoding).GetField("_addForm",
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             var form = new TemplateTableSection.TemplateFormModel
             {
                 Name = "New Template",
-                IssueProviderId = "ip-1",
+                IssueProviderId = "ip-2",
                 RepoProviderId = "rp-2",
                 ProjectId = WellKnownIds.DefaultProjectId
             };

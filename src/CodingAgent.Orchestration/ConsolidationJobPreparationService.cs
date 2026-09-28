@@ -87,7 +87,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         var vendedConfigs = await VendProviderConfigsAsync(rawConfigs, repoProviderId, type, ct);
 
         var pipelineConfiguration = await ResolvePipelineConfigurationAsync(
-            templateId, repoProviderId, brainProviderId, vendedConfigs, ct);
+            templateId, repoProviderId, vendedConfigs, ct);
 
         return new ConsolidationJobPreparationResult
         {
@@ -202,7 +202,6 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     private async Task<PipelineConfiguration> ResolvePipelineConfigurationAsync(
         TemplateId? templateId,
         string repoProviderId,
-        string? brainProviderId,
         IReadOnlyList<ProviderConfig> vendedConfigs,
         CancellationToken ct)
     {
@@ -231,7 +230,6 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
             _projectStore.LoadAllTemplatesAsync,
             project,
             (ProviderConfigId)repoProviderId,
-            brainProviderId,
             vendedConfigs,
             ct);
     }

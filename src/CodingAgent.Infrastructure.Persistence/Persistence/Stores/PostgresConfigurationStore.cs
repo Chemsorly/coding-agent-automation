@@ -521,6 +521,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     }
 
     // ── IProjectStore ────────────────────────────────────────────────────
+    //
+    // A template's own project (PipelineJobTemplateEntity.ProjectId) is the only membership record.
+    // PipelineProject.TemplateIds is filled from it on load, in TemplateOrder, and ignored on save.
 
     public async Task<IReadOnlyList<PipelineProject>> LoadProjectsAsync(CancellationToken ct)
     {
@@ -530,9 +533,10 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entities = await db.Projects.AsNoTracking().ToListAsync(ct);
+        var membership = await LoadMembershipAsync(db, projectId: null, ct);
 
         var result = entities
-            .Select(DeserializeProject)
+            .Select(e => DeserializeProject(e, membership))
             .Where(p => p is not null)
             .Cast<PipelineProject>()
             .ToList()
@@ -552,8 +556,11 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         var entity = await db.Projects
             .AsNoTracking()
             .FirstOrDefaultAsync(e => e.Id == guid, ct);
+        if (entity is null)
+            return null;
 
-        return entity is null ? null : DeserializeProject(entity);
+        var membership = await LoadMembershipAsync(db, guid, ct);
+        return DeserializeProject(entity, membership);
     }
 
     public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct)
@@ -568,7 +575,8 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
             var entity = await db.Projects.FirstOrDefaultAsync(e => e.Id == guid, ct);
 
-            var settingsDoc = SerializeToJson(project);
+            // Membership is not part of the project: its TemplateIds are derived on load, so none are stored.
+            var settingsDoc = SerializeToJson(project with { TemplateIds = [] });
 
             if (entity is null)
             {
@@ -578,75 +586,16 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                     Name = project.Name,
                     Enabled = project.Enabled,
                     Description = project.Description,
-                    Settings = settingsDoc,
-                    TemplateIds = project.TemplateIds.ToList()
+                    Settings = settingsDoc
                 };
                 db.Projects.Add(entity);
             }
             else
             {
-                // Detect template IDs that were dropped from this project's list but whose
-                // PipelineJobTemplateEntity.ProjectId still points here. Reparent each to Default.
-                // Skip this guard when saving the Default project itself — the identity map means
-                // entity == defaultProject, and the TemplateIds assignment below would overwrite
-                // the guard's repair. On the Default project, the only way to "orphan" a template
-                // is to remove it from TemplateIds AND change its FK, which should use DeleteTemplateAsync.
-                // TODO [WARNING]: Guard is intentionally skipped for the Default project, so criterion 2
-                // ("saving a project whose TemplateIds drops a template never leaves it in no project")
-                // is only eventually-consistent for Default — a template dropped from Default's TemplateIds
-                // stays orphaned at runtime until the next process restart runs ClaimOrphanedTemplatesAsync.
-                // This is a known, accepted gap documented in SaveProjectAsync_DefaultProject_DroppingId_NoOrphanCreated.
-                var defaultGuidForGuard = Guid.Parse(WellKnownIds.DefaultProjectId);
-                if (guid != defaultGuidForGuard)
-                {
-                    var newIdSet = project.TemplateIds.ToHashSet();
-                    var droppedIds = entity.TemplateIds
-                        .Where(id => !newIdSet.Contains(id))
-                        .ToList();
-
-                    if (droppedIds.Count > 0)
-                    {
-                        var defaultProject = await db.Projects.FirstOrDefaultAsync(e => e.Id == defaultGuidForGuard, ct);
-
-                        if (defaultProject is not null)
-                        {
-                            var droppedGuids = droppedIds
-                                .Where(id => Guid.TryParse(id, out _))
-                                .Select(Guid.Parse)
-                                .ToList();
-
-                            var orphanedTemplates = await db.PipelineJobTemplates
-                                .Where(t => droppedGuids.Contains(t.Id) && t.ProjectId == guid)
-                                .ToListAsync(ct);
-
-                            foreach (var t in orphanedTemplates)
-                            {
-                                t.ProjectId = defaultGuidForGuard;
-                                db.Entry(t).Property(x => x.ProjectId).IsModified = true;
-                                if (!defaultProject.TemplateIds.Contains(t.Id.ToString()))
-                                {
-                                    // TODO [WARNING]: O(N²) allocation — each iteration creates a new List<string>
-                                    // via spread [...defaultProject.TemplateIds, t.Id.ToString()]. Use .Add() (O(1))
-                                    // as the DeleteProjectAsync path does.
-                                    defaultProject.TemplateIds = [.. defaultProject.TemplateIds, t.Id.ToString()];
-                                }
-
-                                Logger.Information(
-                                    "SaveProjectAsync: reparented orphaned template {TemplateId} from project {ProjectId} to Default",
-                                    t.Id, guid);
-                            }
-
-                            if (orphanedTemplates.Count > 0)
-                                ResyncSettingsJson(defaultProject);
-                        }
-                    }
-                }
-
                 entity.Name = project.Name;
                 entity.Enabled = project.Enabled;
                 entity.Description = project.Description;
                 entity.Settings = settingsDoc;
-                entity.TemplateIds = project.TemplateIds.ToList();
             }
 
             await db.SaveChangesAsync(ct);
@@ -675,62 +624,19 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             if (entity is null)
                 return;
 
-            // Move orphaned templates to Default project
+            // The deleted project's templates move to the Default project.
             var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
-            var defaultProject = await db.Projects
-                .FirstOrDefaultAsync(e => e.Id == defaultGuid, ct);
+            var templates = await db.PipelineJobTemplates
+                .Where(t => t.ProjectId == guid)
+                .ToListAsync(ct);
+            foreach (var t in templates)
+                t.ProjectId = defaultGuid;
 
-            if (defaultProject is not null)
+            if (templates.Count > 0)
             {
-                var alreadyReparentedIds = new HashSet<Guid>();
-
-                // Reparent templates listed in TemplateIds
-                if (entity.TemplateIds.Count > 0)
-                {
-                    var templateGuids = entity.TemplateIds
-                        .Where(t => Guid.TryParse(t, out _))
-                        .Select(Guid.Parse)
-                        .ToList();
-                    var templates = await db.PipelineJobTemplates
-                        .Where(t => templateGuids.Contains(t.Id))
-                        .ToListAsync(ct);
-                    foreach (var t in templates)
-                    {
-                        t.ProjectId = defaultGuid;
-                        alreadyReparentedIds.Add(t.Id);
-                    }
-
-                    foreach (var tid in entity.TemplateIds)
-                    {
-                        if (!defaultProject.TemplateIds.Contains(tid))
-                            defaultProject.TemplateIds.Add(tid);
-                    }
-                }
-
-                // Also reparent FK-only orphans (FK points here but ID not in TemplateIds list)
-                var fkOnlyOrphans = await db.PipelineJobTemplates
-                    .Where(t => t.ProjectId == guid && !alreadyReparentedIds.Contains(t.Id))
-                    .ToListAsync(ct);
-                foreach (var t in fkOnlyOrphans)
-                {
-                    t.ProjectId = defaultGuid;
-                    var tid = t.Id.ToString();
-                    if (!defaultProject.TemplateIds.Contains(tid))
-                        defaultProject.TemplateIds.Add(tid);
-                }
-
-                // TODO [WARNING]: totalMoved uses entity.TemplateIds.Count (the full ID list from the
-                // entity) rather than the number of template entities actually found and reparented.
-                // If TemplateIds contains dangling IDs or non-GUID strings, the log overreports.
-                // Consider using templates.Count + fkOnlyOrphans.Count for accuracy.
-                var totalMoved = entity.TemplateIds.Count + fkOnlyOrphans.Count;
-                if (totalMoved > 0)
-                {
-                    ResyncSettingsJson(defaultProject);
-                    Logger.Information(
-                        "Moved {Count} templates from deleted project {ProjectId} to Default project",
-                        totalMoved, guid);
-                }
+                Logger.Information(
+                    "Moved {Count} templates from deleted project {ProjectId} to Default project",
+                    templates.Count, guid);
             }
 
             db.Projects.Remove(entity);
@@ -753,32 +659,17 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             return [];
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var project = await db.Projects
-            .AsNoTracking()
-            .FirstOrDefaultAsync(e => e.Id == guid, ct);
-
-        if (project is null)
-            return [];
-
         var entities = await db.PipelineJobTemplates
             .AsNoTracking()
             .Where(t => t.ProjectId == guid)
             .ToListAsync(ct);
 
-        var templateMap = entities
+        return TemplateOrder.ByName(entities, e => e.Name, e => e.Id.ToString())
             .Select(e => DeserializeFromEntity<PipelineJobTemplate>(e.Configuration))
             .Where(t => t is not null)
             .Cast<PipelineJobTemplate>()
-            .ToDictionary(t => t.Id);
-
-        // Order by TemplateIds position
-        var ordered = new List<PipelineJobTemplate>();
-        foreach (var tid in project.TemplateIds)
-        {
-            if (templateMap.TryGetValue(tid, out var t))
-                ordered.Add(t);
-        }
-        return ordered.AsReadOnly();
+            .ToList()
+            .AsReadOnly();
     }
 
     public async Task<IReadOnlyList<PipelineJobTemplate>> LoadAllTemplatesAsync(CancellationToken ct)
@@ -825,8 +716,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
             // Verify project exists
-            var project = await db.Projects.FirstOrDefaultAsync(e => e.Id == projectGuid, ct);
-            if (project is null)
+            if (!await db.Projects.AnyAsync(e => e.Id == projectGuid, ct))
                 return;
 
             var entity = await db.PipelineJobTemplates
@@ -852,12 +742,6 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                 entity.Configuration = jsonDoc;
             }
 
-            // Add template ID to project's TemplateIds if not present
-            if (!project.TemplateIds.Contains(template.Id))
-            {
-                project.TemplateIds.Add(template.Id);
-            }
-
             await db.SaveChangesAsync(ct);
             InvalidateProjectCaches();
         }
@@ -871,10 +755,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         string projectId, TemplateId templateId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(projectId);
-        var templateIdValue = templateId.Value;
-        if (!Guid.TryParse(projectId, out var projectGuid))
+        if (!Guid.TryParse(projectId, out _))
             return;
-        if (!Guid.TryParse(templateIdValue, out var templateGuid))
+        if (!Guid.TryParse(templateId.Value, out var templateGuid))
             return;
 
         await _projectLock.WaitAsync(ct);
@@ -884,14 +767,10 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
 
             var entity = await db.PipelineJobTemplates
                 .FirstOrDefaultAsync(e => e.Id == templateGuid, ct);
-            if (entity is not null)
-                db.PipelineJobTemplates.Remove(entity);
+            if (entity is null)
+                return;
 
-            // Remove template ID from project's TemplateIds
-            var project = await db.Projects.FirstOrDefaultAsync(e => e.Id == projectGuid, ct);
-            if (project is not null)
-                project.TemplateIds.Remove(templateIdValue);
-
+            db.PipelineJobTemplates.Remove(entity);
             await db.SaveChangesAsync(ct);
             InvalidateProjectCaches();
         }
@@ -904,12 +783,11 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     public async Task MoveTemplateAsync(
         ProjectId sourceProjectId, ProjectId targetProjectId, TemplateId templateId, CancellationToken ct)
     {
-        var templateIdValue = templateId.Value;
-        if (!Guid.TryParse(sourceProjectId.Value, out var sourceGuid))
+        if (!Guid.TryParse(sourceProjectId.Value, out _))
             return;
         if (!Guid.TryParse(targetProjectId.Value, out var targetGuid))
             return;
-        if (!Guid.TryParse(templateIdValue, out var templateGuid))
+        if (!Guid.TryParse(templateId.Value, out var templateGuid))
             return;
 
         await _projectLock.WaitAsync(ct);
@@ -917,30 +795,16 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         {
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-            // Update the template's project reference
+            // A template must always point at a project that exists, or it would drop out of every project.
+            if (!await db.Projects.AnyAsync(e => e.Id == targetGuid, ct))
+                return;
+
             var entity = await db.PipelineJobTemplates
                 .FirstOrDefaultAsync(e => e.Id == templateGuid, ct);
-            if (entity is not null)
-                entity.ProjectId = targetGuid;
+            if (entity is null)
+                return;
 
-            // Remove from source project's TemplateIds
-            var sourceProject = await db.Projects
-                .FirstOrDefaultAsync(e => e.Id == sourceGuid, ct);
-            if (sourceProject is not null)
-            {
-                sourceProject.TemplateIds.Remove(templateIdValue);
-                ResyncSettingsJson(sourceProject);
-            }
-
-            // Add to target project's TemplateIds
-            var targetProject = await db.Projects
-                .FirstOrDefaultAsync(e => e.Id == targetGuid, ct);
-            if (targetProject is not null && !targetProject.TemplateIds.Contains(templateIdValue))
-            {
-                targetProject.TemplateIds.Add(templateIdValue);
-                ResyncSettingsJson(targetProject);
-            }
-
+            entity.ProjectId = targetGuid;
             await db.SaveChangesAsync(ct);
             InvalidateProjectCaches();
         }
@@ -955,27 +819,6 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     private static string SerializeToJson<T>(T value)
     {
         return JsonSerializer.Serialize(value, JsonOptions);
-    }
-
-    /// <summary>
-    /// Re-serializes the Settings JSON on a ProjectEntity to match the current
-    /// TemplateIds column and entity Id, preventing drift between the two data sources.
-    /// </summary>
-    private static void ResyncSettingsJson(ProjectEntity entity)
-    {
-        if (entity.Settings is null)
-            return;
-
-        var project = JsonSerializer.Deserialize<PipelineProject>(entity.Settings, JsonOptions);
-        if (project is null)
-            return;
-
-        var synced = project with
-        {
-            Id = entity.Id.ToString(),
-            TemplateIds = entity.TemplateIds
-        };
-        entity.Settings = SerializeToJson(synced);
     }
 
     // TODO: PipelineJsonOptions.Lenient adds PropertyNameCaseInsensitive=true (required for
@@ -1002,8 +845,10 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         return JsonSerializer.Deserialize<ProviderConfig>(entity.Configuration, JsonOptions);
     }
 
-    private static PipelineProject? DeserializeProject(ProjectEntity entity)
+    private static PipelineProject? DeserializeProject(ProjectEntity entity, ILookup<Guid, string> membership)
     {
+        var templateIds = membership[entity.Id].ToList();
+
         if (entity.Settings is null)
         {
             // Minimal project from typed columns only
@@ -1013,7 +858,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                 Name = entity.Name,
                 Enabled = entity.Enabled,
                 Description = entity.Description,
-                TemplateIds = entity.TemplateIds
+                TemplateIds = templateIds
             };
         }
 
@@ -1021,16 +866,31 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         if (project is null)
             return null;
 
-        // Override with authoritative column values — the Settings JSON may be stale
-        // if MoveTemplateAsync (or other code paths) updated columns without re-serializing JSON.
-        // NOTE: entity.TemplateIds is a mutable List assigned without a defensive copy (.ToList()).
+        // The row's ID and the templates' own project are authoritative; Settings JSON saved before
+        // membership moved to the templates may still carry a stale TemplateIds list.
         // NOTE: Name, Enabled, Description are not overridden here; if they diverge, consider
         // overriding all typed-column fields for consistency with the null-Settings fallback path.
         return project with
         {
             Id = entity.Id.ToString(),
-            TemplateIds = entity.TemplateIds
+            TemplateIds = templateIds
         };
+    }
+
+    /// <summary>
+    /// Each project's template IDs in <see cref="TemplateOrder"/>, read from the templates' own project, which is
+    /// the only membership record. With <paramref name="projectId"/>, only that project's templates are read.
+    /// </summary>
+    private static async Task<ILookup<Guid, string>> LoadMembershipAsync(
+        PipelineDbContext db, Guid? projectId, CancellationToken ct)
+    {
+        var query = db.PipelineJobTemplates.AsNoTracking();
+        if (projectId is { } id)
+            query = query.Where(t => t.ProjectId == id);
+
+        var rows = await query.Select(t => new { t.Id, t.ProjectId, t.Name }).ToListAsync(ct);
+        return TemplateOrder.ByName(rows, r => r.Name, r => r.Id.ToString())
+            .ToLookup(r => r.ProjectId, r => r.Id.ToString());
     }
 
     private void InvalidateProviderCache(ProviderKind kind)

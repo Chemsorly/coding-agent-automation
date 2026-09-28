@@ -200,19 +200,22 @@ public static class PipelineConfigurationResolver
 
     /// <summary>
     /// Applies template-level overrides to the pipeline configuration.
-    /// Resolution order: find matching template by repo+brain provider IDs → apply BrainReadOnly
+    /// Resolution order: find the template by its repository → apply BrainReadOnly
     /// (one-directional: only overrides to true) → apply blacklist from repo provider config.
+    /// A repository belongs to one enabled template (<see cref="TemplateBindingRules"/>), so the repository
+    /// identifies the template; an enabled template wins over disabled ones that use the same repository.
     /// Called AFTER <see cref="ApplyProjectOverrides"/> in the dispatch pipeline.
     /// </summary>
     public static PipelineConfiguration ApplyTemplateOverrides(
         PipelineConfiguration config,
         ProviderConfigId repoProviderId,
-        string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
         IReadOnlyList<PipelineJobTemplate> templates)
     {
-        var matchingTemplate = templates.FirstOrDefault(t =>
-            t.RepoProviderId == repoProviderId.Value && t.BrainProviderId == brainProviderId);
+        var matchingTemplate = templates
+            .Where(t => t.RepoProviderId == repoProviderId.Value)
+            .OrderByDescending(t => t.Enabled)
+            .FirstOrDefault();
         if (matchingTemplate is { BrainReadOnly: true })
             config = config with { BrainReadOnly = true };
 
@@ -229,7 +232,6 @@ public static class PipelineConfigurationResolver
         Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
         PipelineProject? project,
         ProviderConfigId repoProviderId,
-        string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
@@ -237,7 +239,7 @@ public static class PipelineConfigurationResolver
         var config = await loadConfig(ct);
         config = ApplyProjectOverrides(config, project);
         var templates = await loadTemplates(ct);
-        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
+        return ApplyTemplateOverrides(config, repoProviderId, providerConfigs, templates);
     }
 
     /// <summary>
@@ -250,13 +252,12 @@ public static class PipelineConfigurationResolver
         Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
         PipelineProject? project,
         ProviderConfigId repoProviderId,
-        string? brainProviderId,
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
         // TODO: Add ArgumentNullException.ThrowIfNull for preLoaded, loadTemplates parameters to produce clear validation errors instead of NRE
         var config = ApplyProjectOverrides(preLoaded, project);
         var templates = await loadTemplates(ct);
-        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
+        return ApplyTemplateOverrides(config, repoProviderId, providerConfigs, templates);
     }
 }

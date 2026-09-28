@@ -280,8 +280,7 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
       "name": "My Project",
       "enabled": true,
       "description": "Main product repository",
-      "settings": "{\"maxRetries\":5}",
-      "templateIds": ["f6a7b8c9-d0e1-2345-f012-456789012345"]
+      "settings": "{\"maxRetries\":5}"
     }
   ],
   "jobTemplates": [
@@ -296,6 +295,8 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
 ```
 
 The `pipelineConfig`, `configuration`, and `settings` fields contain serialized JSON strings (double-encoded). This preserves the exact format used internally.
+
+A project's templates are the `jobTemplates` whose `projectId` points to it. A `templateIds` list in a bundle from an older version is ignored on import.
 
 ---
 
