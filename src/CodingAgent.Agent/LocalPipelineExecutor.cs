@@ -44,6 +44,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IAgentProviderResolver _providerResolver;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
+    /// <summary>
+    /// When non-null, overrides the internal <see cref="AgentProviderFactory"/> so test code
+    /// can substitute fake repository and agent providers. Set via
+    /// <see cref="LocalPipelineExecutorDependencies.ProviderFactoryOverride"/>.
+    /// </summary>
+    private readonly IProviderFactory? _providerFactoryOverride;
 
     public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
     {
@@ -66,6 +72,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
                 deps.BrainUpdateService, deps.HistoryService, finalization));
         _logger = deps.Logger;
+        _providerFactoryOverride = deps.ProviderFactoryOverride;
     }
 
     /// <summary>
@@ -123,11 +130,16 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // as done in LocalConsolidationExecutor. Not a defect since Dispose() is idempotent, but
         // the alias introduces maintenance risk around ownership. (.NET Specialist Review)
         using var issueOpsDisposable = issueOps; // ensure _tokenCacheLock is disposed after the job completes
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
+        // When a ProviderFactoryOverride is injected (test seam), use it instead of constructing
+        // a real AgentProviderFactory. This allows fake repository / agent providers to be
+        // substituted without modifying the rest of the execution path.
+        var providerFactory = _providerFactoryOverride
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         // The project repositories a project epic clones next to its own use the token vended into
         // their own config: the proxy's token refresh covers only this job's primary repository.
-        var projectRepoFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+        var projectRepoFactory = _providerFactoryOverride
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
