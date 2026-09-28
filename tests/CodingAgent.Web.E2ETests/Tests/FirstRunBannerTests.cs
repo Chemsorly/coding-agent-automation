@@ -64,7 +64,7 @@ public sealed class FirstRunBannerTests : E2ETestBase
         var bannerLink = Page.Locator(".first-run-banner a");
         await bannerLink.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
 
-        // Assert: link href is relative "pipelines" (no leading /)
+        // Assert: link href is relative "pipelines" (no leading /) — Blazor resolves against <base href>
         var href = await bannerLink.GetAttributeAsync("href");
         Assert.Equal("pipelines", href);
 
@@ -73,7 +73,9 @@ public sealed class FirstRunBannerTests : E2ETestBase
 
         // Assert: navigated to the Pipelines page
         await Page.WaitForURLAsync(url => url.Contains("/pipelines"), new() { Timeout = 10_000 });
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
+        // Wait for the Pipelines page h1 to appear — ensures Blazor has rendered the new page
+        // before asserting, avoiding a race where h1 still shows "Overview".
+        await Page.WaitForFunctionAsync("document.querySelector('h1')?.textContent?.includes('Pipelines')", null, new() { Timeout = 10_000 });
         var heading = await Page.TextContentAsync("h1");
         Assert.Contains("Pipelines", heading);
         // TODO [WARNING]: The issue's Scenario 2 requires that "the add-template control is visible
