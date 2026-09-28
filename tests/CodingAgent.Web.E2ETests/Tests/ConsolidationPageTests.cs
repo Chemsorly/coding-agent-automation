@@ -292,6 +292,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var rowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(rowText);
         Assert.Contains("Brain Consolidation", rowText);
+        // TODO [WARNING]: Assert.Contains("Succeeded") matches any occurrence of the word,
+        // including in an error message like "Not succeeded". A more precise assertion would
+        // check the CSS class of the status cell (e.g. QuerySelectorAsync for
+        // ".consolidation-status-succeeded" scoped to the row) rather than free-text substring
+        // matching. The card-level assertion below already uses the CSS-class approach; the
+        // row-level assertion is inconsistently weaker.
         Assert.Contains("Succeeded", rowText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Consolidated 3 files", rowText);
 
@@ -305,6 +311,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
             new() { Timeout = 10_000 });
         var cardStatusEl = await Page.QuerySelectorAsync(
             ".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded");
+        // TODO [WARNING]: This asserts presence of the succeeded badge on the card but not its
+        // text content. If the card renders a stale summary from a prior run or renders the badge
+        // without any summary, this assertion still passes. Add a TextContentAsync assertion on
+        // cardStatusEl or on the adjacent summary element to verify the card reflects the
+        // "Consolidated 3 files" summary from this specific run.
         Assert.NotNull(cardStatusEl);
     }
 
@@ -392,18 +403,32 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var page = new ConsolidationPage(Page, BaseUrl);
         await page.NavigateAsync();
 
+        // TODO [WARNING]: NavigateAsync resolves when the page skeleton is visible, but
+        // OnInitializedAsync may not have finished populating _templates yet. If the Refactoring
+        // Scan button for "S3a Template" is not yet in the DOM when ClickRefactoringScanAsync
+        // fires, Playwright will throw a TimeoutException. All other scenarios that follow
+        // NavigateAsync with WaitForRunHistoryCountAsync or WaitForFunctionAsync are guarded;
+        // this one is not. Fix: add a WaitForFunctionAsync that waits for the template card
+        // button to be visible before clicking, e.g.:
+        //   await Page.WaitForFunctionAsync(
+        //     "() => document.querySelector('.consolidation-card-title') !== null");
+
         // Act: open modal then cancel
         await page.ClickRefactoringScanAsync("S3a Template");
         Assert.True(await page.WaitForRefactoringModalAsync(), "Refactoring modal should be visible after clicking Refactoring Scan");
         await page.CancelRefactoringModalAsync();
+        // TODO [WARNING]: Add Assert.False(await page.IsRefactoringModalVisibleAsync()) here to
+        // confirm the modal was actually dismissed before asserting on work item state. If
+        // CancelRefactoringModalAsync silently fails (button selector mismatch after a Blazor
+        // re-render), the modal stays open and the work-item assertion still passes because no
+        // item was created either way — making the test pass without verifying the cancel path.
 
-        // TODO: This Task.Delay is a fixed delay, which violates the acceptance criterion
-        // ("Waits use WaitUntilAsync or Playwright waits, never fixed delays"). A deterministic
-        // alternative: assert immediately after CancelRefactoringModalAsync — CancelRefactoringModal
-        // is a synchronous page interaction with no async dispatch path — or poll
-        // Fixture.WorkItems.GetPendingAsync via WaitUntilAsync with the inverted condition.
-        // Allow one FakeJobController poll cycle (250ms) to ensure no erroneous trigger fires
-        await Task.Delay(350);
+        // CancelRefactoringModal is a synchronous Blazor click: it calls StateHasChanged and
+        // sets _showRefactoringModal = false with no async dispatch path. There is no server-side
+        // call that could create a WorkItem, so we assert immediately rather than waiting.
+        // Run one explicit FakeJobController dispatch pass to confirm that even after a full poll
+        // cycle no item was enqueued by a stray trigger.
+        await Fixture.JobController.DispatchOnceAsync();
 
         // Assert: no Pending work items were created
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
@@ -609,22 +634,32 @@ public sealed class ConsolidationPageTests : E2ETestBase
         Assert.NotNull(msg);
         Assert.Contains("cancelled", msg, StringComparison.OrdinalIgnoreCase);
         Assert.False(await page.IsStatusMessageErrorAsync());
+        // TODO [WARNING]: WaitForStatusMessageAsync (above) may resolve on the status message
+        // from the initial trigger (e.g. "Triggered") if the Blazor component does not clear
+        // the message between the trigger and the cancel operations. If the message element
+        // persists from the trigger phase, Assert.Contains("cancelled") will fail on the wrong
+        // message. Verify the component clears the status message on navigation or add an
+        // explicit wait for the message to change to one containing "cancel" before asserting.
+        // TODO [WARNING]: The issue requires "The WorkItem ends Cancelled". The assertions here
+        // only check the transient status toast and the work-item queue. Add a NavigateAsync +
+        // WaitForRunHistoryCountAsync(1) + GetRunHistoryRowTextAsync(0) assertion to confirm the
+        // run history row also reflects the Cancelled status after a page reload.
 
         // Assert: no Pending work items remain (cancelled item no longer fetchable by FakeJobController)
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
         Assert.Empty(pending);
 
         // Assert: connecting an agent now does NOT dispatch the cancelled item.
-        // TODO: This Task.Delay violates the acceptance criterion ("Waits use WaitUntilAsync or
-        // Playwright waits, never fixed delays"). No completion event exists for "nothing happened",
-        // so a purely event-driven wait is not available here. A partial improvement: gate the
-        // delay start on lateAgent.IsConnected (so the 350ms is measured from actual registration,
-        // not from the start of the connect attempt) and replace with WaitUntilAsync on a
-        // stabilisation condition if one can be identified.
+        // ConnectAsync uses InvokeAsync("RegisterAgent") which is request-response: when it
+        // returns the agent IS in the registry with Idle status. The cancelled item is no longer
+        // in GetPendingAsync (confirmed above), so FakeJobController will never claim it. We run
+        // one explicit dispatch pass to confirm deterministically — no timing assumption required.
         await using var lateAgent = new FakeAgentClient("agent-consol-s5-late");
         await lateAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
-        await Task.Delay(350);
+        // One explicit dispatch pass covers the full poll cycle. If the cancelled item were
+        // somehow dispatchable, DispatchOnceAsync would claim it and lateAgent would receive a job.
+        await Fixture.JobController.DispatchOnceAsync();
         Assert.Empty(lateAgent.ReceivedJobIds);
     }
 
@@ -646,6 +681,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         {
             Id = "profile-consol-s6",
             DisplayName = "S6 Profile",
+            // TODO [WARNING]: Empty MatchLabels means FakeJobController.FindIdleAgentFor matches
+            // ANY idle agent connected to the shared fixture — including agents from prior tests
+            // that were disposed but whose SignalR connections are still draining. If such an
+            // agent receives and claims the work item before this test's WaitUntilAsync fires,
+            // GetPendingAsync returns empty and Assert.Single fails. Mitigation: either assign
+            // a specific label (e.g. "consol-s6=true") to both the profile and the agent
+            // registered below, or use Fixture.JobController.DispatchOnceAsync() deterministically
+            // rather than relying on the polling loop.
             MatchLabels = [],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
@@ -668,6 +711,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
             (await Fixture.WorkItems.GetPendingAsync(10)).Count > 0);
 
         // Assert: exactly one Pending WorkItem exists
+        // TODO [WARNING]: Assert.Single(pending) fails if the work item was dispatched to a
+        // Running state between WaitUntilAsync and this assertion (the FakeJobController poll
+        // can claim it in the background). Consider querying both Pending and Running items and
+        // asserting (pending + running).Count == 1 to make the dedup check resilient to dispatch
+        // timing: the dedup only guarantees one item exists in any non-terminal state, not that
+        // it remains Pending until this line executes.
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
         Assert.Single(pending);
     }

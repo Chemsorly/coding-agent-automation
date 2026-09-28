@@ -35,6 +35,13 @@ public abstract class E2ETestBase : IAsyncLifetime
         // Fresh browser context per test (isolated cookies, storage)
         var browser = await Fixture.GetBrowserAsync();
         _context = await browser.NewContextAsync();
+        // TODO [WARNING]: StubExternalFontsAsync was removed in this change. The stub intercepted
+        // requests to fonts.googleapis.com and fonts.gstatic.com to prevent the Google Fonts CDN
+        // from blocking the Playwright "load" event that GotoAsync waits for. Without it, a slow
+        // or unreachable CDN from the CI runner can cause any test that calls NavigateAsync to time
+        // out (seen once for /agent-coding at 30s). If E2E tests start flaking with navigation
+        // timeouts in CI, restore StubExternalFontsAsync or switch App.razor to a self-hosted
+        // font stack that does not make outbound requests.
         Page = await _context.NewPageAsync();
 
         // Guard: verify DI replacement worked

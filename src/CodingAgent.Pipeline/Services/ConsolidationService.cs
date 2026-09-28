@@ -413,6 +413,14 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             // scan by WorkItemId to find the run. This is an O(N) scan on a small, bounded
             // list (≤1000 runs) and is only reached in the hub-completion path — not in the
             // high-frequency polling paths.
+            // TODO [WARNING]: A valid GUID that belongs to a deleted or non-existent ConsolidationRun
+            // (not a WorkItemId) will reach the fallback scan on every call before logging "not found".
+            // This contradicts the comment above that the fallback is "only reached in the
+            // hub-completion path" — any caller that supplies a well-formed but unknown GUID will
+            // also trigger the full scan. While the bounded list keeps this acceptable in practice,
+            // consider short-circuiting with an early "not found" if GetByIdAsync returns null for
+            // a value that parses as a Guid (since WorkItem IDs are not Guids, a Guid miss on the
+            // primary key means the value is neither a RunId nor a WorkItemId).
             if (run is null)
             {
                 var allRuns = await _runStore.LoadAllRunsAsync(ct);
