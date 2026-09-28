@@ -210,6 +210,18 @@ public class WorkDistributorAdditionalTests
     // ── Kubernetes-specific: GetJobStatus + Cancel (not part of shared contract) ──
 
     [Fact]
+    public async Task Kubernetes_GetActiveDecompositionCountAsync_ReturnsClientValue()
+    {
+        // The KubernetesWorkDistributor delegates GetActiveDecompositionCountAsync directly to
+        // IPipelineApiWorkItemClient.GetActiveDecompositionCountAsync. Verify the value flows through.
+        var sut = CreateKubernetes();
+
+        var count = await sut.GetActiveDecompositionCountAsync(CancellationToken.None);
+
+        count.Should().Be(2, "the fake returns 2 active decompositions");
+    }
+
+    [Fact]
     public async Task Kubernetes_DistributeAsync_Success_ReturnsWorkItemId()
     {
         var sut = CreateKubernetes();
@@ -305,6 +317,9 @@ file static class ApiWorkItemClientFake
                 .Select(w => (w.Request.IssueIdentifier.Value, w.Request.IssueProviderConfigId))
                 .Distinct()
                 .ToList());
+
+        mock.Setup(c => c.GetActiveDecompositionCountAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(2);
 
         return mock.Object;
     }

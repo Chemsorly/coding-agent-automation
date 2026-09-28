@@ -624,4 +624,61 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
             _loopService.Dispose();
         }
     }
+
+    // ── LoadActiveDecompositionCountAsync — exception fallback ────────────────
+
+    /// <summary>
+    /// When <c>IWorkDistributor.GetActiveDecompositionCountAsync</c> throws a transient exception,
+    /// <c>LoadActiveDecompositionCountAsync</c> should return <c>-1</c> (fallback, gate disabled
+    /// for this cycle) rather than letting the exception propagate and killing the loop cycle.
+    /// </summary>
+    [Fact]
+    public async Task WhenGetActiveDecompositionCountAsync_Throws_LoopCycleStillCompletes()
+    {
+        var mockDistributor = new Mock<IWorkDistributor>();
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
+        mockDistributor.Setup(d => d.ReconcileStuckItemsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+        // Simulate a transient failure on GetActiveDecompositionCountAsync
+        mockDistributor.Setup(d => d.GetActiveDecompositionCountAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated active decomposition count failure"));
+
+        var pollCalled = false;
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(
+                It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                pollCalled = true;
+                return new PagedResult<IssueSummary>
+                {
+                    Items = new List<IssueSummary>(),
+                    Page = 1,
+                    PageSize = 50,
+                    HasMore = false
+                };
+            });
+
+        var svc = CreateService(workDistributor: mockDistributor.Object);
+        using var hostCts = new CancellationTokenSource();
+        _ = InvokeExecuteAsync(svc, hostCts.Token);
+
+        await svc.StartLoopAsync();
+
+        // The poller should still be called — the exception in GetActiveDecompositionCountAsync
+        // is swallowed and the cycle continues with the fallback -1 count.
+        await WaitUntilAsync(
+            () => pollCalled,
+            TimeSpan.FromSeconds(10),
+            "poller must still be called even when GetActiveDecompositionCountAsync throws (exception is swallowed)");
+
+        // No Error-level log — the exception is swallowed silently (best-effort)
+        _mockLogger.Verify(
+            l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
+            Times.Never(),
+            "transient GetActiveDecompositionCountAsync failure must not propagate to Error-level log");
+
+        svc.StopLoop();
+    }
 }

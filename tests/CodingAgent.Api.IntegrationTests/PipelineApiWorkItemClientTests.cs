@@ -605,4 +605,34 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
             e.RequestMessage!.Method == "POST" &&
             e.RequestMessage.Path == $"/api/work-items/{workItemId}/last-progress");
     }
+
+    // ── GetActiveDecompositionCountAsync ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveDecompositionCountAsync_ReturnsCount()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/active-decomposition-count").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(Serialize(new { count = 3 })));
+
+        var result = await _client.GetActiveDecompositionCountAsync();
+
+        result.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetActiveDecompositionCountAsync_NullResponse_ReturnsZero()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/active-decomposition-count").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _client.GetActiveDecompositionCountAsync();
+
+        result.Should().Be(0);
+    }
 }
