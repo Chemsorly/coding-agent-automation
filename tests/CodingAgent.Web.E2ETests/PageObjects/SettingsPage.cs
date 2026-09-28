@@ -167,6 +167,32 @@ public sealed class SettingsPage
 
         // Wait for Blazor to process the save and re-render
         await _page.WaitForTimeoutAsync(1500);
+
+        // After saving a provider, the Settings page may open a "Related Providers" or
+        // "Configure Labels" modal overlay (via OnIssueProviderSaved / OnGitHubProviderSaved).
+        // Dismiss it so subsequent interactions (Edit, Delete buttons) are not blocked.
+        await DismissModalIfPresentAsync();
+    }
+
+    /// <summary>
+    /// Dismisses any open modal overlay by clicking its Skip/Cancel button.
+    /// No-op if no modal is currently visible.
+    /// Handles both the "Related Providers" and "Configure Labels" modals that the Settings page
+    /// can show automatically after a provider save.
+    /// </summary>
+    public async Task DismissModalIfPresentAsync()
+    {
+        var overlay = _page.Locator("div.modal-overlay");
+        if (!await overlay.IsVisibleAsync())
+            return;
+
+        // Both modals render a btn-cancel ("Skip") button — click it to dismiss
+        var cancelBtn = overlay.Locator("button.btn-cancel");
+        if (await cancelBtn.IsVisibleAsync())
+            await cancelBtn.ClickAsync();
+
+        // Wait for the modal to disappear
+        await overlay.WaitForAsync(new() { State = WaitForSelectorState.Hidden, Timeout = 3_000 });
     }
 
     /// <summary>Gets the display names from all visible provider cards.</summary>
