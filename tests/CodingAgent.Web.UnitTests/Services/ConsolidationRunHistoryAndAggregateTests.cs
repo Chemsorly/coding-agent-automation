@@ -18,7 +18,18 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        {
+            try
+            {
+                Directory.Delete(_tempDir, recursive: true);
+            }
+            catch (IOException)
+            {
+                // Transient "directory not empty" on Linux when a background handle is briefly
+                // open inside the temp dir. The directory is in /tmp and will be cleaned by the OS;
+                // a test cleanup failure should not fail the test itself.
+            }
+        }
     }
 
     /// <summary>

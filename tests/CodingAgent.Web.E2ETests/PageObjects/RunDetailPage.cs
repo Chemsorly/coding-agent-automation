@@ -1,4 +1,3 @@
-using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -25,7 +24,10 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(1500);
+        // Wait for the Blazor Server circuit to establish and for event handlers to be attached.
+        // 3000 ms matches the pattern used by AgentCodingPage.NavigateAsync and is generous enough
+        // for slow ARM CI runners where SignalR negotiation and the first hub round-trip take longer.
+        await _page.WaitForTimeoutAsync(3000);
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
@@ -85,10 +87,6 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm = true)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-        // Wait for the Blazor circuit to register @onclick on the cancel button before clicking.
-        // Without this, ClickAsync() fires before the server-side handler is active and
-        // _showCancelConfirm never becomes true on a slow CI runner.
-        await _page.WaitForInteractiveAsync("[data-testid='cancel-pipeline-btn']");
         await CancelButton.ClickAsync();
 
         // Wait for the confirm section to appear (the sidebar shows it after the initial click)
@@ -111,10 +109,6 @@ public sealed class RunDetailPage
     public async Task RedispatchAsync(bool confirm = true)
     {
         await RedispatchButton.WaitForAsync(new() { Timeout = 10_000 });
-        // Wait for the Blazor circuit to register @onclick on the redispatch button before clicking.
-        // Without this, ClickAsync() fires before the server-side handler is active and
-        // _showRedispatchConfirm never becomes true on a slow CI runner.
-        await _page.WaitForInteractiveAsync("[data-testid='redispatch-btn']");
         await RedispatchButton.ClickAsync();
 
         // Wait for the confirm box to appear
