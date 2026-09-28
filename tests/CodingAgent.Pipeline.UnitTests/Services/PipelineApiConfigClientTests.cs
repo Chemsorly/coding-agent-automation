@@ -378,6 +378,42 @@ public sealed class PipelineApiConfigClientTests
         handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/config/templates/move");
     }
 
+    [Fact]
+    public async Task SaveTemplateAsync_RefusedByTheApi_ThrowsWithTheApiReason()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => JsonResponse("The repository is already used by the enabled template \"Api\".", HttpStatusCode.BadRequest);
+        var template = new PipelineJobTemplate { Id = "t1", Name = "Web", IssueProviderId = "ip", RepoProviderId = "rp" };
+
+        var act = () => client.SaveTemplateAsync("proj-1", template);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("The repository is already used by the enabled template \"Api\".");
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_UnknownTargetProject_ThrowsWithTheApiReason()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => JsonResponse("Project dst does not exist.", HttpStatusCode.NotFound);
+
+        var act = () => client.MoveTemplateAsync("src", "dst", "tmpl-1");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Project dst does not exist.");
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_ServerError_StillThrowsHttpRequestException()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => Empty(HttpStatusCode.InternalServerError);
+        var template = new PipelineJobTemplate { Id = "t1", Name = "Web", IssueProviderId = "ip", RepoProviderId = "rp" };
+
+        var act = () => client.SaveTemplateAsync("proj-1", template);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
     // ── Key-value store ───────────────────────────────────────────────────
 
     [Fact]

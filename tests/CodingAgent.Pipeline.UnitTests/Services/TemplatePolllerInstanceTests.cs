@@ -9,8 +9,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Tests for <see cref="TemplatePoller"/> instance methods:
-/// <see cref="TemplatePoller.PollProjectLevelEpicsAsync"/> and the private
-/// PollSingleProjectEpicsAsync, exercised by pre-populating the ProviderCacheManager.
+/// <see cref="TemplatePoller.AddProjectEpicsAsync"/> and the private
+/// AddSingleProjectEpicsAsync, exercised by pre-populating the ProviderCacheManager.
 /// </summary>
 public class TemplatePolllerInstanceTests
 {
@@ -55,8 +55,8 @@ public class TemplatePolllerInstanceTests
             DecompositionEnabled = decompositionEnabled
         };
 
-    private static IssueSummary MakeIssue(string id, string[]? labels = null) =>
-        new() { Identifier = id, Title = $"Issue {id}", Labels = labels ?? [] };
+    private static IssueSummary MakeIssue(string id, string[]? labels = null, DateTime? createdAt = null) =>
+        new() { Identifier = id, Title = $"Issue {id}", Labels = labels ?? [], CreatedAt = createdAt };
 
     private static PagedResult<IssueSummary> EmptyPage() =>
         new() { Items = [], Page = 1, PageSize = 25, HasMore = false };
@@ -64,19 +64,41 @@ public class TemplatePolllerInstanceTests
     private static PagedResult<IssueSummary> SinglePage(IssueSummary[] items) =>
         new() { Items = items, Page = 1, PageSize = 25, HasMore = false };
 
-    // ── PollProjectLevelEpicsAsync — no projects ──────────────────────────────
+    private static Dictionary<string, List<EpicCandidate>> EmptyQueues() => new();
+
+    /// <summary>Queues as PollTemplateQueuesAsync leaves them: one (empty) queue per template polled this cycle.</summary>
+    private static Dictionary<string, List<EpicCandidate>> PolledQueues(params string[] polledTemplateIds) =>
+        polledTemplateIds.ToDictionary(id => id, _ => new List<EpicCandidate>());
+
+    /// <summary>An epic provider whose agent:epic list returns <paramref name="epics"/> and whose agent:epic-approved list is empty.</summary>
+    private static Mock<IIssueProvider> EpicProvider(params IssueSummary[] epics)
+    {
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.Epic)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SinglePage(epics));
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.EpicApproved)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(EmptyPage());
+        return mockProvider;
+    }
+
+    // ── AddProjectEpicsAsync — projects that are skipped ─────────────────────
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_NoProjects_ReturnsEmptyDictionary()
+    public async Task AddProjectEpicsAsync_NoProjects_LeavesQueuesEmpty()
     {
         var poller = CreatePoller();
-        var result = await poller.PollProjectLevelEpicsAsync(
-            Array.Empty<PipelineProject>(), new Dictionary<string, PipelineJobTemplate>(), 3, CancellationToken.None);
-        result.Should().BeEmpty();
+        var queues = EmptyQueues();
+
+        await poller.AddProjectEpicsAsync(
+            Array.Empty<PipelineProject>(), new Dictionary<string, PipelineJobTemplate>(), 3, queues, CancellationToken.None);
+
+        queues.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_DisabledProject_SkipsIt()
+    public async Task AddProjectEpicsAsync_DisabledProject_SkipsIt()
     {
         var project = new PipelineProject
         {
@@ -84,13 +106,16 @@ public class TemplatePolllerInstanceTests
             EpicIssueProviderId = "ep-1", TemplateIds = []
         };
         var poller = CreatePoller();
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate>(), 3, CancellationToken.None);
-        result.Should().BeEmpty();
+        var queues = EmptyQueues();
+
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate>(), 3, queues, CancellationToken.None);
+
+        queues.Should().BeEmpty();
     }
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_NullEpicIssueProviderId_SkipsIt()
+    public async Task AddProjectEpicsAsync_NullEpicIssueProviderId_SkipsIt()
     {
         var project = new PipelineProject
         {
@@ -98,43 +123,46 @@ public class TemplatePolllerInstanceTests
             EpicIssueProviderId = null, TemplateIds = []
         };
         var poller = CreatePoller();
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate>(), 3, CancellationToken.None);
-        result.Should().BeEmpty();
+        var queues = EmptyQueues();
+
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate>(), 3, queues, CancellationToken.None);
+
+        queues.Should().BeEmpty();
     }
 
-    // ── PollSingleProjectEpicsAsync — provider not in cache ──────────────────
-
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_EpicProviderNotInCache_SkipsProject()
+    public async Task AddProjectEpicsAsync_EpicProviderNotInCache_SkipsProject()
     {
         var project = MakeProject("p1", "missing-provider");
         var poller = CreatePoller(); // empty cache
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate>(), 3, CancellationToken.None);
-        result.Should().BeEmpty();
+        var queues = EmptyQueues();
+
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate>(), 3, queues, CancellationToken.None);
+
+        queues.Should().BeEmpty();
     }
 
-    // ── PollSingleProjectEpicsAsync — no decomposition template ──────────────
-
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_NoDecompositionTemplate_SkipsProject()
+    public async Task AddProjectEpicsAsync_NoDecompositionTemplate_SkipsProject()
     {
         var epicProvider = new Mock<IIssueProvider>().Object;
         var project = MakeProject("p1", "ep-1", ["t1"]);
         var template = MakeTemplate("t1", enabled: false, decompositionEnabled: true);
         var poller = CreatePoller(issueProviders: new() { ["ep-1"] = epicProvider });
+        var queues = EmptyQueues();
 
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, CancellationToken.None);
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
 
-        result.Should().BeEmpty();
+        queues.Should().BeEmpty();
     }
 
-    // ── PollSingleProjectEpicsAsync — success, empty result ──────────────────
+    // ── AddProjectEpicsAsync — epics join the executor template's queue ──────
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_EmptyIssues_ReturnsEmptyQueue()
+    public async Task AddProjectEpicsAsync_EmptyIssues_AddsNothing()
     {
         var mockProvider = new Mock<IIssueProvider>();
         mockProvider
@@ -144,51 +172,38 @@ public class TemplatePolllerInstanceTests
         var project = MakeProject("p1", "ep-1", ["t1"]);
         var template = MakeTemplate("t1");
         var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1");
 
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, CancellationToken.None);
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
 
-        // No items — nothing added to the queue
-        result.Should().BeEmpty();
+        queues["t1"].Should().BeEmpty();
     }
 
-    // ── PollSingleProjectEpicsAsync — success with epic issues ───────────────
-
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_EpicIssues_PopulatesDecompositionAnalysisQueue()
+    public async Task AddProjectEpicsAsync_EpicIssues_JoinExecutorQueueBoundToEpicTracker()
     {
-        var epicIssue = MakeIssue("epic-1", [AgentLabels.Epic]);
-        var mockProvider = new Mock<IIssueProvider>();
-
-        // First call: agent:epic label → returns epic
-        // Second call: agent:epic-approved label → empty
-        mockProvider
-            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.Epic)), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(SinglePage([epicIssue]));
-        mockProvider
-            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.EpicApproved)), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(EmptyPage());
-
+        var mockProvider = EpicProvider(MakeIssue("epic-1", [AgentLabels.Epic]));
         var template = MakeTemplate("t1");
         var project = MakeProject("p1", "ep-1", [template.Id]);
         var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1");
 
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, CancellationToken.None);
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
 
-        result.Should().ContainKey("p1");
-        result["p1"].Should().HaveCount(1);
-        result["p1"][0].Phase.Should().Be(PipelineRunType.DecompositionAnalysis);
-        result["p1"][0].Issue.Identifier.Should().Be("epic-1");
-        result["p1"][0].Template.Id.Should().Be("t1");
+        queues.Should().ContainKey("t1");
+        queues["t1"].Should().ContainSingle();
+        queues["t1"][0].Phase.Should().Be(PipelineRunType.DecompositionAnalysis);
+        queues["t1"][0].Issue.Identifier.Should().Be("epic-1");
+        queues["t1"][0].IssueProviderId.Should().Be("ep-1", "the run is bound to the tracker the epic lives in");
     }
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_ApprovedIssues_PopulatesDecompositionQueue()
+    public async Task AddProjectEpicsAsync_ApprovedIssues_QueueDecompositionPhase()
     {
         var approvedIssue = MakeIssue("approved-1", [AgentLabels.EpicApproved]);
         var mockProvider = new Mock<IIssueProvider>();
-
         mockProvider
             .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.Epic)), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyPage());
@@ -199,17 +214,120 @@ public class TemplatePolllerInstanceTests
         var template = MakeTemplate("t1");
         var project = MakeProject("p1", "ep-1", [template.Id]);
         var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1");
 
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, CancellationToken.None);
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
 
-        result.Should().ContainKey("p1");
-        result["p1"].Should().HaveCount(1);
-        result["p1"][0].Phase.Should().Be(PipelineRunType.Decomposition);
+        queues["t1"].Should().ContainSingle();
+        queues["t1"][0].Phase.Should().Be(PipelineRunType.Decomposition);
     }
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_ProviderThrows_SwallowsExceptionAndSkipsProject()
+    public async Task AddProjectEpicsAsync_MergesWithExecutorsOwnEpics_OldestFirst()
+    {
+        var mockProvider = EpicProvider(MakeIssue("project-epic", [AgentLabels.Epic], new DateTime(2026, 1, 1)));
+        var template = MakeTemplate("t1");
+        var project = MakeProject("p1", "ep-1", [template.Id]);
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = EmptyQueues();
+        queues["t1"] = [new EpicCandidate(MakeIssue("repo-epic", [AgentLabels.Epic], new DateTime(2026, 1, 2)), PipelineRunType.DecompositionAnalysis, "ip-1")];
+
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
+
+        queues["t1"].Select(c => (c.Issue.Identifier, c.IssueProviderId)).Should().Equal(
+            ("project-epic", "ep-1"),
+            ("repo-epic", "ip-1"));
+    }
+
+    [Fact]
+    public async Task AddProjectEpicsAsync_EpicTrackerIsATemplatesTracker_QueuesEachEpicOnceAsProjectEpic()
+    {
+        var epic = MakeIssue("epic-1", [AgentLabels.Epic]);
+        var mockProvider = EpicProvider(epic);
+        var executor = MakeTemplate("t1");
+        var trackerOwner = MakeTemplate("t2") with { IssueProviderId = "ep-1" };
+        var project = MakeProject("p1", "ep-1", [executor.Id, trackerOwner.Id]);
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = EmptyQueues();
+        queues["t1"] = [];
+        queues["t2"] = [new EpicCandidate(epic, PipelineRunType.DecompositionAnalysis, "ep-1")]; // t2's own poll of the same tracker
+
+        var lookup = new Dictionary<string, PipelineJobTemplate> { [executor.Id] = executor, [trackerOwner.Id] = trackerOwner };
+        await poller.AddProjectEpicsAsync([project], lookup, 3, queues, CancellationToken.None);
+
+        queues["t2"].Should().BeEmpty("the epic tracker's epics are project epics, run by the executor");
+        queues["t1"].Should().ContainSingle()
+            .Which.IssueProviderId.Should().Be("ep-1");
+    }
+
+    [Fact]
+    public async Task AddProjectEpicsAsync_ExecutorNotPolled_EpicsWaitAndTheTrackerOwnersCopiesAreDropped()
+    {
+        // The executor t1 was not polled this cycle (for example rate-limited), so it has no queue.
+        // t2, whose own tracker is the epic tracker, must not run the project's epics in its place.
+        var epic = MakeIssue("epic-1", [AgentLabels.Epic]);
+        var mockProvider = EpicProvider(epic);
+        var executor = MakeTemplate("t1");
+        var trackerOwner = MakeTemplate("t2") with { IssueProviderId = "ep-1" };
+        var project = MakeProject("p1", "ep-1", [executor.Id, trackerOwner.Id]);
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t2");
+        queues["t2"].Add(new EpicCandidate(epic, PipelineRunType.DecompositionAnalysis, "ep-1"));
+
+        var lookup = new Dictionary<string, PipelineJobTemplate> { [executor.Id] = executor, [trackerOwner.Id] = trackerOwner };
+        await poller.AddProjectEpicsAsync([project], lookup, 3, queues, CancellationToken.None);
+
+        queues.Should().NotContainKey("t1", "the scheduler would never dispatch a queue for a template it did not poll");
+        queues["t2"].Should().BeEmpty();
+        mockProvider.Verify(p => p.ListOpenIssuesAsync(
+            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string[]>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AddProjectEpicsAsync_PollFails_TheTrackerOwnersCopiesAreStillDropped()
+    {
+        // A failed epic poll must make the epics wait a cycle, not hand them to the template that owns the tracker
+        var epic = MakeIssue("epic-1", [AgentLabels.Epic]);
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string[]>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+        var executor = MakeTemplate("t1");
+        var trackerOwner = MakeTemplate("t2") with { IssueProviderId = "ep-1" };
+        var project = MakeProject("p1", "ep-1", [executor.Id, trackerOwner.Id]);
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1", "t2");
+        queues["t2"].Add(new EpicCandidate(epic, PipelineRunType.DecompositionAnalysis, "ep-1"));
+
+        var lookup = new Dictionary<string, PipelineJobTemplate> { [executor.Id] = executor, [trackerOwner.Id] = trackerOwner };
+        await poller.AddProjectEpicsAsync([project], lookup, 3, queues, CancellationToken.None);
+
+        queues["t1"].Should().BeEmpty();
+        queues["t2"].Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AddProjectEpicsAsync_TwoProjectsShareAnEpicTracker_TheFirstByNameOwnsIt()
+    {
+        var mockProvider = EpicProvider(MakeIssue("epic-1", [AgentLabels.Epic]));
+        var templateA = MakeTemplate("tA");
+        var templateB = MakeTemplate("tB");
+        var projectB = new PipelineProject { Id = "p-b", Name = "Beta", Enabled = true, EpicIssueProviderId = "ep-1", TemplateIds = [templateB.Id] };
+        var projectA = new PipelineProject { Id = "p-a", Name = "Alpha", Enabled = true, EpicIssueProviderId = "ep-1", TemplateIds = [templateA.Id] };
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("tA", "tB");
+
+        var lookup = new Dictionary<string, PipelineJobTemplate> { [templateA.Id] = templateA, [templateB.Id] = templateB };
+        await poller.AddProjectEpicsAsync([projectB, projectA], lookup, 3, queues, CancellationToken.None);
+
+        queues["tA"].Should().ContainSingle();
+        queues["tB"].Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AddProjectEpicsAsync_ProviderThrows_SwallowsExceptionAndKeepsQueues()
     {
         var mockProvider = new Mock<IIssueProvider>();
         mockProvider
@@ -219,16 +337,18 @@ public class TemplatePolllerInstanceTests
         var template = MakeTemplate("t1");
         var project = MakeProject("p1", "ep-1", [template.Id]);
         var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1");
 
         // Should not throw
-        var act = () => poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, CancellationToken.None);
+        var act = () => poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+        queues["t1"].Should().BeEmpty();
     }
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_CancellationRequestedBeforeLoop_ReturnsEmptyEarly()
+    public async Task AddProjectEpicsAsync_CancellationRequestedBeforeLoop_AddsNothing()
     {
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -237,27 +357,22 @@ public class TemplatePolllerInstanceTests
         var project = MakeProject("p1", "ep-1", [template.Id]);
         var mockProvider = new Mock<IIssueProvider>(); // never called
         var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = EmptyQueues();
 
         // Already cancelled — loop breaks immediately
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, cts.Token);
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, cts.Token);
 
-        result.Should().BeEmpty("cancellation before loop causes immediate break");
+        queues.Should().BeEmpty("cancellation before loop causes immediate break");
         mockProvider.Verify(p => p.ListOpenIssuesAsync(
             It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string[]>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task PollProjectLevelEpicsAsync_MultipleProjects_ProcessesAll()
+    public async Task AddProjectEpicsAsync_MultipleProjects_ProcessesAll()
     {
-        var mockProvider1 = new Mock<IIssueProvider>();
+        var mockProvider1 = EpicProvider(MakeIssue("e1", [AgentLabels.Epic]));
         var mockProvider2 = new Mock<IIssueProvider>();
-        mockProvider1
-            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.Epic)), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(SinglePage([MakeIssue("e1", [AgentLabels.Epic])]));
-        mockProvider1
-            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.EpicApproved)), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(EmptyPage());
         mockProvider2
             .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string[]>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyPage());
@@ -278,13 +393,13 @@ public class TemplatePolllerInstanceTests
             [template1.Id] = template1,
             [template2.Id] = template2
         };
+        var queues = PolledQueues("t1", "t2");
 
-        var result = await poller.PollProjectLevelEpicsAsync(
-            [project1, project2], lookup, 3, CancellationToken.None);
+        await poller.AddProjectEpicsAsync([project1, project2], lookup, 3, queues, CancellationToken.None);
 
-        // p1 had an epic, p2 was empty so not added
-        result.Should().ContainKey("p1");
-        result.Should().NotContainKey("p2");
-        result["p1"].Should().HaveCount(1);
+        // p1 had an epic, p2 was empty so nothing was added to its executor
+        queues.Should().ContainKey("t1");
+        queues["t2"].Should().BeEmpty();
+        queues["t1"].Should().ContainSingle();
     }
 }

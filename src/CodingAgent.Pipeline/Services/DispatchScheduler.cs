@@ -93,11 +93,11 @@ internal sealed partial class DispatchScheduler
         /// <summary>Per-template queues of PR reviews to dispatch.</summary>
         public required Dictionary<string, List<PullRequestSummary>> PrQueues { get; init; }
 
-        /// <summary>Per-template queues of decomposition epics to dispatch.</summary>
-        public required Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> DecompositionQueues { get; init; }
-
-        /// <summary>Per-project queues of project-level decomposition epics.</summary>
-        public required Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> ProjectLevelDecompositionQueues { get; init; }
+        /// <summary>
+        /// Per-template queues of decomposition epics to dispatch, each with the tracker the epic lives in.
+        /// A project's executor template also holds the project epics.
+        /// </summary>
+        public required Dictionary<string, List<EpicCandidate>> DecompositionQueues { get; init; }
 
         /// <summary>Callback to report current dispatch status string.</summary>
         public required Action<string> ReportStatus { get; init; }
@@ -334,8 +334,7 @@ internal sealed partial class DispatchScheduler
 
     /// <summary>
     /// Executes the dispatch logic for the selected turn (Issues, PullRequests, or Decomposition).
-    /// Also handles the project-level decomposition fallback when the regular decomposition queue
-    /// makes no progress.
+    /// Decomposition covers both repo epics and project epics, which share their executor template's queue.
     /// </summary>
     private async Task<TurnResult> ExecuteTurnAsync(
         DispatchTurn currentTurn,
@@ -370,20 +369,6 @@ internal sealed partial class DispatchScheduler
             decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
         }
 
-        // Project-level decomposition fallback — runs when regular decomposition made no progress
-        bool canDispatchProjectLevel = currentTurn == DispatchTurn.Decomposition
-            && !decompMadeProgress
-            && request.ProjectLevelDecompositionQueues.Count > 0
-            && (eligibility.ActiveDecompositionCount + additionalDecomp) < request.Config.MaxConcurrentDecompositions;
-
-        if (canDispatchProjectLevel)
-        {
-            var (progress, count, p, f, addl) = await DispatchProjectLevelDecompositionRoundAsync(
-                roundCtx, request.ProjectLevelDecompositionQueues, request.Config,
-                eligibility.ActiveDecompositionCount + additionalDecomp, stoppingToken, ct);
-            decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
-        }
-
         return new TurnResult(issueMadeProgress, prMadeProgress, decompMadeProgress,
             consumed, processed, failed, additionalDecomp);
     }
@@ -393,8 +378,7 @@ internal sealed partial class DispatchScheduler
         if (remaining > 0) return;
         var remainingItems = request.IssueQueues.Values.Sum(q => q.Count)
             + request.PrQueues.Values.Sum(q => q.Count)
-            + request.DecompositionQueues.Values.Sum(q => q.Count)
-            + request.ProjectLevelDecompositionQueues.Values.Sum(q => q.Count);
+            + request.DecompositionQueues.Values.Sum(q => q.Count);
         if (remainingItems > 0)
             PipelineTelemetry.LoopDispatchDecisions.Add(remainingItems,
                 new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedMaxRuns));
@@ -408,8 +392,7 @@ internal sealed partial class DispatchScheduler
     {
         var hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
         var hasPrs = HasEligible(request.PollableTemplates, request.PrQueues, t => t.ReviewEnabled);
-        var hasDecomp = (HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled)
-            || HasEligibleProjectLevelDecomposition(request.ProjectLevelDecompositionQueues))
+        var hasDecomp = HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled)
             && activeDecompositionCount < request.Config.MaxConcurrentDecompositions;
         return (hasIssues, hasPrs, hasDecomp);
     }

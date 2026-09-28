@@ -298,6 +298,41 @@ public class CloneProjectRepositoriesStepTests : IDisposable
             () => step.ExecuteAsync(context, cts.Token));
     }
 
+    // ── ToFolderName — a template name always becomes one folder inside repos/ ──
+
+    [Theory]
+    [InlineData("backend-api", "backend-api")]
+    [InlineData("owner/repo", "owner_repo")]
+    [InlineData("../escape", "_escape")]
+    [InlineData("..", "_")]
+    [InlineData("C:x", "C_x")]
+    [InlineData("a b\\c", "a_b_c")]
+    [InlineData(" ", "_")]
+    [InlineData("v1.2", "v1.2")]
+    public void ToFolderName_KeepsSafeCharactersAndReplacesTheRest(string templateName, string expected)
+    {
+        CloneProjectRepositoriesStep.ToFolderName(templateName).Should().Be(expected);
+    }
+
+    [Fact]
+    public void ToFolderName_LongName_IsCapped()
+    {
+        CloneProjectRepositoriesStep.ToFolderName(new string('a', 300)).Should().HaveLength(100);
+    }
+
+    [Fact]
+    public void UniqueFolderName_NamesThatMapToTheSameFolder_GetDistinctFolders()
+    {
+        // "web app" and "web_app" both become "web_app"; clones run in parallel, so they must not share it
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var first = CloneProjectRepositoriesStep.UniqueFolderName(CloneProjectRepositoriesStep.ToFolderName("web app"), used);
+        var second = CloneProjectRepositoriesStep.UniqueFolderName(CloneProjectRepositoriesStep.ToFolderName("web_app"), used);
+        var third = CloneProjectRepositoriesStep.UniqueFolderName(CloneProjectRepositoriesStep.ToFolderName("Web_App"), used);
+
+        new[] { first, second, third }.Should().Equal("web_app", "web_app_2", "Web_App_3");
+    }
+
     #region Helpers
 
     private PipelineStepContext BuildContext(

@@ -89,7 +89,7 @@ public class DispatchInfrastructure
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
+            project, repoProviderId, providerConfigs, ct);
 
         return (providerConfigs, config);
     }
@@ -120,9 +120,9 @@ public class DispatchInfrastructure
     /// Builds the provider configs list and prepares tokens via the token vending service.
     /// </summary>
     /// <remarks>
-    /// The superset signature supports optional <paramref name="additionalRepoProviderIds"/> for
-    /// cross-repo decomposition. Callers that don't
-    /// need cross-repo support simply omit the parameter.
+    /// <paramref name="additionalRepoProviderIds"/> lists the other project repositories a project epic's
+    /// decomposition clones. The agent only reads them, so they get read-only tokens and none of their
+    /// secrets or setup steps; see <see cref="ITokenVendingService.PrepareReadOnlyCloneConfigsAsync"/>.
     /// </remarks>
     internal async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
         ProviderConfigId repoProviderId,
@@ -134,8 +134,16 @@ public class DispatchInfrastructure
         IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct, additionalRepoProviderIds);
-        return await TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId.Value, ct);
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
+        var jobConfigs = await TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId.Value, ct);
+
+        if (additionalRepoProviderIds is null)
+            return jobConfigs;
+
+        var additionalConfigs = await ResolveAdditionalRepoConfigsAsync(
+            additionalRepoProviderIds, excludedIds: [repoProviderId.Value, brainProviderId], logger, ct);
+        var cloneConfigs = await TokenVending.PrepareReadOnlyCloneConfigsAsync(additionalConfigs, ct);
+        return [.. jobConfigs, .. cloneConfigs];
     }
 
     /// <summary>
@@ -148,8 +156,7 @@ public class DispatchInfrastructure
         string? brainProviderId,
         string? pipelineProviderId,
         ILogger logger,
-        CancellationToken ct,
-        IEnumerable<string>? additionalRepoProviderIds = null)
+        CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
 
@@ -157,15 +164,6 @@ public class DispatchInfrastructure
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
             Resolution.ConfigStore, repoProviderId.Value, ProviderKind.Repository, repoConfigs, required: true, logger, ct);
         configs.Add(repoConfig!);
-
-        // Include additional repo provider configs for cross-repo decomposition.
-        // These are needed so the agent can clone secondary repos for code exploration.
-        if (additionalRepoProviderIds is not null)
-        {
-            var additionalConfigs = await ResolveAdditionalRepoConfigsAsync(
-                repoProviderId.Value, additionalRepoProviderIds, repoConfigs, logger, ct);
-            configs.AddRange(additionalConfigs);
-        }
 
         var agentConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = await ProviderConfigResolver.ResolveAsync(
@@ -187,15 +185,20 @@ public class DispatchInfrastructure
         return configs.AsReadOnly();
     }
 
+    /// <summary>
+    /// Resolves the repository configs for <paramref name="additionalRepoProviderIds"/>, skipping
+    /// empty ids, duplicates, and <paramref name="excludedIds"/> (the job's own repository and brain,
+    /// which are already in the job's configs).
+    /// </summary>
     private async Task<IReadOnlyList<ProviderConfig>> ResolveAdditionalRepoConfigsAsync(
-        string primaryId,
         IEnumerable<string> additionalRepoProviderIds,
-        IReadOnlyList<ProviderConfig> repoConfigs,
+        IEnumerable<string?> excludedIds,
         ILogger logger,
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
-        var addedIds = new HashSet<string> { primaryId }; // primary already added
+        var repoConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var addedIds = excludedIds.OfType<string>().ToHashSet();
 
         foreach (var additionalId in additionalRepoProviderIds)
         {
@@ -221,6 +224,82 @@ public class DispatchInfrastructure
 
         return await ProviderConfigResolver.ResolveAsync(
             Resolution.ConfigStore, providerId, kind, existingConfigs, required: false, logger, ct);
+    }
+
+    // ── Project epic context ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds the <see cref="DecompositionProjectContext"/> of a project epic (1E-006): the project's
+    /// repositories the agent may route sub-issues to, and clone. Returns null when the project has
+    /// no usable template or the templates cannot be loaded. See <see cref="BuildRepositoryTargets"/>.
+    /// </summary>
+    internal virtual async Task<DecompositionProjectContext?> BuildProjectEpicContextAsync(
+        PipelineProject project, ILogger logger, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(project.Id) || project.TemplateIds is not { Count: > 0 })
+            return null;
+
+        try
+        {
+            var allTemplates = await Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+            var repositories = BuildRepositoryTargets(project, allTemplates, logger);
+
+            if (repositories.Count == 0)
+                return null;
+
+            return new DecompositionProjectContext
+            {
+                ProjectName = project.Name,
+                Repositories = repositories
+            };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.Warning(ex,
+                "DispatchInfrastructure: failed to build DecompositionProjectContext for project {ProjectId}",
+                project.Id);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Lists the project's enabled templates as routing targets, in project order (by name). A template's name is
+    /// the routing key the agent writes (<c>targetRepository</c>), so a template is left out when its name
+    /// is empty or an earlier template in the project already uses it (possible only for templates saved before
+    /// <see cref="TemplateBindingRules"/> were enforced).
+    /// </summary>
+    internal static List<RepositoryTarget> BuildRepositoryTargets(
+        PipelineProject project, IReadOnlyList<PipelineJobTemplate> allTemplates, ILogger logger)
+    {
+        var templatesById = allTemplates.ToLookup(t => t.Id);
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var repositories = new List<RepositoryTarget>();
+
+        foreach (var template in project.TemplateIds.Distinct().SelectMany(id => templatesById[id]))
+        {
+            if (!template.Enabled)
+                continue;
+
+            if (string.IsNullOrWhiteSpace(template.Name) || !names.Add(template.Name))
+            {
+                logger.Warning(
+                    "DispatchInfrastructure: template {TemplateId} is left out of project {ProjectId}'s decomposition targets: its name '{TemplateName}' is empty or already used by an earlier template",
+                    template.Id, project.Id, LogSanitizer.SanitizeForLog(template.Name));
+                continue;
+            }
+
+            repositories.Add(new RepositoryTarget
+            {
+                TemplateName = template.Name,
+                IssueProviderId = template.IssueProviderId,
+                RepoProviderId = template.RepoProviderId,
+                Description = string.Empty,
+                DecompositionEnabled = template.DecompositionEnabled,
+                Labels = []
+            });
+        }
+
+        return repositories;
     }
 
     // ── Issue Context Building (inlined from IssueContextBuilder) ─────────────────
@@ -435,12 +514,13 @@ public class DispatchInfrastructure
 
         // ── Step 3: Prepare provider configs and resolve pipeline configuration ──
         var providerConfigs = await PrepareProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct,
+            request.AdditionalRepoProviderIds);
 
         var config = await PipelineConfigurationResolver.ResolveAsync(
             Resolution.ConfigStore.LoadPipelineConfigAsync,
             Resolution.ConfigStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
+            project, repoProviderId, providerConfigs, ct);
 
         // ── Step 4: Carry forward staleness signals from issue context ──
         var forceRefresh = issueContext.ForceRefreshAnalysis;

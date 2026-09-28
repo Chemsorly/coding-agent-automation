@@ -193,6 +193,22 @@ public sealed class CreateSubIssuesStep : IPipelineStep
 
         // Resolve target issue provider for cross-repo routing
         var targetProviderId = ResolveTargetIssueProviderId(proposal, context);
+        if (targetProviderId is null && context.ProjectContext is not null)
+        {
+            // A project epic's own tracker is the project's epic tracker, which is not polled for
+            // agent:next; without a template's tracker to create the sub-issue in, it is not created.
+            context.Logger.Error(
+                "Sub-issue '{Title}' is not created: the project epic has no target tracker (its executor template is not in the project's repository list)",
+                proposal.Title);
+            PipelineTelemetry.SubIssuesFailed.Add(1,
+                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
+            return new SubIssueCreationResult
+            {
+                Title = proposal.Title,
+                Success = false,
+                FailureReason = "no target tracker: the executor template is not in the project's repository list"
+            };
+        }
 
         // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
         for (var attempt = 0; attempt < MaxRetryAttempts; attempt++)
@@ -312,16 +328,31 @@ public sealed class CreateSubIssuesStep : IPipelineStep
     }
 
     /// <summary>
-    /// Resolves the target issue provider config ID for a decomposed issue proposal.
-    /// When <c>targetRepository</c> matches a template name in the project context,
-    /// returns that template's <c>IssueProviderId</c>.
-    /// Falls back to null (use dispatching template's default provider) when:
-    /// - <c>targetRepository</c> is null or empty (default behavior)
-    /// - No <c>ProjectContext</c> is available (per-template decomposition, backward compatible)
-    /// - <c>targetRepository</c> does not match any template name (logs warning)
+    /// Resolves the target issue provider config ID for a decomposed issue proposal:
+    /// - a <c>targetRepository</c> that matches a template name in the project context: that template's tracker
+    /// - otherwise, for a project epic (it has a <c>ProjectContext</c>): the executor template's tracker
+    ///   (<see cref="ResolveExecutorIssueProviderId"/>), or null when the executor is not in the context,
+    ///   in which case the sub-issue is not created
+    /// - for a repo epic (no <c>ProjectContext</c>): null, the run's own tracker
     /// </summary>
     private static string? ResolveTargetIssueProviderId(SubIssueProposal proposal, PipelineStepContext context)
-        => ResolveTargetIssueProviderId(proposal.TargetRepository, context.ProjectContext, context.Logger);
+        => ResolveTargetIssueProviderId(proposal.TargetRepository, context.ProjectContext, context.Logger)
+           ?? ResolveExecutorIssueProviderId(context.ProjectContext, context.Run.RepoProviderConfigId);
+
+    /// <summary>
+    /// The default target of a project epic's sub-issues: the tracker of the template whose repository
+    /// the run executes in (the executor), never the epic tracker the run is bound to. Returns null when
+    /// there is no project context or the executor is not in it.
+    /// </summary>
+    internal static string? ResolveExecutorIssueProviderId(
+        DecompositionProjectContext? projectContext,
+        string repoProviderConfigId)
+    {
+        var executor = projectContext?.Repositories
+            .FirstOrDefault(r => string.Equals(r.RepoProviderId, repoProviderConfigId, StringComparison.Ordinal));
+
+        return string.IsNullOrEmpty(executor?.IssueProviderId) ? null : executor.IssueProviderId;
+    }
 
     /// <summary>
     /// Pure routing logic extracted for testability. Resolves a <c>targetRepository</c> value

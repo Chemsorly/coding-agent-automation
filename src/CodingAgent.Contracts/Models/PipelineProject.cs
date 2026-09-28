@@ -19,7 +19,11 @@ public sealed record PipelineProject
     /// <summary>Whether this project is active for polling. Default true.</summary>
     public bool Enabled { get; init; } = true;
 
-    /// <summary>Ordered list of template IDs belonging to this project.</summary>
+    /// <summary>
+    /// The IDs of the templates in this project, in <see cref="TemplateOrder"/>. A template's own project is
+    /// the only membership record: the store fills this list when it loads the project, and saving a project
+    /// ignores it. To change membership, save the template into a project or move it.
+    /// </summary>
     public IReadOnlyList<string> TemplateIds { get; init; } = [];
 
     /// <summary>
@@ -27,6 +31,15 @@ public sealed record PipelineProject
     /// When set, the loop additionally polls this provider for agent:epic issues.
     /// </summary>
     public string? EpicIssueProviderId { get; init; }
+
+    /// <summary>
+    /// Whether <paramref name="issueProviderId"/> is this project's epic tracker. Epics that live there are
+    /// project epics: their decomposition may create sub-issues in the tracker of every template in the
+    /// project. Epics in any other tracker are repo epics, limited to the tracker they live in.
+    /// </summary>
+    public bool IsEpicTracker(string? issueProviderId) =>
+        !string.IsNullOrEmpty(EpicIssueProviderId)
+        && string.Equals(EpicIssueProviderId, issueProviderId, StringComparison.Ordinal);
 
     // ── Behavioral overrides (null = inherit from global) ──────────────
 
@@ -50,7 +63,6 @@ public sealed record PipelineProject
     public int? MaxDecompositionSubIssues { get; init; }
     public int? MaxDecompositionSubIssueFiles { get; init; }
     public int? MaxConcurrentDecompositions { get; init; }
-    public TimeSpan? DecompositionTimeout { get; init; }
     public int? MaxOpenIssuesForContext { get; init; }
     public int? MaxRefactoringProposals { get; init; }
     public bool? RefactoringReviewEnabled { get; init; }

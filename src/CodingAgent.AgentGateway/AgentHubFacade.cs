@@ -225,6 +225,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     /// <inheritdoc />
+    public Task<PipelineProject?> GetProjectByIdAsync(string projectId, CancellationToken ct)
+    {
+        if (_projectStore is null)
+            return Task.FromResult<PipelineProject?>(null);
+        return _projectStore.GetProjectByIdAsync(projectId, ct);
+    }
+
+    /// <inheritdoc />
     public Task<IReadOnlyList<ProviderConfig>> LoadProviderConfigsAsync(ProviderKind kind, CancellationToken ct)
         => _configStore.LoadProviderConfigsAsync(kind, ct);
 

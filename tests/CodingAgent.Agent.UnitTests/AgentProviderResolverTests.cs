@@ -68,7 +68,7 @@ public class AgentProviderResolverTests
         };
 
         // Act — CreateAgentProvider throws after repoProvider is already created
-        var act = () => resolver.ResolveAsync(job, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+        var act = () => resolver.ResolveAsync(job, mockFactory.Object, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
 
         // Assert — NotSupportedException propagates and repoProvider.DisposeAsync was called
         await act.Should().ThrowAsync<NotSupportedException>();
@@ -138,7 +138,7 @@ public class AgentProviderResolverTests
         };
 
         // Act — CreatePipelineProviderAsync throws after repo+agent providers are created
-        var act = () => resolver.ResolveAsync(job, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+        var act = () => resolver.ResolveAsync(job, mockFactory.Object, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
 
         // Assert — NotSupportedException propagates and both earlier providers are disposed
         await act.Should().ThrowAsync<NotSupportedException>();
@@ -149,6 +149,78 @@ public class AgentProviderResolverTests
     // TODO: Add a test where additionalRepoProviders have been created (via ProjectContext with
     // DecompositionAnalysis run type) and a subsequent ValidateAsync call fails, verifying that
     // all additional repo providers are also disposed in the catch block.
+
+    // ── ResolveAdditionalRepoProviders — project repositories use their own vended token ──
+
+    [Fact]
+    public async Task ResolveAsync_ProjectEpic_CreatesTheOtherProjectReposWithTheProjectRepoFactory()
+    {
+        // The orchestrator proxy's token refresh only covers the job's primary repository, so the
+        // other project repositories must be created by the factory that uses their config's token.
+        var resolver = new AgentProviderResolver(_mockLogger.Object);
+        var primaryRepoProvider = new Mock<IRepositoryProvider>();
+        primaryRepoProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var webRepoProvider = new Mock<IRepositoryProvider>();
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-api", Kind = ProviderKind.Repository, ProviderType = "GitHub",
+            DisplayName = "api", Settings = new Dictionary<string, string>()
+        };
+        var webConfig = new ProviderConfig
+        {
+            Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitHub",
+            DisplayName = "web", Settings = new Dictionary<string, string> { ["token"] = "vended-for-web" }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
+            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+        };
+
+        var jobFactory = new Mock<IProviderFactory>();
+        jobFactory.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(primaryRepoProvider.Object);
+        jobFactory.Setup(f => f.CreateAgentProvider(agentConfig)).Returns(agentProvider.Object);
+        var projectRepoFactory = new Mock<IProviderFactory>();
+        projectRepoFactory.Setup(f => f.CreateRepositoryProvider(webConfig)).Returns(webRepoProvider.Object);
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-project-epic",
+            IssueIdentifier = "7",
+            IssueDetail = new IssueDetail { Identifier = "7", Title = "Epic", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RunType = PipelineRunType.DecompositionAnalysis,
+            RepoProviderConfigId = "repo-api",
+            AgentProviderConfigId = "agent-1",
+            BrainProviderConfigId = "",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, webConfig, agentConfig],
+            ProjectContext = new DecompositionProjectContext
+            {
+                ProjectName = "Shop",
+                Repositories =
+                [
+                    new RepositoryTarget { TemplateName = "api", Description = "", RepoProviderId = "repo-api" },
+                    new RepositoryTarget { TemplateName = "web", Description = "", RepoProviderId = "repo-web" }
+                ]
+            },
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        var result = await resolver.ResolveAsync(
+            job, jobFactory.Object, projectRepoFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+
+        result.AdditionalRepoProviders.Should().ContainSingle()
+            .Which.TemplateName.Should().Be("web");
+        projectRepoFactory.Verify(f => f.CreateRepositoryProvider(webConfig), Times.Once);
+        jobFactory.Verify(f => f.CreateRepositoryProvider(webConfig), Times.Never);
+    }
 
     // ── ResolveBrainProviderAsync null/skip paths ─────────────────────────
 
@@ -199,7 +271,7 @@ public class AgentProviderResolverTests
             InitiatedBy = "test-user"
         };
 
-        var result = await resolver.ResolveAsync(job, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+        var result = await resolver.ResolveAsync(job, mockFactory.Object, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
 
         result.BrainProvider.Should().BeNull();
         // Verify factory was never asked to create a brain provider
@@ -253,7 +325,7 @@ public class AgentProviderResolverTests
             InitiatedBy = "test-user"
         };
 
-        var result = await resolver.ResolveAsync(job, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+        var result = await resolver.ResolveAsync(job, mockFactory.Object, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
 
         result.BrainProvider.Should().BeNull();
     }
@@ -321,7 +393,7 @@ public class AgentProviderResolverTests
         };
 
         // Should NOT throw — validation failure for brain is gracefully handled
-        var result = await resolver.ResolveAsync(job, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+        var result = await resolver.ResolveAsync(job, mockFactory.Object, mockFactory.Object, repoConfig, agentConfig, CancellationToken.None);
 
         result.BrainProvider.Should().BeNull();
         // Brain provider was created and then disposed after validation failure

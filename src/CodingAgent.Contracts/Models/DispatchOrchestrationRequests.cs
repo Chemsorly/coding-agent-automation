@@ -51,10 +51,13 @@ public sealed record DecompositionDispatchOrchestrationRequest
     /// <summary>Decomposition phase type (DecompositionAnalysis or Decomposition).</summary>
     public required PipelineRunType PhaseType { get; init; }
 
-    /// <summary>Issue provider config ID.</summary>
+    /// <summary>
+    /// The tracker the epic lives in; the run is bound to it. When it is the project's epic tracker the
+    /// epic is a project epic and may route sub-issues to every template's tracker.
+    /// </summary>
     public required ProviderConfigId IssueProviderId { get; init; }
 
-    /// <summary>Repository provider config ID.</summary>
+    /// <summary>Repository provider config ID of the executor template.</summary>
     public required ProviderConfigId RepoProviderId { get; init; }
 
     /// <summary>Optional brain provider config ID.</summary>
@@ -65,7 +68,4 @@ public sealed record DecompositionDispatchOrchestrationRequest
 
     /// <summary>The project context for this dispatch.</summary>
     public required PipelineProject Project { get; init; }
-
-    /// <summary>Optional decomposition source (e.g., epic issue URL).</summary>
-    public string? DecompositionSource { get; init; }
 }

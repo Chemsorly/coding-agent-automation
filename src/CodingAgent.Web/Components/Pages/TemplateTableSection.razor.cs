@@ -109,10 +109,7 @@ public partial class TemplateTableSection
                 groups.Add(new ProjectTemplateGroup { Project = project, Templates = projectTemplates });
         }
 
-        // Note: orphaned templates (on disk but not in any TemplateIds) are now claimed
-        // by the Default project at startup via ClaimOrphanedTemplates(). If any still
-        // appear here, it means a template was added to disk while the app was running.
-        // They'll be picked up on next restart. No silent visual patching needed.
+        // Every template records its own project, so each one appears under that project here.
 
         return groups;
     }

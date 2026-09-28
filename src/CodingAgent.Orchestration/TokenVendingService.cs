@@ -54,6 +54,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         long InstallationId,
         string? RepoName,
         bool IncludeIssuePermission,
+        bool ReadOnly,
         string ApiUrl);
 
     private readonly record struct TokenCacheEntry(string Token, DateTimeOffset ExpiresAt);
@@ -97,10 +98,22 @@ public sealed partial class TokenVendingService : ITokenVendingService
     /// <param name="ct">Cancellation token.</param>
     /// <param name="includeIssuePermission">Whether to include issues:write permission (default: false).</param>
     /// <returns>A tuple of the token string and its expiration time.</returns>
-    public async Task<(string Token, DateTimeOffset ExpiresAt)> GenerateAgentTokenAsync(
+    public Task<(string Token, DateTimeOffset ExpiresAt)> GenerateAgentTokenAsync(
         ProviderConfig repoConfig,
         CancellationToken ct,
         bool includeIssuePermission = false)
+        => GenerateTokenAsync(repoConfig, readOnly: false, includeIssuePermission, ct);
+
+    /// <summary>
+    /// Mints (or returns a cached) installation token. <paramref name="readOnly"/> asks for
+    /// <c>contents: read</c> only, for repositories the agent only clones; see
+    /// <see cref="GenerateAgentTokenAsync"/> for the default permission set.
+    /// </summary>
+    private async Task<(string Token, DateTimeOffset ExpiresAt)> GenerateTokenAsync(
+        ProviderConfig repoConfig,
+        bool readOnly,
+        bool includeIssuePermission,
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(repoConfig);
 
@@ -129,7 +142,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : "https://api.github.com";
         settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName);
 
-        var cacheKey = new TokenCacheKey(installationId, repoName, includeIssuePermission, apiUrl);
+        var cacheKey = new TokenCacheKey(installationId, repoName, includeIssuePermission, readOnly, apiUrl);
         var now = _timeProvider.GetUtcNow();
 
         // ── Fast path: valid cached entry ────────────────────────────────
@@ -182,7 +195,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
             // Mint a fresh token from GitHub.
             var (token, expiresAt) = await MintTokenFromGitHubAsync(
-                installationId, apiUrl, clientId, privateKeyBase64, repoName, includeIssuePermission, ct);
+                installationId, apiUrl, clientId, privateKeyBase64, repoName, readOnly, includeIssuePermission, ct);
 
             // Store in cache. If mint threw, we never reach here, so no faulted entry is stored.
             _tokenCache[cacheKey] = new TokenCacheEntry(token, expiresAt);
@@ -249,6 +262,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
         string clientId,
         string privateKeyBase64,
         string? repoName,
+        bool readOnly,
         bool includeIssuePermission,
         CancellationToken ct)
     {
@@ -262,13 +276,15 @@ public sealed partial class TokenVendingService : ITokenVendingService
             // Build the scoped token request body
             var requestBody = new TokenRequestBody
             {
-                Permissions = new TokenPermissions
-                {
-                    Contents = "write",
-                    PullRequests = "write",
-                    Actions = "read",
-                    Issues = includeIssuePermission ? "write" : null
-                }
+                Permissions = readOnly
+                    ? new TokenPermissions { Contents = "read" }
+                    : new TokenPermissions
+                    {
+                        Contents = "write",
+                        PullRequests = "write",
+                        Actions = "read",
+                        Issues = includeIssuePermission ? "write" : null
+                    }
             };
 
             if (!string.IsNullOrWhiteSpace(repoName))
@@ -432,13 +448,58 @@ public sealed partial class TokenVendingService : ITokenVendingService
         return result.AsReadOnly();
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ProviderConfig>> PrepareReadOnlyCloneConfigsAsync(
+        IReadOnlyList<ProviderConfig> configs,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(configs);
+
+        var result = new List<ProviderConfig>(configs.Count);
+
+        foreach (var config in configs)
+        {
+            // Only GitHub App credentials can be narrowed to a read-only token. Anything else (a GitLab
+            // access token, a personal access token) would give the agent write access, so it is left out.
+            if (!config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
+            {
+                _logger.Information(
+                    "Repository config {ConfigId} ({DisplayName}) is not cloned for the project epic: only GitHub App repositories can get a read-only token",
+                    config.Id, config.DisplayName);
+                continue;
+            }
+
+            try
+            {
+                var (token, expiresAt) = await GenerateTokenAsync(config, readOnly: true, includeIssuePermission: false, ct);
+
+                var clonedSettings = new Dictionary<string, string>(config.Settings);
+                clonedSettings.Remove(ProviderSettingKeys.PrivateKeyBase64);
+                clonedSettings[ProviderSettingKeys.Token] = token;
+                clonedSettings[ProviderSettingKeys.TokenExpiresAt] = expiresAt.ToString("O");
+
+                result.Add(CloneWithSettings(config, clonedSettings, cloneOnly: true));
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Failed to generate a read-only token for config {ConfigId} ({DisplayName}); it is not cloned",
+                    config.Id, config.DisplayName);
+            }
+        }
+
+        return result.AsReadOnly();
+    }
+
     /// <summary>
     /// Creates a new <see cref="ProviderConfig"/> copying all properties from the original,
     /// replacing only the <see cref="ProviderConfig.Settings"/> dictionary.
     /// This ensures newer properties (Secrets, SetupSteps, RequiredLabels, etc.) are never
     /// accidentally dropped when cloning configs during token vending.
+    /// A <paramref name="cloneOnly"/> repository is never built or run by the job, so it
+    /// gets none of its secrets or setup steps.
     /// </summary>
-    private static ProviderConfig CloneWithSettings(ProviderConfig original, Dictionary<string, string> newSettings)
+    private static ProviderConfig CloneWithSettings(
+        ProviderConfig original, Dictionary<string, string> newSettings, bool cloneOnly = false)
     {
         return new ProviderConfig
         {
@@ -450,8 +511,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
             RepositoryRole = original.RepositoryRole,
             RequiredLabels = original.RequiredLabels,
             BlacklistedPaths = original.BlacklistedPaths,
-            Secrets = original.Secrets,
-            SetupSteps = original.SetupSteps,
+            Secrets = cloneOnly ? null : original.Secrets,
+            SetupSteps = cloneOnly ? null : original.SetupSteps,
             SteeringContent = original.SteeringContent
         };
     }

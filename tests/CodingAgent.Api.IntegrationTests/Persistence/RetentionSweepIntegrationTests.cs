@@ -508,8 +508,7 @@ public class RetentionSweepIntegrationTests : IDisposable
             {
                 Id = projectId.Value,
                 Name = $"Test Project {projectId.Value}",
-                Enabled = true,
-                TemplateIds = []
+                Enabled = true
             });
         }
         db.WorkItems.Add(new WorkItemEntity

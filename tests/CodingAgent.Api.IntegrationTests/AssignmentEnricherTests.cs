@@ -59,6 +59,18 @@ public sealed class AssignmentEnricherTests
             CapturedRequest = request;
             return _handler(request, ct);
         }
+
+        /// <summary>The repository list <see cref="BuildProjectEpicContextAsync"/> returns (null: none usable).</summary>
+        public DecompositionProjectContext? ProjectEpicContext { get; set; }
+
+        public int ProjectEpicContextCalls { get; private set; }
+
+        internal override Task<DecompositionProjectContext?> BuildProjectEpicContextAsync(
+            PipelineProject project, Serilog.ILogger logger, CancellationToken ct)
+        {
+            ProjectEpicContextCalls++;
+            return Task.FromResult(ProjectEpicContext);
+        }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -190,7 +202,8 @@ public sealed class AssignmentEnricherTests
         IReadOnlyList<AgentProfile>? profiles = null,
         (IReadOnlyList<QualityGateConfiguration>, IReadOnlyList<ReviewerConfiguration>,
             DispatchInfrastructure.IssueContextResult, IReadOnlyList<ProviderConfig>,
-            PipelineConfiguration, bool, string?, int)? coreResult = null)
+            PipelineConfiguration, bool, string?, int)? coreResult = null,
+        IReadOnlyList<PipelineJobTemplate>? projectTemplates = null)
     {
         var capturedResult = coreResult ?? MakeCoreResult();
         var infra = new StubDispatchInfrastructure((_, _) => Task.FromResult(capturedResult));
@@ -203,6 +216,8 @@ public sealed class AssignmentEnricherTests
         var projectStoreMock = new Mock<IProjectStore>();
         projectStoreMock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
         projectStoreMock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        projectStoreMock.Setup(s => s.LoadTemplatesForProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projectTemplates ?? []);
         var consolidationTemplateResolver = new ConsolidationTemplateResolver(projectStoreMock.Object);
 
         var enricher = new AssignmentEnricher(
@@ -374,7 +389,113 @@ public sealed class AssignmentEnricherTests
         infra.CapturedRequest!.IssueProviderId.Value.Should().Be("iss-42");
         infra.CapturedRequest.RepoProviderId.Value.Should().Be("repo-77");
         infra.CapturedRequest.RequiredLabels.Should().Contain("dotnet");
+        infra.CapturedRequest.AdditionalRepoProviderIds.Should().BeNull("only a project epic clones other repositories");
     }
+
+    [Fact]
+    public async Task EnrichAsync_ProjectEpic_UsesTheCurrentRepoListAndRequestsItsRepositoriesForCloning()
+    {
+        // ARRANGE: an epic in its project's epic tracker is a project epic; the repo list comes from
+        // the current configuration, not from the payload
+        var identity = MakeIdentity("dotnet") with
+        {
+            TaskType = WorkItemTaskType.Decomposition,
+            IssueProviderConfigId = "issue-epics",
+            RepoProviderConfigId = "repo-api"
+        };
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var (infra, _, enricher) = MakeEnricher();
+        infra.ProjectEpicContext = ShopProjectContext();
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT: every project repository is requested (the primary one is skipped downstream)
+        infra.CapturedRequest.Should().NotBeNull();
+        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().Equal("repo-api", "repo-web");
+        result!.ProjectContext.Should().BeSameAs(infra.ProjectEpicContext);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_RepoEpicWithAStaleRepoListInThePayload_DropsItAndClonesNothing()
+    {
+        // ARRANGE: a WorkItem queued before the deploy carries a repo list, but its epic lives in a
+        // template's own tracker (not the project's epic tracker), so it is a repo epic
+        var identity = MakeIdentity("dotnet") with
+        {
+            TaskType = WorkItemTaskType.Decomposition,
+            IssueProviderConfigId = "issue-api",
+            RepoProviderConfigId = "repo-api",
+            ProjectContext = ShopProjectContext()
+        };
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var (infra, _, enricher) = MakeEnricher(projectTemplates: [ApiTemplate()]);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT
+        result!.ProjectContext.Should().BeNull("a repo epic's sub-issues stay in its own tracker");
+        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull();
+        infra.ProjectEpicContextCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ProjectEpicWithoutAUsableRepoList_ReturnsNull()
+    {
+        // ARRANGE: without the repo list the sub-issues would land in the epic tracker
+        var identity = MakeIdentity("dotnet") with
+        {
+            TaskType = WorkItemTaskType.Decomposition,
+            IssueProviderConfigId = "issue-epics",
+            RepoProviderConfigId = "repo-api"
+        };
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var (infra, _, enricher) = MakeEnricher();
+        infra.ProjectEpicContext = null;
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT
+        result.Should().BeNull();
+        infra.CapturedRequest.Should().BeNull("the job is not prepared at all");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_EpicInNeitherTheEpicTrackerNorATemplateTracker_ReturnsNull()
+    {
+        // ARRANGE: the project's epic tracker changed after the WorkItem was queued; the epic's
+        // tracker is no longer in scope, and its sub-issues would land where nothing polls
+        var identity = MakeIdentity("dotnet") with
+        {
+            TaskType = WorkItemTaskType.Decomposition,
+            IssueProviderConfigId = "issue-old-epics",
+            RepoProviderConfigId = "repo-api"
+        };
+        var project = MakeProject() with { EpicIssueProviderId = "issue-epics" };
+        var (infra, _, enricher) = MakeEnricher(projectTemplates: [ApiTemplate()]);
+
+        // ACT
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        // ASSERT
+        result.Should().BeNull();
+        infra.CapturedRequest.Should().BeNull("the job is not prepared at all");
+    }
+
+    private static PipelineJobTemplate ApiTemplate() =>
+        new() { Id = "t-api", Name = "api", IssueProviderId = "issue-api", RepoProviderId = "repo-api" };
+
+    private static DecompositionProjectContext ShopProjectContext() => new()
+    {
+        ProjectName = "Shop",
+        Repositories =
+        [
+            new RepositoryTarget { TemplateName = "api", Description = "", IssueProviderId = "issue-api", RepoProviderId = "repo-api" },
+            new RepositoryTarget { TemplateName = "web", Description = "", IssueProviderId = "issue-web", RepoProviderId = "repo-web" }
+        ]
+    };
 
     // ── Profile-not-found path ────────────────────────────────────────────────────
 

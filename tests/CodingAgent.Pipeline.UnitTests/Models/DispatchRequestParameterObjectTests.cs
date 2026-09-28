@@ -192,25 +192,6 @@ public class DispatchRequestParameterObjectTests
         };
 
         req.BrainProviderId.Should().BeNull();
-        req.DecompositionSource.Should().BeNull();
-    }
-
-    [Fact]
-    public void DecompositionDispatchOrchestrationRequest_DecompositionSource_CanBeSet()
-    {
-        var req = new DecompositionDispatchOrchestrationRequest
-        {
-            EpicIdentifier = "x",
-            EpicTitle = "Title",
-            PhaseType = PipelineRunType.DecompositionAnalysis,
-            IssueProviderId = "ip",
-            RepoProviderId = "rp",
-            InitiatedBy = "loop",
-            Project = new PipelineProject { Id = "", Name = "" },
-            DecompositionSource = "project-level"
-        };
-
-        req.DecompositionSource.Should().Be("project-level");
     }
 
     // ── Record equality (smoke test) ───────────────────────────────────

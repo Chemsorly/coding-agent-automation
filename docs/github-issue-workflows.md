@@ -95,13 +95,13 @@ If either phase fails, the label is swapped to `agent:error`. The user can retry
 
 ### Cross-Repository Epic Decomposition
 
-When a **project** has an `EpicIssueProviderId` configured, the decomposition pipeline supports routing sub-issues to different repositories. The epic is polled from the project-level provider (e.g., a centralized tracker like Polarion or Jira), and each decomposed sub-issue can include a `targetRepository` field specifying which template's issue provider should receive it.
+When a **project** has an `EpicIssueProviderId` configured, epics in that tracker are **project epics**: their decomposition may route sub-issues to the tracker of any enabled template in the project. Epics in a template's own tracker are **repo epics**, and their sub-issues stay in that tracker. Each decomposed sub-issue of a project epic can include a `targetRepository` field naming the template whose issue provider should receive it.
 
 - If `targetRepository` resolves to a known template in the project → the issue is created in that template's issue provider
-- If `targetRepository` is unresolvable or empty → the issue falls back to the dispatching template's issue provider
-- Issues are created as regular issues (via `CreateIssueAsync`), not platform-specific sub-issues, ensuring compatibility across all issue providers
+- If `targetRepository` is unresolvable or empty → the issue goes to the executor template's issue provider, never to the epic tracker
+- Issues are created as regular issues, not platform-specific sub-issues, ensuring compatibility across all issue providers
 
-See [Projects — Cross-Repo Decomposition](projects.md#cross-repository-decomposition) for configuration details.
+See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) and [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decomposition) for configuration details.
 
 ## Closed-Loop Mode
 
@@ -112,4 +112,4 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 - Runs execute in parallel, each in its own Kubernetes Job. Each poll cycle dispatches up to `closedLoopMaxRunsPerCycle` items (0 = no limit). How many run at once is capped per agent label set by the job template's `maxConcurrent` (Helm `jobTemplates`) and by the available credential PVCs; decomposition is additionally capped by `MaxConcurrentDecompositions`. Work beyond that capacity waits in the queue (Work page) until a slot frees up
 - Configurable poll interval, max runs per cycle, and backoff on failures
 - When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition
-- When a project has an `EpicIssueProviderId` configured, the loop polls that provider for epics independently (see [Projects](projects.md))
+- When a project has an `EpicIssueProviderId` configured, the loop also polls that provider for epics and queues them with the project's first decomposition-enabled template, oldest first, in the same round-robin (see [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics))

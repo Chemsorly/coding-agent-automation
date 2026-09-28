@@ -130,12 +130,13 @@ public sealed partial class PipelineLoopService
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
-        var projectLevelDecompositionQueues = await _poller.PollProjectLevelEpicsAsync(
-            snapshot.Projects, snapshot.TemplateLookup, snapshot.Config.ClosedLoopMaxPagesToFetch, ct);
+        // Project epics join their executor template's decomposition queue (one round-robin for all epics)
+        await _poller.AddProjectEpicsAsync(
+            snapshot.Projects, snapshot.TemplateLookup, snapshot.Config.ClosedLoopMaxPagesToFetch, decompositionQueues, ct);
 
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
-        EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
+        EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues);
 
         // Build eligibility maps from already-polled data for use by the queue sweep later.
         // failuresBefore is passed so BuildEligibilityMap / BuildPrEligibilityMap can detect
@@ -164,7 +165,6 @@ public sealed partial class PipelineLoopService
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompositionQueues,
-                ProjectLevelDecompositionQueues = projectLevelDecompositionQueues,
                 ReportStatus = msg => { lock (_lock) { StatusMessage = msg; } },
                 ReportIssue = id => CurrentIssueIdentifier = id,
                 NotifyChange = NotifyChange
@@ -394,8 +394,8 @@ public sealed partial class PipelineLoopService
                 case WorkItemTaskType.Decomposition:
                 default:
                     // Consolidation: dispatched synchronously via KubernetesWorkDistributor — no eligibility map.
-                    // Decomposition: eligibility source (decompositionQueues, projectLevelDecompositionQueues)
-                    //   not yet folded into a sweep map — skip to avoid incorrect cancellations.
+                    // Decomposition: eligibility source (decompositionQueues) not yet folded into
+                    //   a sweep map — skip to avoid incorrect cancellations.
                     _queueSweepSkipped.Add(1);
                     continue;
             }
@@ -575,13 +575,11 @@ public sealed partial class PipelineLoopService
         Dictionary<string, int> failuresBefore,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
-        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> projectLevelDecompositionQueues)
+        Dictionary<string, List<EpicCandidate>> decompositionQueues)
     {
         var totalItemsFound = issueQueues.Values.Sum(q => q.Count)
             + prQueues.Values.Sum(q => q.Count)
-            + decompositionQueues.Values.Sum(q => q.Count)
-            + projectLevelDecompositionQueues.Values.Sum(q => q.Count);
+            + decompositionQueues.Values.Sum(q => q.Count);
 
         var templatePollFailures = snapshot.PollableTemplates.Count(t =>
         {
@@ -862,7 +860,7 @@ public sealed partial class PipelineLoopService
 
     /// <summary>
     /// Flattens all enabled projects' templates into a single ordered list.
-    /// Order: projects alphabetical by Name, templates by TemplateIds position.
+    /// Order: projects alphabetical by Name, templates by name within each project (TemplateOrder).
     /// Templates are loaded from IProjectStore.LoadAllTemplatesAsync.
     /// Skips disabled projects entirely. Skips missing template IDs with a warning.
     /// Only includes templates that are individually enabled.

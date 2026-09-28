@@ -558,8 +558,7 @@ public sealed class WorkItemEndpointTests
             {
                 Id = new Guid("12300000-0000-0000-0000-000000000001"),
                 Name = "Default",
-                Enabled = true,
-                TemplateIds = []
+                Enabled = true
             });
             db.WorkItems.Add(new WorkItemEntity
             {

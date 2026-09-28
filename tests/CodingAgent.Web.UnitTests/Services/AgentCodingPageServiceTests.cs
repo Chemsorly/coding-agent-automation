@@ -178,15 +178,39 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
-    public void ValidateAddTemplate_RejectsDuplicateProviderCombination()
+    public void ValidateAddTemplate_RejectsTheRepositoryOfAnEnabledTemplate()
     {
         _service.Templates.Add(MakeTemplate());
-        var form = new TemplateTableSection.TemplateFormModel { Name = "New", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
+        var form = new TemplateTableSection.TemplateFormModel { Name = "New", IssueProviderId = "ip-2", RepoProviderId = "rp-1" };
 
         var (valid, formError) = _service.ValidateAddTemplate(form);
 
         Assert.False(valid);
-        Assert.Contains("already exists", formError);
+        Assert.Contains("repository is already used", formError);
+    }
+
+    [Fact]
+    public void ValidateAddTemplate_RejectsTheTrackerOfAnEnabledTemplate()
+    {
+        _service.Templates.Add(MakeTemplate());
+        var form = new TemplateTableSection.TemplateFormModel { Name = "New", IssueProviderId = "ip-1", RepoProviderId = "rp-2" };
+
+        var (valid, formError) = _service.ValidateAddTemplate(form);
+
+        Assert.False(valid);
+        Assert.Contains("issue tracker is already used", formError);
+    }
+
+    [Fact]
+    public void ValidateAddTemplate_AcceptsTheBindingsOfADisabledTemplate()
+    {
+        _service.Templates.Add(MakeTemplate() with { Enabled = false });
+        var form = new TemplateTableSection.TemplateFormModel { Name = "New", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
+
+        var (valid, formError) = _service.ValidateAddTemplate(form);
+
+        Assert.True(valid);
+        Assert.Null(formError);
     }
 
     [Fact]
@@ -234,9 +258,7 @@ public class AgentCodingPageServiceTests
             templates: new List<PipelineJobTemplate> { MakeTemplate("t-1", "My Template"), MakeTemplate("t-2", "Other") });
         await _service.InitializeAsync();
 
-        var savedProjects = new List<PipelineProject>();
-        _mockConfigClient.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
-            .Callback<PipelineProject, CancellationToken>((p, _) => savedProjects.Add(p))
+        _mockConfigClient.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject> { sourceProject, targetProject });
@@ -248,12 +270,29 @@ public class AgentCodingPageServiceTests
         Assert.Contains("My Template", msg);
         Assert.Contains("Target", msg);
 
-        var savedSource = savedProjects.First(p => p.Id == "proj-src");
-        Assert.DoesNotContain("t-1", savedSource.TemplateIds);
-        Assert.Contains("t-2", savedSource.TemplateIds);
+        // The template's own project is the only membership record: one move, no project saves (#3143).
+        _mockConfigClient.Verify(s => s.MoveTemplateAsync(
+            It.Is<ProjectId>(p => p.Value == "proj-src"), It.Is<ProjectId>(p => p.Value == "proj-tgt"), "t-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockConfigClient.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
 
-        var savedTarget = savedProjects.First(p => p.Id == "proj-tgt");
-        Assert.Contains("t-1", savedTarget.TemplateIds);
+    [Fact]
+    public async Task MoveTemplateToProjectAsync_RefusedByTheApi_ReturnsTheReason()
+    {
+        var sourceProject = new PipelineProject { Id = "proj-src", Name = "Source", TemplateIds = new List<string> { "t-1" } };
+        var targetProject = new PipelineProject { Id = "proj-tgt", Name = "Target", TemplateIds = new List<string>() };
+        SetupMinimalInitialize(
+            projects: new List<PipelineProject> { sourceProject, targetProject },
+            templates: new List<PipelineJobTemplate> { MakeTemplate("t-1", "My Template") });
+        await _service.InitializeAsync();
+        _mockConfigClient.Setup(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("The project already has an enabled template named \"My Template\"."));
+
+        var (success, error, _) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
+
+        Assert.False(success);
+        Assert.Contains("already has an enabled template", error);
     }
 
     [Fact]
@@ -264,7 +303,7 @@ public class AgentCodingPageServiceTests
         Assert.True(success);
         Assert.Null(error);
         Assert.Null(msg);
-        _mockConfigClient.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockConfigClient.Verify(s => s.MoveTemplateAsync(It.IsAny<ProjectId>(), It.IsAny<ProjectId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Loop Controls ──

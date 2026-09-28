@@ -47,6 +47,11 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
 
+        // Default: no project has an epic tracker
+        _mockConfigClient
+            .Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+
         // Default: no active work items (issue is not distributed — will reach GitHub checks)
         _mockWorkItemClient
             .Setup(w => w.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

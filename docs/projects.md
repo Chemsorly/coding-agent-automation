@@ -44,6 +44,8 @@ Projects are persisted in PostgreSQL (the `Projects` table). Configuration is ma
 
 The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
+A project does not store its templates: each template names the project it belongs to. The API returns a project's templates as a read-only `TemplateIds` list, ordered by name; saving a project ignores that list.
+
 ### Example: Mono-Repo Project (Settings Only)
 
 ```json
@@ -52,10 +54,6 @@ The JSON bundle produced by `GET /api/config/export` includes a `projects` array
   "Name": "Backend Services",
   "Description": "Java microservices with extended timeouts",
   "Enabled": true,
-  "TemplateIds": [
-    "template-id-1",
-    "template-id-2"
-  ],
   "EpicIssueProviderId": null,
   "MaxRetries": 5,
   "AgentTimeout": "00:45:00",
@@ -77,14 +75,8 @@ The JSON bundle produced by `GET /api/config/export` includes a `projects` array
   "Name": "Platform Product",
   "Description": "Cross-repo product with Polarion epic tracking",
   "Enabled": true,
-  "TemplateIds": [
-    "frontend-template-id",
-    "backend-template-id",
-    "shared-libs-template-id"
-  ],
   "EpicIssueProviderId": "polarion-provider-id",
   "MaxDecompositionSubIssues": 8,
-  "DecompositionTimeout": "00:20:00",
   "MaxConcurrentDecompositions": 3
 }
 ```
@@ -99,7 +91,7 @@ All settings below are nullable on the project. When `null`, the global default 
 |---------|------|-------------|
 | `MaxRetries` | int? | Max retry attempts when quality gates fail |
 | `MaxAnalysisRetries` | int? | Max retry attempts for the analysis phase |
-| `AgentTimeout` | TimeSpan? | Maximum time for a single agent invocation |
+| `AgentTimeout` | TimeSpan? | Maximum time for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds |
 | `MaxInfrastructureRetries` | int? | Max retries for infrastructure operations |
 | `StallWarningInterval` | TimeSpan? | Time without output before stall warning |
 
@@ -136,7 +128,6 @@ All settings below are nullable on the project. When `null`, the global default 
 |---------|------|-------------|
 | `MaxDecompositionSubIssues` | int? | Max sub-issues per epic (1–20) |
 | `MaxConcurrentDecompositions` | int? | Max simultaneous decomposition runs |
-| `DecompositionTimeout` | TimeSpan? | Timeout for decomposition phases |
 | `MaxOpenIssuesForContext` | int? | Max open issues fetched for deduplication context |
 
 ### Blacklist & Brain Settings
@@ -185,32 +176,44 @@ The Default project behaves identically to any other project: you can rename it,
 
 ## Template Management
 
-Every template belongs to exactly one project. There is no "unassigned" state.
+Every template belongs to exactly one project. There is no "unassigned" state. The template records its project, and that is the only record of membership.
+
+### Template Rules
+
+A template binds one repository to one implementation tracker. Among **enabled** templates:
+
+- a repository belongs to one template;
+- an issue tracker belongs to one template;
+- a name is unique within its project, ignoring case, because a project epic routes each sub-issue by template name.
+
+Saving or moving an enabled template that breaks a rule is refused with the reason. Disabled templates are not checked, so one of two conflicting templates can always be switched off. A project's epic tracker may also be the tracker of one of its templates.
+
+Templates saved before these rules were enforced keep working. The **Pipelines** page lists any conflicts above the template table, and an enabled template that is part of one cannot be saved until the conflict is fixed, for example by disabling, moving or removing the other template.
 
 ### Moving Templates Between Projects
 
 Templates can be moved between projects with the "Move to…" action, available in two places: each template row on the **Pipelines** page, and the project's **Templates** tab (Settings → Projects → *project*). When a template moves:
 
-- It is removed from the source project's `TemplateIds` list
-- It is appended to the destination project's `TemplateIds` list
+- Its project changes, so it leaves the source project's list and appears in the destination project's list
 - The template itself is unchanged — only project ownership moves
+- The move is refused if an enabled template in the destination project already has the same name
 
 ### Deleting a Project
 
 When a non-Default project is deleted:
 
-1. All templates in that project are moved to the Default project (appended at the end)
+1. All templates in that project are moved to the Default project
 2. The project record is removed from the database
 
 This ensures no template is ever orphaned.
 
 ### Template Ordering
 
-Templates within a project are ordered by their position in the `TemplateIds` list. This order determines:
+Templates within a project are ordered by name, ignoring case. There is no manual order. The order determines:
 
-- **Poll sequence:** Templates are polled in list order within each project
-- **Cross-project ordering:** Projects are sorted alphabetically by name, then templates within each project by position
-- **Decomposition template selection:** The first decomposition-enabled template in the project is used for epic analysis
+- **Poll sequence:** Templates are polled in this order within each project
+- **Cross-project ordering:** Projects are sorted alphabetically by name, then templates within each project by name
+- **Project epic executor:** The first enabled template with `DecompositionEnabled` runs the project's epics (the epics in its `EpicIssueProviderId` tracker). To choose it, rename it or enable decomposition only on that template
 
 ## Use Case: Mono-Repo (Grouping + Settings)
 
@@ -250,24 +253,25 @@ flowchart TD
     A[Poll Cycle] --> B[Project has EpicIssueProviderId?]
     B -->|Yes| C[Poll Polarion for<br/>agent:epic / agent:epic-approved]
     C --> D{Epic found?}
-    D -->|Yes| E[Select first decomposition-enabled template]
-    E --> F[Clone that template's repo]
-    F --> G[Write .agent/project-context.md]
-    G --> H[Run decomposition agent]
-    H --> I[Agent proposes sub-issues with<br/>targetRepository field]
-    I --> J[CreateIssuesStep routes each issue]
-    
-    J --> K{targetRepository<br/>matches template?}
-    K -->|Yes| L[Create issue in that<br/>template's issue provider]
-    K -->|No match or null| M[Create issue in dispatching<br/>template's issue provider]
-    
-    L --> N[Issues labeled agent:next]
-    M --> N
+    D -->|Yes| E[Queue it with the first<br/>decomposition-enabled template]
+    E --> F[Run bound to the epic in Polarion]
+    F --> G[Clone the template's repo, and the<br/>other project repos read-only]
+    G --> H[Write .agent/project-context.md]
+    H --> I[Run decomposition agent]
+    I --> J[Agent proposes sub-issues with<br/>targetRepository field]
+    J --> K[CreateSubIssuesStep routes each issue]
+
+    K --> L{targetRepository<br/>matches template?}
+    L -->|Yes| M[Create issue in that<br/>template's issue provider]
+    L -->|No match or null| N[Create issue in the executor<br/>template's issue provider]
+
+    M --> O[Issues labeled agent:next]
+    N --> O
 ```
 
 ### Project Context File
 
-When decomposing from a project-level `EpicIssueProviderId`, the system generates `.agent/project-context.md` in the workspace:
+When decomposing a project epic (an epic in the project's `EpicIssueProviderId` tracker), the system generates `.agent/project-context.md` in the workspace. Repo epics get no project context, so their sub-issues stay in their own tracker:
 
 ```markdown
 # Project Context
@@ -307,17 +311,19 @@ a repository name below (case-sensitive).
 | `targetRepository` Value | Behavior |
 |--------------------------|----------|
 | Matches a template name in the project | Issue created in that template's issue provider |
-| Does not match any template | Warning logged, issue created in dispatching template's provider |
-| Null or empty | Issue created in dispatching template's provider (default) |
+| Does not match any template | Warning logged, issue created in the executor template's provider |
+| Null or empty | Issue created in the executor template's provider (default) |
 
-All created issues receive the `agent:next` and `agent:generated` labels regardless of routing target.
+All created issues receive the `agent:next` and `agent:generated` labels regardless of routing target. The gateway only accepts the trackers of the project's enabled templates, and only from a project epic's decomposition run. A template whose name is empty or already used by an earlier template in the project is left out of the project context.
 
-### Existing Per-Template Decomposition
+### Repo Epics and Project Epics
 
-The project-level epic flow coexists with existing per-template decomposition:
+Both kinds of epic use the same flow; only their scope differs:
 
-- **Without `EpicIssueProviderId`:** Each template with `DecompositionEnabled` polls its own issue provider for epics
-- **With `EpicIssueProviderId`:** The project additionally polls the centralized tracker
+- **Repo epics:** Each template with `DecompositionEnabled` polls its own issue provider for epics. Their sub-issues stay in that tracker.
+- **Project epics:** With `EpicIssueProviderId`, the project also polls the centralized tracker. Project epics may create sub-issues in every template's tracker.
+
+See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) for the full comparison.
 
 ## UI Management
 
@@ -326,7 +332,7 @@ Projects are managed in the **Settings** page under the "Projects" group in the 
 | Tab | Contents |
 |-----|----------|
 | **Overview** | Name, description, enabled toggle, EpicIssueProviderId dropdown |
-| **Templates** | Ordered list with add/remove/reorder controls and a "Move to…" action |
+| **Templates** | The project's templates by name, with add/remove controls and a "Move to…" action |
 | **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
 | **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*" |
 | **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
