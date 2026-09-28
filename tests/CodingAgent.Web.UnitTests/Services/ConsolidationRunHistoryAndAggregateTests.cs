@@ -18,7 +18,20 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        {
+            // Retry once on IOException (ENOTEMPTY): on Linux, Directory.Delete with recursive:true
+            // can transiently fail when the runtime still holds file handles open from the async
+            // writes in AddRunSummaryAsync. A short yield + retry is sufficient.
+            try
+            {
+                Directory.Delete(_tempDir, recursive: true);
+            }
+            catch (IOException)
+            {
+                try { Directory.Delete(_tempDir, recursive: true); }
+                catch { /* best-effort cleanup — do not fail the test */ }
+            }
+        }
     }
 
     /// <summary>
