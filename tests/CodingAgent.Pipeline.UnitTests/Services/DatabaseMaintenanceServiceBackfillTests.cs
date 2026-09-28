@@ -305,6 +305,126 @@ public class DatabaseMaintenanceServiceBackfillTests : IDisposable
         captured.WorkItemId.Should().Be(Guid.Parse(workItemId));
     }
 
+    // ── Guard paths: malformed/null/empty data blobs ──────────────────────────
+
+    [Fact]
+    public async Task BackfillConsolidationRunsAsync_SkipsEntityWithNullOrEmptyData()
+    {
+        // Seed an entity with empty Data — the backfill must skip it and return 0.
+        await using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.ConsolidationRuns.Add(new ConsolidationRunEntity
+            {
+                Id = Guid.NewGuid(),
+                Data = string.Empty
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var count = await svc.BackfillConsolidationRunsAsync(CancellationToken.None);
+
+        count.Should().Be(0, "entity with empty Data blob must be skipped");
+        _mockRunHistoryService.Verify(s => s.AddRunSummaryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackfillConsolidationRunsAsync_SkipsEntityWithInvalidJson()
+    {
+        // Seed an entity whose Data is not valid JSON — must be skipped, no exception propagated.
+        await using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.ConsolidationRuns.Add(new ConsolidationRunEntity
+            {
+                Id = Guid.NewGuid(),
+                Data = "not-valid-json{{{"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var count = await svc.BackfillConsolidationRunsAsync(CancellationToken.None);
+
+        count.Should().Be(0, "entity with invalid JSON must be skipped");
+        _mockRunHistoryService.Verify(s => s.AddRunSummaryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackfillConsolidationRunsAsync_SkipsRunWithNonGuidRunId()
+    {
+        // Seed a ConsolidationRun whose RunId is not a GUID — must be skipped (non-GUID RunId guard).
+        var run = MakeRun(status: ConsolidationRunStatus.Succeeded);
+        // Patch RunId to a non-GUID value by serializing a modified object via raw JSON manipulation.
+        await using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            // Serialize a valid run then replace the RunId with a non-GUID string.
+            var json = System.Text.Json.JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
+            var nonGuidJson = json.Replace($"\"{run.RunId}\"", "\"not-a-guid\"");
+            var entity = new ConsolidationRunEntity
+            {
+                Id = Guid.NewGuid(),
+                Data = nonGuidJson
+            };
+            db.ConsolidationRuns.Add(entity);
+            await db.SaveChangesAsync();
+        }
+
+        var svc = CreateService();
+        var count = await svc.BackfillConsolidationRunsAsync(CancellationToken.None);
+
+        count.Should().Be(0, "run with non-GUID RunId must be skipped");
+        _mockRunHistoryService.Verify(s => s.AddRunSummaryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackfillConsolidationRunsAsync_EmptyConsolidationRuns_ReturnsZero()
+    {
+        // No ConsolidationRun rows at all — must return 0 immediately (early-exit path).
+        var svc = CreateService();
+        var count = await svc.BackfillConsolidationRunsAsync(CancellationToken.None);
+
+        count.Should().Be(0);
+        _mockRunHistoryService.Verify(s => s.AddRunSummaryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task BackfillConsolidationRunsAsync_GlobalScopeRun_UsesGlobalIssueIdentifier()
+    {
+        // Runs with null TemplateId use "{type}:global" as IssueIdentifier.
+        var run = MakeRun(status: ConsolidationRunStatus.Succeeded, templateId: null);
+        await SeedConsolidationRunEntity(run);
+
+        PipelineRunSummary? captured = null;
+        _mockRunHistoryService
+            .Setup(s => s.AddRunSummaryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineRunSummary, CancellationToken>((s, _) => captured = s)
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+        var count = await svc.BackfillConsolidationRunsAsync(CancellationToken.None);
+
+        count.Should().Be(1);
+        captured.Should().NotBeNull();
+        captured!.IssueIdentifier.Value.Should().EndWith(":global", "null TemplateId must produce a global-scope identifier");
+    }
+
+    [Fact]
+    public async Task BackfillConsolidationRunsAsync_Cancellation_ReturnsZeroWithoutThrowing()
+    {
+        // Cancellation before any row is processed must return 0 (OperationCanceledException swallowed).
+        var run = MakeRun(status: ConsolidationRunStatus.Succeeded);
+        await SeedConsolidationRunEntity(run);
+
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var svc = CreateService();
+        // Should not throw even with a pre-cancelled token (outer catch handles OCE and returns 0).
+        var count = await svc.BackfillConsolidationRunsAsync(cts.Token);
+
+        count.Should().Be(0, "a pre-cancelled token must result in 0 rows backfilled");
+    }
+
     // ── RetentionSweepResult integration ─────────────────────────────────────
 
     [Fact]
