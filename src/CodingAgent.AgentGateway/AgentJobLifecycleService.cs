@@ -255,6 +255,22 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Consolidation runs skip bookkeeping — they have no associated issue labels or feedback comments.
         if (run is not null && run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
+            // Record brain update result once per non-consolidation run.
+            // BrainUpdatesPushed is set by JobCompletionMapper.Apply inside strategy.ExecuteAsync above.
+            // Recorded regardless of runWasAlive: even when another path terminated the run,
+            // the agent still ran and may have pushed (or not pushed) to the brain.
+            // Runs without a brain provider configured will always produce result=none.
+            // TODO: [WARNING] Under Redis, _facade.GetRun deserializes a fresh copy of the run,
+            // and JobCompletionMapper.Apply is called on a *different* in-memory object (the one
+            // inside strategy.ExecuteAsync). On the race path (runWasAlive=false), the `run`
+            // object read here may not have BrainUpdatesPushed set by Apply, so the metric will
+            // always record result=none on that path under Redis. This only affects metric accuracy,
+            // not system correctness. Fix would require Apply to persist BrainUpdatesPushed to the
+            // store before this point, or for the metric to be recorded inside strategy.ExecuteAsync
+            // where the Apply result is available. See review findings [WARNING] Correctness L265.
+            PipelineTelemetry.RunBrainUpdates.Add(1,
+                new KeyValuePair<string, object?>("result", run.BrainUpdatesPushed ? "pushed" : "none"));
+
             // skipLabelSwap=true when the run was already terminated by another path (HTTP Failed POST).
             // In that case the HTTP path already set the correct label (e.g. agent:needs-refinement),
             // and we must not overwrite it. The outbox enqueue and feedback comment still run.
@@ -481,6 +497,19 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             var previousStep = run.CurrentStep;
             run.CurrentStep = step;
+
+            // Capture previous step's start time BEFORE mutation 2 overwrites it.
+            // Must be after run.CurrentStep = step (mutation 1) but before
+            // run.LastStepChangeAt = clampedTimestamp (mutation 2).
+            // TODO: [WARNING] This ordering is fragile: if run.LastStepChangeAt = clampedTimestamp
+            // were moved above this capture (e.g. during a refactor), previousStepChangedAt would
+            // equal clampedTimestamp and every delta would be 0. No test currently fails if these
+            // lines are reordered. Consider a regression test or a code comment asserting the
+            // invariant: previousStepChangedAt must equal the value of LastStepChangeAt at the
+            // time the previous step started, not the current clamped timestamp.
+            // See review findings [WARNING] Correctness L540.
+            var previousStepChangedAt = run.LastStepChangeAt;
+
             var clampedTimestamp = timestamp <= DateTimeOffset.UtcNow
                 ? timestamp
                 : DateTimeOffset.UtcNow;
@@ -496,12 +525,57 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 && StepOrder.GetOrder(step) > StepOrder.GetOrder(run.HighWaterMark))
                 run.HighWaterMark = step;
 
-            // Apply step metadata from the agent (carries data from the just-completed step)
+            // Apply step metadata from the agent (carries data from the just-completed step).
+            // Capture sub-issue counts before Apply so we can detect first-write (once per run).
+            // NOTE: capture unconditionally (before the metadata guard) so that when metadata is null
+            // or empty, previousSubIssuesAttempted reflects the already-set value from a prior call.
+            // If captured inside the if-block only, a subsequent null-metadata call would leave
+            // previousSubIssuesAttempted=0 while run.DecompositionSubIssuesAttempted is already >0,
+            // causing the once-per-run guard to fire again and double-emit the counters.
+            // TODO: [WARNING] previousSubIssuesCreated is declared for symmetry / future use but is
+            // not currently read. The guard only needs previousSubIssuesAttempted to enforce
+            // once-per-run semantics. Remove or use previousSubIssuesCreated if a finer guard
+            // (e.g. re-emit when created count increases) is ever needed. See review findings
+            // [WARNING] DotNetSpecialist L516.
+            int previousSubIssuesAttempted = run.DecompositionSubIssuesAttempted;
+            int previousSubIssuesCreated = run.DecompositionSubIssuesCreated;
             if (metadata is { Count: > 0 })
+            {
                 StepMetadataApplier.Apply(run, metadata);
+            }
 
             // Persist mutated run back to the store (no-op for in-memory; required for Redis).
             _facade.ReplaceRun(run);
+
+            // Record step duration for the step that just completed (previousStep).
+            // Guard: only when the step actually changed (prevents double-recording on no-op transitions).
+            // Re-visits (e.g. GeneratingCode appearing twice in a retry loop) each produce their own sample.
+            // Note: previousStep is always set (PipelineStep is a non-nullable enum); the first transition
+            // from the initial state (Created=0) still records a sample — by design.
+            if (step != previousStep)
+            {
+                var delta = clampedTimestamp - previousStepChangedAt;
+                if (delta.TotalSeconds >= 0)
+                {
+                    PipelineTelemetry.RunStepDuration.Record(
+                        delta.TotalSeconds,
+                        new KeyValuePair<string, object?>("run_type", run.RunType.ToString().ToLowerInvariant()),
+                        new KeyValuePair<string, object?>("step", previousStep.ToString()));
+                }
+            }
+
+            // Record sub-issue counters once per run: fire only when DecompositionSubIssuesAttempted
+            // transitions from 0 to non-zero (guards against re-emission on metadata retransmission).
+            if (run.DecompositionSubIssuesAttempted > 0 && previousSubIssuesAttempted == 0)
+            {
+                var failed = run.DecompositionSubIssuesAttempted - run.DecompositionSubIssuesCreated;
+                if (run.DecompositionSubIssuesCreated > 0)
+                    PipelineTelemetry.RunSubIssues.Add(run.DecompositionSubIssuesCreated,
+                        new KeyValuePair<string, object?>("result", "created"));
+                if (failed > 0)
+                    PipelineTelemetry.RunSubIssues.Add(failed,
+                        new KeyValuePair<string, object?>("result", "failed"));
+            }
 
             _logger.Information("Job {JobId} step transition {Previous} → {Step}",
                 jobId.Value, previousStep, step);

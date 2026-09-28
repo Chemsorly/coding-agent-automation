@@ -100,9 +100,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                     "Creation timeout exceeded; marking remaining sub-issues as failed. Title: {Title}",
                     proposal.Title);
 
-                PipelineTelemetry.SubIssuesFailed.Add(1,
-                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
-
                 results.Add(new SubIssueCreationResult
                 {
                     Title = proposal.Title,
@@ -266,9 +263,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                 created.Identifier, sanitizedTitle,
                 targetProviderId is not null ? $" (routed to provider {targetProviderId})" : "");
 
-            PipelineTelemetry.SubIssuesCreated.Add(1,
-                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
-
             return new SubIssueCreationResult
             {
                 Title = proposal.Title,
@@ -279,8 +273,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         }
         catch (OperationCanceledException)
         {
-            PipelineTelemetry.SubIssuesFailed.Add(1,
-                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
             return new SubIssueCreationResult
             {
                 Title = proposal.Title,
@@ -299,8 +291,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                 // Last attempt — stop retrying
                 Activity.Current?.RecordError(ex, ct);
                 context.Logger.Warning("Exhausted retries for issue '{Title}': {Error}", proposal.Title, ex.Message);
-                PipelineTelemetry.SubIssuesFailed.Add(1,
-                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
                 return new SubIssueCreationResult
                 {
                     Title = proposal.Title,
@@ -316,8 +306,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             Activity.Current?.RecordError(ex, ct);
             context.Logger.Warning(ex,
                 "Non-transient error creating issue '{Title}': {Error}", proposal.Title, ex.Message);
-            PipelineTelemetry.SubIssuesFailed.Add(1,
-                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
             return new SubIssueCreationResult
             {
                 Title = proposal.Title,
