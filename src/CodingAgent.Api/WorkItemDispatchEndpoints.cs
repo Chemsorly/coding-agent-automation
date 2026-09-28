@@ -1044,10 +1044,16 @@ public static class WorkItemDispatchEndpoints
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
 
+        // Use PipelineConstants.ActiveWorkItemStatuses (Pending, Dispatched, Running) rather than
+        // WhereActive() (Dispatched, Running only). A Pending decomposition WorkItem is already
+        // occupying a dispatch slot — the loop enqueued it but FakeJobController / the real
+        // Scheduler may not yet have claimed it. Excluding Pending means the gate sees 0 active
+        // decompositions in the window between enqueue and claim, allowing a second epic to be
+        // dispatched before the first is even picked up.
+        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
         var count = await db.WorkItems
             .AsNoTracking()
-            .WhereActive()
-            .Where(w => w.TaskType == WorkItemTaskType.Decomposition)
+            .Where(w => activeStatuses.Contains(w.Status) && w.TaskType == WorkItemTaskType.Decomposition)
             .CountAsync(ct);
 
         return TypedResults.Ok(new { count });

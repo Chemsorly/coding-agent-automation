@@ -384,21 +384,19 @@ public sealed class DispatchDedupEndpointTests
     // ── active-decomposition-count ────────────────────────────────────────────
 
     /// <summary>
-    /// GET /api/work-items/active-decomposition-count returns only Decomposition work items
-    /// in active states (Pending, Dispatched, Running). Implementation items and terminal items
-    /// must not be counted.
+    /// GET /api/work-items/active-decomposition-count returns Decomposition work items
+    /// in ALL active states (Pending, Dispatched, Running). Implementation items and terminal items
+    /// must not be counted. Pending is included because a queued epic already occupies a slot.
     /// </summary>
     [Fact]
     public async Task GetActiveDecompositionCount_CountsOnlyActiveDecompositionItems()
     {
         var count0 = await GetActiveDecompositionCountAsync();
 
-        // Seed one Decomposition in each active status (Dispatched, Running — WhereActive() excludes Pending)
+        // Seed one Decomposition in each active status (Pending, Dispatched, Running — all should be counted)
+        SeedWithTaskType(NewIssueId(), NewProviderId(), WorkItemStatus.Pending, WorkItemTaskType.Decomposition);
         SeedWithTaskType(NewIssueId(), NewProviderId(), WorkItemStatus.Dispatched, WorkItemTaskType.Decomposition);
         SeedWithTaskType(NewIssueId(), NewProviderId(), WorkItemStatus.Running, WorkItemTaskType.Decomposition);
-
-        // Seed a Decomposition in Pending — WhereActive() excludes it, so it must NOT be counted
-        SeedWithTaskType(NewIssueId(), NewProviderId(), WorkItemStatus.Pending, WorkItemTaskType.Decomposition);
 
         // Seed a Decomposition in each terminal status — must not be counted
         SeedWithTaskType(NewIssueId(), NewProviderId(), WorkItemStatus.Succeeded, WorkItemTaskType.Decomposition);
@@ -410,8 +408,8 @@ public sealed class DispatchDedupEndpointTests
 
         var count = await GetActiveDecompositionCountAsync();
 
-        (count - count0).Should().Be(2,
-            "only Dispatched and Running Decomposition items are counted (WhereActive excludes Pending and terminal)");
+        (count - count0).Should().Be(3,
+            "Pending, Dispatched, and Running Decomposition items are all counted (Pending is included because a queued epic occupies a dispatch slot)");
     }
 
     [Fact]
