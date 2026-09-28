@@ -98,22 +98,37 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         var config = job.PipelineConfiguration;
 
-        // Resolve provider configs from the job assignment
-        // TODO: These two mandatory lookups use TryGetProviderConfig + manual null-check-and-throw rather than
-        // GetRequiredProviderConfig, because GetRequiredProviderConfig skips the structured _logger.Error call that
-        // precedes the throw. If the error-logging requirement is relaxed, migrate to GetRequiredProviderConfig to
-        // consolidate the "lookup + throw" pattern as originally intended by the extract.
-        var repoConfig = job.ProviderConfigs.TryGetProviderConfig(job.RepoProviderConfigId);
-        if (repoConfig is null)
+        // Resolve provider configs from the job assignment.
+        // When a ProviderFactoryOverride is injected (test seam), the factory ignores ProviderConfig
+        // contents entirely, so we skip the mandatory lookup and use a dummy config instead.
+        // This allows smoke tests to insert minimal work-item rows without a fully-populated payload.
+        ProviderConfig repoConfig;
+        ProviderConfig agentConfig;
+        if (_providerFactoryOverride is not null)
         {
-            _logger.Error("Repository provider config '{RepoProviderConfigId}' not found in job assignment for job {JobId}", job.RepoProviderConfigId, job.JobId);
-            throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
+            // The override factory ignores ProviderConfig contents entirely, so we use
+            // placeholder values. The only required members are populated to satisfy the compiler.
+            repoConfig = new ProviderConfig { DisplayName = "test-repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" };
+            agentConfig = new ProviderConfig { DisplayName = "test-agent", Kind = ProviderKind.Agent, ProviderType = "KiroCli" };
         }
-        var agentConfig = job.ProviderConfigs.TryGetProviderConfig(job.AgentProviderConfigId);
-        if (agentConfig is null)
+        else
         {
-            _logger.Error("Agent provider config '{AgentProviderConfigId}' not found in job assignment for job {JobId}", job.AgentProviderConfigId, job.JobId);
-            throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+            // TODO: These two mandatory lookups use TryGetProviderConfig + manual null-check-and-throw rather than
+            // GetRequiredProviderConfig, because GetRequiredProviderConfig skips the structured _logger.Error call that
+            // precedes the throw. If the error-logging requirement is relaxed, migrate to GetRequiredProviderConfig to
+            // consolidate the "lookup + throw" pattern as originally intended by the extract.
+            repoConfig = job.ProviderConfigs.TryGetProviderConfig(job.RepoProviderConfigId)!;
+            if (repoConfig is null)
+            {
+                _logger.Error("Repository provider config '{RepoProviderConfigId}' not found in job assignment for job {JobId}", job.RepoProviderConfigId, job.JobId);
+                throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
+            }
+            agentConfig = job.ProviderConfigs.TryGetProviderConfig(job.AgentProviderConfigId)!;
+            if (agentConfig is null)
+            {
+                _logger.Error("Agent provider config '{AgentProviderConfigId}' not found in job assignment for job {JobId}", job.AgentProviderConfigId, job.JobId);
+                throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+            }
         }
 
         // Override blacklist settings from repo provider config (per-repo takes precedence)
