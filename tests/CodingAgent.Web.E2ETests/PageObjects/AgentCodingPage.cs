@@ -169,4 +169,35 @@ public sealed class AgentCodingPage
     {
         await _page.ClickAsync("[data-testid='dispatch-pr-btn']");
     }
+
+    /// <summary>Clicks the "Browse Epics" button to open the epic drawer.</summary>
+    public async Task ClickBrowseEpicsAsync()
+    {
+        // Wait for the button to become enabled (depends on template selection triggering re-render).
+        // Same pattern as ClickBrowseIssuesAsync and ClickBrowsePrsAsync.
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const btn = document.querySelector('[data-testid=""browse-epics-btn""]');
+                return btn && !btn.disabled;
+            }",
+            null,
+            new() { Timeout = 10_000 });
+
+        await _page.ClickAsync("[data-testid='browse-epics-btn']");
+        // All three drawers (Issue, PR, Epic) share the .dispatch-drawer CSS class; at most one
+        // is open at a time, so this selector is unambiguous.
+        await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
+    }
+
+    /// <summary>Selects an epic from the epic drawer by its identifier.</summary>
+    public async Task SelectEpicAsync(string identifier)
+    {
+        await _page.ClickAsync($"[data-testid='epic-row-{identifier}']");
+    }
+
+    /// <summary>Clicks the "Start Decomposition on #X" button in the epic drawer.</summary>
+    public async Task ClickDispatchEpicAsync()
+    {
+        await _page.ClickAsync("[data-testid='dispatch-epic-btn']");
+    }
 }
