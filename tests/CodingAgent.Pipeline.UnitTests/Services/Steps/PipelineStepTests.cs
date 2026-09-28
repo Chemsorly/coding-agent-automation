@@ -493,7 +493,7 @@ public class PipelineStepTests
     public async Task CreateBranchStep_NewIssue_CreatesBranch()
     {
         _run.WorkspacePath = "/tmp/test";
-        _repoProvider.Setup(p => p.CreateBranchAsync("/tmp/test", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CreateBranchAsync("/tmp/test", It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("feature/auto-42-test");
 
         var step = new CreateBranchStep();
@@ -511,7 +511,7 @@ public class PipelineStepTests
     {
         _run.WorkspacePath = "/tmp/test";
         _run.LinkedPullRequest = new LinkedPullRequest { Number = 5, BranchName = "feature/auto-42-old", Url = "http://pr/5", IsDraft = false };
-        _repoProvider.Setup(p => p.CheckoutRemoteBranchAsync("/tmp/test", "feature/auto-42-old", It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CheckoutRemoteBranchAsync("/tmp/test", (BranchName)"feature/auto-42-old", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _repoProvider.Setup(p => p.MergeFromBaseAsync("/tmp/test", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new MergeResult { Success = true, HasConflicts = false, ConflictFiles = [] });
@@ -530,7 +530,7 @@ public class PipelineStepTests
     {
         _run.WorkspacePath = "/tmp/test";
         _run.LinkedPullRequest = new LinkedPullRequest { Number = 5, BranchName = "feature/auto-42-old", Url = "http://pr/5", IsDraft = false };
-        _repoProvider.Setup(p => p.CheckoutRemoteBranchAsync("/tmp/test", "feature/auto-42-old", It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CheckoutRemoteBranchAsync("/tmp/test", (BranchName)"feature/auto-42-old", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("checkout failed"));
 
         var step = new CreateBranchStep();
@@ -546,7 +546,7 @@ public class PipelineStepTests
     {
         _run.WorkspacePath = "/tmp/test";
         _run.LinkedPullRequest = new LinkedPullRequest { Number = 5, BranchName = "feature/auto-42-old", Url = "http://pr/5", IsDraft = false };
-        _repoProvider.Setup(p => p.CheckoutRemoteBranchAsync("/tmp/test", "feature/auto-42-old", It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CheckoutRemoteBranchAsync("/tmp/test", (BranchName)"feature/auto-42-old", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _repoProvider.Setup(p => p.MergeFromBaseAsync("/tmp/test", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("merge conflict unresolvable"));
@@ -563,7 +563,7 @@ public class PipelineStepTests
     public async Task CreateBranchStep_BranchCreationFails_FailsRun()
     {
         _run.WorkspacePath = "/tmp/test";
-        _repoProvider.Setup(p => p.CreateBranchAsync("/tmp/test", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CreateBranchAsync("/tmp/test", It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("branch exists"));
 
         var step = new CreateBranchStep();

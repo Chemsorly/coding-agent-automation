@@ -57,7 +57,7 @@ public class CreateBranchStepTests
 
         _repoProvider.Verify(
             r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "must not attempt git checkout when PR is already merged");
 
@@ -92,7 +92,7 @@ public class CreateBranchStepTests
 
         _repoProvider.Verify(
             r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -127,7 +127,7 @@ public class CreateBranchStepTests
 
         _repoProvider.Verify(
             r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "must not attempt git checkout when PR is closed without merge");
 
@@ -154,7 +154,7 @@ public class CreateBranchStepTests
 
         // Checkout succeeds after fail-open
         _repoProvider.Setup(r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _repoProvider.Setup(r => r.MergeFromBaseAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -167,7 +167,7 @@ public class CreateBranchStepTests
         // Checkout was attempted despite the state query failing
         _repoProvider.Verify(
             r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "must attempt checkout when PR state query fails (fail-open)");
     }
@@ -187,7 +187,7 @@ public class CreateBranchStepTests
             .ReturnsAsync(PullRequestState.Open);
 
         _repoProvider.Setup(r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _repoProvider.Setup(r => r.MergeFromBaseAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -198,7 +198,7 @@ public class CreateBranchStepTests
 
         _repoProvider.Verify(
             r => r.CheckoutRemoteBranchAsync(
-                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "must checkout the branch when PR is open");
     }

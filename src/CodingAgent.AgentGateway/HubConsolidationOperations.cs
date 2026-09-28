@@ -88,7 +88,8 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
     {
         ArgumentNullException.ThrowIfNull(result);
 
-        // result.JobId is agent-supplied and the hub only validates it when the agent has an active job.
+        // result.JobId has already been validated by the hub: the caller must be a registered
+        // agent with an active consolidation job whose JobId matches result.JobId.
         var sanitizedJobId = LogSanitizer.SanitizeForLog(result.JobId);
         var debugInfo = $"agentFound={agent is not null}, agentId={agent?.AgentId ?? "NULL"}, activeJobId={agent?.ActiveJobId ?? "NULL"}";
         _logger.Debug("HubConsolidationOperations.HandleConsolidationComplete ENTRY: {DebugInfo}", debugInfo);

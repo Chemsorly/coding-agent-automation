@@ -20,7 +20,7 @@ public class PullRequestOrchestratorTests
         _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockRepo.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -91,7 +91,7 @@ public class PullRequestOrchestratorTests
     [Fact]
     public async Task CreatePullRequest_PushFails_ExceptionPropagates()
     {
-        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("permission denied"));
 
@@ -219,7 +219,7 @@ public class PullRequestOrchestratorTests
             null, null, CreateConfig(), CancellationToken.None);
 
         result.Should().BeNull();
-        _mockRepo.Verify(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
+        _mockRepo.Verify(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(),
             It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

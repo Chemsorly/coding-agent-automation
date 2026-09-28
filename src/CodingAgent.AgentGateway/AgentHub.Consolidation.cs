@@ -30,27 +30,28 @@ public sealed partial class AgentHub
 
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
 
-        // Validation: reject if agent has a different active job
-        if (agent is not null && agent.ActiveJobId is not null
-            && !string.Equals(agent.ActiveJobId, result.JobId, StringComparison.Ordinal))
+        // Validation: accept only when the caller is a registered agent, has an active
+        // consolidation job, and the reported JobId matches that job exactly.
+        // Reject when: agent is null (narrow race after disconnect), ActiveJobId is null
+        // (idle agent — duplicate report or stale retry), or JobId does not match.
+        if (agent is null || agent.ActiveJobId is null
+            || !string.Equals(agent.ActiveJobId, result.JobId, StringComparison.Ordinal))
         {
+            var activeJobId = agent?.ActiveJobId ?? "NULL";
             _logger.Warning(
-                "ReportConsolidationComplete rejected — job {JobId} not assigned to agent {AgentId} (active: {ActiveJobId})",
-                SanitizeForLog(result.JobId), agent.AgentId, agent.ActiveJobId);
-            return $"REJECTED: agentId={agent.AgentId}, activeJobId={agent.ActiveJobId}";
+                "ReportConsolidationComplete rejected — job {JobId} not active on agent {AgentId} (active: {ActiveJobId})",
+                SanitizeForLog(result.JobId), agent?.AgentId ?? "NULL", activeJobId);
+            return $"REJECTED: agentId={agent?.AgentId ?? "NULL"}, activeJobId={activeJobId}";
         }
 
-        // result.JobId is only checked above when the agent has an active job — sanitize it here too.
         _logger.Information("Consolidation job {JobId} completed by agent {AgentId}: success={Success}",
-            SanitizeForLog(result.JobId), agent?.AgentId ?? "NULL", result.Success);
+            SanitizeForLog(result.JobId), agent.AgentId, result.Success);
 
         // Transition agent to Idle BEFORE delegating to slow I/O
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null; // local snapshot update
-            _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null); // distributed write
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-        }
+        // (validation above guarantees agent is non-null here)
+        agent.ActiveJobId = null; // local snapshot update
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null); // distributed write
+        _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
         // Delegate all consolidation business logic to the facade service (T10)
         return await _consolidationOps.HandleConsolidationCompleteAsync(result, agent, CancellationToken.None);

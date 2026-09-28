@@ -51,6 +51,30 @@ public interface IPipelineRunHistoryService
     Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, CancellationToken ct = default)
         => GetRunHistoryAsync(page, pageSize, feedbackOnly, ct);
 
+    /// <summary>
+    /// Retrieves paginated run history with a server-side date filter in addition to the outcome and project filters.
+    /// The <paramref name="since"/> filter is applied in the DB query before paging, so <see cref="PagedResult{T}.HasMore"/>
+    /// accurately reflects whether in-window runs overflow the requested page size.
+    /// </summary>
+    /// <param name="since">When set, returns only runs whose <c>StartedAt</c> is &gt;= this value. Pass <c>null</c> for no date filter (equivalent to "All" window).</param>
+    /// <remarks>
+    /// <para>
+    /// The default implementation ignores <paramref name="since"/> and delegates to
+    /// <see cref="GetRunHistoryAsync(int,int,bool,PipelineStep?,string?,CancellationToken)"/>.
+    /// Only <c>PostgresPipelineRunHistoryService</c> overrides this overload to push the filter to the DB.
+    /// </para>
+    /// <para>
+    /// <b>Services that do NOT override this overload (silent no-op for <paramref name="since"/>):</b>
+    /// <list type="bullet">
+    ///   <item><c>PipelineRunHistoryService</c> (file-backed) — used only in non-Postgres local deployments; not on the Insights call path.</item>
+    ///   <item><c>ApiBackedPipelineRunHistoryService</c> — the orchestrator's HTTP-bridged service; <c>Insights.razor</c> calls
+    ///   <c>IPipelineApiRunHistoryClient</c> directly and never routes through this service, so the no-op is harmless.</item>
+    /// </list>
+    /// </para>
+    /// </remarks>
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, CancellationToken ct = default)
+        => GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, ct);
+
     /// <summary>Retrieves a single pipeline run summary by run ID. Returns null if not found.</summary>
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 }
