@@ -320,7 +320,15 @@ public sealed class E2EFixture : IAsyncLifetime
     public async Task DisposeAsync()
     {
         if (_browser is not null)
-            await _browser.DisposeAsync();
+        {
+            // Wrap in try/catch: if a test closed its browser context mid-test
+            // (e.g. AgentChat_PageClose_TerminatesJobViaDispose which calls Page.Context.CloseAsync()),
+            // Playwright's internal context bookkeeping may be in a state where browser disposal
+            // throws ObjectDisposedException. This is a teardown artefact — all tests have already
+            // passed — so the exception is swallowed to prevent a spurious CI failure.
+            try { await _browser.DisposeAsync(); }
+            catch (ObjectDisposedException) { }
+        }
         _playwright?.Dispose();
         _browserLock.Dispose();
 
