@@ -1,6 +1,7 @@
 using CodingAgent.Web.E2ETests.Infrastructure;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Playwright;
+using Xunit;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
 
@@ -168,5 +169,40 @@ public sealed class AgentCodingPage
     public async Task ClickDispatchPrReviewAsync()
     {
         await _page.ClickAsync("[data-testid='dispatch-pr-btn']");
+    }
+
+    /// <summary>
+    /// Asserts that the DRAFT badge is visible on the PR row for the given identifier.
+    ///
+    /// <para>
+    /// The badge is rendered as <c>&lt;span class="badge-default"&gt;DRAFT&lt;/span&gt;</c> inside the
+    /// <c>data-testid='pr-row-{identifier}'</c> element in <c>PrDispatchDrawer.razor</c>.
+    /// CSS class <c>badge-default</c> is the correct class — there is no <c>draft-badge</c> class.
+    /// </para>
+    /// </summary>
+    public async Task AssertDraftBadgeVisibleAsync(string identifier)
+    {
+        var badgeLocator = _page.Locator($"[data-testid='pr-row-{identifier}'] .badge-default");
+        await badgeLocator.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        var text = await badgeLocator.TextContentAsync();
+        Assert.Contains("DRAFT", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Asserts that the draft warning banner is visible in the selected-item section of the PR drawer.
+    ///
+    /// <para>
+    /// The warning is rendered as:
+    /// <c>&lt;div class="settings-status status-error"&gt;...This PR is a draft. Review will still be dispatched.&lt;/div&gt;</c>
+    /// in <c>PrDispatchDrawer.razor</c> when the selected PR has <c>IsDraft = true</c>.
+    /// </para>
+    /// </summary>
+    public async Task AssertDraftWarningVisibleAsync()
+    {
+        await _page.WaitForSelectorAsync(
+            ".settings-status.status-error",
+            new() { Timeout = 10_000 });
+        var warningText = await _page.TextContentAsync(".settings-status.status-error");
+        Assert.Contains("This PR is a draft", warningText, StringComparison.OrdinalIgnoreCase);
     }
 }

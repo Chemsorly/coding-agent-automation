@@ -50,7 +50,7 @@ public class KnowledgePageTests : BunitContext
         // All runs used the brain — no "without brain" group to compare against
         _mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(
                 MakeRun("r1", usedBrain: true),
                 MakeRun("r2", usedBrain: true)));
@@ -76,7 +76,7 @@ public class KnowledgePageTests : BunitContext
     {
         _mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(
                 MakeRun("r1", usedBrain: true),
                 MakeRun("r2", usedBrain: false)));
@@ -95,7 +95,7 @@ public class KnowledgePageTests : BunitContext
     {
         _mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", usedBrain: true)));
 
         var cut = Render<Knowledge>();
@@ -113,7 +113,7 @@ public class KnowledgePageTests : BunitContext
     {
         _mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", usedBrain: true)));
 
         var cut = Render<Knowledge>();
@@ -130,7 +130,7 @@ public class KnowledgePageTests : BunitContext
     {
         _mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", usedBrain: true)));
 
         var cut = Render<Knowledge>();

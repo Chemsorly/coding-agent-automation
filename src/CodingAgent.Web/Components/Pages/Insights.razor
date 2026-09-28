@@ -295,20 +295,16 @@
             // snapshot. Two separate UtcNow reads could straddle an hour boundary under slow I/O and
             // shift every bucket label by a full hour.
             var now = DateTimeOffset.UtcNow;
-
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: PageSize, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
             var windowStart = WindowStart(_recentWindowHours, now);
-            var items = runs.Items.Where(r => r.StartedAtOffset >= windowStart).ToList();
 
-            // Only flag truncation when the fetch cap may have excluded in-window runs: there are older
-            // pages AND the oldest fetched run still falls inside the window. Known limit (#3077): the
-            // figures come from this one page, so exact whole-window numbers need a server-side filter.
-            _isTruncated = runs.HasMore && runs.Items.Count > 0 &&
-                runs.Items.Min(r => r.StartedAtOffset) >= windowStart;
+            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: PageSize, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, since: _recentWindowHours == 0 ? null : windowStart, ct: _cts.Token);
+            var items = runs.Items.ToList();
+
+            // HasMore is now accurate: the server filtered StartedAt >= since before pagination,
+            // so HasMore = true means there are genuinely more in-window runs than PageSize.
+            _isTruncated = runs.HasMore;
 
             _total = items.Count;
-            // Known limit (#3077): runs started in the current hour count here, but the hourly chart
-            // ends at the start of the current hour, so they appear in no bar.
             if (_total > 0)
                 Aggregate(items, now);
         }

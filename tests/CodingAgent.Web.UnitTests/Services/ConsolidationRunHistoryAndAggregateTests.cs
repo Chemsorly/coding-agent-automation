@@ -17,8 +17,18 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
+        if (!Directory.Exists(_tempDir))
+            return;
+        try
+        {
             Directory.Delete(_tempDir, recursive: true);
+        }
+        catch (IOException)
+        {
+            // Ignore: async file handles from PipelineRunHistoryService may still be open
+            // when Dispose runs synchronously. Temp directory cleanup failure is not a
+            // correctness issue.
+        }
     }
 
     /// <summary>
