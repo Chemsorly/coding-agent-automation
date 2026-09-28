@@ -10,7 +10,7 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// <summary>
 /// bUnit component tests for <see cref="FirstRunBanner"/>.
 /// Verifies the show/hide logic:
-///   show = noEnabledTemplates AND route != "/settings" AND (notDismissed OR noEnabledTemplates)
+///   show = noEnabledTemplates AND route != "/pipelines" AND route != "/agent-coding" AND (notDismissed OR noEnabledTemplates)
 /// </summary>
 public class FirstRunBannerComponentTests : BunitContext
 {
@@ -60,14 +60,66 @@ public class FirstRunBannerComponentTests : BunitContext
     }
 
     [Fact]
-    public void Banner_IsHidden_WhenRouteIsSettings_EvenWithNoTemplates()
+    public void Banner_IsHidden_WhenRouteIsPipelines_EvenWithNoTemplates()
     {
-        // Arrange: no enabled templates but on /settings
+        // Arrange: no enabled templates but already on /pipelines (the destination page)
+        SetCurrentUrl("http://localhost/pipelines");
+
+        var cut = Render<FirstRunBanner>();
+
+        // Banner must be suppressed so it doesn't tell users to go where they already are
+        Assert.DoesNotContain("No job templates configured", cut.Markup);
+    }
+
+    [Fact]
+    public void Banner_IsHidden_WhenRouteIsAgentCoding_EvenWithNoTemplates()
+    {
+        // Arrange: no enabled templates but on /agent-coding (the legacy alias for /pipelines)
+        SetCurrentUrl("http://localhost/agent-coding");
+
+        var cut = Render<FirstRunBanner>();
+
+        // Banner must be suppressed for the alias route too
+        Assert.DoesNotContain("No job templates configured", cut.Markup);
+    }
+
+    [Fact]
+    public void Banner_IsVisible_WhenRouteIsSettings_AfterFix()
+    {
+        // After the fix, /settings no longer suppresses the banner.
+        // The banner destination changed from /settings to /pipelines, so /settings should
+        // show the banner (the user still needs to navigate to /pipelines).
         SetCurrentUrl("http://localhost/settings");
 
         var cut = Render<FirstRunBanner>();
 
-        Assert.DoesNotContain("No job templates configured", cut.Markup);
+        Assert.Contains("No job templates configured", cut.Markup);
+    }
+
+    [Fact]
+    public void Banner_Link_PointsToPipelinesPage()
+    {
+        // Arrange: banner is visible (no templates, not dismissed, home route)
+        SetCurrentUrl("http://localhost/");
+
+        var cut = Render<FirstRunBanner>();
+
+        // Assert: the link inside the banner points to "pipelines" (relative, no leading /)
+        var link = cut.Find(".first-run-banner a");
+        Assert.Equal("pipelines", link.GetAttribute("href"));
+    }
+
+    [Fact]
+    public void Banner_LinkText_NamesPipelinesPage()
+    {
+        // Arrange: banner is visible
+        SetCurrentUrl("http://localhost/");
+
+        var cut = Render<FirstRunBanner>();
+
+        // Assert: link text refers to "Pipelines" (not the old "Settings → Job Templates")
+        var link = cut.Find(".first-run-banner a");
+        Assert.Contains("Pipelines", link.TextContent, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -86,7 +138,15 @@ public class FirstRunBannerComponentTests : BunitContext
 
         Assert.DoesNotContain("No job templates configured", cut.Markup);
 
-        // Dismiss button click should have called SetKeyValueAsync
+        // TODO [WARNING]: This test covers dismissed=true AND templates=true. The banner being
+        // hidden here is entirely explained by templates=true alone (already covered by
+        // Banner_IsHidden_WhenEnabledTemplatesExist). This case adds no additional signal about
+        // dismissal behaviour. Consider replacing or augmenting with dismissed=true AND
+        // templates=false to specifically verify the dismiss flag's effect when templates is
+        // not independently hiding the banner (that path is covered by
+        // Banner_StaysVisible_WhenDismissed_ButNoTemplates_BecauseNoTemplatesOverridesDismissal,
+        // but an explicit "dismissed=true hides when templates exist" vs
+        // "dismissed=true has no effect when templates absent" contrast would clarify the logic).
         await Task.CompletedTask; // satisfy async signature
     }
 
