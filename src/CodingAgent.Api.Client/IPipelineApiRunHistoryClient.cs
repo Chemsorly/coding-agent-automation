@@ -9,7 +9,8 @@ public interface IPipelineApiRunHistoryClient
 {
     /// <param name="finalStep">Optional outcome filter (e.g. <see cref="PipelineStep.Failed"/>); null returns all outcomes. Applied DB-side by the API so pagination stays correct.</param>
     /// <param name="projectId">Optional project scope; null returns all projects. Applied DB-side by the API.</param>
-    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page = 1, int pageSize = 50, bool feedbackOnly = false, bool includeActive = false, PipelineStep? finalStep = null, string? projectId = null, CancellationToken ct = default);
+    /// <param name="since">Optional start-date filter; when set, only runs with StartedAt &gt;= this value are returned. Applied DB-side. Pass null for no date filter ("All" window).</param>
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page = 1, int pageSize = 50, bool feedbackOnly = false, bool includeActive = false, PipelineStep? finalStep = null, string? projectId = null, DateTimeOffset? since = null, CancellationToken ct = default);
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 
     /// <summary>

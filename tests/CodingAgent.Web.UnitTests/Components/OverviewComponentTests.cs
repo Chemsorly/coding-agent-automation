@@ -56,7 +56,7 @@ public class OverviewComponentTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
         return mock;
     }
@@ -201,7 +201,7 @@ public class OverviewComponentTests : BunitContext
         var mockHistory = new Mock<IPipelineApiRunHistoryClient>();
         mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = runs,
@@ -260,7 +260,7 @@ public class OverviewComponentTests : BunitContext
         var mockHistory = new Mock<IPipelineApiRunHistoryClient>();
         mockHistory.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = runs,
@@ -348,7 +348,7 @@ public class OverviewComponentTests : BunitContext
         var mock = new Mock<IPipelineApiRunHistoryClient>();
         mock.Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs, Page = 1, PageSize = 100, HasMore = false });
         return mock;
     }
