@@ -219,6 +219,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             if (additionalRepoProviders is { Count: > 0 })
                 stepContext.AdditionalRepoProviders = additionalRepoProviders;
 
+            // Store provider type on run so BuildPayloadBase can include it in the completion payload.
+            run.AgentProviderType = agentProvider.ProviderType;
+
             // Build step pipeline based on run type
             var steps = run.RunType switch
             {
@@ -335,7 +338,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         TotalTokens = run.TotalTokens,
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel,
-        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
+        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION"),
+        PhaseBreakdown = run.Metrics.PhaseBreakdown.Count > 0
+            ? run.Metrics.PhaseBreakdown.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+            : null,
+        ProviderType = run.AgentProviderType
     };
 
     /// <summary>

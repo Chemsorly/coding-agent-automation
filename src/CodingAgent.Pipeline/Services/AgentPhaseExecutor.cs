@@ -115,13 +115,14 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                     Timeout = request.Config.AgentTimeout,
                     UseResume = resumeSessionId is null,
                     ResumeSessionId = resumeSessionId,
-                    EnvironmentVariables = request.EnvironmentVariables
+                    EnvironmentVariables = request.EnvironmentVariables,
+                    Phase = request.Phase
                 },
                 request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
                 line => callbacks.EmitOutputLine(line),
                 stallMetrics: request.StallMetrics);
 
-            request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
+            request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase, agentSeconds: agentResult.AgentSeconds);
 
             if (recordOutputToHistory)
             {
@@ -175,13 +176,14 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 WorkspacePath = request.Run.WorkspacePath!,
                 Timeout = request.Config.AgentTimeout,
                 UseResume = false,
-                EnvironmentVariables = request.EnvironmentVariables
+                EnvironmentVariables = request.EnvironmentVariables,
+                Phase = request.Phase
             },
             request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
             request.OnOutputLine,
             stallMetrics: request.StallMetrics);
 
-        request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
+        request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase, agentSeconds: agentResult.AgentSeconds);
         return agentResult;
     }
 

@@ -1,4 +1,5 @@
 using MessagePack;
+using CodingAgent.Pipeline.Interfaces;
 
 namespace CodingAgent.Pipeline.Models;
 
@@ -365,6 +366,22 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(26)]
     public string? BranchName { get; init; }
+
+    /// <summary>
+    /// Per-phase token/cost/session/time breakdown accumulated during the run.
+    /// Null when no agent invocations produced usage data (e.g. early failures, Kiro runs without usage data).
+    /// Keys are raw phase strings (e.g. "analysis", "codegen", "review_Correctness");
+    /// normalization to the closed tag set is applied by the API when recording metrics.
+    /// </summary>
+    [Key(27)]
+    public IReadOnlyDictionary<string, PhaseUsage>? PhaseBreakdown { get; init; }
+
+    /// <summary>
+    /// Agent provider type that executed this run. Used as the <c>provider</c> tag on
+    /// <c>pipeline.run.*</c> metrics. Null for runs from older agent pods that do not set this field.
+    /// </summary>
+    [Key(28)]
+    public AgentProviderType? ProviderType { get; init; }
 }
 
 /// <summary>

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Threading;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Services;
 
 namespace CodingAgent.Pipeline.Models;
@@ -379,6 +380,13 @@ public sealed partial class PipelineRun
     /// Null for non-decomposition runs.
     /// </summary>
     public string? DecompositionSource { get; init; }
+
+    /// <summary>
+    /// Provider type of the agent executing this run (kiro or opencode).
+    /// Set in LocalPipelineExecutor.ExecutePipelineStepsAsync after provider resolution
+    /// so that BuildPayloadBase can include it in the completion payload.
+    /// </summary>
+    public AgentProviderType? AgentProviderType { get; set; }
 
     /// <summary>Agent Profile Id that was resolved at dispatch time.</summary>
     public string? ResolvedProfileId { get; set; }

@@ -257,6 +257,8 @@ public sealed partial class WorkItemStatusTransitionService
 
             RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
 
+            RecordPhaseUsageMetrics(runTypeTag, payload);
+
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
                 failureReason);
@@ -453,6 +455,69 @@ public sealed partial class WorkItemStatusTransitionService
             ? PascalToSnakeCaseTag(failureReason.Value.ToString())
             : "none";
         return ("failed", tag);
+    }
+
+    /// <summary>
+    /// Records pipeline.run.tokens, pipeline.run.cost_usd, pipeline.run.agent_sessions, and
+    /// pipeline.run.agent_time from the per-phase breakdown in the completion payload.
+    /// Each phase entry in the breakdown produces one Add() call per counter.
+    /// Phase keys are normalized to the closed set before tagging.
+    /// </summary>
+    private static void RecordPhaseUsageMetrics(string runTypeTag, JobCompletionPayload? payload)
+    {
+        if (payload?.PhaseBreakdown is not { Count: > 0 }) return;
+
+        // Provider tag: map enum to the canonical tag value that matches the pre-initialized series.
+        // "kiro" and "opencode" must match the strings in Program.EmitPreInitCounters providers[].
+        var providerTag = payload.ProviderType switch
+        {
+            AgentProviderType.KiroCli => "kiro",
+            AgentProviderType.OpenCode => "opencode",
+            _ => UnknownTag  // null or future enum values → "unknown"
+        };
+
+        foreach (var (rawPhase, usage) in payload.PhaseBreakdown)
+        {
+            var phase = PipelineTelemetry.NormalizePhase(rawPhase);
+
+            if (usage.Tokens > 0)
+            {
+                PipelineTelemetry.RunTokens.Add(usage.Tokens,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", providerTag));
+            }
+
+            if (usage.Cost is { } cost and > 0m)
+            {
+                PipelineTelemetry.RunCostUsd.Add((double)cost,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", providerTag));
+            }
+
+            if (usage.Sessions > 0)
+            {
+                // TODO: [WARNING] The model tag is always "unknown" because the model name is not
+                // threaded from the agent pod into PhaseUsage/JobCompletionPayload. To populate a
+                // real model value here, PhaseUsage would need a per-phase model field and AgentStallMonitor
+                // would need to write agentProvider.Model into it. Until then, the model dimension on
+                // pipeline.run.agent_sessions provides no discriminative value.
+                PipelineTelemetry.RunAgentSessions.Add(usage.Sessions,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", providerTag),
+                    new KeyValuePair<string, object?>("model", "unknown"));
+            }
+
+            if (usage.AgentSeconds > 0.0)
+            {
+                PipelineTelemetry.RunAgentTime.Add(usage.AgentSeconds,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", providerTag));
+            }
+        }
     }
 
     /// <summary>

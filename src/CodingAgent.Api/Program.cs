@@ -260,6 +260,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
         string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
         string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
         string[] terminalStatuses = ["Succeeded", "Failed", "Cancelled"];
+        string[] providers = ["kiro", "opencode"];
 
         // pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7)
         foreach (var runType in runTypes)
@@ -300,6 +301,36 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
                     new KeyValuePair<string, object?>("status", status),
                     new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
+            }
+        }
+
+        // pipeline.run.tokens, pipeline.run.cost_usd, pipeline.run.agent_sessions, pipeline.run.agent_time:
+        // 5 run_types × 9 phases × 2 providers = 90 series per counter (model excluded from pre-init).
+        foreach (var runType in runTypes)
+        {
+            foreach (var phase in PipelineTelemetry.RunPhases.All)
+            {
+                foreach (var provider in providers)
+                {
+                    PipelineTelemetry.RunTokens.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider));
+
+                    PipelineTelemetry.RunCostUsd.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider));
+
+                    PipelineTelemetry.RunAgentTime.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider));
+
+                    // pipeline.run.agent_sessions is NOT pre-initialized because it carries a model tag
+                    // (unbounded cardinality). Only the 3-tag dimensions (run_type, phase, provider) are
+                    // pre-initialized for the other three counters.
+                }
             }
         }
     }

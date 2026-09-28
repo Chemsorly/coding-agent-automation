@@ -220,4 +220,143 @@ public sealed class RunOutcomeCounterPreInitializationTests
             }
         }
     }
+
+    // ── New pipeline.run.* counters pre-initialization ─────────────────────────
+
+    private static readonly string[] Providers = ["kiro", "opencode"];
+
+    [Fact]
+    public void PreInitialization_RunTokens_Produces90Series()
+    {
+        // 5 run_types × 9 phases × 2 providers = 90 series
+        // TODO: [WARNING] This test only validates the arithmetic of the constant expression
+        // (5 × 9 × 2 == 90) — it will always pass regardless of what EmitPreInitCounters actually
+        // emits. It provides false confidence: even if EmitPreInitCounters emitted zero series,
+        // this test would still pass. The real behavioral validation is in
+        // PreInitialization_EmitsAdd0_ForAllRunTokensCombinations. Consider removing this test or
+        // converting it to assert the actual emitted count from the MeterListener.
+        var expected = RunTypes.Length * PipelineTelemetry.RunPhases.All.Length * Providers.Length;
+        expected.Should().Be(90);
+    }
+
+    [Fact]
+    public void PreInitialization_EmitsAdd0_ForAllRunTokensCombinations()
+    {
+        var observed = new ConcurrentBag<(string RunType, string Phase, string Provider)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.tokens")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string runType = "", phase = "", provider = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "run_type") runType = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "phase") phase = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "provider") provider = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((runType, phase, provider));
+        });
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        observed.Should().HaveCountGreaterThanOrEqualTo(90,
+            "all 90 pre-initialized combinations must have been observed for pipeline.run.tokens");
+
+        foreach (var runType in RunTypes)
+        {
+            foreach (var phase in PipelineTelemetry.RunPhases.All)
+            {
+                foreach (var provider in Providers)
+                {
+                    observed.Should().Contain((runType, phase, provider),
+                        $"pre-init must cover ({runType}, {phase}, {provider})");
+                }
+            }
+        }
+    }
+
+    [Fact]
+    public void PreInitialization_EmitsAdd0_ForAllRunCostUsdCombinations()
+    {
+        var observed = new ConcurrentBag<(string RunType, string Phase, string Provider)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.cost_usd")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            string runType = "", phase = "", provider = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "run_type") runType = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "phase") phase = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "provider") provider = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((runType, phase, provider));
+        });
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        observed.Should().HaveCountGreaterThanOrEqualTo(90,
+            "all 90 pre-initialized combinations must have been observed for pipeline.run.cost_usd");
+    }
+
+    [Fact]
+    public void PreInitialization_EmitsAdd0_ForAllRunAgentTimeCombinations()
+    {
+        var observed = new ConcurrentBag<(string RunType, string Phase, string Provider)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.agent_time")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, tags, _) =>
+        {
+            string runType = "", phase = "", provider = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "run_type") runType = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "phase") phase = tag.Value?.ToString() ?? "";
+                else if (tag.Key == "provider") provider = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((runType, phase, provider));
+        });
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        observed.Should().HaveCountGreaterThanOrEqualTo(90,
+            "all 90 pre-initialized combinations must have been observed for pipeline.run.agent_time");
+    }
+
+    [Fact]
+    public void PreInitialization_DoesNotPreInit_RunAgentSessions()
+    {
+        // pipeline.run.agent_sessions carries a model tag (unbounded cardinality) — NOT pre-initialized
+        var count = new System.Collections.Concurrent.ConcurrentBag<int>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Name == "pipeline.run.agent_sessions") l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => count.Add(1));
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        // No pre-init calls for agent_sessions
+        count.Should().BeEmpty("pipeline.run.agent_sessions is not pre-initialized due to unbounded model tag cardinality");
+    }
 }

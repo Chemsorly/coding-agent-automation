@@ -20,4 +20,12 @@ public sealed class AgentRequest
     /// Null or empty means the child inherits the parent environment unchanged.
     /// </summary>
     public IReadOnlyDictionary<string, string>? EnvironmentVariables { get; init; }
+
+    /// <summary>
+    /// Pipeline phase key for this invocation (e.g. "analysis", "codegen", "review_Correctness").
+    /// Used by <see cref="CodingAgent.Pipeline.Services.AgentStallMonitor"/> to set the
+    /// <c>pipeline.phase</c> tag on the <c>invoke_agent</c> span.
+    /// Null when called outside a named pipeline phase (e.g. session warm-up, chat).
+    /// </summary>
+    public string? Phase { get; init; }
 }

@@ -44,6 +44,10 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 |--------|------|------|------|-------------|
 | `pipeline.run.outcomes` | Counter | `{run}` | `run_type`, `outcome`, `failure_reason`, `pipeline.project_name` | Terminal pipeline run outcomes — recorded exactly once per transition by the API (`WorkItemStatusTransitionService`). Pre-initialized at process start for all closed-tag combinations (excluding `pipeline.project_name`, which has unbounded cardinality). |
 | `pipeline.run.duration` | Histogram | seconds | `run_type`, `outcome` | Total duration of a pipeline run from dispatch to terminal status |
+| `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider` | Agent tokens consumed per pipeline run, per phase, per provider. Recorded at terminal time by the API from the per-phase breakdown in `JobCompletionPayload`. Pre-initialized at process start for all 5×9×2 = 90 closed-dimension combinations. |
+| `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost in USD per pipeline run, per phase, per provider. Recorded at terminal time. Pre-initialized at process start. |
+| `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per pipeline run, per phase, per provider. NOT pre-initialized (unbounded `model` tag). |
+| `pipeline.run.agent_time` | Counter | `s` | `run_type`, `phase`, `provider` | Total agent wall-clock execution time per pipeline run, per phase, per provider. Pre-initialized at process start. |
 | `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
 | `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
 | `pipeline.loop.dispatch_decisions` | Counter | — | `decision` | Incremented for each dispatch decision made by the loop |
@@ -57,8 +61,6 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
 | `pipeline.step.duration` | Histogram | seconds | `step_name`, `run_type`, `pipeline.project_id`, `pipeline.project_name` | Duration of individual pipeline steps |
 | `pipeline.step.count` | Counter | — | `step_name`, `run_type`, `pipeline.project_id`, `pipeline.project_name` | Pipeline step execution count |
-| `agent.tokens.used` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Agent tokens consumed |
-| `agent.cost.usd` | Counter | USD | `run_type`, `pipeline.project_id`, `pipeline.project_name` | LLM cost in USD |
 | `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
 | `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
@@ -108,6 +110,8 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
 | `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
 | `phase` | `qgc_retry_agent`, `codegen`, `analysis`, `code_review`, `decomposition`, `unknown` | Pipeline phase — only present on `quality_gate.stall.*` metrics |
+| `phase` (pipeline.run.*) | `analysis`, `analysis_review`, `codegen`, `review`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | Normalized pipeline phase for `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_sessions`, `pipeline.run.agent_time`. Raw phase keys (e.g. `review_Correctness`) are normalized by `PipelineTelemetry.NormalizePhase()`. |
+| `provider` | `kiro`, `opencode`, `unknown` | Agent provider type — only present on `pipeline.run.*` metrics. `unknown` for runs from older agent pods that do not include `ProviderType` in `JobCompletionPayload`. |
 | `qgc_name` | QGC display name | Quality gate config name — only present on `quality_gate.process.*` metrics |
 
 #### Outcome mapping
@@ -138,10 +142,16 @@ All counters with closed tag sets are pre-initialized to `0` at API process star
 - Histograms (`pipeline.run.duration`, `workdistribution.job_execution_duration_seconds`) cannot be pre-initialized and are left as-is.
 - `pipeline.run.outcomes` is pre-initialized with **75 series** (3-tag): 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
 - `workdistribution.workitems_terminated` is pre-initialized with **24 series**: 3 statuses × (1 none + 7 failure_reasons).
+- `pipeline.run.tokens`, `pipeline.run.cost_usd`, and `pipeline.run.agent_time` are pre-initialized with **90 series each** (3-tag): 5 run_types × 9 phases × 2 providers (kiro, opencode).
+- `pipeline.run.agent_sessions` is **NOT pre-initialized** because it carries an additional `model` tag (unbounded cardinality).
 
 ### Prompt Cache and Per-Phase Token Data
 
-Each `PipelineRun` accumulates token and cost data beyond the simple totals exposed by `agent.tokens.used` and `agent.cost.usd`. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
+Each `PipelineRun` accumulates token and cost data beyond the simple totals. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
+
+#### Kiro CLI Usage
+
+**As of 2026-09, Kiro CLI does not report token or cost data in its stdout, stderr, or any accessible session file.** The `KiroCliAgentProvider` always produces `AgentResult.Usage = null`. Consequently, `pipeline.run.tokens` and `pipeline.run.cost_usd` will show 0 for all phases on Kiro runs, and `pipeline.run.agent_sessions` and `pipeline.run.agent_time` will also show 0 because `AccumulateTokenUsage` returns early when `Usage` is null, before writing session count or agent seconds into `PhaseBreakdown` (see `PipelineRunExtensions.AccumulateTokenUsage`). This section will be updated when Kiro CLI exposes usage data, at which point the session/time accumulation should also be decoupled from the Usage null guard.
 
 #### Cache Token Fields
 
@@ -201,6 +211,8 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 | Exact job counts (alerts) | `workdistribution_workitems_terminated_total` (exact, pre-initialized) |
 
 **Breaking change in issue #2967:** `workdistribution_workitems_terminated_total{failure_reason=...}` values changed from PascalCase (e.g. `"Timeout"`) to snake_case (e.g. `"timeout"`). Update any Grafana panels or alert rules that filter on `failure_reason` labels.
+
+**Breaking change in issue #2978:** `agent_tokens_used_total` and `agent_cost_usd_total` have been removed. Replace them with `pipeline_run_tokens_total` and `pipeline_run_cost_usd_total` respectively. Note that the new counters carry `phase` and `provider` tags in addition to `run_type`, and are recorded at terminal time by the API (not at accumulation time in the agent pod). Grafana dashboards or alerts using the old metric names will stop receiving data after deploying this change.
 
 ### Work Distribution Metrics
 
@@ -279,6 +291,7 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
 | `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
+| `invoke_agent {phase}` | `gen_ai.operation.name`, `gen_ai.provider.name`, `gen_ai.request.model`†, `pipeline.phase`, `agent.session.resumed`, `agent.exit_code`, `gen_ai.usage.input_tokens`†, `gen_ai.usage.output_tokens`† | Per-agent-CLI-invocation span, created by `AgentStallMonitor.ExecuteWithMonitoringAsync`. Phase is the raw phase key (e.g. `invoke_agent analysis`, `invoke_agent codegen`). Stall warnings and kills appear as span events (`agent.stall_warning`, `agent.stall_kill`). † = only set when available. |
 | `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
 | `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
 | `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |

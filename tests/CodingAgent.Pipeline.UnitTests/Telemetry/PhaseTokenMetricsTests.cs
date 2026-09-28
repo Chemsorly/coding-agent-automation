@@ -7,8 +7,10 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Pipeline.UnitTests.Telemetry;
 
 /// <summary>
-/// Tests verifying that AccumulateTokenUsage emits a phase tag when provided,
+/// Tests verifying that AccumulateTokenUsage correctly updates PhaseBreakdown and run totals,
 /// and that the analysis gate outcome counter emits correctly.
+/// Note: agent.tokens.used and agent.cost.usd counters have been removed (issue #2978).
+/// Token/cost metrics are now emitted at terminal time by the API (pipeline.run.tokens, etc.).
 /// </summary>
 public class PhaseTokenMetricsTests : IDisposable
 {
@@ -42,8 +44,10 @@ public class PhaseTokenMetricsTests : IDisposable
     // ── Phase-tagged token metrics ──
 
     [Fact]
-    public void AccumulateTokenUsage_WithPhase_EmitsPhaseTag()
+    public void AccumulateTokenUsage_WithPhase_UpdatesPhaseBreakdown()
     {
+        // agent.tokens.used counter removed — AccumulateTokenUsage now updates PhaseBreakdown
+        // without emitting a counter. The API emits pipeline.run.tokens at terminal time.
         var run = CreateRun("phase-tag-test");
         var result = new AgentResult
         {
@@ -54,16 +58,15 @@ public class PhaseTokenMetricsTests : IDisposable
 
         run.AccumulateTokenUsage(result, phase: "codegen");
 
-        var counter = _counters.Should().Contain(c => c.Name == "agent.tokens.used"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "phase-tag-test"))
-            && c.Tags.Contains(new KeyValuePair<string, object?>("phase", "codegen")))
-            .Which;
-        counter.Value.Should().Be(300);
+        run.TotalTokens.Should().Be(300);
+        run.Metrics.PhaseBreakdown.Should().ContainKey("codegen");
+        run.Metrics.PhaseBreakdown["codegen"].Tokens.Should().Be(300);
     }
 
     [Fact]
-    public void AccumulateTokenUsage_WithPhase_CostAlsoGetsPhaseTag()
+    public void AccumulateTokenUsage_WithPhase_CostUpdatesPhaseBreakdown()
     {
+        // agent.cost.usd counter removed — cost now updates PhaseBreakdown and run.TotalCost.
         var run = CreateRun("phase-cost-test");
         var result = new AgentResult
         {
@@ -75,13 +78,13 @@ public class PhaseTokenMetricsTests : IDisposable
 
         run.AccumulateTokenUsage(result, phase: "analysis");
 
-        _doubles.Should().Contain(h => h.Name == "agent.cost.usd"
-            && h.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "phase-cost-test"))
-            && h.Tags.Contains(new KeyValuePair<string, object?>("phase", "analysis")));
+        run.TotalCost.Should().Be(0.03m);
+        run.Metrics.PhaseBreakdown.Should().ContainKey("analysis");
+        run.Metrics.PhaseBreakdown["analysis"].Cost.Should().Be(0.03m);
     }
 
     [Fact]
-    public void AccumulateTokenUsage_WithoutPhase_DoesNotEmitPhaseTag()
+    public void AccumulateTokenUsage_WithoutPhase_DoesNotUpdatePhaseBreakdown()
     {
         var run = CreateRun("no-phase-test");
         var result = new AgentResult
@@ -93,10 +96,8 @@ public class PhaseTokenMetricsTests : IDisposable
 
         run.AccumulateTokenUsage(result);
 
-        var counter = _counters.Should().Contain(c => c.Name == "agent.tokens.used"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "no-phase-test")))
-            .Which;
-        counter.Tags.Should().NotContain(t => t.Key == "phase");
+        run.TotalTokens.Should().Be(75);
+        run.Metrics.PhaseBreakdown.Should().BeEmpty();
     }
 
     // ── Analysis gate outcome counter ──

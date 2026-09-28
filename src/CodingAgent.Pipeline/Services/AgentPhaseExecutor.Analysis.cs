@@ -234,12 +234,13 @@ public partial class AgentPhaseExecutor
                 ImagePaths = context.Config.EnableNativeImageParts
                     ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
                     : null,
-                EnvironmentVariables = context.InjectedSecrets
+                EnvironmentVariables = context.InjectedSecrets,
+                Phase = "analysis"
             },
             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine(line));
 
-        run.AccumulateTokenUsage(analysisResult, phase: "analysis");
+        run.AccumulateTokenUsage(analysisResult, phase: "analysis", agentSeconds: analysisResult.AgentSeconds);
 
         _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
             run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
@@ -321,6 +322,17 @@ public partial class AgentPhaseExecutor
             line => context.Callbacks.EmitOutputLine(line),
             _logger,
             ct);
+
+        // Accumulate analysis_review token usage into PhaseBreakdown.
+        // AdversarialReviewHelper bypasses AgentStallMonitor so AgentSeconds is not available here;
+        // both usages accumulate with Sessions=0 (adversarial review counts are not tracked per-session).
+        // TODO: [WARNING] The analysis_review phase will never have Sessions > 0 or AgentSeconds > 0
+        // in the PhaseBreakdown, so pipeline.run.agent_sessions and pipeline.run.agent_time will show 0
+        // for this phase on all runs. The two agent invocations behind adversarial review are real sessions
+        // with real wall-clock cost that go uncounted. To fix, AdversarialReviewHelper would need to pass
+        // timing data back via AdversarialReviewResult and use AccumulateTokenUsage(AgentResult, ...).
+        run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: "analysis_review");
+        run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: "analysis_review");
 
         if (!reviewResult.RefinementTriggered) return currentAssessment;
 

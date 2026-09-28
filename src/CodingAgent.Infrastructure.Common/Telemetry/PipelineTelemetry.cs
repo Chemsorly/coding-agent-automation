@@ -63,10 +63,38 @@ public static class PipelineTelemetry
         });
     public static readonly Counter<long> StepCount = Meter.CreateCounter<long>(
         "pipeline.step.count", "{step}", "Pipeline step execution count");
-    public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
-        "agent.tokens.used", "{token}", "Agent tokens consumed");
-    public static readonly Counter<double> CostUsd = Meter.CreateCounter<double>(
-        "agent.cost.usd", "USD", "LLM cost in USD");
+
+    /// <summary>
+    /// Counter: tokens consumed per pipeline run, per phase, per provider.
+    /// Recorded at terminal time by the API from the per-phase breakdown in <see cref="JobCompletionPayload"/>.
+    /// Tags: <c>run_type</c>, <c>phase</c> (closed set, normalized), <c>provider</c> (kiro | opencode | unknown).
+    /// Pre-initialized at process start for all 5×9×2 = 90 closed-dimension combinations.
+    /// </summary>
+    public static readonly Counter<long> RunTokens = Meter.CreateCounter<long>(
+        "pipeline.run.tokens", "{token}", "Agent tokens consumed per pipeline run, phase, and provider");
+
+    /// <summary>
+    /// Counter: LLM cost (USD) per pipeline run, per phase, per provider.
+    /// Tags: <c>run_type</c>, <c>phase</c>, <c>provider</c>.
+    /// Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<double> RunCostUsd = Meter.CreateCounter<double>(
+        "pipeline.run.cost_usd", "{usd}", "LLM cost in USD per pipeline run, phase, and provider");
+
+    /// <summary>
+    /// Counter: agent CLI sessions (individual invocations) per pipeline run, per phase, per provider.
+    /// Tags: <c>run_type</c>, <c>phase</c>, <c>provider</c>, <c>model</c> (excluded from pre-init).
+    /// </summary>
+    public static readonly Counter<long> RunAgentSessions = Meter.CreateCounter<long>(
+        "pipeline.run.agent_sessions", "{session}", "Agent CLI invocations per pipeline run, phase, and provider");
+
+    /// <summary>
+    /// Counter: total agent wall-clock time in seconds per pipeline run, per phase, per provider.
+    /// Tags: <c>run_type</c>, <c>phase</c>, <c>provider</c>.
+    /// Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<double> RunAgentTime = Meter.CreateCounter<double>(
+        "pipeline.run.agent_time", "s", "Agent wall-clock execution time per pipeline run, phase, and provider");
 
     public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
         "quality_gate.retries", UnitRetry, "Quality gate retry attempts");
@@ -403,6 +431,68 @@ public static class PipelineTelemetry
             return StallPhases.Decomposition;
 
         return StallPhases.Unknown;
+    }
+
+    /// <summary>
+    /// Closed-set phase tag values for the <c>pipeline.run.*</c> metrics.
+    /// Raw phase keys from <see cref="PipelineRunExtensions.AccumulateTokenUsage"/> are normalized
+    /// to this set via <see cref="NormalizePhase"/> before being emitted as metric tags.
+    /// </summary>
+    public static class RunPhases
+    {
+        public const string Analysis = "analysis";
+        public const string AnalysisReview = "analysis_review";
+        public const string CodeGen = "codegen";
+        public const string Review = "review";
+        public const string AcceptanceCriteria = "acceptance_criteria";
+        public const string PrDescription = "pr_description";
+        public const string Reflection = "reflection";
+        public const string Decomposition = "decomposition";
+        public const string Other = "other";
+
+        /// <summary>All normalized phase values in a fixed array. Used for pre-initialization.</summary>
+        public static readonly string[] All =
+        [
+            Analysis, AnalysisReview, CodeGen, Review, AcceptanceCriteria,
+            PrDescription, Reflection, Decomposition, Other
+        ];
+    }
+
+    /// <summary>
+    /// Normalizes a raw phase key (as recorded by <see cref="PipelineRunExtensions.AccumulateTokenUsage"/>)
+    /// to a closed-set value safe for use as a metric tag. Prevents unbounded cardinality on
+    /// <c>pipeline.run.*</c> counters.
+    ///
+    /// Mapping:
+    /// - <c>"analysis"</c> → <c>"analysis"</c>
+    /// - <c>"analysis_review"</c> → <c>"analysis_review"</c>
+    /// - <c>"codegen"</c> → <c>"codegen"</c>
+    /// - <c>"review_{anything}"</c> or <c>"fix"</c> → <c>"review"</c>
+    /// - <c>"acceptance_criteria"</c> → <c>"acceptance_criteria"</c>
+    /// - <c>"pr_description"</c> → <c>"pr_description"</c>
+    /// - <c>"reflection"</c> → <c>"reflection"</c>
+    /// - <c>"decomposition"</c>, <c>"decomposition_analysis"</c>,
+    ///   <c>"decomposition_review"</c>, <c>"decomposition_refinement"</c> → <c>"decomposition"</c>
+    /// - anything else (including null) → <c>"other"</c>
+    /// </summary>
+    public static string NormalizePhase(string? phase)
+    {
+        if (string.IsNullOrEmpty(phase)) return RunPhases.Other;
+
+        return phase switch
+        {
+            "analysis" => RunPhases.Analysis,
+            "analysis_review" => RunPhases.AnalysisReview,
+            "codegen" => RunPhases.CodeGen,
+            "acceptance_criteria" => RunPhases.AcceptanceCriteria,
+            "pr_description" => RunPhases.PrDescription,
+            "reflection" => RunPhases.Reflection,
+            _ when phase == "fix" || phase.StartsWith("review_", StringComparison.Ordinal)
+                => RunPhases.Review,
+            _ when phase == "decomposition" || phase.StartsWith("decomposition_", StringComparison.Ordinal)
+                => RunPhases.Decomposition,
+            _ => RunPhases.Other
+        };
     }
 
     /// <summary>

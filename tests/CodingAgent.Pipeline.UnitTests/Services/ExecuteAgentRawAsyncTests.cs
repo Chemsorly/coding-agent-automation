@@ -76,8 +76,10 @@ public class ExecuteAgentRawAsyncTests
             },
             CancellationToken.None);
 
-        // Assert
-        result.Should().BeSameAs(agentResult);
+        // Assert — result is a new AgentResult with the same data (AgentStallMonitor wraps the original to add AgentSeconds)
+        result.ExitCode.Should().Be(agentResult.ExitCode);
+        result.OutputLines.Should().BeEquivalentTo(agentResult.OutputLines);
+        result.Usage.Should().Be(agentResult.Usage);
         _run.TotalTokens.Should().Be(150);
     }
 

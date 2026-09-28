@@ -45,12 +45,13 @@ public partial class AgentPhaseExecutor
                     ImagePaths = context.Config.EnableNativeImageParts
                         ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
                         : null,
-                    EnvironmentVariables = context.InjectedSecrets
+                    EnvironmentVariables = context.InjectedSecrets,
+                    Phase = "codegen"
                 },
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
                 line => context.Callbacks.EmitOutputLine(line));
 
-            run.AccumulateTokenUsage(agentResult, phase: "codegen");
+            run.AccumulateTokenUsage(agentResult, phase: "codegen", agentSeconds: agentResult.AgentSeconds);
 
             var outputSummary = agentResult.OutputLines.Count > 0
                 ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))

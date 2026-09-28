@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using MessagePack;
 using MessagePack.Resolvers;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Pipeline.UnitTests.Serialization;
@@ -109,7 +110,13 @@ public class HubMessageSerializationTests
             },
             TotalTokens = 125000,
             TotalCost = 2.47m,
-            FinalLabel = "agent:done"
+            FinalLabel = "agent:done",
+            PhaseBreakdown = new Dictionary<string, PhaseUsage>
+            {
+                ["analysis"] = new PhaseUsage(50000, 0.75m, Sessions: 1, AgentSeconds: 120.5),
+                ["codegen"] = new PhaseUsage(75000, 1.72m, Sessions: 2, AgentSeconds: 300.0)
+            },
+            ProviderType = AgentProviderType.KiroCli
         };
 
         var deserialized = RoundTrip(original);
@@ -132,6 +139,17 @@ public class HubMessageSerializationTests
         deserialized.TotalCost.Should().Be(2.47m);
         deserialized.FinalLabel.Should().Be("agent:done");
         deserialized.BranchName.Should().Be("feature/test-branch");
+
+        // PhaseBreakdown and ProviderType (Keys 27, 28)
+        deserialized.PhaseBreakdown.Should().NotBeNull();
+        deserialized.PhaseBreakdown!.Should().ContainKey("analysis");
+        deserialized.PhaseBreakdown["analysis"].Tokens.Should().Be(50000);
+        deserialized.PhaseBreakdown["analysis"].Cost.Should().Be(0.75m);
+        deserialized.PhaseBreakdown["analysis"].Sessions.Should().Be(1);
+        deserialized.PhaseBreakdown["analysis"].AgentSeconds.Should().BeApproximately(120.5, 0.001);
+        deserialized.PhaseBreakdown.Should().ContainKey("codegen");
+        deserialized.PhaseBreakdown["codegen"].Tokens.Should().Be(75000);
+        deserialized.ProviderType.Should().Be(AgentProviderType.KiroCli);
 
         // Collection properties
         deserialized.AnalysisConcerns.Should().BeEquivalentTo(new[] { "Thread safety concern", "Missing null check" });

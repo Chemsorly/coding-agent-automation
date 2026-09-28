@@ -37,4 +37,12 @@ public sealed class AgentResult
     /// The QG retry loop uses this to skip <c>RetryCount</c> increments on transient provider errors.
     /// </summary>
     public AgentErrorCategory ErrorCategory { get; init; } = AgentErrorCategory.None;
+
+    /// <summary>
+    /// Wall-clock time in seconds that the agent invocation took (as measured by
+    /// <see cref="CodingAgent.Pipeline.Services.AgentStallMonitor"/>).
+    /// Zero when not measured (direct <see cref="CodingAgent.Pipeline.Interfaces.IAgentProvider.ExecuteAsync"/>
+    /// calls that bypass the stall monitor, e.g. adversarial review).
+    /// </summary>
+    public double AgentSeconds { get; init; }
 }
