@@ -67,12 +67,27 @@ public sealed class AgentChatPage
     }
 
     /// <summary>
-    /// Waits for the launch error element (<c>.agent-detail-warning</c>) to appear.
-    /// Used by Scenario 3 (pod never connects) to assert the timeout error message is rendered.
+    /// Waits for the launch error element (<c>.agent-detail-warning</c>) to appear with an error
+    /// message (not the transient "Launching chat pod..." progress text).
+    ///
+    /// Both the launching-progress div and the error div share the <c>.agent-detail-warning</c>
+    /// CSS class. The progress div is visible immediately after clicking Launch (while
+    /// <c>_launching = true</c>), but is replaced by the error div once the launch fails
+    /// (<c>_launching = false</c>, <c>_launchError != null</c>). Waiting for the selector
+    /// alone would return immediately on the progress text rather than the error text.
+    /// This overload uses <c>WaitForFunctionAsync</c> to poll until the element is present
+    /// AND its text content does not start with "Launching" (i.e., the error message has replaced
+    /// the progress indicator).
     /// </summary>
     public async Task WaitForLaunchErrorAsync(int timeoutMs = 40_000)
     {
-        await _page.WaitForSelectorAsync(".agent-detail-warning", new() { Timeout = timeoutMs });
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const el = document.querySelector('.agent-detail-warning');
+                return el !== null && !el.textContent.includes('Launching chat pod');
+            }",
+            null,
+            new() { Timeout = timeoutMs });
     }
 
     /// <summary>Types a prompt and clicks Send.</summary>

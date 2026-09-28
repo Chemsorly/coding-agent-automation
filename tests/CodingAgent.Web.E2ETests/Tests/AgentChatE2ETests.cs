@@ -298,7 +298,14 @@ public sealed class AgentChatE2ETests : E2ETestBase
             // → hub sends CancelChat to the agent. Allow 15s for circuit teardown + hub delivery.
             await fakeAgent.CancelChatReceived.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-            // TerminateChatSessionAsync also cleans up the K8s job
+            // TerminateChatSessionAsync also cleans up the K8s job. However the deletion is
+            // asynchronous with respect to CancelChat: TerminateChatSessionAsync sends CancelChat
+            // first, then waits up to ChatTerminationGracePeriodSeconds (10s in the harness) for the
+            // watcher task to complete, then calls DeleteJobAsync. Poll until DeletedJobs contains the
+            // job name rather than asserting immediately after CancelChatReceived.
+            await WaitUntilAsync(
+                () => Fixture.K8sClient.DeletedJobs.Contains(jobName),
+                timeout: TimeSpan.FromSeconds(20));
             Assert.Contains(jobName, Fixture.K8sClient.DeletedJobs);
         }
     }
