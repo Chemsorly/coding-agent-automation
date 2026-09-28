@@ -868,18 +868,16 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         // state), the test silently treats it as a success. Capture and log (or assert) the HTTP
         // status after Task.WhenAll to make the race's observable outcome explicit.
         // (Reported by DotNetSpecialist.)
-        // TODO [WARNING]: WaitForWorkItemAsync uses a compound predicate (w.Id == workItemId &&
-        // w.Status == Failed|Cancelled). If the EF provider falls back to client evaluation, this
-        // degrades to a full-table scan, which may exhaust the 15-second timeout under load before
-        // the WorkItem is actually updated. Consider WaitForWorkItemStatusAsync (queries by id,
-        // checks status after retrieval) for a simpler, index-friendly query. Also: the 15-second
-        // timeout here is independent and starts fresh after WaitForHistoryAsync completes; a much
-        // shorter timeout (e.g. 5 seconds) would give a more informative diagnostic on pathological
-        // WorkItem write delays. (Reported by TestQualityReviewer.)
-        var workItem = await WaitForWorkItemAsync(
-            w => w.Id == workItemId &&
-                 (w.Status == WorkItemStatus.Failed || w.Status == WorkItemStatus.Cancelled),
-            timeout: TimeSpan.FromSeconds(15));
+        // TODO [WARNING]: WaitForWorkItemByIdUntilTerminalAsync queries by ID only and checks
+        // status in-memory, which avoids the EF Core untranslatable-predicate issue. The
+        // 15-second timeout is independent and starts fresh after WaitForHistoryAsync completes;
+        // a shorter timeout (e.g. 5 seconds) would give a more informative diagnostic on
+        // pathological WorkItem write delays. (Reported by TestQualityReviewer.)
+        // Use WaitForWorkItemStatusAsync-style polling (query by ID only, check status in-memory)
+        // to avoid EF Core's inability to translate a Func<> delegate predicate to SQL.
+        // The race winner is non-deterministic (Failed or Cancelled), so we check both statuses
+        // after retrieval rather than passing a compound predicate to FirstOrDefaultAsync.
+        var workItem = await WaitForWorkItemByIdUntilTerminalAsync(workItemId, timeout: TimeSpan.FromSeconds(15));
 
         var expectedFromStatus = workItem.Status switch
         {
