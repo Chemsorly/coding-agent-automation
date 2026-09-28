@@ -97,7 +97,7 @@ public sealed class DecompositionStep : IPipelineStep
                 {
                     Prompt = prompt,
                     WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.DecompositionTimeout,
+                    Timeout = config.AgentTimeout,
                     UseResume = true
                 },
                 run, config, "Decomposition agent", context.Callbacks.NotifyChange, logger, ct,

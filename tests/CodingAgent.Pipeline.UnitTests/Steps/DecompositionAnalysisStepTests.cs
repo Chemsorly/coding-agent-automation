@@ -314,7 +314,7 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
                 WorkspaceBaseDirectory = "/tmp",
                 MaxDecompositionSubIssues = maxSubIssues,
                 MaxDecompositionSubIssueFiles = maxFiles,
-                DecompositionTimeout = TimeSpan.FromMinutes(5)
+                AgentTimeout = TimeSpan.FromMinutes(5)
             },
             RepoProvider = Mock.Of<IRepositoryProvider>(),
             AgentProvider = _agentProvider.Object,
@@ -358,6 +358,24 @@ public class DecompositionAnalysisStepCapWiringTests : IDisposable
             "the review prompt must name the configured cap");
         reviewPrompt.Should().Contain(cap.ToString(),
             "the cap value from config.MaxDecompositionSubIssues must appear in the review prompt");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AnalysisAndReviewCalls_UseAgentTimeout()
+    {
+        var planPath = Path.Combine(_workspacePath, AgentWorkspacePaths.DecompositionPlanFilePath);
+        File.WriteAllText(planPath, "# Plan\n\nSome plan content.\n\n| # | Title | Scope |\n|---|-------|-------|\n| 1 | Sub-issue 1 | Scope |");
+
+        var capturedRequests = SetupAgentMock();
+        var context = BuildContext(maxSubIssues: 10);
+        var step = new DecompositionAnalysisStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        // Decomposition has no timeout of its own: the analysis call and the adversarial
+        // review both run with the AgentTimeout that applies to every agent call.
+        capturedRequests.Should().HaveCountGreaterThanOrEqualTo(2);
+        capturedRequests.Should().AllSatisfy(r => r.Timeout.Should().Be(context.Config.AgentTimeout));
     }
 
     [Theory]

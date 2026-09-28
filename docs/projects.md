@@ -84,7 +84,6 @@ The JSON bundle produced by `GET /api/config/export` includes a `projects` array
   ],
   "EpicIssueProviderId": "polarion-provider-id",
   "MaxDecompositionSubIssues": 8,
-  "DecompositionTimeout": "00:20:00",
   "MaxConcurrentDecompositions": 3
 }
 ```
@@ -99,7 +98,7 @@ All settings below are nullable on the project. When `null`, the global default 
 |---------|------|-------------|
 | `MaxRetries` | int? | Max retry attempts when quality gates fail |
 | `MaxAnalysisRetries` | int? | Max retry attempts for the analysis phase |
-| `AgentTimeout` | TimeSpan? | Maximum time for a single agent invocation |
+| `AgentTimeout` | TimeSpan? | Maximum time for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds |
 | `MaxInfrastructureRetries` | int? | Max retries for infrastructure operations |
 | `StallWarningInterval` | TimeSpan? | Time without output before stall warning |
 
@@ -136,7 +135,6 @@ All settings below are nullable on the project. When `null`, the global default 
 |---------|------|-------------|
 | `MaxDecompositionSubIssues` | int? | Max sub-issues per epic (1–20) |
 | `MaxConcurrentDecompositions` | int? | Max simultaneous decomposition runs |
-| `DecompositionTimeout` | TimeSpan? | Timeout for decomposition phases |
 | `MaxOpenIssuesForContext` | int? | Max open issues fetched for deduplication context |
 
 ### Blacklist & Brain Settings

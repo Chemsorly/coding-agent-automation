@@ -113,7 +113,6 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         var markup = await Page.ContentAsync();
         Assert.Contains("Max Sub-Issues Per Epic", markup);
         Assert.Contains("Max Concurrent Decompositions", markup);
-        Assert.Contains("Decomposition Timeout", markup);
         Assert.Contains("Max Open Issues for Context", markup);
 
         var saveBtn = Page.Locator("button:has-text('Save Decomposition')");

@@ -49,7 +49,6 @@ public class SettingsResolutionDeterminismPropertyTests
         result1.StallWarningInterval.Should().Be(result2.StallWarningInterval);
         result1.MaxDecompositionSubIssues.Should().Be(result2.MaxDecompositionSubIssues);
         result1.MaxConcurrentDecompositions.Should().Be(result2.MaxConcurrentDecompositions);
-        result1.DecompositionTimeout.Should().Be(result2.DecompositionTimeout);
         result1.MaxOpenIssuesForContext.Should().Be(result2.MaxOpenIssuesForContext);
         result1.MaxRefactoringProposals.Should().Be(result2.MaxRefactoringProposals);
         result1.RefactoringReviewEnabled.Should().Be(result2.RefactoringReviewEnabled);
@@ -87,7 +86,6 @@ public class SettingsResolutionDeterminismPropertyTests
         result.StallWarningInterval.Should().Be(input.Config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(input.Config.MaxDecompositionSubIssues);
         result.MaxConcurrentDecompositions.Should().Be(input.Config.MaxConcurrentDecompositions);
-        result.DecompositionTimeout.Should().Be(input.Config.DecompositionTimeout);
         result.MaxOpenIssuesForContext.Should().Be(input.Config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(input.Config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(input.Config.RefactoringReviewEnabled);
@@ -132,7 +130,6 @@ public class SettingsResolutionDeterminismPropertyTests
         result.StallWarningInterval.Should().Be(input.Config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(input.Config.MaxDecompositionSubIssues);
         result.MaxConcurrentDecompositions.Should().Be(input.Config.MaxConcurrentDecompositions);
-        result.DecompositionTimeout.Should().Be(input.Config.DecompositionTimeout);
         result.MaxOpenIssuesForContext.Should().Be(input.Config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(input.Config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(input.Config.RefactoringReviewEnabled);
@@ -199,8 +196,6 @@ public class SettingsResolutionDeterminismPropertyTests
             result.MaxDecompositionSubIssues.Should().Be(project.MaxDecompositionSubIssues.Value);
         if (project.MaxConcurrentDecompositions.HasValue)
             result.MaxConcurrentDecompositions.Should().Be(project.MaxConcurrentDecompositions.Value);
-        if (project.DecompositionTimeout.HasValue)
-            result.DecompositionTimeout.Should().Be(project.DecompositionTimeout.Value);
         if (project.MaxOpenIssuesForContext.HasValue)
             result.MaxOpenIssuesForContext.Should().Be(project.MaxOpenIssuesForContext.Value);
         if (project.MaxRefactoringProposals.HasValue)
@@ -309,7 +304,6 @@ public class SettingsResolutionArbitraries
         from stallWarningInterval in GenTimeSpan()
         from maxDecompSubIssues in Gen.Choose(1, 20)
         from maxConcurrentDecomps in Gen.Choose(1, 5)
-        from decompTimeout in GenTimeSpan()
         from maxOpenIssues in Gen.Choose(1, 100)
         from maxRefactoringProposals in Gen.Choose(1, 10)
         from refactoringReviewEnabled in Gen.Elements(true, false)
@@ -336,7 +330,6 @@ public class SettingsResolutionArbitraries
             StallWarningInterval = stallWarningInterval,
             MaxDecompositionSubIssues = maxDecompSubIssues,
             MaxConcurrentDecompositions = maxConcurrentDecomps,
-            DecompositionTimeout = decompTimeout,
             MaxOpenIssuesForContext = maxOpenIssues,
             MaxRefactoringProposals = maxRefactoringProposals,
             RefactoringReviewEnabled = refactoringReviewEnabled,
@@ -372,7 +365,6 @@ public class SettingsResolutionArbitraries
         from stallWarningInterval in Gen.Elements<TimeSpan?>(null, TimeSpan.FromMinutes(5))
         from maxDecompSubIssues in Gen.Elements<int?>(null, 5, 10, 15)
         from maxConcurrentDecomps in Gen.Elements<int?>(null, 1, 2, 4)
-        from decompTimeout in Gen.Elements<TimeSpan?>(null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(20))
         from maxOpenIssues in Gen.Elements<int?>(null, 25, 50)
         from maxRefactoringProposals in Gen.Elements<int?>(null, 2, 5)
         from refactoringReviewEnabled in Gen.Elements<bool?>(null, true, false)
@@ -404,7 +396,6 @@ public class SettingsResolutionArbitraries
             StallWarningInterval = stallWarningInterval,
             MaxDecompositionSubIssues = maxDecompSubIssues,
             MaxConcurrentDecompositions = maxConcurrentDecomps,
-            DecompositionTimeout = decompTimeout,
             MaxOpenIssuesForContext = maxOpenIssues,
             MaxRefactoringProposals = maxRefactoringProposals,
             RefactoringReviewEnabled = refactoringReviewEnabled,

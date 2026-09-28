@@ -77,8 +77,9 @@ After Phase 1 posts the decomposition plan:
 | `MaxDecompositionSubIssues` | `int` | `10` | Maximum sub-issues per epic (range: 1–20) |
 | `MaxDecompositionSubIssueFiles` | `int` | `12` | Maximum files a single sub-issue may create or modify (range: 1–30). Keeps each sub-issue within single-agent capacity |
 | `MaxConcurrentDecompositions` | `int` | `2` | Maximum simultaneous decomposition runs |
-| `DecompositionTimeout` | `TimeSpan` | `15 min` | Timeout for each decomposition phase |
 | `MaxOpenIssuesForContext` | `int` | `50` | Open issues downloaded for deduplication context |
+
+Decomposition has no timeout of its own: each agent call, including the adversarial review, runs with `AgentTimeout`, like every other agent call.
 
 Example template configuration:
 ```json

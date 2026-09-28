@@ -59,7 +59,6 @@ public sealed record PipelineProject
     public int? MaxDecompositionSubIssues { get; init; }
     public int? MaxDecompositionSubIssueFiles { get; init; }
     public int? MaxConcurrentDecompositions { get; init; }
-    public TimeSpan? DecompositionTimeout { get; init; }
     public int? MaxOpenIssuesForContext { get; init; }
     public int? MaxRefactoringProposals { get; init; }
     public bool? RefactoringReviewEnabled { get; init; }
