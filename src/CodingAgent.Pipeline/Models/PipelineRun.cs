@@ -483,7 +483,13 @@ public sealed partial class PipelineRun
         PipelineProviderConfigId = PipelineProviderConfigId,
         ConsolidationType = ConsolidationType,
         ConsolidationTemplateId = ConsolidationTemplateId,
-        ConsolidationResultSummary = ConsolidationResultSummary
+        ConsolidationResultSummary = ConsolidationResultSummary,
+        // For new runs, RunId == WorkItemId (same GUID by contract in CreateFromWorkItem).
+        // For consolidation runs the WorkItemId may differ from RunId (backfilled rows from the
+        // ConsolidationRuns table may have a separate WorkItemId in the JSONB blob), so we expose
+        // it via Guid.TryParse on RunId as the best approximation for in-memory runs.
+        // Backfilled PipelineRunSummary rows have WorkItemId set directly in the constructor.
+        WorkItemId = Guid.TryParse(RunId, out var wiGuid) ? wiGuid : null
     };
     #pragma warning restore CS0618
 

@@ -245,11 +245,43 @@ public sealed class HubConsolidationOperationsTests
         _mockChangeNotifier.Verify(c => c.NotifyChange(), Times.Once);
     }
 
-    // ── HandleConsolidationCompleteAsync — UpdateRunAsync ─────────────────
+    // ── HandleConsolidationCompleteAsync — UpdateRunAsync (stopped in #3028) ──────
+
+    /// <summary>
+    /// Issue #3028: UpdateRunAsync must NOT be called from HandleConsolidationCompleteAsync.
+    /// ConsolidationRuns writes have been stopped; the PipelineRun is the authoritative record.
+    /// </summary>
+    [Fact]
+    public async Task HandleConsolidationComplete_DoesNotCallUpdateRunAsync()
+    {
+        // Use a strict mock so any unexpected call to UpdateRunAsync would throw
+        var strictConsolidation = new Mock<IConsolidationService>(MockBehavior.Strict);
+        strictConsolidation.Setup(c => c.SaveHarnessSuggestionsAsync(
+            It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var sut = new HubConsolidationOperations(
+            CreateModelFetchService(),
+            strictConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
+            _mockLogger.Object);
+
+        var result = new ConsolidationJobResult { JobId = "crun-success", Success = true, Summary = "Brain updated" };
+
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync("UpdateRunAsync must not be called — store writes stopped in #3028");
+
+        strictConsolidation.Verify(c => c.UpdateRunAsync(
+            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
+    }
 
     [Fact]
     public async Task HandleConsolidationComplete_Success_CallsUpdateRunWithSucceeded()
     {
+        // Issue #3028: UpdateRunAsync is no longer called from HandleConsolidationCompleteAsync.
+        // This test now verifies that the method does NOT call UpdateRunAsync on success.
         var result = new ConsolidationJobResult
         {
             JobId = "crun-success",
@@ -261,16 +293,15 @@ public sealed class HubConsolidationOperationsTests
         await sut.HandleConsolidationCompleteAsync(result, null);
 
         _mockConsolidation.Verify(c => c.UpdateRunAsync(
-            new RunId("crun-success"),
-            ConsolidationRunStatus.Succeeded,
-            "Brain updated",
-            It.IsAny<CancellationToken>(),
-            It.IsAny<long>()), Times.Once);
+            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never,
+            "UpdateRunAsync must not be called — ConsolidationRuns store writes stopped in #3028");
     }
 
     [Fact]
     public async Task HandleConsolidationComplete_Failure_CallsUpdateRunWithFailedAndErrorMessage()
     {
+        // Issue #3028: UpdateRunAsync is no longer called from HandleConsolidationCompleteAsync.
         var result = new ConsolidationJobResult
         {
             JobId = "crun-fail",
@@ -282,70 +313,47 @@ public sealed class HubConsolidationOperationsTests
         await sut.HandleConsolidationCompleteAsync(result, null);
 
         _mockConsolidation.Verify(c => c.UpdateRunAsync(
-            new RunId("crun-fail"),
-            ConsolidationRunStatus.Failed,
-            "agent crashed",
-            It.IsAny<CancellationToken>(),
-            It.IsAny<long>()), Times.Once);
+            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never,
+            "UpdateRunAsync must not be called — ConsolidationRuns store writes stopped in #3028");
     }
 
     [Fact]
     public async Task HandleConsolidationComplete_UpdateRunThrows_DoesNotPropagate()
     {
-        _mockConsolidation
-            .Setup(c => c.UpdateRunAsync(
-                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
-
+        // Issue #3028: UpdateRunAsync is no longer called; this test verifies no throw regardless.
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
         var sut = CreateSut();
 
         var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
-        await act.Should().NotThrowAsync("UpdateRunAsync failure is caught and logged, not propagated");
+        await act.Should().NotThrowAsync("method must not throw regardless of UpdateRunAsync state");
     }
 
     // ── HandleConsolidationCompleteAsync — token usage sum ───────────────
+    // Issue #3028: UpdateRunAsync is no longer called, so token usage is no longer
+    // passed to the ConsolidationRuns store. These tests now verify that the method
+    // still completes without throwing when token usage fields are set.
 
     [Fact]
-    public async Task HandleConsolidationComplete_TokenUsage_SummedCorrectly()
+    public async Task HandleConsolidationComplete_TokenUsage_MethodCompletes()
     {
-        long capturedTokens = -1;
-        _mockConsolidation
-            .Setup(c => c.UpdateRunAsync(
-                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Callback<RunId, ConsolidationRunStatus, string?, CancellationToken, long>(
-                (_, _, _, _, tokens) => capturedTokens = tokens)
-            .Returns(Task.CompletedTask);
-
         var result = new ConsolidationJobResult
         {
             JobId = "crun-tokens",
             Success = true,
-            ReviewTokenUsage = new TokenUsage { InputTokens = 100, OutputTokens = 50, ReasoningTokens = 10 }, // 160
-            RefinementTokenUsage = new TokenUsage { InputTokens = 200, OutputTokens = 80, ReasoningTokens = 0 }, // 280
-            DiffSummaryTokenUsage = new TokenUsage { InputTokens = 30, OutputTokens = 20, ReasoningTokens = 5 }  // 55
+            ReviewTokenUsage = new TokenUsage { InputTokens = 100, OutputTokens = 50, ReasoningTokens = 10 },
+            RefinementTokenUsage = new TokenUsage { InputTokens = 200, OutputTokens = 80, ReasoningTokens = 0 },
+            DiffSummaryTokenUsage = new TokenUsage { InputTokens = 30, OutputTokens = 20, ReasoningTokens = 5 }
         };
         var sut = CreateSut();
 
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        capturedTokens.Should().Be(495, "100+50+10 + 200+80+0 + 30+20+5 = 495");
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync("token usage fields must not cause errors");
     }
 
     [Fact]
     public async Task HandleConsolidationComplete_NullTokenUsage_PassesZeroTotal()
     {
-        long capturedTokens = -1;
-        _mockConsolidation
-            .Setup(c => c.UpdateRunAsync(
-                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Callback<RunId, ConsolidationRunStatus, string?, CancellationToken, long>(
-                (_, _, _, _, tokens) => capturedTokens = tokens)
-            .Returns(Task.CompletedTask);
-
         var result = new ConsolidationJobResult
         {
             JobId = "crun-notok",
@@ -356,23 +364,13 @@ public sealed class HubConsolidationOperationsTests
         };
         var sut = CreateSut();
 
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        capturedTokens.Should().Be(0, "all-null token usages must sum to zero");
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync("null token usage must not cause errors");
     }
 
     [Fact]
     public async Task HandleConsolidationComplete_PartialNullTokenUsage_SumsNonNullOnly()
     {
-        long capturedTokens = -1;
-        _mockConsolidation
-            .Setup(c => c.UpdateRunAsync(
-                It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-                It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .Callback<RunId, ConsolidationRunStatus, string?, CancellationToken, long>(
-                (_, _, _, _, tokens) => capturedTokens = tokens)
-            .Returns(Task.CompletedTask);
-
         var result = new ConsolidationJobResult
         {
             JobId = "crun-partial",
@@ -383,9 +381,8 @@ public sealed class HubConsolidationOperationsTests
         };
         var sut = CreateSut();
 
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        capturedTokens.Should().Be(15, "10+5+0 = 15; nulls contribute 0");
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync("partial null token usage must not cause errors");
     }
 
     // ── HandleConsolidationCompleteAsync — harness suggestions ───────────

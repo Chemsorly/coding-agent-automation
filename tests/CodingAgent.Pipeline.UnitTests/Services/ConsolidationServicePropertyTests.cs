@@ -83,6 +83,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     /// Property 4: Last-Run Timestamp Isolation
     /// For any sequence of consolidation runs across multiple templates and types,
     /// GetLastRunAsync(type, templateId) returns only the most recent run matching that exact pair.
+    /// Updated for issue #3028: runs are seeded directly into the store (TriggerAsync no longer persists).
     /// **Validates: Requirements 2.4**
     /// </summary>
     [Property(MaxTest = 20)]
@@ -116,30 +117,37 @@ public class ConsolidationServicePropertyTests : IDisposable
         mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(templates);
 
-        var mockDist1 = new Mock<IWorkDistributor>();
-        mockDist1.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-1", ErrorMessage: null));
+        // Issue #3028: seed runs directly into the store (TriggerAsync no longer persists).
+        var store = new FileSystemConsolidationRunStore(runsDir);
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
-            new FileSystemConsolidationRunStore(runsDir),
+            store,
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config),
-            WorkDistributor: mockDist1.Object));
+            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
 
         var count = Math.Min(runCount.Get, 5);
         var types = new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection };
         var templateIds = new[] { "tmpl-A", "tmpl-B" };
 
+        // Seed runs directly into the store with distinct StartedAtUtc timestamps
         var runs = new List<ConsolidationRun>();
+        var baseTime = DateTimeOffset.UtcNow.AddHours(-count);
         for (var i = 0; i < count; i++)
         {
             var type = types[i % types.Length];
             var templateId = templateIds[i % templateIds.Length];
-            var run = sut.TriggerAsync(type, templateId, CancellationToken.None).GetAwaiter().GetResult();
-            if (run is not null)
-                runs.Add(run);
+            var run = new ConsolidationRun
+            {
+                RunId = Guid.NewGuid().ToString(),
+                Type = type,
+                TemplateId = templateId,
+                StartedAtUtc = baseTime.AddMinutes(i),
+                Status = ConsolidationRunStatus.Succeeded
+            };
+            store.SaveRunAsync(run, CancellationToken.None).GetAwaiter().GetResult();
+            runs.Add(run);
         }
 
         foreach (var type in types)

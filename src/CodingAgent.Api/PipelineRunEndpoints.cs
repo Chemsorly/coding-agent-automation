@@ -70,9 +70,10 @@ public static class PipelineRunEndpoints
         PipelineStep? finalStep = null,
         string? projectId = null,
         DateTimeOffset? since = null,
+        PipelineRunType? runType = null,
         CancellationToken ct = default)
     {
-        var result = await history.GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, since, ct);
+        var result = await history.GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, since, runType, ct);
 
         // Skip the in-flight merge when an outcome filter is set: active runs are non-terminal, so they
         // never match a Completed/Failed/Cancelled tab and merging them in would violate the filter.
@@ -126,6 +127,7 @@ public static class PipelineRunEndpoints
             .Where(r => !activeRunIds.Contains(r.RunId))        // not already in history page
             .Select(r => r.ToSummary())
             .Where(s => string.IsNullOrEmpty(projectId) || s.ProjectId == projectId)  // honor the project scope
+            .Where(s => runType == null || s.RunType == runType)                       // honor the runType scope
             .ToList();
 
         if (inFlightSummaries.Count == 0)
