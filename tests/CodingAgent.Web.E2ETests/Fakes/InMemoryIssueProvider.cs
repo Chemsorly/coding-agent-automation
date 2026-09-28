@@ -18,6 +18,21 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public bool ShouldFail { get; set; }
     public HashSet<string> ClosedIssueIdentifiers { get; } = new();
 
+    /// <summary>
+    /// When true, <see cref="ValidateAsync"/> throws so that <see cref="IIssueProvider.InitializeAsync"/>
+    /// (which calls ValidateAsync first) surfaces a failure to the UI. Allows Scenario 3 failure-path tests
+    /// without touching the ShouldFail flag used by issue-read operations.
+    /// Reset to false by <see cref="Reset"/>.
+    /// </summary>
+    public bool InitializeShouldFail { get; set; }
+
+    /// <summary>
+    /// Number of times <see cref="EnsureAgentLabelsAsync"/> has been called since the last <see cref="Reset"/>.
+    /// Used by Scenario 3 tests to assert "EnsureAgentLabelsAsync was called on the fake issue provider"
+    /// without relying solely on the UI success message.
+    /// </summary>
+    public int EnsureAgentLabelsCallCount { get; private set; }
+
     // Comment storage: per-issue ordered list of (comment, updatedAt)
     private readonly Dictionary<string, List<(IssueComment Comment, DateTime? UpdatedAt)>> _comments = new();
     // TODO [WARNING]: _nextCommentId is mutated with ++_nextCommentId (non-atomic). If PostCommentAsync is ever
@@ -39,6 +54,8 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         _comments.Clear();
         _nextCommentId = 5_000_000_000L;
         ShouldFail = false;
+        InitializeShouldFail = false;
+        EnsureAgentLabelsCallCount = 0;
         ClosedIssueIdentifiers.Clear();
     }
 
@@ -190,8 +207,34 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public Task<bool> IsIssueClosedAsync(IssueIdentifier identifier, CancellationToken ct)
         => Task.FromResult(ClosedIssueIdentifiers.Contains(identifier.Value));
     public Task<bool> HasAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
-    public Task<bool> EnsureAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
-    public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
+
+    /// <summary>
+    /// Increments <see cref="EnsureAgentLabelsCallCount"/> so tests can assert the method was called.
+    /// Always returns <c>true</c> (no live label creation in tests).
+    /// </summary>
+    public Task<bool> EnsureAgentLabelsAsync(CancellationToken ct)
+    {
+        // TODO [WARNING]: EnsureAgentLabelsCallCount++ is a non-atomic read-modify-write. Current E2E tests
+        // drive a single UI click so there is no concurrency in practice and the ==1/==0 assertions are sound.
+        // However, this is a shared-instance counter on a fixture-scoped fake; if a future test ever triggers
+        // Initialize concurrently (e.g. two provider cards via Task.WhenAll), the count could under-report.
+        // Replace with Interlocked.Increment(ref _ensureAgentLabelsCallCount) (with a backing int field) to
+        // make it safe without changing current behaviour. Mirrors the existing TODO on _nextCommentId.
+        EnsureAgentLabelsCallCount++;
+        return Task.FromResult(true);
+    }
+
+    /// <summary>
+    /// Throws when <see cref="InitializeShouldFail"/> is true so that
+    /// <see cref="IIssueProvider.InitializeAsync"/> (which calls <c>ValidateAsync</c> first) surfaces
+    /// a UI error for Scenario 3 failure-path tests.
+    /// </summary>
+    public Task ValidateAsync(CancellationToken ct)
+    {
+        if (InitializeShouldFail)
+            throw new HttpRequestException("Fake initialize failure");
+        return Task.CompletedTask;
+    }
 
     public Task<IReadOnlyList<string>> ListRepositoryLabelsAsync(CancellationToken ct)
     {
