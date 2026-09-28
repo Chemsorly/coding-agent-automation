@@ -167,6 +167,7 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
         catch (HttpRequestException ex)
         {
             _logger.LogInformation(
+                ex,
                 "GetActiveDecompositionCountAsync returned HTTP error {StatusCode} — returning 0 (gate disabled for this cycle)",
                 ex.StatusCode);
             return 0;

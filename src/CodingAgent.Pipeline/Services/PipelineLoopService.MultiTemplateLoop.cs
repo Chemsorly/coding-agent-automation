@@ -154,30 +154,8 @@ public sealed partial class PipelineLoopService
             return false;
 
         // Pre-compute the active decomposition count from the WorkItems DB via the distributor.
-        // This is necessary because SchedulerRunQueryService.GetActiveRuns() always returns empty
-        // in the Scheduler process — the in-memory gate in DispatchScheduler would see 0 active
-        // decompositions every cycle, defeating MaxConcurrentDecompositions entirely.
-        // When _workDistributor is null (in-process / test mode), pass -1 so DispatchScheduler
-        // falls back to GetAllActiveRuns(), which is accurate in non-Scheduler deployments.
-        int activeDecompositionCount = -1;
-        if (_workDistributor is not null)
-        {
-            try
-            {
-                activeDecompositionCount = await _workDistributor.GetActiveDecompositionCountAsync(ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch
-            {
-                // Best-effort: if the count cannot be retrieved, pass -1 so the scheduler falls
-                // back to GetAllActiveRuns(). In the Scheduler process this means the gate is
-                // disabled for this cycle (returns 0) rather than blocking all decompositions.
-                activeDecompositionCount = -1;
-            }
-        }
+        // See LoadActiveDecompositionCountAsync for details.
+        var activeDecompositionCount = await LoadActiveDecompositionCountAsync(ct);
 
         var dispatchResult = await _dispatcher.DispatchFairRoundRobinAsync(
             new DispatchScheduler.DispatchRoundRobinRequest
@@ -794,6 +772,31 @@ public sealed partial class PipelineLoopService
         {
             _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
             return new HashSet<(IssueIdentifier, ProviderConfigId)>();
+        }
+    }
+
+    /// <summary>
+    /// Loads the count of active decomposition work items for the <c>MaxConcurrentDecompositions</c> gate.
+    /// Returns <c>-1</c> when the count is unavailable so <see cref="DispatchScheduler"/> falls back to
+    /// <c>GetAllActiveRuns()</c>. This fallback is accurate in the API/Orchestrator process but always
+    /// returns 0 in the Scheduler process (where <c>SchedulerRunQueryService.GetActiveRuns()</c> is empty).
+    /// </summary>
+    private async Task<int> LoadActiveDecompositionCountAsync(CancellationToken ct)
+    {
+        if (_workDistributor is null)
+            return -1;
+
+        try
+        {
+            return await _workDistributor.GetActiveDecompositionCountAsync(ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch
+        {
+            // Best-effort: if the count cannot be retrieved, pass -1 so the scheduler falls
+            // back to GetAllActiveRuns(). In the Scheduler process this means the gate is
+            // disabled for this cycle rather than blocking all decompositions.
+            return -1;
         }
     }
 

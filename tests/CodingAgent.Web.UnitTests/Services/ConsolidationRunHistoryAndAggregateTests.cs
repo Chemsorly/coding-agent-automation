@@ -17,8 +17,22 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (!Directory.Exists(_tempDir)) return;
+
+        // Retry up to 5 times with short delays: the fire-and-forget PersistRunSummaryAsync writes
+        // may still be in flight when Dispose() runs, leaving temp files that cause "Directory not empty".
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                Directory.Delete(_tempDir, recursive: true);
+                return;
+            }
+            catch (IOException) when (attempt < 4)
+            {
+                System.Threading.Thread.Sleep(50);
+            }
+        }
     }
 
     /// <summary>
