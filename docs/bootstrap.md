@@ -26,12 +26,11 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
    --set scheduler.dispatch.enabled=true
    ```
 
-3. Open the web UI. A first-run banner will appear prompting you to configure job templates.
+3. Open the web UI. A first-run banner will appear linking to the Pipelines page where you configure job templates.
 
-4. Go to **Settings** and configure:
-   - Providers (Issue, Repository, Agent, optionally Pipeline/CI)
-   - Agent Profiles, Quality Gate Configs, Reviewer Configs
-   - Pipeline Job Templates
+4. Configure the two areas:
+   - Go to **Settings** and configure: Providers (Issue, Repository, Agent, optionally Pipeline/CI), Agent Profiles, Quality Gate Configs, Reviewer Configs
+   - Go to **Pipelines** and configure: Pipeline Job Templates (use the **+ Add** button)
 
 5. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
 

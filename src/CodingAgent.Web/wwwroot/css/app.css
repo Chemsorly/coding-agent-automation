@@ -1600,7 +1600,6 @@ select option { background: var(--surface); color: var(--text); }
 
 .template-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .template-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
-.template-order { font-size: 0.75rem; color: var(--text-muted); font-weight: 600; min-width: 20px; }
 .template-name { flex: 1; font-size: 0.82rem; color: var(--text); }
 .template-actions { display: flex; gap: 2px; }
 .template-add-row { display: flex; gap: 8px; align-items: center; }

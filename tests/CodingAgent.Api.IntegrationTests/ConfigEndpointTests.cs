@@ -781,6 +781,118 @@ public sealed class ConfigEndpointTests
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
     }
 
+    // ── Templates: membership and binding rules ───────────────────────────────────
+
+    [Fact]
+    public async Task SaveTemplate_RepositoryOfAnotherEnabledTemplate_Returns400WithTheReason()
+    {
+        var projectId = await CreateProjectAsync("Binding rules");
+        var repo = $"repo-{Guid.NewGuid():N}";
+        (await PutTemplateAsync(projectId, NewTemplate("First", repo))).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var response = await PutTemplateAsync(projectId, NewTemplate("Second", repo));
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("repository").And.Contain("First");
+    }
+
+    [Fact]
+    public async Task SaveTemplate_DisabledDuplicate_IsAccepted()
+    {
+        var projectId = await CreateProjectAsync("Disabled duplicate");
+        var repo = $"repo-{Guid.NewGuid():N}";
+        (await PutTemplateAsync(projectId, NewTemplate("First", repo))).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var response = await PutTemplateAsync(projectId, NewTemplate("Second", repo) with { Enabled = false });
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task SaveTemplate_UnknownProject_Returns404()
+    {
+        var response = await PutTemplateAsync(Guid.NewGuid().ToString(), NewTemplate("Lost", $"repo-{Guid.NewGuid():N}"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+    }
+
+    [Fact]
+    public async Task MoveTemplate_UpdatesTheMembershipOfBothProjects()
+    {
+        var source = await CreateProjectAsync("Move source");
+        var target = await CreateProjectAsync("Move target");
+        var template = NewTemplate("Mover", $"repo-{Guid.NewGuid():N}");
+        (await PutTemplateAsync(source, template)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var response = await PostMoveAsync(source, target, template.Id);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await GetProjectAsync(source)).TemplateIds.Should().NotContain(template.Id);
+        (await GetProjectAsync(target)).TemplateIds.Should().Equal(template.Id);
+    }
+
+    [Fact]
+    public async Task MoveTemplate_NameTakenInTheTargetProject_Returns400()
+    {
+        var source = await CreateProjectAsync("Name source");
+        var target = await CreateProjectAsync("Name target");
+        var moving = NewTemplate("Shared name", $"repo-{Guid.NewGuid():N}");
+        (await PutTemplateAsync(source, moving)).StatusCode.Should().Be(HttpStatusCode.OK);
+        (await PutTemplateAsync(target, NewTemplate("shared name", $"repo-{Guid.NewGuid():N}"))).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var response = await PostMoveAsync(source, target, moving.Id);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await GetProjectAsync(source)).TemplateIds.Should().Equal(moving.Id);
+    }
+
+    [Fact]
+    public async Task SaveProject_TemplateIdsInTheBody_DoNotChangeMembership()
+    {
+        var home = await CreateProjectAsync("Home");
+        var other = await CreateProjectAsync("Other");
+        var template = NewTemplate("Resident", $"repo-{Guid.NewGuid():N}");
+        (await PutTemplateAsync(home, template)).StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var claim = new PipelineProject { Id = other, Name = "Other", TemplateIds = [template.Id] };
+        (await _client.PutAsJsonAsync("/api/config/projects", claim, PipelineJsonOptions.Default))
+            .StatusCode.Should().Be(HttpStatusCode.OK);
+
+        (await GetProjectAsync(home)).TemplateIds.Should().Equal(template.Id);
+        (await GetProjectAsync(other)).TemplateIds.Should().BeEmpty();
+    }
+
+    private async Task<string> CreateProjectAsync(string name)
+    {
+        var project = new PipelineProject { Id = Guid.NewGuid().ToString(), Name = name, Enabled = true };
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        return project.Id;
+    }
+
+    private async Task<PipelineProject> GetProjectAsync(string id)
+    {
+        var project = await _client.GetFromJsonAsync<PipelineProject>($"/api/config/projects/{id}", PipelineJsonOptions.Default);
+        return project!;
+    }
+
+    private static PipelineJobTemplate NewTemplate(string name, string repoProviderId) => new()
+    {
+        Id = Guid.NewGuid().ToString(),
+        Name = name,
+        IssueProviderId = $"issues-{Guid.NewGuid():N}",
+        RepoProviderId = repoProviderId
+    };
+
+    private Task<HttpResponseMessage> PutTemplateAsync(string projectId, PipelineJobTemplate template) =>
+        _client.PutAsJsonAsync($"/api/config/projects/{projectId}/templates", template, PipelineJsonOptions.Default);
+
+    private Task<HttpResponseMessage> PostMoveAsync(string sourceProjectId, string targetProjectId, string templateId) =>
+        _client.PostAsJsonAsync(
+            "/api/config/templates/move",
+            new { SourceProjectId = sourceProjectId, TargetProjectId = targetProjectId, TemplateId = templateId },
+            PipelineJsonOptions.Default);
+
     // ── AgentProfiles DELETE ──────────────────────────────────────────────────────
 
     [Fact]

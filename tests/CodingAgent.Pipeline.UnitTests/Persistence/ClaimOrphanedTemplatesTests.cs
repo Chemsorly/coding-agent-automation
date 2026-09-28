@@ -16,8 +16,8 @@ namespace CodingAgent.Pipeline.UnitTests.Persistence;
 
 /// <summary>
 /// Tests for <see cref="DatabaseStartupService.ClaimOrphanedTemplatesAsync"/> — verifies that
-/// templates whose ProjectId does not match their owning project's TemplateIds list (or whose
-/// project no longer exists) are reparented to the Default project at startup.
+/// templates whose project no longer exists are reparented to the Default project at startup.
+/// A template's own project is the only membership record.
 ///
 /// Replaces the pre-Spec-041 CRUD tests that were migrated from JsonConfigurationStore and
 /// became duplicates of ProjectStoreTests.cs after the orphan-claiming logic was removed.
@@ -48,8 +48,7 @@ public class ClaimOrphanedTemplatesTests : IDisposable
         {
             Id = Guid.Parse(WellKnownIds.DefaultProjectId),
             Name = "Default",
-            Enabled = true,
-            TemplateIds = []
+            Enabled = true
         });
         seed.SaveChanges();
     }
@@ -63,69 +62,16 @@ public class ClaimOrphanedTemplatesTests : IDisposable
     // ── ClaimOrphanedTemplatesAsync ────────────────────────────────────
 
     [Fact]
-    public async Task ClaimOrphanedTemplatesAsync_TemplateNotInOwningProjectTemplateIds_MovesToDefault()
-    {
-        // Arrange: create a project that owns the template by FK but does NOT list it in TemplateIds
-        var projectGuid = Guid.NewGuid();
-        var templateGuid = Guid.NewGuid();
-        var templateIdStr = templateGuid.ToString();
-
-        await using (var db = _dbFactory.CreateDbContext())
-        {
-            db.Projects.Add(new ProjectEntity
-            {
-                Id = projectGuid,
-                Name = "Source",
-                Enabled = true,
-                TemplateIds = [] // NOT listed — this is the orphan condition
-            });
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-            {
-                Id = templateGuid,
-                ProjectId = projectGuid, // FK points to Source but Source doesn't list it
-                Name = "T1",
-                Configuration = System.Text.Json.JsonSerializer.Serialize(
-                    new PipelineJobTemplate { Id = templateIdStr, Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp" },
-                    PipelineJsonOptions.Default)
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var sut = CreateService();
-
-        // Act
-        await sut.ClaimOrphanedTemplatesAsync(CancellationToken.None);
-
-        // Assert: template's FK now points to Default
-        await using var verify = _dbFactory.CreateDbContext();
-        var template = await verify.PipelineJobTemplates.FindAsync(templateGuid);
-        template!.ProjectId.Should().Be(Guid.Parse(WellKnownIds.DefaultProjectId));
-
-        // Assert: Default project's TemplateIds contains the template
-        var defaultProject = await verify.Projects.FindAsync(Guid.Parse(WellKnownIds.DefaultProjectId));
-        defaultProject!.TemplateIds.Should().Contain(templateIdStr);
-    }
-
-    [Fact]
     public async Task ClaimOrphanedTemplatesAsync_TemplateWithDeletedProject_MovesToDefault()
     {
         // Arrange: template's ProjectId references a project GUID that doesn't exist
         var missingProjectGuid = Guid.NewGuid();
         var templateGuid = Guid.NewGuid();
-        var templateIdStr = templateGuid.ToString();
 
         await using (var db = _dbFactory.CreateDbContext())
         {
             // Do NOT create the project — it's gone
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-            {
-                Id = templateGuid,
-                ProjectId = missingProjectGuid, // project doesn't exist
-                Name = "T1",
-                Configuration = System.Text.Json.JsonSerializer.Serialize(
-                    new PipelineJobTemplate { Id = templateIdStr, Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp" },
-                    PipelineJsonOptions.Default)
-            });
+            db.PipelineJobTemplates.Add(CreateTemplate(templateGuid, missingProjectGuid));
             await db.SaveChangesAsync();
         }
 
@@ -138,37 +84,19 @@ public class ClaimOrphanedTemplatesTests : IDisposable
         await using var verify = _dbFactory.CreateDbContext();
         var template = await verify.PipelineJobTemplates.FindAsync(templateGuid);
         template!.ProjectId.Should().Be(Guid.Parse(WellKnownIds.DefaultProjectId));
-
-        var defaultProject = await verify.Projects.FindAsync(Guid.Parse(WellKnownIds.DefaultProjectId));
-        defaultProject!.TemplateIds.Should().Contain(templateIdStr);
     }
 
     [Fact]
-    public async Task ClaimOrphanedTemplatesAsync_AlreadyCorrectTemplate_IsUntouched()
+    public async Task ClaimOrphanedTemplatesAsync_TemplateOfAnExistingProject_IsUntouched()
     {
-        // Arrange: template FK and TemplateIds agree — not orphaned
+        // Arrange: the template's project exists — not orphaned
         var projectGuid = Guid.NewGuid();
         var templateGuid = Guid.NewGuid();
-        var templateIdStr = templateGuid.ToString();
 
         await using (var db = _dbFactory.CreateDbContext())
         {
-            db.Projects.Add(new ProjectEntity
-            {
-                Id = projectGuid,
-                Name = "Source",
-                Enabled = true,
-                TemplateIds = [templateIdStr] // Listed — not orphaned
-            });
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-            {
-                Id = templateGuid,
-                ProjectId = projectGuid,
-                Name = "T1",
-                Configuration = System.Text.Json.JsonSerializer.Serialize(
-                    new PipelineJobTemplate { Id = templateIdStr, Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp" },
-                    PipelineJsonOptions.Default)
-            });
+            db.Projects.Add(new ProjectEntity { Id = projectGuid, Name = "Source", Enabled = true });
+            db.PipelineJobTemplates.Add(CreateTemplate(templateGuid, projectGuid));
             await db.SaveChangesAsync();
         }
 
@@ -181,15 +109,12 @@ public class ClaimOrphanedTemplatesTests : IDisposable
         await using var verify = _dbFactory.CreateDbContext();
         var template = await verify.PipelineJobTemplates.FindAsync(templateGuid);
         template!.ProjectId.Should().Be(projectGuid);
-
-        var defaultProject = await verify.Projects.FindAsync(Guid.Parse(WellKnownIds.DefaultProjectId));
-        defaultProject!.TemplateIds.Should().NotContain(templateIdStr);
     }
 
     [Fact]
     public async Task ClaimOrphanedTemplatesAsync_MultipleOrphans_AllRepaired()
     {
-        // Arrange: three orphaned templates from two different projects
+        // Arrange: three orphaned templates from two deleted projects
         var projectA = Guid.NewGuid();
         var projectB = Guid.NewGuid();
         var t1 = Guid.NewGuid();
@@ -198,20 +123,8 @@ public class ClaimOrphanedTemplatesTests : IDisposable
 
         await using (var db = _dbFactory.CreateDbContext())
         {
-            db.Projects.Add(new ProjectEntity { Id = projectA, Name = "A", TemplateIds = [] });
-            db.Projects.Add(new ProjectEntity { Id = projectB, Name = "B", TemplateIds = [] });
             foreach (var (guid, owner) in new[] { (t1, projectA), (t2, projectA), (t3, projectB) })
-            {
-                db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-                {
-                    Id = guid,
-                    ProjectId = owner,
-                    Name = $"T-{guid:N}",
-                    Configuration = System.Text.Json.JsonSerializer.Serialize(
-                        new PipelineJobTemplate { Id = guid.ToString(), Name = "T", IssueProviderId = "ip", RepoProviderId = "rp" },
-                        PipelineJsonOptions.Default)
-                });
-            }
+                db.PipelineJobTemplates.Add(CreateTemplate(guid, owner));
             await db.SaveChangesAsync();
         }
 
@@ -228,11 +141,6 @@ public class ClaimOrphanedTemplatesTests : IDisposable
             template!.ProjectId.Should().Be(Guid.Parse(WellKnownIds.DefaultProjectId),
                 $"template {guid} must be in Default");
         }
-
-        var defaultProject = await verify.Projects.FindAsync(Guid.Parse(WellKnownIds.DefaultProjectId));
-        defaultProject!.TemplateIds.Should().Contain(t1.ToString());
-        defaultProject.TemplateIds.Should().Contain(t2.ToString());
-        defaultProject.TemplateIds.Should().Contain(t3.ToString());
     }
 
     [Fact]
@@ -246,17 +154,7 @@ public class ClaimOrphanedTemplatesTests : IDisposable
         {
             var missingProject = Guid.NewGuid();
             foreach (var guid in new[] { t1, t2 })
-            {
-                db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-                {
-                    Id = guid,
-                    ProjectId = missingProject,
-                    Name = "T",
-                    Configuration = System.Text.Json.JsonSerializer.Serialize(
-                        new PipelineJobTemplate { Id = guid.ToString(), Name = "T", IssueProviderId = "ip", RepoProviderId = "rp" },
-                        PipelineJsonOptions.Default)
-                });
-            }
+                db.PipelineJobTemplates.Add(CreateTemplate(guid, missingProject));
             await db.SaveChangesAsync();
         }
 
@@ -275,7 +173,7 @@ public class ClaimOrphanedTemplatesTests : IDisposable
     }
 
     [Fact]
-    public async Task ClaimOrphanedTemplatesAsync_NoOrphans_DoesNotCallSaveChanges()
+    public async Task ClaimOrphanedTemplatesAsync_NoOrphans_EmitsNoRepairLogLines()
     {
         // Arrange: everything is consistent — no orphans
         var projectGuid = Guid.NewGuid();
@@ -283,21 +181,8 @@ public class ClaimOrphanedTemplatesTests : IDisposable
 
         await using (var db = _dbFactory.CreateDbContext())
         {
-            db.Projects.Add(new ProjectEntity
-            {
-                Id = projectGuid,
-                Name = "Source",
-                TemplateIds = [templateGuid.ToString()]
-            });
-            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-            {
-                Id = templateGuid,
-                ProjectId = projectGuid,
-                Name = "T1",
-                Configuration = System.Text.Json.JsonSerializer.Serialize(
-                    new PipelineJobTemplate { Id = templateGuid.ToString(), Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp" },
-                    PipelineJsonOptions.Default)
-            });
+            db.Projects.Add(new ProjectEntity { Id = projectGuid, Name = "Source" });
+            db.PipelineJobTemplates.Add(CreateTemplate(templateGuid, projectGuid));
             await db.SaveChangesAsync();
         }
 
@@ -308,18 +193,26 @@ public class ClaimOrphanedTemplatesTests : IDisposable
         // Act
         await sut.ClaimOrphanedTemplatesAsync(CancellationToken.None);
 
-        // Assert: no reparent log lines (nothing changed)
+        // Assert: no reparent log lines, and the template stays where it is
         var repairLines = sink.Events.Where(e => e.MessageTemplate.Text.Contains("reparented orphaned template")).ToList();
-        // TODO [WARNING]: Test name promises "DoesNotCallSaveChanges" but this assertion is an
-        // indirect proxy — it checks that no log lines were emitted, not that SaveChangesAsync was
-        // skipped. If SaveChangesAsync were called unconditionally, no log lines would be emitted
-        // and this test would still pass. Consider renaming to _NoOrphans_EmitsNoRepairLogLines,
-        // or adding a DB state assertion (e.g. Default project TemplateIds remains empty) to verify
-        // no mutations occurred.
         repairLines.Should().BeEmpty("no orphans — nothing should be repaired");
+
+        await using var verify = _dbFactory.CreateDbContext();
+        (await verify.PipelineJobTemplates.FindAsync(templateGuid))!.ProjectId.Should().Be(projectGuid);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
+
+    private static PipelineJobTemplateEntity CreateTemplate(Guid id, Guid projectId) => new()
+    {
+        Id = id,
+        ProjectId = projectId,
+        Name = $"T-{id:N}",
+        Configuration = System.Text.Json.JsonSerializer.Serialize(
+            new PipelineJobTemplate { Id = id.ToString(), Name = "T", IssueProviderId = "ip", RepoProviderId = "rp" },
+            PipelineJsonOptions.Default)
+    };
+
 
     private DatabaseStartupService CreateService(Serilog.ILogger? logger = null)
     {

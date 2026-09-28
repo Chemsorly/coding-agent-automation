@@ -41,7 +41,8 @@ public class ProjectStoreTests
         result.Name.Should().Be("Test Project");
         result.Description.Should().Be("A test project");
         result.Enabled.Should().BeTrue();
-        result.TemplateIds.Should().BeEquivalentTo(["template-1", "template-2"]);
+        // Membership comes from the templates' own project, not from the saved list.
+        result.TemplateIds.Should().BeEmpty();
     }
 
     [Fact]

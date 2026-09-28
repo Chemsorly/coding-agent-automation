@@ -862,7 +862,7 @@ public sealed partial class PipelineLoopService
 
     /// <summary>
     /// Flattens all enabled projects' templates into a single ordered list.
-    /// Order: projects alphabetical by Name, templates by TemplateIds position.
+    /// Order: projects alphabetical by Name, templates by name within each project (TemplateOrder).
     /// Templates are loaded from IProjectStore.LoadAllTemplatesAsync.
     /// Skips disabled projects entirely. Skips missing template IDs with a warning.
     /// Only includes templates that are individually enabled.

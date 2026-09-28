@@ -16,15 +16,25 @@ flowchart TD
     F --> C
 ```
 
-The migration is idempotent — running it multiple times produces the same result. In DB mode, templates are stored in the PostgreSQL database; in legacy file-based mode, they were stored in `config/pipeline/` JSON files. Projects hold ownership IDs referencing templates.
+The migration is idempotent — running it multiple times produces the same result. In DB mode, templates are stored in the PostgreSQL database; in legacy file-based mode, they were stored in `config/pipeline/` JSON files.
+
+## Membership
+
+Each template row (`PipelineJobTemplates.ProjectId`) records its project, and that is the only record of membership. `PipelineProject.TemplateIds` is filled from it when projects are loaded, ordered by `TemplateOrder` (name ignoring case, then exact name, then ID), and ignored when a project is saved. Moving a template changes one row.
+
+Until the `RemoveProjectTemplateIds` migration, the project row also stored an ordered `TemplateIds` list, and the Settings JSON a copy of it. The loop and the UI followed the list, so the migration kept what the loop did:
+
+- a template no project listed was never polled, so it is disabled, and shows up again;
+- a template a project listed moves to that project (a project other than Default first, then the first by name);
+- a template whose project no longer exists moves to the Default project.
 
 ## Pipeline Loop Integration
 
 The pipeline loop iterates projects instead of reading templates directly from the global config:
 
 ```
-foreach project in enabled projects (ordered by creation):
-    foreach template in project.TemplateIds (ordered by position):
+foreach project in enabled projects (ordered by name):
+    foreach template in project.TemplateIds (ordered by name):
         if template.Enabled:
             apply project settings overrides
             poll for work (issues, PRs, epics)
@@ -32,7 +42,7 @@ foreach project in enabled projects (ordered by creation):
 
 - Disabled projects skip all templates within them
 - Template ordering within a project determines poll priority
-- Orphaned templates (data corruption) are auto-assigned to the Default project on load
+- Templates of a deleted project move to the Default project; the startup repair (`ClaimOrphanedTemplatesAsync`) also moves templates whose project row is missing
 
 ## Observability Tags
 

@@ -609,7 +609,7 @@ internal sealed class TemplatePoller
 
     /// <summary>
     /// Selects the repository template for a project-level epic decomposition dispatch.
-    /// Returns the first decomposition-enabled template in the project (by TemplateIds position).
+    /// Returns the first decomposition-enabled template in the project (TemplateIds are in TemplateOrder, by name).
     /// Returns null if no decomposition-enabled template exists.
     /// </summary>
     internal static PipelineJobTemplate? SelectDecompositionTemplate(

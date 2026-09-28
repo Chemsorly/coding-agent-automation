@@ -19,7 +19,7 @@ public record GitLabValidationResult(
 /// Lightweight service for validating GitLab access tokens and project accessibility.
 /// Used by the Settings page GitLab provider form for pre-save validation.
 /// </summary>
-public sealed class GitLabValidationService
+public class GitLabValidationService
 {
     private readonly ILogger _logger = Log.Logger;
 
@@ -33,7 +33,7 @@ public sealed class GitLabValidationService
     /// <param name="projectId">Numeric project identifier as a string.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A <see cref="GitLabValidationResult"/> indicating success or failure.</returns>
-    public async Task<GitLabValidationResult> ValidateAsync(
+    public virtual async Task<GitLabValidationResult> ValidateAsync(
         string apiUrl, string accessToken, string projectId, CancellationToken ct)
     {
         var inputError = ValidateInputParameters(apiUrl, accessToken, projectId);

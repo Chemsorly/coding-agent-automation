@@ -251,6 +251,7 @@
             }
             else
             {
+                <p class="form-hint">Listed by name, which is also the order the loop uses. The first enabled template with decomposition runs this project's epics.</p>
                 <div class="template-list">
                     @for (var i = 0; i < _project.TemplateIds.Count; i++)
                     {
@@ -260,7 +261,6 @@
                         var displayName = template?.Name ?? $"Unknown ({templateId[..8]}...)";
 
                         <div class="template-row">
-                            <span class="template-order">@(index + 1).</span>
                             <span class="template-name">@displayName</span>
                             <div class="template-actions">
                                 <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
@@ -270,8 +270,6 @@
                                         <option value="@proj.Id">@proj.Name</option>
                                     }
                                 </select>
-                                <button class="btn-icon" disabled="@(index == 0)" @onclick="() => MoveTemplateUp(index)" title="Move up">▲</button>
-                                <button class="btn-icon" disabled="@(index == _project.TemplateIds.Count - 1)" @onclick="() => MoveTemplateDown(index)" title="Move down">▼</button>
                                 @if (_project.Id != WellKnownIds.DefaultProjectId)
                                 {
                                     <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove from project (moves to Default)">✕</button>
@@ -553,26 +551,6 @@
         }
     }
 
-    private async Task MoveTemplateUp(int index)
-    {
-        if (index <= 0) return;
-        var newIds = _project.TemplateIds.ToList();
-        (newIds[index], newIds[index - 1]) = (newIds[index - 1], newIds[index]);
-        _project = _project with { TemplateIds = newIds };
-
-        await SaveProjectAsync();
-    }
-
-    private async Task MoveTemplateDown(int index)
-    {
-        if (index >= _project.TemplateIds.Count - 1) return;
-        var newIds = _project.TemplateIds.ToList();
-        (newIds[index], newIds[index + 1]) = (newIds[index + 1], newIds[index]);
-        _project = _project with { TemplateIds = newIds };
-
-        await SaveProjectAsync();
-    }
-
     private async Task MoveTemplateToProject(string templateId, string? targetProjectId)
     {
         if (string.IsNullOrEmpty(targetProjectId)) return;
@@ -671,20 +649,6 @@
             await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
-        }
-        catch (Exception ex)
-        {
-            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
-        }
-    }
-
-    private async Task SaveProjectAsync()
-    {
-        try
-        {
-            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
-            await OnProjectSaved.InvokeAsync();
-            await OnShowStatus.InvokeAsync(("Project updated.", false));
         }
         catch (Exception ex)
         {
