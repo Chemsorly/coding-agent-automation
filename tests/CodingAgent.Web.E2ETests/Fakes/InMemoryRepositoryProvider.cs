@@ -45,11 +45,11 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         return Task.CompletedTask;
     }
 
-    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         MethodCalls.Add(nameof(CreateBranchAsync));
-        LastBranchName = branchName;
-        return Task.FromResult(branchName);
+        LastBranchName = branchName.Value;
+        return Task.FromResult(branchName.Value);
     }
 
     public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
@@ -70,7 +70,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         return Task.CompletedTask;
     }
 
-    public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    public Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
     {
         MethodCalls.Add(nameof(PushBranchAsync));
         return Task.CompletedTask;
@@ -99,7 +99,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct) => Task.CompletedTask;
 
-    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct) =>
+    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct) =>
         Task.CompletedTask;
 
     public Task<MergeResult> MergeFromBaseAsync(WorkspacePath workspacePath, CancellationToken ct) =>

@@ -46,7 +46,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
     [Fact]
     public async Task CommitAndPushAsync_PushSucceedsFirstAttempt_ReturnsSuccessNoRetry()
     {
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var result = await _sut.CommitAndPushAsync(
@@ -55,7 +55,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         result.Success.Should().BeTrue();
         result.FilesCommitted.Should().Be(1);
         _mockProvider.Verify(
-            p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -63,7 +63,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
     public async Task CommitAndPushAsync_PushFailsThenSucceeds_RetriesAndReturnsSuccess()
     {
         var callCount = 0;
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
@@ -80,14 +80,14 @@ public class BrainUpdateServicePushRetryTests : IDisposable
 
         result.Success.Should().BeTrue();
         _mockProvider.Verify(
-            p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }
 
     [Fact]
     public async Task CommitAndPushAsync_MaxRetriesExhausted_ReturnsFailure()
     {
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Push failed for ref 'refs/heads/main': non-fast-forward"));
 
         SetupRebaseMocks();
@@ -98,7 +98,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("non-fast-forward");
         _mockProvider.Verify(
-            p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
             Times.Exactly(3));
     }
 
@@ -106,7 +106,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
     public async Task CommitAndPushAsync_ConflictDuringRebase_ResolvesWithAcceptBoth()
     {
         var callCount = 0;
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
@@ -135,7 +135,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
     [Fact]
     public async Task CommitAndPushAsync_NonFastForwardWithCustomRetryCount_RespectsConfig()
     {
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Push failed for ref 'refs/heads/main': non-fast-forward"));
 
         SetupRebaseMocks();
@@ -145,14 +145,14 @@ public class BrainUpdateServicePushRetryTests : IDisposable
 
         result.Success.Should().BeFalse();
         _mockProvider.Verify(
-            p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
             Times.Exactly(2));
     }
 
     [Fact]
     public async Task CommitAndPushAsync_OtherInvalidOperationException_DoesNotRetry()
     {
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Push failed: authentication required"));
 
         var result = await _sut.CommitAndPushAsync(
@@ -161,7 +161,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         result.Success.Should().BeFalse();
         result.ErrorMessage.Should().Contain("authentication required");
         _mockProvider.Verify(
-            p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -169,7 +169,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
     public async Task CommitAndPushAsync_CancellationDuringRetry_DoesNotKeepRetrying()
     {
         using var cts = new CancellationTokenSource();
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 cts.Cancel();
@@ -183,7 +183,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
 
         // Either returns failure or throws OCE — key is it doesn't keep retrying
         _mockProvider.Verify(
-            p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -200,7 +200,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         result.FilesCommitted.Should().Be(0);
         // Push should NOT be called when there's nothing to commit
         _mockProvider.Verify(
-            p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -209,7 +209,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
     {
         // Verify that PullAsync is NOT called before the initial commit+push
         // (the old bug where PullAsync was called first, causing CheckoutConflictException)
-        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, "main", It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var result = await _sut.CommitAndPushAsync(

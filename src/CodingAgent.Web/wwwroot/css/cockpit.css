@@ -111,12 +111,14 @@
 }
 
 /* ---- Base link color for the cockpit shell --------------------------------- */
-/* Use :where() to keep specificity at 0-0-1 so any class on a link overrides. */
+/* Use :where() to keep specificity at 0-0-1 so any class on a link overrides. :hover goes inside :where()
+   too — a bare `a:hover` is 0-1-1 and out-ranks single-class links such as .cockpit-nav-link, which then
+   underline on hover. */
 :where(.cockpit) a {
     color: var(--accent-light);
     text-decoration: none;
 }
-:where(.cockpit) a:hover {
+:where(.cockpit) a:where(:hover) {
     text-decoration: underline;
 }
 
@@ -559,25 +561,86 @@
 .cockpit .template-table td:nth-child(-n+5) { white-space: normal; overflow-wrap: anywhere; min-width: 120px; }
 .cockpit .template-table .feature-badge-bar { flex-wrap: wrap; }
 
-/* Settings lists (profiles, quality gates, reviewers): wrap every cell except the actions column. */
+/* A table's first column lines up with its card title and its rows run edge to edge, in either card type:
+   in a .cockpit-card the outer cells take the header's 18px (the 10px cell padding left the text 8px left of
+   the title); in a padded .settings-section the table bleeds through the 20px card padding and the outer
+   cells take that 20px instead (the stacked paddings put the text 8–10px right of the title). */
+.cockpit .cockpit-card > .monitoring-table-wrap > table :is(th, td):first-child { padding-left: 18px; }
+.cockpit .cockpit-card > .monitoring-table-wrap > table :is(th, td):last-child { padding-right: 18px; }
+.cockpit .settings-section > .monitoring-table-wrap { margin-left: -20px; margin-right: -20px; }
+.cockpit .settings-section > .monitoring-table-wrap > table :is(th, td):first-child { padding-left: 20px; }
+.cockpit .settings-section > .monitoring-table-wrap > table :is(th, td):last-child { padding-right: 20px; }
+
+/* Lists inside section cards: wrap every cell except the actions column. */
 .cockpit .settings-section .monitoring-table td:not(:last-child) { white-space: normal; overflow-wrap: anywhere; }
+/* Consolidation run history: the summary cell takes all spare width (width: 100%; max-width: 0), so the short
+   columns keep their text on one line — with the wrap rule above they were squeezed to a few characters and
+   split mid-word ("Succe|eded"). */
+.cockpit .settings-section .monitoring-table.consolidation-history-table td:not(.consolidation-summary-cell) { white-space: nowrap; }
+/* Settings page lists (profiles, quality gates, reviewers) wrap at word boundaries instead — anywhere split
+   names and label chips mid-word once a column got narrow. Chips wrap as whole chips; headers wrap and cells
+   are a little tighter, so the lists fit the content column at 1280px. */
+.cockpit .settings-content .monitoring-table td:not(:last-child) { overflow-wrap: break-word; }
+.cockpit .settings-content .monitoring-table .sidebar-label { display: inline-block; margin: 1px 3px 1px 0; white-space: nowrap; }
+.cockpit .settings-content .monitoring-table th { white-space: normal; text-overflow: clip; }
+.cockpit .settings-content .monitoring-table :is(th, td) { padding-left: 8px; padding-right: 8px; }
 
 /* ---- Settings re-shell (scoped tweaks so it sits cleanly in the new frame) -- */
-.cockpit .settings-page { padding: 0; height: auto; }
-.cockpit .settings-header { padding: 22px 28px 4px; border: none; background: transparent; }
-.cockpit .settings-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-.cockpit .settings-layout { padding: 14px 28px 40px; }
-/* Align settings section cards with the h1 left edge. Without this, .settings-content's 20px
-   padding stacks on top of .settings-layout's 28px, pushing cards to 48px vs h1 at 28px. */
-.cockpit .settings-content { padding-left: 0; padding-right: 0; }
+/* The page uses the shared .cockpit-page chrome. Drop the legacy full-height scroller from app.css: an
+   overflow container here would also stop the tree from sticking. */
+.cockpit .settings-page { height: auto; overflow: visible; }
+.cockpit .settings-layout { gap: 16px; align-items: flex-start; overflow: visible; }
+
+/* The tree is a card of its own, level with the content card, and stays in view while a long section
+   scrolls (max-height leaves room for the 56px top bar and the 16px offsets). */
+.cockpit .settings-tree {
+    position: sticky; top: 16px;
+    max-height: calc(100vh - 88px);
+    padding: 8px;
+    border: 1px solid var(--border); border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(15, 19, 32, .04);
+    scrollbar-width: thin; scrollbar-color: var(--ctl-border) transparent;
+}
+.cockpit .tree-group-header { padding: 7px 10px; border-radius: 8px; }
+.cockpit .tree-group-children { gap: 1px; padding: 2px 0 6px; }
+/* Tree links use the sidebar nav's item style: a rounded row, tinted when active. */
+.cockpit .tree-node { padding: 5px 10px 5px 28px; border-left: 0; border-radius: 8px; }
+.cockpit .tree-node:hover { background: var(--bg-hover); color: var(--text); }
+.cockpit .tree-node.active { background: var(--bg-active); color: var(--nav-active-fg); font-weight: 600; }
+
+/* The content column starts level with the tree; app.css pads it 20px on every side. */
+.cockpit .settings-content { padding: 0; min-width: 0; }
+
+/* Section cards match .cockpit-card: 14px radius, faint shadow, plain-text titles. */
+.cockpit .settings-section { padding: 18px 20px; border-radius: 14px; box-shadow: 0 1px 2px rgba(15, 19, 32, .04); }
+.cockpit .settings-section h2 { font-size: 15px; font-weight: 700; color: var(--text); }
+/* A section whose body is a single settings form: the card already frames it, so the form's own box would
+   nest a second bordered well inside the card. Add/edit panels under a list keep their frame. */
+.cockpit .settings-section > .section-description + .provider-form { padding: 0; border: 0; background: none; }
+
+/* Cards are as wide as the window; single-line controls stretched to 1300px at 1885px. Text areas keep
+   the full width for prompts. */
+.cockpit .settings-section .form-group > :is(input:not([type="checkbox"], [type="radio"]), select),
+.cockpit .settings-section .input-with-action { max-width: 560px; }
+.cockpit .settings-section .form-group > input[type="number"] { max-width: 220px; }
+
+/* ≤768px: the tree stacks above the content and its links wrap into chips, so the content keeps the full
+   width (next to the fixed 220px tree it was 99px wide on a phone). */
+@media (max-width: 768px) {
+    .cockpit .settings-layout { flex-direction: column; align-items: stretch; }
+    .cockpit .settings-tree { position: static; width: auto; min-width: 0; max-height: none; }
+    .cockpit .tree-group-children { flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 2px 6px 8px; }
+    .cockpit .tree-node { padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; }
+}
 
 /* ---- Pipelines re-shell (Agent Coding page inside the new frame) ------------ */
-.cockpit .agent-header { padding: 22px 28px 4px; border: none; background: transparent; }
-.cockpit .agent-header h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
-/* Align the section content inset with the header (28px — the app-wide content inset). Without this,
-   .agent-main's 20px padding + the sections' own 20px margins push content to 40px, 12px past the h1. */
-.cockpit .agent-main { padding-left: 8px; padding-right: 8px; }
-/* Consolidation is a standalone page — its header is visible. */
+/* The page sits in .cockpit-page, which already provides the 28px inset and the 16px rhythm. .agent-main only
+   stacks its cards the same way; its legacy 20px padding pushed the cards past the h1 and away from the right. */
+.cockpit .agent-main { display: flex; flex-direction: column; gap: 16px; padding: 0; }
+
+/* A card title row inside a padded .settings-section spans the card edge to edge, like .cockpit-card-header in
+   a .cockpit-card, and its title lines up with the card body instead of sitting 18px further in. */
+.cockpit .settings-section > .cockpit-card-header:first-child { margin: -18px -20px 14px; padding: 14px 20px; }
 
 /* ---- RefreshBar — consistent refresh control (issue #2339) ---------------- */
 .refresh-bar {

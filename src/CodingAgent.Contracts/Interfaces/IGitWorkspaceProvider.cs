@@ -20,7 +20,7 @@ public interface IGitWorkspaceProvider : IAsyncDisposable
 
     Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct);
 
-    Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct);
+    Task<string> CreateBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct);
 
     /// <summary>
     /// Stages all changes, unstages any files matching <paramref name="blacklistedPaths"/>
@@ -39,10 +39,10 @@ public interface IGitWorkspaceProvider : IAsyncDisposable
         IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null);
 
-    Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct);
+    Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct);
 
     /// <summary>Pushes the branch with optional force-push (required after rebase rewrites history).</summary>
-    Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
+    Task PushBranchAsync(WorkspacePath workspacePath, BranchName branchName, bool forcePush, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, ct);
 
     /// <summary>Returns the SHA of the HEAD commit in the given workspace repository.</summary>
@@ -69,7 +69,7 @@ public interface IGitWorkspaceProvider : IAsyncDisposable
             $"{GetType().Name} does not support PullAsync. Override to enable pull operations.");
 
     /// <summary>Checks out an existing remote branch after clone, creating a local tracking branch.</summary>
-    Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
+    Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support CheckoutRemoteBranchAsync.");
 
