@@ -217,6 +217,15 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)).ToList();
     }
 
+    public async Task<int> GetActiveDecompositionCountAsync(CancellationToken ct = default)
+    {
+        var result = await _http.GetFromJsonAsync<ActiveDecompositionCountResponse>(
+            "/api/work-items/active-decomposition-count",
+            PipelineJsonOptions.Default,
+            ct);
+        return result?.Count ?? 0;
+    }
+
     public async Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
     {
         var response = await _http.PostAsJsonAsync(
@@ -267,4 +276,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         public string IssueIdentifier { get; init; } = "";
         public string IssueProviderConfigId { get; init; } = "";
     }
+
+    private sealed record ActiveDecompositionCountResponse(int Count);
 }

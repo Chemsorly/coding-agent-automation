@@ -56,6 +56,7 @@ public static class WorkItemDispatchEndpoints
         group.MapGet("/{id:guid}/k8s-job-name", GetK8sJobName).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/is-distributed", GetIsDistributed).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/active-identifiers", GetActiveIdentifiers).RequireAuthorization(ApiAuthPolicies.Operator);
+        group.MapGet("/active-decomposition-count", GetActiveDecompositionCount).RequireAuthorization(ApiAuthPolicies.Operator);
     }
 
     // ── POST / — create WorkItem ───────────────────────────────────────────
@@ -1023,6 +1024,34 @@ public static class WorkItemDispatchEndpoints
     /// S1944 suspicious-cast warning and preserves field-name stability on the wire.
     /// </summary>
     internal sealed record ActiveIdentifierDto(string IssueIdentifier, string IssueProviderConfigId);
+
+    // ── GET /active-decomposition-count ──────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/active-decomposition-count
+    /// Returns the number of active (Pending, Dispatched, or Running) WorkItems whose
+    /// <c>TaskType</c> is <see cref="WorkItemTaskType.Decomposition"/>.
+    /// Used by <c>KubernetesWorkDistributor.GetActiveDecompositionCountAsync</c> so the
+    /// Scheduler's <c>DispatchScheduler</c> can enforce <c>MaxConcurrentDecompositions</c>
+    /// from authoritative DB state. The Scheduler's in-memory
+    /// <c>SchedulerRunQueryService.GetActiveRuns()</c> always returns empty, making the
+    /// in-process gate unreliable; this endpoint provides the correct count.
+    /// 200 with { count: int }.
+    /// </summary>
+    internal static async Task<IResult> GetActiveDecompositionCount(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var count = await db.WorkItems
+            .AsNoTracking()
+            .WhereActive()
+            .Where(w => w.TaskType == WorkItemTaskType.Decomposition)
+            .CountAsync(ct);
+
+        return TypedResults.Ok(new { count });
+    }
 
     // ── POST /{id}/priority ───────────────────────────────────────────────
 

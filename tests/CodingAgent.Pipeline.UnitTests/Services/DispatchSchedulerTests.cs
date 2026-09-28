@@ -1785,4 +1785,114 @@ public class DispatchSchedulerTests
     // TODO: No span-emission tests exist for Loop.Enqueue (added in issue #2977).
     // Add tests to verify: (1) Loop.Enqueue is emitted with issue_identifier and template_name tags
     // when an issue is successfully dispatched; (2) no span is emitted when dispatch is skipped.
+
+    #region ActiveDecompositionCount — external DB-backed gate
+
+    /// <summary>
+    /// When <see cref="DispatchRoundRobinRequest.ActiveDecompositionCount"/> is set to a value
+    /// at or above <c>MaxConcurrentDecompositions</c>, decomposition dispatch is blocked even
+    /// when <c>GetAllActiveRuns()</c> returns an empty list (simulating the Scheduler process
+    /// where in-memory run state is unavailable).
+    /// This verifies that the DB-backed count passed by <c>PipelineLoopService</c> is actually
+    /// used by <c>DispatchFairRoundRobinAsync</c> to enforce the gate.
+    /// </summary>
+    [Fact]
+    public async Task ActiveDecompositionCount_ExternalCountAtLimit_BlocksDecompositionDispatch()
+    {
+        // Arrange — GetAllActiveRuns() returns empty (Scheduler process: always returns 0)
+        _mockOrchestration.Setup(o => o.GetAllActiveRuns()).Returns(new List<PipelineRun>());
+
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        {
+            ["t1"] = new List<(IssueSummary, PipelineRunType)>
+            {
+                (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis),
+                (CreateIssueSummary("epic-2"), PipelineRunType.DecompositionAnalysis)
+            }
+        };
+
+        var config = new PipelineConfiguration { MaxConcurrentDecompositions = 1 };
+
+        // Act: pass ActiveDecompositionCount = 1 (= the limit) → gate should block all decomposition
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = config,
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { },
+                ActiveDecompositionCount = 1 // at limit — must block dispatch
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        // Assert: no decompositions dispatched despite GetAllActiveRuns() returning 0
+        _decompDispatchCount.Should().Be(0,
+            "the externally-supplied ActiveDecompositionCount of 1 at MaxConcurrentDecompositions=1 should block all decomposition dispatch");
+        result.ProcessedCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// When <see cref="DispatchRoundRobinRequest.ActiveDecompositionCount"/> is -1 (not set),
+    /// the scheduler falls back to <c>GetAllActiveRuns()</c>. If that also returns 0, dispatch
+    /// proceeds normally. This verifies the fallback path remains intact for non-Scheduler contexts.
+    /// </summary>
+    [Fact]
+    public async Task ActiveDecompositionCount_NotSet_FallsBackToGetAllActiveRuns_AndDispatchesWhenBelowLimit()
+    {
+        // Arrange — GetAllActiveRuns() returns empty (0 active decompositions in memory)
+        _mockOrchestration.Setup(o => o.GetAllActiveRuns()).Returns(new List<PipelineRun>());
+
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        {
+            ["t1"] = new List<(IssueSummary, PipelineRunType)>
+            {
+                (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis)
+            }
+        };
+
+        var config = new PipelineConfiguration { MaxConcurrentDecompositions = 1 };
+
+        // Act: ActiveDecompositionCount = -1 (default, not set) → fall back to GetAllActiveRuns()
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = config,
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+                // ActiveDecompositionCount not set → defaults to -1 → uses GetAllActiveRuns()
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        // Assert: dispatch proceeds because GetAllActiveRuns() returned 0 < limit of 1
+        _decompDispatchCount.Should().Be(1,
+            "fallback to GetAllActiveRuns() (returning 0) should allow dispatch up to MaxConcurrentDecompositions=1");
+        result.ProcessedCount.Should().Be(1);
+    }
+
+    #endregion
 }

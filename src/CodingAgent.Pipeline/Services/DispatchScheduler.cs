@@ -107,6 +107,18 @@ internal sealed partial class DispatchScheduler
 
         /// <summary>Callback to notify UI of a state change.</summary>
         public required Action NotifyChange { get; init; }
+
+        /// <summary>
+        /// Number of active decomposition work items (Pending, Dispatched, or Running) as
+        /// of the start of this cycle, pre-computed by the caller from the WorkItems DB.
+        /// A value of <c>-1</c> (the default) causes <see cref="DispatchFairRoundRobinAsync"/>
+        /// to fall back to <c>_orchestration.GetAllActiveRuns()</c>, which is correct for the
+        /// API/Orchestrator process but always returns 0 in the Scheduler process.
+        /// Callers that have access to <see cref="IWorkDistributor.GetActiveDecompositionCountAsync"/>
+        /// should set this to the DB-backed count so the <c>MaxConcurrentDecompositions</c>
+        /// gate works correctly across process boundaries.
+        /// </summary>
+        public int ActiveDecompositionCount { get; init; } = -1;
     }
 
     /// <summary>
@@ -160,8 +172,17 @@ internal sealed partial class DispatchScheduler
         int remaining = priorityBudget;
         int processedCount = 0;
         int failedCount = 0;
-        int activeDecompositionCount = _orchestration.GetAllActiveRuns()
-            .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+
+        // Use the caller-supplied active decomposition count when available (>= 0). This is set by
+        // PipelineLoopService via IWorkDistributor.GetActiveDecompositionCountAsync, which queries
+        // the WorkItems DB. This is needed because SchedulerRunQueryService.GetActiveRuns() always
+        // returns empty in the Scheduler process — in-memory state is unavailable cross-process.
+        // Fall back to GetAllActiveRuns() only when no external count was provided (caller is the
+        // API/Orchestrator process where in-memory state is accurate).
+        int activeDecompositionCount = request.ActiveDecompositionCount >= 0
+            ? request.ActiveDecompositionCount
+            : _orchestration.GetAllActiveRuns()
+                .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
 
         var cycleStateCache = new Dictionary<int, bool>();
         var templateProjectLookup = request.FlattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);

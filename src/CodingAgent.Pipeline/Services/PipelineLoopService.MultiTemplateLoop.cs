@@ -153,6 +153,32 @@ public sealed partial class PipelineLoopService
         if (_dispatcher is null)
             return false;
 
+        // Pre-compute the active decomposition count from the WorkItems DB via the distributor.
+        // This is necessary because SchedulerRunQueryService.GetActiveRuns() always returns empty
+        // in the Scheduler process — the in-memory gate in DispatchScheduler would see 0 active
+        // decompositions every cycle, defeating MaxConcurrentDecompositions entirely.
+        // When _workDistributor is null (in-process / test mode), pass -1 so DispatchScheduler
+        // falls back to GetAllActiveRuns(), which is accurate in non-Scheduler deployments.
+        int activeDecompositionCount = -1;
+        if (_workDistributor is not null)
+        {
+            try
+            {
+                activeDecompositionCount = await _workDistributor.GetActiveDecompositionCountAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch
+            {
+                // Best-effort: if the count cannot be retrieved, pass -1 so the scheduler falls
+                // back to GetAllActiveRuns(). In the Scheduler process this means the gate is
+                // disabled for this cycle (returns 0) rather than blocking all decompositions.
+                activeDecompositionCount = -1;
+            }
+        }
+
         var dispatchResult = await _dispatcher.DispatchFairRoundRobinAsync(
             new DispatchScheduler.DispatchRoundRobinRequest
             {
@@ -167,7 +193,8 @@ public sealed partial class PipelineLoopService
                 ProjectLevelDecompositionQueues = projectLevelDecompositionQueues,
                 ReportStatus = msg => { lock (_lock) { StatusMessage = msg; } },
                 ReportIssue = id => CurrentIssueIdentifier = id,
-                NotifyChange = NotifyChange
+                NotifyChange = NotifyChange,
+                ActiveDecompositionCount = activeDecompositionCount
             },
             stoppingToken, ct);
 

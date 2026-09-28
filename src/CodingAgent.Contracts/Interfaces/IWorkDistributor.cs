@@ -71,4 +71,25 @@ public interface IWorkDistributor
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Number of stuck items detected and remediated.</returns>
     Task<int> ReconcileStuckItemsAsync(CancellationToken ct) => Task.FromResult(0);
+
+    /// <summary>
+    /// Returns the number of active (Pending, Dispatched, or Running) WorkItems whose
+    /// <c>TaskType</c> is <c>Decomposition</c>.
+    /// <para>
+    /// Used by the Scheduler's <c>DispatchScheduler</c> to enforce
+    /// <c>MaxConcurrentDecompositions</c> from authoritative DB state. The Scheduler's
+    /// in-memory <c>SchedulerRunQueryService.GetActiveRuns()</c> always returns empty,
+    /// making the in-process <c>GetAllActiveRuns()</c> gate unreliable; this method
+    /// provides the correct cross-process count.
+    /// </para>
+    /// <para>
+    /// The default implementation returns 0. Override in distributor implementations
+    /// that have access to the WorkItems database (i.e. <c>KubernetesWorkDistributor</c>).
+    /// Returning 0 is safe but disables the gate — all cycles will dispatch decompositions
+    /// regardless of <c>MaxConcurrentDecompositions</c>.
+    /// </para>
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Count of active decomposition work items.</returns>
+    Task<int> GetActiveDecompositionCountAsync(CancellationToken ct) => Task.FromResult(0);
 }

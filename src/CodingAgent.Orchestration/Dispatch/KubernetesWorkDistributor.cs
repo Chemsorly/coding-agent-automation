@@ -157,6 +157,29 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             .ToHashSet();
     }
 
+    /// <inheritdoc />
+    public async Task<int> GetActiveDecompositionCountAsync(CancellationToken ct)
+    {
+        try
+        {
+            return await _apiClient.GetActiveDecompositionCountAsync(ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogInformation(
+                "GetActiveDecompositionCountAsync returned HTTP error {StatusCode} — returning 0 (gate disabled for this cycle)",
+                ex.StatusCode);
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogInformation(
+                ex,
+                "GetActiveDecompositionCountAsync failed unexpectedly — returning 0 (gate disabled for this cycle)");
+            return 0;
+        }
+    }
+
     private static JobDistributionStatus MapStatus(WorkItemStatus status) => status switch
     {
         WorkItemStatus.Pending => JobDistributionStatus.Pending,
