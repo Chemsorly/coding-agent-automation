@@ -115,7 +115,6 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_ClearsAgentActiveJobId()
     {
-        SetupUpdateRun(_consolidation);
 
         var agent = MakeAgent();
         await _sut.HandleConsolidationCompleteAsync(MakeResult(), agent);
@@ -126,7 +125,6 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_NullAgent_DoesNotThrow()
     {
-        SetupUpdateRun(_consolidation);
 
         var act = () => _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
         await act.Should().NotThrowAsync();
@@ -135,45 +133,45 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_NotifiesChange()
     {
-        SetupUpdateRun(_consolidation);
-
         await _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
 
         _notifier.Verify(n => n.NotifyChange(), Times.Once);
     }
 
+    /// <summary>
+    /// Issue #3028: UpdateRunAsync must NOT be called from HandleConsolidationCompleteAsync.
+    /// ConsolidationRuns writes have been stopped; the PipelineRun row is now the authoritative
+    /// terminal-state record (written by RunLifecycleManager).
+    /// </summary>
     [Fact]
-    public async Task HandleConsolidationCompleteAsync_Success_CallsUpdateRunWithSucceeded()
+    public async Task HandleConsolidationCompleteAsync_DoesNotCallUpdateRunAsync()
     {
-        _consolidation.Setup(c => c.UpdateRunAsync(
-            new RunId("job-1"), ConsolidationRunStatus.Succeeded, "All done",
-            It.IsAny<CancellationToken>(), It.IsAny<long>())).Returns(Task.CompletedTask);
+        // Use a strict mock so any unexpected call to UpdateRunAsync would throw
+        var strictConsolidation = new Mock<IConsolidationService>(MockBehavior.Strict);
+        // Only SaveHarnessSuggestionsAsync is permitted (if HarnessSuggestions are present)
+        strictConsolidation.Setup(c => c.SaveHarnessSuggestionsAsync(
+            It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
-        await _sut.HandleConsolidationCompleteAsync(MakeResult(success: true), null);
+        var sut = new HubConsolidationOperations(
+            _modelFetch,
+            strictConsolidation.Object,
+            _badge,
+            _notifier.Object,
+            _lifecycleManager.Object,
+            _logger.Object);
 
-        _consolidation.Verify(c => c.UpdateRunAsync(
-            new RunId("job-1"), ConsolidationRunStatus.Succeeded, "All done",
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Once);
-    }
+        // Act: should complete without calling UpdateRunAsync
+        var act = () => sut.HandleConsolidationCompleteAsync(MakeResult(success: true), null);
+        await act.Should().NotThrowAsync("UpdateRunAsync must not be called — store writes stopped in #3028");
 
-    [Fact]
-    public async Task HandleConsolidationCompleteAsync_Failure_CallsUpdateRunWithFailed()
-    {
-        _consolidation.Setup(c => c.UpdateRunAsync(
-            new RunId("job-1"), ConsolidationRunStatus.Failed, "Failed",
-            It.IsAny<CancellationToken>(), It.IsAny<long>())).Returns(Task.CompletedTask);
-
-        await _sut.HandleConsolidationCompleteAsync(MakeResult(success: false), null);
-
-        _consolidation.Verify(c => c.UpdateRunAsync(
-            new RunId("job-1"), ConsolidationRunStatus.Failed, "Failed",
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Once);
+        strictConsolidation.Verify(c => c.UpdateRunAsync(
+            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
     }
 
     [Fact]
     public async Task HandleConsolidationCompleteAsync_Success_CallsCompleteRunAsync()
     {
-        SetupUpdateRun(_consolidation);
         _lifecycleManager
             .Setup(l => l.CompleteRunAsync(new RunId("job-1"), WorkItemStatus.Succeeded,
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
@@ -189,7 +187,6 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_Failure_CallsFailRunAsync()
     {
-        SetupUpdateRun(_consolidation);
         _lifecycleManager
             .Setup(l => l.FailRunAsync(new RunId("job-1"), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
@@ -205,7 +202,6 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_WithHarnessSuggestions_SavesAndIncrementsBadge()
     {
-        SetupUpdateRun(_consolidation);
         _consolidation.Setup(c => c.SaveHarnessSuggestionsAsync(
             It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
@@ -236,7 +232,6 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_WithCreatedIssues_IncrementsBadgeCount()
     {
-        SetupUpdateRun(_consolidation);
 
         var result = new ConsolidationJobResult
         {
@@ -258,7 +253,6 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationCompleteAsync_ReturnsDebugInfo()
     {
-        SetupUpdateRun(_consolidation);
 
         var result = await _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
 

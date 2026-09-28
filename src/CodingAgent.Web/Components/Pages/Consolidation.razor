@@ -12,6 +12,8 @@
 @inject ConsolidationBadgeService BadgeService
 @inject IPipelineApiConfigClient ConfigClient
 @inject IPipelineApiWorkItemClient WorkItems
+@inject IPipelineApiRunHistoryClient RunHistoryClient
+@inject IAgentHubConnection HubConnection
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
@@ -61,8 +63,8 @@
                                 @if (lastBrain != null)
                                 {
                                     <span class="consolidation-card-value">
-                                        @lastBrain.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") —
-                                        <span class="consolidation-status consolidation-status-@lastBrain.Status.ToString().ToLowerInvariant()">@lastBrain.Status</span>
+                                        @lastBrain.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm") —
+                                        <span class="consolidation-status consolidation-status-@GetStatusDisplay(lastBrain).ToLowerInvariant()">@GetStatusDisplay(lastBrain)</span>
                                     </span>
                                 }
                                 else
@@ -83,8 +85,8 @@
                                 @if (lastRefactoring != null)
                                 {
                                     <span class="consolidation-card-value">
-                                        @lastRefactoring.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm") —
-                                        <span class="consolidation-status consolidation-status-@lastRefactoring.Status.ToString().ToLowerInvariant()">@lastRefactoring.Status</span>
+                                        @lastRefactoring.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm") —
+                                        <span class="consolidation-status consolidation-status-@GetStatusDisplay(lastRefactoring).ToLowerInvariant()">@GetStatusDisplay(lastRefactoring)</span>
                                     </span>
                                 }
                                 else
@@ -195,20 +197,21 @@
                     <tbody>
                         @foreach (var run in _runHistory)
                         {
+                            var statusDisplay = GetStatusDisplay(run);
                             <tr>
-                                <td>@FormatRunType(run.Type)</td>
-                                <td>@(run.TemplateName ?? "Global")</td>
-                                <td>@run.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
+                                <td>@FormatRunType(run.ConsolidationType ?? ConsolidationRunType.BrainConsolidation)</td>
+                                <td>@(run.ConsolidationTemplateName ?? (run.ConsolidationTemplateId is not null ? run.ConsolidationTemplateId : "Global"))</td>
+                                <td>@run.StartedAtOffset.ToLocalTime().ToString("yyyy-MM-dd HH:mm")</td>
                                 <td>
-                                    <span class="consolidation-status consolidation-status-@run.Status.ToString().ToLowerInvariant()">
-                                        @run.Status
+                                    <span class="consolidation-status consolidation-status-@statusDisplay.ToLowerInvariant()">
+                                        @statusDisplay
                                     </span>
                                 </td>
-                                <td class="consolidation-summary-cell" title="@(run.Summary ?? "—")">@(run.Summary ?? "—")</td>
+                                <td class="consolidation-summary-cell" title="@(run.ConsolidationResultSummary ?? "—")">@(run.ConsolidationResultSummary ?? "—")</td>
                                 @if (_anyRunCancellable)
                                 {
                                     <td>
-                                        @if (run.Status == ConsolidationRunStatus.Pending && !string.IsNullOrEmpty(run.WorkItemId))
+                                        @if (run.CompletedAtOffset == null && run.WorkItemId.HasValue)
                                         {
                                             <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run)">Cancel</button>
                                         }
@@ -279,13 +282,18 @@
 
 @code {
     private IReadOnlyList<PipelineJobTemplate> _templates = [];
-    private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
-    private IReadOnlyList<ConsolidationRun> _runHistory = [];
+    private Dictionary<(ConsolidationRunType, string?), PipelineRunSummary?> _lastRuns = new();
+    private IReadOnlyList<PipelineRunSummary> _runHistory = [];
     private bool _anyRunCancellable;
     private HarnessSuggestions? _harnessSuggestions;
     private string? _statusMessage;
     private bool _statusIsError;
     private bool _isLoading = true;
+
+    // Hub subscription for real-time refresh (replaces ConsolidationService.OnChange).
+    // IChangeNotifier is registered as NullChangeNotifier in the web host (no-op), so we subscribe
+    // to IAgentHubConnection hub events instead — the same pattern used by Runs.razor.
+    private IDisposable? _completedSub;
 
     // Refactoring modal state
     private bool _showRefactoringModal;
@@ -301,7 +309,25 @@
     protected override async Task OnInitializedAsync()
     {
         BadgeService.Reset();
-        ConsolidationService.OnChange += HandleConsolidationChanged;
+
+        // Subscribe to hub JobCompleted events for real-time page refresh.
+        // This replaces ConsolidationService.OnChange which will no longer fire after
+        // UpdateRunAsync writes are removed (issue #3028).
+        // Uses the same pattern as Runs.razor (HubMethodNames.OnRunCompleted).
+        // TODO [WARNING]: The async lambda below captures `this` (the Blazor component) but has no
+        // exception guard. If the circuit is disposed between the hub event firing and InvokeAsync
+        // completing, LoadDataAsync will throw ObjectDisposedException (or TaskCanceledException),
+        // which escapes the async-void-equivalent SignalR dispatch and may terminate the process.
+        // The old HandleConsolidationChanged had an explicit catch (ObjectDisposedException) for
+        // exactly this reason. Add a try/catch inside the lambda to swallow ObjectDisposedException
+        // and TaskCanceledException, matching the pattern in the removed handler. (DotNetSpecialist review)
+        _completedSub = HubConnection.On<string, JobCompletionPayload>(
+            HubMethodNames.OnRunCompleted,
+            (_, _) => InvokeAsync(async () =>
+            {
+                await LoadDataAsync();
+                StateHasChanged();
+            }));
 
         await LoadDataAsync();
     }
@@ -349,16 +375,17 @@
 
         try
         {
-            // Null-coalesce: this section is embedded in the Pipelines page, so a null return
-            // (e.g. a service that doesn't honour the non-null contract) must not NRE the render.
-            _runHistory = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
-            _anyRunCancellable = _runHistory.Any(r =>
-                r.Status == ConsolidationRunStatus.Pending &&
-                !string.IsNullOrEmpty(r.WorkItemId));
+            // Read consolidation run history from the pipeline-run read path (issue #3028).
+            // This replaces the former IConsolidationService.GetRunHistoryAsync call.
+            var result = await RunHistoryClient.GetRunHistoryAsync(
+                page: 1, pageSize: 200, feedbackOnly: false, includeActive: true,
+                runType: PipelineRunType.Consolidation, ct: CancellationToken.None);
+            _runHistory = result.Items;
+            _anyRunCancellable = _runHistory.Any(r => r.WorkItemId.HasValue && r.CompletedAtOffset == null);
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to load consolidation run history");
+            Log.Warning(ex, "Failed to load consolidation run history from pipeline-run read path");
             _runHistory = [];
             _anyRunCancellable = false;
         }
@@ -373,24 +400,26 @@
             _harnessSuggestions = null;
         }
 
-        // Load last runs per template per type
+        // Derive last-run per (type, templateId) from the already-loaded history (no per-template API calls).
+        // _runHistory is ordered by StartedAt DESC, so FirstOrDefault gives the most recent run.
+        // TODO [WARNING]: When includeActive:true merges in-flight runs, the API prepends active runs to
+        // the paged history without re-sorting (inFlightSummaries.Concat(result.Items)). The comment
+        // "ordered by StartedAt DESC" is therefore not strictly true for the merged list. In practice this
+        // produces the correct result (active runs are the newest activity and appear first), but the
+        // assumption is fragile if the merge order ever changes. Consider sorting _runHistory by
+        // StartedAtOffset descending after load for defensive correctness. (review-findings correctness)
         _lastRuns.Clear();
         foreach (var template in _templates)
         {
-            try
-            {
-                var lastBrain = await ConsolidationService.GetLastRunAsync(
-                    ConsolidationRunType.BrainConsolidation, template.Id, CancellationToken.None);
-                _lastRuns[(ConsolidationRunType.BrainConsolidation, template.Id)] = lastBrain;
+            _lastRuns[(ConsolidationRunType.BrainConsolidation, template.Id)] =
+                _runHistory.FirstOrDefault(r =>
+                    r.ConsolidationType == ConsolidationRunType.BrainConsolidation &&
+                    r.ConsolidationTemplateId == template.Id);
 
-                var lastRefactoring = await ConsolidationService.GetLastRunAsync(
-                    ConsolidationRunType.RefactoringDetection, template.Id, CancellationToken.None);
-                _lastRuns[(ConsolidationRunType.RefactoringDetection, template.Id)] = lastRefactoring;
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Failed to load last runs for template {TemplateId}", template.Id);
-            }
+            _lastRuns[(ConsolidationRunType.RefactoringDetection, template.Id)] =
+                _runHistory.FirstOrDefault(r =>
+                    r.ConsolidationType == ConsolidationRunType.RefactoringDetection &&
+                    r.ConsolidationTemplateId == template.Id);
         }
 
         _isLoading = false;
@@ -490,22 +519,18 @@
 
     private bool IsRunning(ConsolidationRunType type, string? templateId)
     {
-        return _runHistory.Any(r => r.Type == type
-            && r.TemplateId == templateId
-            && (r.Status == ConsolidationRunStatus.Running
-                || r.Status == ConsolidationRunStatus.Pending));
+        // A run is considered active when it has no CompletedAtOffset (i.e. not yet terminal).
+        return _runHistory.Any(r =>
+            r.ConsolidationType == type &&
+            r.ConsolidationTemplateId == templateId &&
+            r.CompletedAtOffset == null);
     }
 
-    private async Task CancelQueuedRun(ConsolidationRun run)
+    private async Task CancelQueuedRun(PipelineRunSummary run)
     {
-        // Route cancel through PostStatus(Cancelled) — the same pattern used by Work.razor (line 404).
-        // This cancels the WorkItem in the DB, preventing the Scheduler from dispatching it.
-        // CancelQueuedRunAsync was removed (issue #3027); WorkItem status is now authoritative.
-        if (!Guid.TryParse(run.WorkItemId, out var workItemId))
+        if (!run.WorkItemId.HasValue)
         {
-            // Older runs created before WorkItemId was introduced have no WorkItemId.
-            // Nothing to cancel via PostStatus; refresh state so the button disappears.
-            _statusMessage = "Cannot cancel: run has no associated WorkItem ID (created before this feature).";
+            _statusMessage = "Cannot cancel: run has no associated WorkItem ID.";
             _statusIsError = true;
             await LoadDataAsync();
             return;
@@ -513,46 +538,34 @@
 
         try
         {
-            await WorkItems.PostStatusAsync(workItemId, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, CancellationToken.None);
+            await WorkItems.PostStatusAsync(run.WorkItemId.Value, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, CancellationToken.None);
             _statusMessage = "Queued run cancelled.";
             _statusIsError = false;
-            // TODO [WARNING]: PostStatusAsync cancels the WorkItem in the DB but does not update the
-            // ConsolidationRun.Status to Cancelled. After LoadDataAsync() below re-fetches runs, the
-            // ConsolidationRun row still shows Pending and WorkItemId is still set, so _anyRunCancellable
-            // evaluates to true and the Cancel button reappears. A second click POSTs Cancelled→Cancelled,
-            // which the API rejects (400), triggering the catch block's "Cancel failed" message for a
-            // run that was successfully cancelled. Scenario: user clicks Cancel → success → LoadDataAsync
-            // refreshes → button reappears → second cancel shows spurious "Cancel failed" error.
-            // Fix options: (1) update run.Status locally before LoadDataAsync, or (2) wait for the
-            // ConsolidationRun completion path to write Cancelled status before showing the button.
-            // (review-findings-dotnetspecialist.md)
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "Failed to cancel WorkItem {WorkItemId} for consolidation run {RunId}", workItemId, run.RunId);
+            Log.Warning(ex, "Failed to cancel WorkItem {WorkItemId} for consolidation run {RunId}", run.WorkItemId, run.RunId);
             _statusMessage = "Cancel failed — check orchestrator logs.";
             _statusIsError = true;
         }
         await LoadDataAsync();
     }
 
-    // TODO(WARNING): This method is `async void`. If LoadDataAsync (or InvokeAsync itself) throws
-    // an exception not caught internally, it will propagate on the thread-pool and terminate the
-    // process, because there is no caller to observe the returned Task. The ObjectDisposedException
-    // guard only covers the disposed-circuit case. Fix: convert to `async Task` and subscribe via
-    // `ConsolidationService.OnChange += () => _ = HandleConsolidationChangedAsync();`, or add a
-    // broad try/catch inside the InvokeAsync lambda to swallow/log unexpected exceptions.
-    private async void HandleConsolidationChanged()
+    /// <summary>
+    /// Derives a display status string from a <see cref="PipelineRunSummary"/>.
+    /// Active runs (CompletedAtOffset == null) are "Running"; completed runs use FinalStep.
+    /// </summary>
+    private static string GetStatusDisplay(PipelineRunSummary run)
     {
-        try
+        if (run.CompletedAtOffset == null)
+            return "Running";
+        return run.FinalStep switch
         {
-            await InvokeAsync(async () =>
-            {
-                await LoadDataAsync();
-                StateHasChanged();
-            });
-        }
-        catch (ObjectDisposedException) { }
+            PipelineStep.Completed => "Succeeded",
+            PipelineStep.Failed => "Failed",
+            PipelineStep.Cancelled => "Cancelled",
+            _ => run.FinalStep.ToString()
+        };
     }
 
     private static string FormatRunType(ConsolidationRunType type) => type switch
@@ -565,6 +578,6 @@
 
     public void Dispose()
     {
-        ConsolidationService.OnChange -= HandleConsolidationChanged;
+        _completedSub?.Dispose();
     }
 }
