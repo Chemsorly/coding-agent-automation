@@ -165,10 +165,10 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     {
         // Arrange: seed three ghost rows — Completed/Failed/Cancelled with null CompletedAt.
         // These are the "33 ghost runs" reported in issue #2316.
-        var idCompleted  = Guid.NewGuid();
-        var idFailed     = Guid.NewGuid();
-        var idCancelled  = Guid.NewGuid();
-        var seededIds    = new[] { idCompleted, idFailed, idCancelled };
+        var idCompleted = Guid.NewGuid();
+        var idFailed = Guid.NewGuid();
+        var idCancelled = Guid.NewGuid();
+        var seededIds = new[] { idCompleted, idFailed, idCancelled };
 
         await using var seedCtx = new TestPipelineDbContext(_dbOptions);
         seedCtx.PipelineRuns.AddRange(

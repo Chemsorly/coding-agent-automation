@@ -25,7 +25,8 @@ public record LoopStatusDto(
     public LoopStatusDto() : this(
         false, "", null, 0, 0, 0, false, null, 0, 0,
         Array.Empty<string>(),
-        new Dictionary<string, ConfigStatusSnapshot>()) { }
+        new Dictionary<string, ConfigStatusSnapshot>())
+    { }
 }
 
 /// <summary>Response from POST /loop/start.</summary>
