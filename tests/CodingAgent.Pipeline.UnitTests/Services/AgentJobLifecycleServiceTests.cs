@@ -14,6 +14,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Covers: job accepted/rejected/completed lifecycle, step transitions, HighWaterMark,
 /// ApplyStepMetadata (internal static), orphaned run handling, and retry exhaustion.
 /// </summary>
+[Collection("Metrics")]
 public sealed class AgentJobLifecycleServiceTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
