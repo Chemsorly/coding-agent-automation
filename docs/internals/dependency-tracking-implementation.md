@@ -22,7 +22,7 @@ The dependency check runs fresh on each poll cycle (~30s default interval):
 
 1. When a candidate issue is dequeued for dispatch, `DependencyParser` extracts issue numbers from the body text
 2. For each referenced issue number, `DependencyChecker` calls `IsIssueClosedAsync` on the issue provider
-3. Results are cached per-cycle in a shared `Dictionary<int, bool>` — if multiple candidates reference the same dependency, only one API call is made
+3. Results are cached per cycle, one `Dictionary<int, bool>` per tracker: if several candidates of a tracker reference the same dependency, only one API call is made. Issue numbers are unique only within a tracker, so #12 is resolved in the dependent issue's own tracker and an answer about #12 in one tracker is never reused for another
 4. If ALL dependencies are closed → issue is eligible for dispatch
 5. If ANY dependency is still open → issue is skipped
 

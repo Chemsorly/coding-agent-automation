@@ -213,7 +213,7 @@ public class HubMessageRoundtripPropertyTests
     // ─── ConsolidationJobMessage ────────────────────────────────────────────────
 
     /// <summary>
-    /// ConsolidationJobMessage round-trip: all fields including optional WorkspacePath,
+    /// ConsolidationJobMessage round-trip: all fields including the optional
     /// LastSuccessfulRunUtc, FeedbackDataJson, and TraceContext.
     /// </summary>
     [Property(MaxTest = 20)]
@@ -244,7 +244,6 @@ public class HubMessageRoundtripPropertyTests
             },
             LastSuccessfulRunUtc = hasOptionals ? new DateTime(2026, 6, 1, 12, 0, 0, DateTimeKind.Utc) : null,
             FeedbackDataJson = hasOptionals ? "{\"entries\":[]}" : null,
-            WorkspacePath = hasOptionals ? "/workspaces/consol-123" : null,
             TraceContext = hasOptionals
                 ? new Dictionary<string, string> { ["traceparent"] = "00-abc-def-01" }
                 : null
@@ -260,7 +259,6 @@ public class HubMessageRoundtripPropertyTests
             && deserialized.ProviderConfigs[0].Id == "pc-1"
             && deserialized.LastSuccessfulRunUtc == original.LastSuccessfulRunUtc
             && deserialized.FeedbackDataJson == original.FeedbackDataJson
-            && deserialized.WorkspacePath == original.WorkspacePath
             && (deserialized.TraceContext == null) == (original.TraceContext == null);
     }
 

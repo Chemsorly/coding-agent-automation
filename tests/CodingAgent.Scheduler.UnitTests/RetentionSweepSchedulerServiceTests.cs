@@ -53,7 +53,7 @@ public sealed class RetentionSweepSchedulerServiceTests
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         _mockClient.Setup(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new RetentionSweepResultDto(5, 3, 1, 2, 4));
+            .ReturnsAsync(new RetentionSweepResultDto(5, 3, 2, 4));
 
         // Use 500ms window (up from 50ms) so PeriodicTimer(1ms) reliably fires
         // at least once even on a loaded CI host where thread-pool scheduling is delayed.
@@ -64,6 +64,11 @@ public sealed class RetentionSweepSchedulerServiceTests
 
         _mockLogger.Verify(l => l.Error(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.Never(), "successful sweep must not log Error");
+        // TODO [WARNING]: This test does not assert that the log message contains the correct field values from
+        // RetentionSweepResultDto. If the log format string in RetentionSweepSchedulerService were accidentally
+        // left referencing a removed named property (e.g. staleConsolidation=), a FormatException or missing
+        // structured-log property would go undetected here. Consider asserting on the Information log message
+        // content (e.g. verify _mockLogger.Information was called with a string containing "retentionRuns=").
     }
 
     [Fact]

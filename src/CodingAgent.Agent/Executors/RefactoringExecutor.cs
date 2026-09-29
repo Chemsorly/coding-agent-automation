@@ -17,7 +17,6 @@ namespace CodingAgent.Agent.Executors;
 /// </summary>
 public sealed class RefactoringExecutor : ConsolidationExecutorBase
 {
-    protected override string WorkspaceSuffix => "refactoring";
     protected override string ExecutorName => "Refactoring detection";
 
     public RefactoringExecutor(Serilog.ILogger logger) : base(logger)
@@ -26,7 +25,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Executes the phased refactoring detection workflow:
-    /// 1. Clone code repo + brain into temp workspace
+    /// 1. Clone code repo + brain into the run's workspace
     /// 2. Hotspot analysis (git log)
     /// 3. Phase 0: Context extraction (project conventions)
     /// 4. Phase 1: Parallel focused detection (3 sub-agents: structural, correctness, design)

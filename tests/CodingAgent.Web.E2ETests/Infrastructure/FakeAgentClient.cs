@@ -26,10 +26,8 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
     // Observability
     public TaskCompletionSource<JobAssignmentMessage> JobAssigned { get; private set; } = new();
-    public TaskCompletionSource<ConsolidationJobMessage> ConsolidationJobAssigned { get; private set; } = new();
     public TaskCompletionSource<ChatPromptMessage> ChatPromptAssigned { get; private set; } = new();
     public ConcurrentBag<string> ReceivedJobIds { get; } = new();
-    public ConcurrentBag<string> ReceivedConsolidationJobIds { get; } = new();
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
 
     /// <summary>
@@ -185,12 +183,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
     {
         ReceivedJobIds.Add(msg.JobId);
         JobAssigned.TrySetResult(msg);
-    }
-
-    private void OnAssignConsolidationJob(string agentId, ConsolidationJobMessage msg)
-    {
-        ReceivedConsolidationJobIds.Add(msg.JobId);
-        ConsolidationJobAssigned.TrySetResult(msg);
     }
 
     /// <summary>
@@ -512,14 +504,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Resets the ConsolidationJobAssigned TaskCompletionSource for reuse across multiple dispatches.
-    /// </summary>
-    public void ResetConsolidationJobAssigned()
-    {
-        ConsolidationJobAssigned = new TaskCompletionSource<ConsolidationJobMessage>();
-    }
-
-    /// <summary>
     /// Resets the ChatPromptAssigned TaskCompletionSource for reuse across multiple prompts.
     /// </summary>
     public void ResetChatPromptAssigned()
@@ -675,7 +659,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
         _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
         _connection.On<string>("CancelChat", sessionId => CancelChatReceived.TrySetResult());
         _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
-        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", OnAssignConsolidationJob);
         _connection.On("ForceDisconnect", async () =>
         {
             if (_connection is not null)

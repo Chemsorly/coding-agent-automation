@@ -124,7 +124,9 @@ public sealed class BlockedIssuesService
             .ToList();
 
         var backlog = new List<BacklogIssue>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);   // dedupe across providers
+        // Dedupe by (tracker, number): issue numbers are unique only within a tracker, so #5 in two
+        // trackers are two different issues and both belong in the backlog.
+        var seen = new HashSet<(string ProviderId, string Identifier)>();
         // TODO: [WARNING] isTruncated is a single flag shared across all providers. If a provider
         // throws mid-pagination (exception on page 2+), the catch block skips setting isTruncated
         // even though that provider's backlog is incomplete — the UI will show an exact count with
@@ -154,7 +156,7 @@ public sealed class BlockedIssuesService
 
                     foreach (var issue in pageResult.Items)
                     {
-                        if (!seen.Add(issue.Identifier))
+                        if (!seen.Add((providerId, issue.Identifier)))
                             continue;
                         // TODO: [WARNING] Cancellation is not checked between per-issue dependency
                         // checks within a page. With PageSize=50 and a slow provider, a cancellation

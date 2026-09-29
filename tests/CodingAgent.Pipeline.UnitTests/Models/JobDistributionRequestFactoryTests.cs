@@ -444,7 +444,7 @@ public class JobDistributionRequestFactoryTests
         var legacy = new JobDistributionRequest
         {
             IssueIdentifier = pr.Identifier,
-            IssueProviderConfigId = template.IssueProviderId,
+            IssueProviderConfigId = template.RepoProviderId, // a pull request is identified by its repository
             RepoProviderConfigId = template.RepoProviderId,
             BrainProviderConfigId = template.BrainProviderId,
             InitiatedBy = "loop",
@@ -478,7 +478,7 @@ public class JobDistributionRequestFactoryTests
         var legacy = new JobDistributionRequest
         {
             IssueIdentifier = pr.Identifier,
-            IssueProviderConfigId = template.IssueProviderId,
+            IssueProviderConfigId = template.RepoProviderId, // a pull request is identified by its repository
             RepoProviderConfigId = template.RepoProviderId,
             BrainProviderConfigId = template.BrainProviderId,
             InitiatedBy = "manual",

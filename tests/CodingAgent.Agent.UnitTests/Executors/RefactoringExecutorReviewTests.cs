@@ -55,9 +55,9 @@ public class RefactoringExecutorReviewTests : IDisposable
         TemplateId = "template-1",
         TemplateName = "Test Template",
         ProviderConfigs = [],
-        WorkspacePath = _tempDir,
         PipelineConfiguration = new PipelineConfiguration
         {
+            WorkspaceBaseDirectory = _tempDir,
             RefactoringReviewEnabled = reviewEnabled,
             AgentTimeout = TimeSpan.FromMinutes(5)
         }

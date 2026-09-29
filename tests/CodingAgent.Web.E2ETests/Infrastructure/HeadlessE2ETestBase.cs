@@ -441,6 +441,36 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
             $"Current status: {finalItem?.Status.ToString() ?? "NOT FOUND"}");
     }
 
+    /// <summary>
+    /// Polls until a WorkItem reaches any terminal status (Failed or Cancelled), then returns it.
+    /// Queries by ID only so EF Core can translate the predicate to SQL; the status check is
+    /// performed in-memory after retrieval. Use this instead of WaitForWorkItemAsync with a
+    /// compound predicate when the expected terminal status is non-deterministic.
+    /// </summary>
+    protected async Task<WorkItemEntity> WaitForWorkItemByIdUntilTerminalAsync(
+        Guid workItemId,
+        TimeSpan? timeout = null,
+        TimeSpan? pollInterval = null)
+    {
+        var deadline = DateTime.UtcNow + (timeout ?? TimeSpan.FromSeconds(30));
+        var interval = pollInterval ?? TimeSpan.FromMilliseconds(100);
+
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var db = Fixture.DbContextFactory.CreateDbContext();
+            var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
+            if (item is { Status: WorkItemStatus.Failed or WorkItemStatus.Cancelled }) return item;
+            await Task.Delay(interval);
+        }
+
+        await using var finalDb = Fixture.DbContextFactory.CreateDbContext();
+        var finalItem = await finalDb.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
+        throw new TimeoutException(
+            $"WorkItem {workItemId} did not reach a terminal status (Failed or Cancelled) within " +
+            $"{(timeout ?? TimeSpan.FromSeconds(30)).TotalSeconds}s. " +
+            $"Current status: {finalItem?.Status.ToString() ?? "NOT FOUND"}");
+    }
+
     /// <summary>Polls until the fake K8s client has at least the expected number of created jobs.</summary>
     protected async Task WaitForK8sJobCreatedAsync(int expectedCount = 1, TimeSpan? timeout = null)
     {

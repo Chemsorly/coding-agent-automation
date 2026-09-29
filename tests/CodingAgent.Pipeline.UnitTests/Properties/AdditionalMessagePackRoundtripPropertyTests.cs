@@ -368,8 +368,6 @@ public class AdditionalMessagePackRoundtripPropertyTests
             from hasLastRun in Gen.Elements(true, false)
             from hasFeedback in Gen.Elements(true, false)
             from feedbackJson in Gen.Elements("[{\"type\":\"positive\"}]", "[]")
-            from hasWorkspace in Gen.Elements(true, false)
-            from workspacePath in Gen.Elements("/workspaces/run-1", "/workspaces/run-2")
             from hasTrace in Gen.Elements(true, false)
             from autoDispatch in Gen.Elements(true, false)
             select new ConsolidationJobMessage
@@ -382,7 +380,6 @@ public class AdditionalMessagePackRoundtripPropertyTests
                 PipelineConfiguration = pipelineConfig,
                 LastSuccessfulRunUtc = hasLastRun ? new DateTime(2026, 1, 15, 10, 0, 0, DateTimeKind.Utc) : null,
                 FeedbackDataJson = hasFeedback ? feedbackJson : null,
-                WorkspacePath = hasWorkspace ? workspacePath : null,
                 TraceContext = hasTrace
                     ? new Dictionary<string, string> { ["traceparent"] = "00-abc123-def456-01" }
                     : null,
@@ -418,7 +415,6 @@ public class AdditionalMessagePackRoundtripPropertyTests
             // Optional fields preserved (null or value)
             deserialized.LastSuccessfulRunUtc.Should().Be(original.LastSuccessfulRunUtc);
             deserialized.FeedbackDataJson.Should().Be(original.FeedbackDataJson);
-            deserialized.WorkspacePath.Should().Be(original.WorkspacePath);
             deserialized.AutoDispatch.Should().Be(original.AutoDispatch,
                 because: "Key(10) AutoDispatch bool must survive MessagePack roundtrip");
 

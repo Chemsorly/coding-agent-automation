@@ -26,14 +26,6 @@ public interface IConsolidationService
     Task<IReadOnlyList<ConsolidationRun>> GetRunHistoryAsync(CancellationToken ct);
 
     /// <summary>
-    /// Returns the most recent run for a given type and template (or global for harness suggestions).
-    /// </summary>
-    /// <param name="type">The consolidation run type to filter by.</param>
-    /// <param name="templateId">The template ID to filter by (null for global/harness suggestions).</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task<ConsolidationRun?> GetLastRunAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct);
-
-    /// <summary>
     /// Updates a run's status and summary after completion.
     /// </summary>
     /// <param name="runId">The unique identifier of the run to update.</param>

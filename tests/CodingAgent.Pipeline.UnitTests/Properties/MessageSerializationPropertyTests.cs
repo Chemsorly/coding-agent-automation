@@ -442,7 +442,7 @@ public class MessageSerializationPropertyTests
         MessagePackSerializer.Serialize(ref writer, new PipelineConfiguration(), MsgPackOptions);
         writer.WriteNil();                                            // [6] LastSuccessfulRunUtc
         writer.WriteNil();                                            // [7] FeedbackDataJson
-        writer.WriteNil();                                            // [8] WorkspacePath
+        writer.WriteNil();                                            // [8] retired (was WorkspacePath)
         writer.WriteNil();                                            // [9] TraceContext
 
         writer.Flush();
@@ -485,12 +485,12 @@ public class MessageSerializationPropertyTests
         };
     }
 
-    // ── JobAssignmentMessage Consolidation Fields (Keys 32-35) ────────────
+    // ── JobAssignmentMessage Consolidation Fields (Keys 32-34) ────────────
 
     /// <summary>
-    /// Round-trip test for JobAssignmentMessage with consolidation fields populated (Keys 32-35).
-    /// Validates that TaskType, ConsolidationRunType, ConsolidationTemplateId, and
-    /// ConsolidationWorkspacePath survive MessagePack serialization.
+    /// Round-trip test for JobAssignmentMessage with consolidation fields populated (Keys 32-34).
+    /// Validates that TaskType, ConsolidationRunType, and ConsolidationTemplateId survive
+    /// MessagePack serialization.
     /// </summary>
     [Fact]
     public void JobAssignmentMessage_RoundTrip_WithConsolidationFields()
@@ -499,8 +499,7 @@ public class MessageSerializationPropertyTests
         {
             TaskType = WorkItemTaskType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
-            ConsolidationTemplateId = "template-abc",
-            ConsolidationWorkspacePath = "/tmp/consolidation/brain"
+            ConsolidationTemplateId = "template-abc"
         };
 
         var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
@@ -509,7 +508,6 @@ public class MessageSerializationPropertyTests
         deserialized.TaskType.Should().Be(WorkItemTaskType.Consolidation);
         deserialized.ConsolidationRunType.Should().Be(ConsolidationRunType.BrainConsolidation);
         deserialized.ConsolidationTemplateId.Should().Be("template-abc");
-        deserialized.ConsolidationWorkspacePath.Should().Be("/tmp/consolidation/brain");
     }
 
     /// <summary>
@@ -529,7 +527,6 @@ public class MessageSerializationPropertyTests
             "TaskType defaults to Implementation for backward compatibility");
         deserialized.ConsolidationRunType.Should().BeNull();
         deserialized.ConsolidationTemplateId.Should().BeNull();
-        deserialized.ConsolidationWorkspacePath.Should().BeNull();
     }
 
     /// <summary>

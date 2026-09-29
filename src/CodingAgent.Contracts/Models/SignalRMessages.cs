@@ -237,9 +237,7 @@ public sealed record JobAssignmentMessage
     [Key(34)]
     public string? ConsolidationTemplateId { get; init; }
 
-    /// <summary>Workspace path for consolidation runs, as determined by the orchestrator.</summary>
-    [Key(35)]
-    public string? ConsolidationWorkspacePath { get; init; }
+    // Key(35) is retired (was ConsolidationWorkspacePath; the agent now chooses the workspace itself). Do not reuse.
 
     /// <summary>Which staleness signal triggered analysis force-refresh (null if not triggered).</summary>
     [Key(36)]

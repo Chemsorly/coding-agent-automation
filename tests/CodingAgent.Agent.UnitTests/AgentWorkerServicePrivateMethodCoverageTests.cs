@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgent.Agent;
@@ -7,7 +5,6 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using Moq;
 
@@ -32,153 +29,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); }
         catch { /* best effort */ }
-    }
-
-    // ── Characterization tests — telemetry counter + activity tags ──────────
-    // These must be added BEFORE any extraction so that regressions (e.g. dropping the counter
-    // from the extracted method) are caught by the test suite, not discovered at runtime.
-
-    // MeterListener warm-up helper shared by the counter tests below.
-    // Activates the listener, emits a zero-valued warm-up measurement so InstrumentPublished fires
-    // for both static instruments, clears the warm-up noise, and returns the listener + measurement list.
-    private static (MeterListener listener, List<(string name, List<KeyValuePair<string, object?>> tags)> measurements)
-        CreateMeterListener()
-    {
-        var measurements = new List<(string, List<KeyValuePair<string, object?>>)>();
-        var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, _, tags, _) =>
-        {
-            var tagList = new List<KeyValuePair<string, object?>>();
-            foreach (var t in tags) tagList.Add(t);
-            measurements.Add((instrument.Name, tagList));
-        });
-        listener.Start();
-        // warm-up: force InstrumentPublished for static instruments created before Start()
-        PipelineTelemetry.AgentJobsReceived.Add(0);
-        PipelineTelemetry.AgentJobsRejected.Add(0);
-        measurements.Clear();
-        return (listener, measurements);
-    }
-
-    [Fact]
-    public async Task RejectJobAsync_Consolidation_IncrementsRejectedCounterWithBusyTag()
-    {
-        // Characterization test: pins rejection telemetry behavior on the consolidation executor path.
-        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobExecutor — call it there.
-        var (listener, measurements) = CreateMeterListener();
-        using (listener)
-        {
-            var service = TestAgentWorkerServiceFactory.Create();
-            var slotManager = GetSlotManager(service);
-            SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing-job");
-            SetPrivateField(slotManager, "_isBusy", true);
-
-            var message = new ConsolidationJobMessage
-            {
-                JobId = "new-consolidation",
-                Type = ConsolidationRunType.BrainConsolidation,
-                ProviderConfigs = [],
-                PipelineConfiguration = new PipelineConfiguration()
-            };
-
-            var consolidationHandler = GetConsolidationJobHandler(service);
-            await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
-                .Invoke(consolidationHandler, [message])!;
-        }
-
-        measurements.Should().Contain(m =>
-            m.name == "agent.jobs.rejected" &&
-            m.tags.Contains(new KeyValuePair<string, object?>("reason", "busy")),
-            "agent.jobs.rejected must be incremented with reason=busy when consolidation job is rejected");
-    }
-
-    [Fact]
-    public async Task HandleAssignConsolidationJobAsync_IncrementsReceivedCounter()
-    {
-        // Characterization test: pins received counter behavior on the consolidation executor path.
-        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobExecutor — call it there.
-        // TODO [WARNING]: Same idle-agent background task concern as HandleAssignJobAsync_IncrementsReceivedCounter —
-        // the dispatched Task.Run is not awaited, leaving uncontrolled work during teardown.
-        // Consider using a busy agent to keep the test scope narrow.
-        // TODO [WARNING]: The assertion only checks presence, not exact count (== 1). A double-increment
-        // regression would pass silently. Consider asserting the exact measurement count.
-        var (listener, measurements) = CreateMeterListener();
-        using (listener)
-        {
-            var service = TestAgentWorkerServiceFactory.Create();
-            var message = new ConsolidationJobMessage
-            {
-                JobId = "job-rcv-consolidation",
-                Type = ConsolidationRunType.BrainConsolidation,
-                ProviderConfigs = [],
-                PipelineConfiguration = new PipelineConfiguration()
-            };
-            var consolidationHandler = GetConsolidationJobHandler(service);
-            await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
-                .Invoke(consolidationHandler, [message])!;
-        }
-
-        measurements.Should().Contain(m => m.name == "agent.jobs.received",
-            "agent.jobs.received must be incremented when HandleAssignConsolidationJobAsync is called");
-    }
-
-    [Fact]
-    public async Task HandleAssignConsolidationJobAsync_SetsRunTypeTagConsolidation()
-    {
-        // Characterization test: verifies run_type="consolidation" is set on the receive activity.
-        // Tags are captured on ActivityStopped (after all SetTag calls) rather than ActivityStarted.
-        // TODO [WARNING]: Same ActivityStopped timing fragility as HandleAssignJobAsync_SetsRunTypeTagImplementation —
-        // the callback firing synchronously on Dispose() is an undocumented implementation detail.
-        // If deferred, capturedTags may be empty at assertion time (spurious failure).
-        // ConcurrentBag is used because ActivityStopped fires on whichever thread disposes the Activity,
-        // which may be a thread-pool thread distinct from the test thread enumerating the collection.
-        var capturedTags = new System.Collections.Concurrent.ConcurrentBag<(string key, object? value)>();
-        using var activityListener = new ActivityListener
-        {
-            ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = act =>
-            {
-                if (act.OperationName == "Agent.ReceiveJob")
-                {
-                    foreach (var tag in act.Tags)
-                        capturedTags.Add((tag.Key, tag.Value));
-                }
-            }
-        };
-        // TODO [WARNING]: Same globally-registered ActivityListener concern as
-        // HandleAssignJobAsync_SetsRunTypeTagImplementation — the listener is registered for the
-        // process lifetime until disposed, and other tests that start Agent.ReceiveJob activities
-        // after this test could fire the ActivityStopped callback into this test's stale context.
-        // See the TODO in the sibling test for the full description and suggested remediation.
-        ActivitySource.AddActivityListener(activityListener);
-
-        var service = TestAgentWorkerServiceFactory.Create();
-        var slotManager = GetSlotManager(service);
-        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing");
-        SetPrivateField(slotManager, "_isBusy", true);
-
-        var message = new ConsolidationJobMessage
-        {
-            JobId = "tag-test-consolidation",
-            Type = ConsolidationRunType.BrainConsolidation,
-            ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        // HandleAssignConsolidationJobAsync was extracted to ConsolidationJobExecutor — call it there.
-        var consolidationHandler = GetConsolidationJobHandler(service);
-        await (Task)GetMethod(consolidationHandler, "HandleAssignConsolidationJobAsync")
-            .Invoke(consolidationHandler, [message])!;
-
-        capturedTags.Should().Contain(t => t.key == "run_type" && (string?)t.value == "consolidation",
-            "run_type tag must be set to 'consolidation' on the Agent.ReceiveJob activity for consolidation jobs");
     }
 
     // ── FinalizeJobAsync — null completion skips reporter call ───────────
@@ -244,125 +94,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var act = async () => await (Task)GetMethod(GetChatJobHandler(service), "ReportChatCompletedAsync")
             .Invoke(GetChatJobHandler(service), ["sess-2", 1, "some error"])!;
         await act.Should().NotThrowAsync();
-    }
-
-    // ── HandleAssignConsolidationJobAsync_WhenBusy — hub throws, swallowed ──────
-    // (Previously named RejectConsolidationJobBusyAsync_HubThrows_CompletesWithoutThrowing — renamed
-    // post-extraction because this test invokes the handler, not the old private rejection method.)
-
-    [Fact]
-    public async Task HandleAssignConsolidationJobAsync_WhenBusy_HubThrows_CompletesWithoutThrowing()
-    {
-        var service = TestAgentWorkerServiceFactory.Create();
-        var slotManager = GetSlotManager(service);
-        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing-consolidation");
-        SetPrivateField(slotManager, "_isBusy", true);
-
-        var message = new ConsolidationJobMessage
-        {
-            JobId = "new-consolidation",
-            Type = ConsolidationRunType.BrainConsolidation,
-            ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        await (Task)GetMethod(GetConsolidationJobHandler(service), "HandleAssignConsolidationJobAsync")
-            .Invoke(GetConsolidationJobHandler(service), [message])!;
-
-        GetPrivateField<JobId?>(slotManager, "_activeJobId")
-            .Should().Be((JobId)"existing-consolidation");
-    }
-
-    // ── RunConsolidationTaskAsync — executor throws → reports failure ─────
-
-    [Fact]
-    public async Task RunConsolidationTaskAsync_ExecutorThrows_ReleasesSlot()
-    {
-        var throwingConsolidation = new Mock<IConsolidationExecutor>();
-        throwingConsolidation
-            .Setup(e => e.ExecuteAsync(
-                It.IsAny<ConsolidationJobMessage>(),
-                It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("consolidation boom"));
-
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var hm = TestAgentWorkerServiceFactory.CreateTestHubManager();
-        var hmFactory = TestAgentWorkerServiceFactory.CreateTestHubManagerFactory();
-        var logger = new Mock<Serilog.ILogger>().Object;
-        var buffer = new CriticalMessageBuffer();
-        var pipeline = Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(logger);
-        var signalRReporter = new SignalRCompletionReporter(hm, pipeline, buffer, logger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifetime = Mock.Of<IHostApplicationLifetime>();
-        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
-            new AgentId("test"), lifetime, logger);
-        var pipelineExecutor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
-            mockOrchestrator.Object, Mock.Of<System.Net.Http.IHttpClientFactory>(),
-            new PipelineConfiguration(), Mock.Of<IQualityGateValidator>(), logger,
-            AgentIdentity: new AgentId("test")));
-
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, mockOrchestrator.Object, lifetime, logger);
-        var consolidationHandler = new ConsolidationJobExecutor(lifecycle, slotManager, throwingConsolidation.Object, logger);
-
-        var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
-            lifecycle, slotManager,
-            chatHandler, consolidationHandler,
-            pipelineExecutor,
-            signalRReporter, logger));
-
-        slotManager.TryAcquireJobSlot("consolidation-throw-job", out _);
-
-        var message = new ConsolidationJobMessage
-        {
-            JobId = "consolidation-throw-job",
-            Type = ConsolidationRunType.BrainConsolidation,
-            ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        using var cts = new CancellationTokenSource();
-        await (Task)GetMethod(GetConsolidationJobHandler(service), "RunConsolidationTaskAsync")
-            .Invoke(GetConsolidationJobHandler(service), [message, cts.Token])!;
-
-        // Slot released in the finally block even when executor throws
-        GetPrivateField<JobId?>(slotManager, "_activeJobId")
-            .Should().BeNull("slot must be released in finally block");
-    }
-
-    // ── ReportConsolidationFailureAsync — hub throws, should not propagate
-
-    [Fact]
-    public async Task ReportConsolidationFailureAsync_HubThrows_DoesNotThrow()
-    {
-        var service = TestAgentWorkerServiceFactory.Create();
-        var act = async () => await (Task)GetMethod(GetConsolidationJobHandler(service), "ReportConsolidationFailureAsync")
-            .Invoke(GetConsolidationJobHandler(service), ["job-id", "error msg"])!;
-        await act.Should().NotThrowAsync();
-    }
-
-    // ── HandleAssignConsolidationJobAsync — idle agent, slot acquired ─────
-
-    [Fact]
-    public async Task HandleAssignConsolidationJobAsync_WhenIdle_AcquiresSlot()
-    {
-        var service = TestAgentWorkerServiceFactory.Create();
-        var slotManager = GetSlotManager(service);
-
-        var message = new ConsolidationJobMessage
-        {
-            JobId = "idle-consolidation",
-            Type = ConsolidationRunType.BrainConsolidation,
-            ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        await (Task)GetMethod(GetConsolidationJobHandler(service), "HandleAssignConsolidationJobAsync")
-            .Invoke(GetConsolidationJobHandler(service), [message])!;
-
-        // Background task was started
-        GetPrivateField<Task?>(slotManager, "_activeJobTask")
-            .Should().NotBeNull("consolidation task should be started");
     }
 
     // ── RunChatTaskAsync — releases chat slot on completion ──────────────
@@ -644,9 +375,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         ?? throw new InvalidOperationException($"Method '{name}' not found");
 
     /// <summary>
-    /// Gets a public method on an executor class by name. Used for ChatJobExecutor and
-    /// ConsolidationJobExecutor methods that moved from private on AgentWorkerService
-    /// to public on the extracted executor class.
+    /// Gets a public method on an executor class by name. Used for ChatJobExecutor methods
+    /// that moved from private on AgentWorkerService to public on the extracted executor class.
     /// </summary>
     private static MethodInfo GetMethod(object obj, string name) =>
         obj.GetType().GetMethod(name, BindingFlags.Public | BindingFlags.Instance)
@@ -658,14 +388,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
         return (ChatJobExecutor)field.GetValue(service)!;
-    }
-
-    private static ConsolidationJobExecutor GetConsolidationJobHandler(AgentWorkerService service)
-    {
-        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
-        return (ConsolidationJobExecutor)field.GetValue(service)!;
     }
 
     private static void SetPrivateField(object obj, string name, object? value)

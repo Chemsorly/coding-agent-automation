@@ -23,7 +23,6 @@ public interface IHubConnectionManager : IAsyncDisposable
     event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
     event Func<string, Task>? OnCancelChat;
     event Func<FetchModelsRequest, Task>? OnFetchModels;
-    event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
     event Func<Task>? OnForceDisconnect;
     event Func<string?, Task>? OnReconnected;
     event Func<Exception?, Task>? OnClosed;

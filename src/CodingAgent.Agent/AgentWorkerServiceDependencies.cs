@@ -10,7 +10,6 @@ public sealed record AgentWorkerServiceDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
     AgentJobSlotManager SlotManager,
     ChatJobExecutor ChatHandler,
-    ConsolidationJobExecutor ConsolidationHandler,
     IPipelineExecutor Executor,
     IJobCompletionReporter CompletionReporter,
     Serilog.ILogger Logger);

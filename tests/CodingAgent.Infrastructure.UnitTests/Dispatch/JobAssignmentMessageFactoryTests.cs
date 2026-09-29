@@ -99,8 +99,7 @@ public class JobAssignmentMessageFactoryTests
         {
             TaskType = WorkItemTaskType.Consolidation,
             ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
-            ConsolidationTemplateId = "template-42",
-            ConsolidationWorkspacePath = "/tmp/consolidation/run-123"
+            ConsolidationTemplateId = "template-42"
         };
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(workItemId, request);
@@ -108,7 +107,6 @@ public class JobAssignmentMessageFactoryTests
         message.TaskType.Should().Be(WorkItemTaskType.Consolidation);
         message.ConsolidationRunType.Should().Be(ConsolidationRunType.RefactoringDetection);
         message.ConsolidationTemplateId.Should().Be("template-42");
-        message.ConsolidationWorkspacePath.Should().Be("/tmp/consolidation/run-123");
     }
 
     [Fact]
@@ -122,6 +120,5 @@ public class JobAssignmentMessageFactoryTests
         message.TaskType.Should().Be(WorkItemTaskType.Implementation);
         message.ConsolidationRunType.Should().BeNull();
         message.ConsolidationTemplateId.Should().BeNull();
-        message.ConsolidationWorkspacePath.Should().BeNull();
     }
 }

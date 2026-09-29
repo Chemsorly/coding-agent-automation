@@ -74,49 +74,6 @@ public class SignalRAgentCommunicationTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
-    [Fact]
-    public async Task AssignConsolidationJobAsync_DelegatesToHubContext()
-    {
-        AgentId agentId = "agent-1";
-        var job = CreateTestConsolidationJob();
-
-        await _comm.AssignConsolidationJobAsync("conn-1", agentId, job, CancellationToken.None);
-
-        _mockClients.Verify(c => c.Client("conn-1"), Times.Once);
-        _mockClient.Verify(c => c.AssignConsolidationJob(agentId, job), Times.Once);
-    }
-
-    [Fact]
-    public async Task AssignConsolidationJobAsync_NullConnectionId_ThrowsArgumentNullException()
-    {
-        AgentId agentId = "agent-1";
-        var job = CreateTestConsolidationJob();
-
-        var act = () => _comm.AssignConsolidationJobAsync(null!, agentId, job, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignConsolidationJobAsync_DefaultAgentId_ThrowsArgumentNullException()
-    {
-        var job = CreateTestConsolidationJob();
-
-        var act = () => _comm.AssignConsolidationJobAsync("conn-1", default, job, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignConsolidationJobAsync_NullJob_ThrowsArgumentNullException()
-    {
-        AgentId agentId = "agent-1";
-
-        var act = () => _comm.AssignConsolidationJobAsync("conn-1", agentId, null!, CancellationToken.None);
-
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
     // ── Null guards for RequestFetchModelsAsync ───────────────────────────
 
     [Fact]
@@ -136,12 +93,4 @@ public class SignalRAgentCommunicationTests
 
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
-
-    private static ConsolidationJobMessage CreateTestConsolidationJob() => new()
-    {
-        JobId = "consolidation-job-1",
-        Type = ConsolidationRunType.BrainConsolidation,
-        ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
 }

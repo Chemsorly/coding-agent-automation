@@ -90,7 +90,9 @@ internal sealed partial class DispatchScheduler
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                 continue;
             }
-            if (IsIssueAlreadyActive(candidate.Identifier, template.IssueProviderId, ctx))
+            // A pull request is identified by its repository and number: its review work item is keyed by
+            // the repository, so issue #N in the tracker does not block pull request !N.
+            if (IsIssueAlreadyActive(candidate.Identifier, template.RepoProviderId, ctx))
             {
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                 continue;

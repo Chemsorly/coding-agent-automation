@@ -129,12 +129,11 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test"), lifetime, logger);
         var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager);
-        var consolidationHandler = TestAgentWorkerServiceFactory.CreateConsolidationJobExecutor(lifecycle, slotManager);
         var executor = new Mock<IPipelineExecutor>().Object;
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
-            chatHandler, consolidationHandler,
+            chatHandler,
             executor,
             signalRReporter, logger));
 
@@ -172,12 +171,11 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
         var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
             new AgentId("test"), lifetime, logger);
         var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager);
-        var consolidationHandler = TestAgentWorkerServiceFactory.CreateConsolidationJobExecutor(lifecycle, slotManager);
         var executor = new Mock<IPipelineExecutor>().Object;
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
-            chatHandler, consolidationHandler,
+            chatHandler,
             executor,
             signalRReporter, logger));
 

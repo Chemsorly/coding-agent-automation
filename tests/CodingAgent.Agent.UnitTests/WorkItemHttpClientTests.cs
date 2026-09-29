@@ -60,6 +60,26 @@ public class WorkItemHttpClientTests
     }
 
     [Fact]
+    public async Task GetAssignment_FromAnOlderApiWithTheRetiredWorkspacePath_Deserializes()
+    {
+        // During a rollout an API of the previous image still sends the consolidation workspace path.
+        // This agent chooses the workspace itself and no longer has the field; the fetch must not fail.
+        var assignment = CreateMinimalAssignment("job-1", "owner/repo#42") with
+        {
+            TaskType = WorkItemTaskType.Consolidation,
+            ConsolidationRunType = ConsolidationRunType.BrainConsolidation
+        };
+        var json = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(assignment, PipelineJsonOptions.Default))!.AsObject();
+        json["consolidationWorkspacePath"] = "/workspaces/consolidation/0b1c2d3e-0000-0000-0000-000000000000";
+        var client = CreateClient(new FakeHandler(HttpStatusCode.OK, json.ToJsonString()));
+
+        var result = await client.GetAssignmentAsync("wi-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ConsolidationRunType.Should().Be(ConsolidationRunType.BrainConsolidation);
+    }
+
+    [Fact]
     public async Task GetAssignment_410Gone_ReturnsNull()
     {
         var handler = new FakeHandler(HttpStatusCode.Gone);

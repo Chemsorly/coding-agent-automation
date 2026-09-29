@@ -814,19 +814,29 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
 
         await Task.WhenAll(httpTask, hubTask);
 
-        // Wait for the race to settle in history
-        // TODO [WARNING]: The predicate r => r.IssueIdentifier == issueId has no FinalStep filter.
-        // A non-terminal history entry written during dispatch/accept can satisfy it immediately,
-        // causing assertions to run before the winning path's terminal cleanup (including the
-        // label swap) has completed. Fix: require r.FinalStep is PipelineStep.Failed or
-        // PipelineStep.Cancelled. Also consider polling until workItem.Status is terminal
-        // before reading it for the switch below (see TODO near db.WorkItems.FindAsync).
-        // (Reported by Correctness review, DotNetSpecialist, and TestQualityReviewer.)
+        // Wait for the race to settle in history. Require a terminal FinalStep (Failed or
+        // Cancelled) so that a non-terminal history entry written during dispatch or acceptance
+        // cannot satisfy the predicate and cause assertions to run before the winning path's
+        // terminal cleanup — including the label swap — has completed.
+        // Fix for [CRITICAL] TestQualityReviewer:819 / Correctness:697 / DotNetSpecialist:730.
+        // TODO [WARNING]: The agent side uses agent.ReportCompletionAsync (hub-only), not
+        // CompleteLikeProductionAsync. In production the agent always sends an HTTP POST first
+        // then fires the hub. This test therefore models "operator-HTTP vs agent-hub-only" rather
+        // than the actual production race of "operator-HTTP vs agent-HTTP+hub". The actual
+        // two-channel race is untested and could have a label gap not caught here.
+        // (Reported by Correctness review and TestQualityReviewer.)
         await WaitForHistoryAsync(
-            r => r.IssueIdentifier == issueId,
+            r => r.IssueIdentifier == issueId &&
+                 (r.FinalStep == PipelineStep.Failed || r.FinalStep == PipelineStep.Cancelled),
             TimeSpan.FromSeconds(15));
 
         // Assert invariant: exactly one terminal label, regardless of race winner
+        // TODO [WARNING]: This assertion can observe a false pass when the wrong terminal step
+        // wins the race and the label matches by coincidence (e.g. Failed wins, label is
+        // agent:error, test passes — but only because the HTTP POST was never processed, not
+        // because both paths actually raced). Without asserting httpTask.Result.IsSuccessStatusCode,
+        // the test cannot distinguish a genuine two-path race from a single-path completion.
+        // (Reported by TestQualityReviewer.)
         var net = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (id, label, added) in Fixture.IssueProvider.LabelChanges)
         {
@@ -840,15 +850,34 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
 
         var actualLabel = net.Single();
 
-        // The winning label must match the persisted WorkItem status
-        // TODO [WARNING]: db.WorkItems.FindAsync reads a snapshot of WorkItem.Status at assertion
-        // time. Under load the WorkItem row may not yet be in a terminal state (it could still be
-        // InProgress or Assigned), causing the switch below to throw InvalidOperationException
-        // instead of a meaningful assertion failure. Use WaitForWorkItemAsync (polling until
-        // terminal) before this read. (Reported by TestQualityReviewer.)
-        await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var workItem = await db.WorkItems.FindAsync(workItemId);
-        Assert.NotNull(workItem);
+        // TODO [WARNING]: The label net-replay logic above (HashSet add/remove over LabelChanges)
+        // is duplicated inline rather than calling the shared AssertExactlyOneTerminalLabelAdded
+        // helper. If the helper is updated (e.g. to add the raw-sequence count check in its own
+        // TODO), this copy will silently diverge. Consider refactoring to use the helper.
+        // (Reported by TestQualityReviewer.)
+
+        // Poll until the WorkItem row reaches a terminal status before reading it for the
+        // expected-label derivation. Without polling, WorkItem.Status may still be Running or
+        // Dispatched at assertion time (the service's SaveChangesAsync for WorkItems fires after
+        // the history write), causing the switch to throw InvalidOperationException with a
+        // misleading error rather than a meaningful assertion failure.
+        // Fix for [CRITICAL] TestQualityReviewer:836 / DotNetSpecialist:745.
+        // TODO [WARNING]: httpTask is Task<HttpResponseMessage>; PostAsJsonAsync does not throw on
+        // non-2xx responses. Task.WhenAll completes without inspecting httpTask.Result.IsSuccessStatusCode.
+        // If the HTTP POST is rejected (409/404/403 because the work item already reached a terminal
+        // state), the test silently treats it as a success. Capture and log (or assert) the HTTP
+        // status after Task.WhenAll to make the race's observable outcome explicit.
+        // (Reported by DotNetSpecialist.)
+        // TODO [WARNING]: WaitForWorkItemByIdUntilTerminalAsync queries by ID only and checks
+        // status in-memory, which avoids the EF Core untranslatable-predicate issue. The
+        // 15-second timeout is independent and starts fresh after WaitForHistoryAsync completes;
+        // a shorter timeout (e.g. 5 seconds) would give a more informative diagnostic on
+        // pathological WorkItem write delays. (Reported by TestQualityReviewer.)
+        // Use WaitForWorkItemStatusAsync-style polling (query by ID only, check status in-memory)
+        // to avoid EF Core's inability to translate a Func<> delegate predicate to SQL.
+        // The race winner is non-deterministic (Failed or Cancelled), so we check both statuses
+        // after retrieval rather than passing a compound predicate to FirstOrDefaultAsync.
+        var workItem = await WaitForWorkItemByIdUntilTerminalAsync(workItemId, timeout: TimeSpan.FromSeconds(15));
 
         var expectedFromStatus = workItem.Status switch
         {

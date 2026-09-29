@@ -243,7 +243,8 @@ public partial class BrainUpdateService : IBrainUpdateService
             }
 
             // Push with retry-rebase loop on non-fast-forward failure
-            await PushWithRetryRebaseAsync(brainPath, brainProvider, commitMessage, maxPushRetries, ct);
+            await PushWithRetryRebaseAsync(brainPath, brainProvider, maxPushRetries,
+                () => RebaseOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct), ct);
 
             // Count committed files
             var filesCommitted = await Task.Run(() => _git.GetHeadCommitFileCount(brainPath), ct);
@@ -304,14 +305,28 @@ public partial class BrainUpdateService : IBrainUpdateService
         }, ct);
     }
 
+    /// <inheritdoc />
+    public async Task PushConsolidationAsync(
+        string brainPath, string commitMessage, IRepositoryProvider brainProvider,
+        CancellationToken ct, int maxPushRetries = 3)
+    {
+        ArgumentNullException.ThrowIfNull(brainPath);
+        ArgumentNullException.ThrowIfNull(commitMessage);
+        ArgumentNullException.ThrowIfNull(brainProvider);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(maxPushRetries, 0);
+
+        await PushWithRetryRebaseAsync(brainPath, brainProvider, maxPushRetries,
+            () => MergeConsolidationOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct), ct);
+    }
+
     /// <summary>
     /// Pushes the current branch with retry-rebase on non-fast-forward failure.
-    /// On conflict: fetches remote, resets to remote HEAD, re-applies local changes,
-    /// resolves conflicts, recommits, and retries push.
+    /// On conflict: <paramref name="rebaseOntoRemote"/> fetches the remote, resets to it, re-applies the
+    /// local changes and recommits; then the push is retried.
     /// </summary>
     private async Task PushWithRetryRebaseAsync(
-        string brainPath, IRepositoryProvider brainProvider, string commitMessage,
-        int maxRetries, CancellationToken ct)
+        string brainPath, IRepositoryProvider brainProvider,
+        int maxRetries, Func<Task> rebaseOntoRemote, CancellationToken ct)
     {
         var remoteBranch = brainProvider.BaseBranch;
         ArgumentException.ThrowIfNullOrEmpty(remoteBranch, nameof(remoteBranch));
@@ -346,10 +361,127 @@ public partial class BrainUpdateService : IBrainUpdateService
                 await Task.Delay(Random.Shared.Next(200, 501), ct);
 
                 // Rebase: fetch, reset to remote, re-apply our changes
-                await RebaseOntoRemoteAsync(brainPath, brainProvider, commitMessage, ct);
+                await rebaseOntoRemote();
             }
         }
     }
+
+    /// <summary>
+    /// Re-applies a brain consolidation on top of what other runs pushed since it cloned the brain:
+    /// fetches, resets to the remote, writes each file the consolidation changed as merged by
+    /// <see cref="MergeConsolidatedFile"/>, and recommits through the provider, which leaves the
+    /// workspace's <c>.agent/</c> files out exactly like the consolidation's first commit.
+    /// </summary>
+    private async Task MergeConsolidationOntoRemoteAsync(
+        string brainPath, IRepositoryProvider brainProvider, string commitMessage, CancellationToken ct)
+    {
+        var ourChanges = _git.GetHeadCommitChanges(brainPath);
+        if (ourChanges.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "Cannot merge the brain consolidation: no changes detected in HEAD commit.");
+        }
+
+        var (ourFileContents, baseFileContents) = SnapshotHeadContents(brainPath, ourChanges);
+
+        try
+        {
+            await brainProvider.PullAsync(brainPath, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Brain repo fetch during consolidation merge failed, resetting to the last fetched remote state");
+        }
+
+        _git.ResetHardToRemote(brainPath, brainProvider.BaseBranch);
+
+        var filesWithAddedLines = 0;
+        foreach (var change in ourChanges)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var fullPath = Path.Combine(brainPath, change.Path);
+            var remoteContent = _git.FileExists(fullPath) ? _git.ReadAllText(fullPath) : null;
+            var consolidatedContent = change.Status == FileChangeStatus.Deleted
+                ? null
+                : ourFileContents.GetValueOrDefault(change.Path);
+            var baseContent = baseFileContents.GetValueOrDefault(change.Path);
+
+            var merged = MergeConsolidatedFile(baseContent, consolidatedContent, remoteContent);
+            if (merged is null)
+                _git.DeleteFile(fullPath);
+            else
+                _git.WriteAllText(fullPath, merged);
+
+            if (merged != consolidatedContent)
+                filesWithAddedLines++;
+        }
+
+        _logger.Information(
+            "Brain consolidation merged onto the remote: {FileCount} of {ChangedCount} consolidated files got lines other runs added meanwhile",
+            filesWithAddedLines, ourChanges.Count);
+
+        await brainProvider.CommitAllAsync(brainPath, commitMessage, ct);
+    }
+
+    /// <summary>
+    /// Merges one file of a brain consolidation with what other runs pushed since the consolidation
+    /// cloned the brain. The consolidated version is kept, and the lines the other runs added are
+    /// appended to it, so nothing they learned is lost and the next consolidation folds those lines in.
+    /// A file the consolidation deleted comes back holding only those lines. Returns <c>null</c> when
+    /// the file is to be deleted.
+    /// </summary>
+    /// <param name="baseContent">The file when the consolidation cloned the brain; null if it did not exist.</param>
+    /// <param name="consolidatedContent">The consolidation's version; null if the consolidation deleted the file.</param>
+    /// <param name="remoteContent">The file on the remote now; null if it does not exist there.</param>
+    internal static string? MergeConsolidatedFile(string? baseContent, string? consolidatedContent, string? remoteContent)
+    {
+        if (remoteContent == baseContent)
+            return consolidatedContent;
+
+        var added = LinesAddedSince(baseContent, remoteContent);
+        if (added.Count == 0)
+            return consolidatedContent;
+
+        var addedText = string.Join('\n', added) + "\n";
+        if (string.IsNullOrEmpty(consolidatedContent))
+            return addedText;
+
+        var separator = consolidatedContent.EndsWith('\n') ? "\n" : "\n\n";
+        return consolidatedContent + separator + addedText;
+    }
+
+    /// <summary>
+    /// The lines of <paramref name="current"/> that are not in <paramref name="original"/>, in their order in
+    /// <paramref name="current"/>. Repeated lines count: a line that occurs twice in <paramref name="current"/>
+    /// but once in <paramref name="original"/> is added once. Blank lines at either end are dropped.
+    /// </summary>
+    internal static IReadOnlyList<string> LinesAddedSince(string? original, string? current)
+    {
+        var remaining = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var line in SplitLines(original))
+            remaining[line] = remaining.GetValueOrDefault(line) + 1;
+
+        var added = new List<string>();
+        foreach (var line in SplitLines(current))
+        {
+            if (remaining.TryGetValue(line, out var count) && count > 0)
+                remaining[line] = count - 1;
+            else
+                added.Add(line);
+        }
+
+        var start = 0;
+        while (start < added.Count && string.IsNullOrWhiteSpace(added[start]))
+            start++;
+        var end = added.Count;
+        while (end > start && string.IsNullOrWhiteSpace(added[end - 1]))
+            end--;
+        return added.GetRange(start, end - start);
+    }
+
+    private static IEnumerable<string> SplitLines(string? content) =>
+        string.IsNullOrEmpty(content) ? [] : content.Split('\n').Select(line => line.TrimEnd('\r'));
 
     /// <summary>
     /// Fetches remote, resets local branch to remote HEAD, re-applies local changes

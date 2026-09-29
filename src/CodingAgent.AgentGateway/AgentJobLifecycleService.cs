@@ -189,12 +189,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
             run.IssueIdentifier, jobId.Value);
-        // TODO: [WARNING] This call hardcodes run.IssueProviderConfigId and LabelTargetKind.Issue, which is
-        // incorrect for Review runs — those route via run.ProviderConfigIdForLabel (RepoProviderConfigId) and
-        // LabelTargetKind.PullRequest. Use the run-aware overload instead:
-        //   await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "...", ct);
-        // PermanentlyFailRejectedRunAsync is reachable for all run types (HandleRejectedRunCleanupAsync
-        // does not filter on RunType), so a rejected Review run will attempt to swap the wrong target.
+        // The run-aware overload labels a review's pull request in the repository and every other run's issue
+        // in the tracker. This method is reachable for all run types (HandleRejectedRunCleanupAsync does not
+        // filter on RunType).
         // TODO: [WARNING] OCE behavior changed: the old inline catch (Exception ex) swallowed OCE; the new
         // call uses SwallowCancellation=false (the default), so OCE now propagates out of this method into
         // HandleRejectedRunCleanupAsync (called from a finally block in HandleJobRejectedAsync). Verify that
@@ -203,8 +200,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // exception swallowed). The bool is intentionally discarded here — this is fire-and-forget.
         // If diagnostics on swap failures are ever needed, capture and log the result.
         await _labelService.TrySwapLabelAsync(
-            run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Error, LabelTargetKind.Issue,
-            _logger, "AgentJobLifecycleService.PermanentlyFailRejectedRunAsync", ct);
+            run, AgentLabels.Error, _logger, "AgentJobLifecycleService.PermanentlyFailRejectedRunAsync", ct);
     }
 
     /// <inheritdoc />

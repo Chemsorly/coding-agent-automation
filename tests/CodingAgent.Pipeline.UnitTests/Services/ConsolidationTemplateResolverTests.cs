@@ -44,10 +44,10 @@ public class ConsolidationTemplateResolverTests
         var template = new PipelineJobTemplate { Id = "t1", Name = "BrainConsolidation", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true };
         var project = new PipelineProject
         {
-            // TODO [WARNING]: "p1" is a short non-GUID string. In production, ConsolidationDispatcher
+            // TODO [WARNING]: "p1" is a short non-GUID string. In production, ConsolidationService.TriggerAsync
             // parses ProjectId with Guid.TryParse, which silently produces null for "p1". This test
-            // verifies the resolver returns the raw string, but the end-to-end path (resolver → service
-            // → dispatcher) would produce a null ProjectId for this fixture value. The dedicated test
+            // verifies the resolver returns the raw string, but the end-to-end path (resolver → service)
+            // would produce a null ProjectId for this fixture value. The dedicated test
             // ResolveTemplateWithProject_TemplateExistsInEnabledProject_ReturnsProjectId covers the
             // full-GUID case. If this fixture is ever promoted to an integration test, use a real GUID.
             Id = "p1",

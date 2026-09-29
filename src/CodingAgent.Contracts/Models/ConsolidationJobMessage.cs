@@ -35,12 +35,7 @@ public sealed class ConsolidationJobMessage
     [Key(7)]
     public string? FeedbackDataJson { get; init; }
 
-    /// <summary>
-    /// The workspace path for the consolidation run, as determined by the orchestrator.
-    /// Executors should use this path instead of constructing their own temp paths.
-    /// </summary>
-    [Key(8)]
-    public string? WorkspacePath { get; init; }
+    // Key(8) is retired (was WorkspacePath; the agent now chooses the workspace itself). Do not reuse.
 
     /// <summary>
     /// W3C trace context (traceparent, tracestate) injected at dispatch time.

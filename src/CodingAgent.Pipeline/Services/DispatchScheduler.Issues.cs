@@ -13,7 +13,7 @@ internal sealed partial class DispatchScheduler
     private async Task<(bool madeProgress, int consumed, int processed, int failed)> DispatchIssueRoundAsync(
         RoundDispatchContext ctx,
         Dictionary<string, List<IssueSummary>> issueQueues,
-        Dictionary<int, bool> cycleStateCache,
+        Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
@@ -23,7 +23,7 @@ internal sealed partial class DispatchScheduler
             if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
                 return DispatchAttemptResult.Skip;
 
-            var issue = await TryDequeueValidIssueAsync(queue, template, ctx, cycleStateCache, ct);
+            var issue = await TryDequeueValidIssueAsync(queue, template, ctx, cycleStateCaches, ct);
             if (issue is null) return DispatchAttemptResult.Skip;
 
             ctx.TrackingReportIssue(issue.Identifier);
@@ -77,7 +77,7 @@ internal sealed partial class DispatchScheduler
         List<IssueSummary> queue,
         PipelineJobTemplate template,
         RoundDispatchContext ctx,
-        Dictionary<int, bool> cycleStateCache,
+        Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
         CancellationToken ct)
     {
         while (queue.Count > 0)
@@ -105,8 +105,13 @@ internal sealed partial class DispatchScheduler
                     continue;
                 }
 
+                // Issue numbers are unique only within a tracker, so each tracker keeps its own cache:
+                // "#12 is closed" in one tracker says nothing about #12 in another.
+                if (!cycleStateCaches.TryGetValue(template.IssueProviderId, out var trackerStateCache))
+                    cycleStateCaches[template.IssueProviderId] = trackerStateCache = new Dictionary<int, bool>();
+
                 var depResult = await _dependencyChecker.CheckAsync(
-                    candidate.Identifier, candidate.Description, provider, cycleStateCache, ct);
+                    candidate.Identifier, candidate.Description, provider, trackerStateCache, ct);
                 if (!depResult.IsReady)
                 {
                     _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",

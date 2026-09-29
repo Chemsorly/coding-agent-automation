@@ -48,7 +48,7 @@ public class RefactoringExecutorTests : IDisposable
             TemplateId = "template-1",
             TemplateName = "Test Template",
             ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
+            PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }
         };
     }
 
@@ -647,7 +647,7 @@ public class RefactoringExecutorTests : IDisposable
             TemplateId = "template-1",
             TemplateName = "Test Template",
             ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration(),
+            PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
             AutoDispatch = true
         };
 

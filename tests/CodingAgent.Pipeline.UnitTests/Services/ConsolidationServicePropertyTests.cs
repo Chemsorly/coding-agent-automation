@@ -1,7 +1,6 @@
 #pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 // Feature: 021-consolidation-loops
 // Property 3: Template Filtering by Provider Configuration
-// Property 4: Last-Run Timestamp Isolation
 // Property 5: Concurrency Guard Rejects Duplicate Running
 using AwesomeAssertions;
 using FsCheck;
@@ -80,99 +79,6 @@ public class ConsolidationServicePropertyTests : IDisposable
     }
 
     /// <summary>
-    /// Property 4: Last-Run Timestamp Isolation
-    /// For any sequence of consolidation runs across multiple templates and types,
-    /// GetLastRunAsync(type, templateId) returns only the most recent run matching that exact pair.
-    /// Updated for issue #3028: runs are seeded directly into the store (TriggerAsync no longer persists).
-    /// **Validates: Requirements 2.4**
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public void GetLastRunAsync_ReturnsOnlyMostRecentMatchingPair(PositiveInt runCount)
-    {
-        var runsDir = Path.Combine(_tempDir, $"runs-{Guid.NewGuid():N}");
-        var templates = new List<PipelineJobTemplate>
-        {
-            new() { Id = "tmpl-A", Name = "A", IssueProviderId = "ip", RepoProviderId = "rp" },
-            new() { Id = "tmpl-B", Name = "B", IssueProviderId = "ip", RepoProviderId = "rp" }
-        };
-        var config = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
-        };
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
-            {
-                new()
-                {
-                    Id = WellKnownIds.DefaultProjectId,
-                    Name = "Default",
-                    TemplateIds = new List<string> { "tmpl-A", "tmpl-B" }
-                }
-            });
-        mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(templates);
-
-        // Issue #3028: seed runs directly into the store (TriggerAsync no longer persists).
-        var store = new FileSystemConsolidationRunStore(runsDir);
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
-            store,
-            new InMemoryHarnessSuggestionStore(),
-            new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config)));
-
-        var count = Math.Min(runCount.Get, 5);
-        var types = new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection };
-        var templateIds = new[] { "tmpl-A", "tmpl-B" };
-
-        // Seed runs directly into the store with distinct StartedAtUtc timestamps
-        var runs = new List<ConsolidationRun>();
-        var baseTime = DateTimeOffset.UtcNow.AddHours(-count);
-        for (var i = 0; i < count; i++)
-        {
-            var type = types[i % types.Length];
-            var templateId = templateIds[i % templateIds.Length];
-            var run = new ConsolidationRun
-            {
-                RunId = Guid.NewGuid().ToString(),
-                Type = type,
-                TemplateId = templateId,
-                StartedAtUtc = baseTime.AddMinutes(i),
-                Status = ConsolidationRunStatus.Succeeded
-            };
-            store.SaveRunAsync(run, CancellationToken.None).GetAwaiter().GetResult();
-            runs.Add(run);
-        }
-
-        foreach (var type in types)
-        {
-            foreach (var templateId in templateIds)
-            {
-                var lastRun = sut.GetLastRunAsync(type, templateId, CancellationToken.None).GetAwaiter().GetResult();
-                var matchingRuns = runs.Where(r => r.Type == type && r.TemplateId == templateId).ToList();
-
-                if (matchingRuns.Count == 0)
-                {
-                    lastRun.Should().BeNull();
-                }
-                else
-                {
-                    lastRun.Should().NotBeNull();
-                    lastRun!.Type.Should().Be(type);
-                    lastRun.TemplateId.Should().Be(templateId);
-                    lastRun.StartedAtUtc.Should().Be(matchingRuns.Max(r => r.StartedAtUtc));
-                }
-            }
-        }
-    }
-
-    /// <summary>
     /// Property 5: Concurrency Guard Rejects Duplicate Running
     /// For any type+templateId where a run with Status=Running exists,
     /// TriggerAsync returns null; different type or templateId is not rejected.
@@ -221,7 +127,6 @@ public class ConsolidationServicePropertyTests : IDisposable
             new FileSystemConsolidationRunStore(runsDir),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config),
             WorkDistributor: mockDist2.Object));
 
         // First trigger succeeds
