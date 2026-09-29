@@ -157,14 +157,16 @@ existingSecret: ""
 
 secretInit:
   image:
-    # Official Kubernetes project kubectl image used by the secret-init hook Job.
-    # Pin to a semver tag matching your cluster's minor version (±1 skew is safe per
-    # the Kubernetes version skew policy). For production, override with a digest-pinned
-    # reference: e.g. registry.k8s.io/kubectl@sha256:<digest>
-    # NOTE: Use registry.k8s.io/kubectl — bitnami/kubectl is no longer accessible as of
-    # September 2025 following the Broadcom acquisition.
-    repository: registry.k8s.io/kubectl
-    tag: "v1.32.0"
+    # Alpine-based kubectl image for the secret-init hook Job.
+    # Uses alpine/kubectl (Alpine Linux + kubectl binary) which includes /bin/sh, base64,
+    # od, and tr — required by the init script. registry.k8s.io/kubectl is distroless
+    # and cannot run shell scripts. bitnami/kubectl was deprecated in September 2025.
+    # alpine/kubectl only maintains a rolling window of recent versions (~3 minor releases);
+    # pin to a specific version tag matching or near your cluster minor version.
+    # For production, override with a digest-pinned reference:
+    #   e.g. alpine/kubectl@sha256:<digest>
+    repository: alpine/kubectl
+    tag: "1.37.1"
   # Maximum seconds the hook Job may run before it is forcibly failed.
   # Without this bound, a stuck image pull (air-gapped cluster, registry.k8s.io blocked)
   # would freeze `helm install` indefinitely since pre-install hooks block Helm until they
