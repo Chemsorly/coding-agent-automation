@@ -329,13 +329,6 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     /// <summary>Deletes a persisted run (used when persist fails and the run must be rolled back).</summary>
-    // TODO [WARNING]: DeletePersistedRunAsync passes CancellationToken.None to _runStore.DeleteRunAsync
-    // instead of accepting and forwarding a CancellationToken parameter. RollbackRunAsync (the last
-    // production caller that also used CancellationToken.None) was removed in this diff, leaving this
-    // as the only remaining path that hardcodes CancellationToken.None. If a future caller passes a
-    // cancellation token expecting it to propagate into the store, the token will be silently dropped,
-    // preventing cooperative cancellation of the underlying store I/O.
-    // (review-findings-dotnetspecialist.md)
     internal async Task DeletePersistedRunAsync(string runId)
     {
         ArgumentNullException.ThrowIfNull(runId);
@@ -348,17 +341,6 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Warning(ex, "Failed to delete persisted consolidation run {RunId}", runId);
         }
     }
-
-    private static bool IsTerminalStatus(ConsolidationRunStatus status) =>
-        // TODO [WARNING]: IsTerminalStatus is now dead code. Its only callers (IsRunActive and
-        // GetActiveRunStartedAt) were deleted in issue #3030. The compiler will not flag this
-        // (private static methods are not warned as unused in C# by default), but it will mislead
-        // future readers into thinking a terminal-status check is still exercised by the service.
-        // Remove this method in a follow-up cleanup.
-        // (review-findings.md — Correctness + DotNetSpecialist)
-        status is ConsolidationRunStatus.Succeeded
-            or ConsolidationRunStatus.Failed
-            or ConsolidationRunStatus.Cancelled;
 
     private static ConsolidationRun BuildNewRun(
         ConsolidationRunType type,

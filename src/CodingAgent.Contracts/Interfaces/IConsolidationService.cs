@@ -38,14 +38,6 @@ public interface IConsolidationService
     /// Only marks runs as Failed if their RunId is not in <paramref name="activeAgentJobIds"/>
     /// — i.e., no agent is currently working on them.
     /// </summary>
-    // TODO [WARNING]: The issue's "Affected Components" section lists CleanupOrphanedRunsAsync in the
-    // removal list alongside UpdateRunAsync and TransitionToRunningAsync. However the acceptance
-    // criteria only requires "triggering + harness-suggestion access", and this method has a live
-    // production caller (ConsolidationRehydrationExtensions.cs:55), so it was intentionally retained.
-    // If the intent was to remove it (making the acceptance criteria the authoritative spec), it was
-    // missed. Confirm with the issue author whether this method should be moved to a separate interface
-    // or removed in a follow-up sub-issue.
-    // (review-findings.md — Correctness)
     Task CleanupOrphanedRunsAsync(IReadOnlyCollection<string> activeAgentJobIds, CancellationToken ct);
 
     /// <summary>
