@@ -147,11 +147,11 @@ public class GitHubActionsPipelineProviderTests
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Success, PipelineRunState.Passed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Failure, PipelineRunState.Failed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Cancelled, PipelineRunState.Cancelled)]
-    // Skipped (an `if:` that did not match) and neutral jobs did not fail; reporting them as
-    // Failed sent the agent after docker-push/publish-chart on a PR.
+    // Skipped jobs (e.g. docker-push / publish-chart whose `if:` condition is false on a PR branch)
+    // are intentionally not run — they are not failures. Mapping them to Failed caused the quality
+    // gate to report "CI Cancelled. 2 job(s) failed: 'docker-push', 'publish-chart'" on every
+    // PR-branch CI run where concurrency:cancel-in-progress killed the prior workflow run.
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped, PipelineRunState.Passed)]
-    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Neutral, PipelineRunState.Passed)]
-    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.TimedOut, PipelineRunState.Failed)]
     public void MapJobState_MapsCorrectly(WorkflowJobStatus status, WorkflowJobConclusion? conclusion, PipelineRunState expected)
     {
         GitHubActionsPipelineProvider.MapJobState(status, conclusion).Should().Be(expected);

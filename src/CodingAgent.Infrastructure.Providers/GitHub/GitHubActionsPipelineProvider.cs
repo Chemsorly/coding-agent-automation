@@ -180,10 +180,12 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             WorkflowJobConclusion.Success => PipelineRunState.Passed,
             WorkflowJobConclusion.Failure => PipelineRunState.Failed,
             WorkflowJobConclusion.Cancelled => PipelineRunState.Cancelled,
-            // A skipped job (an `if:` that did not match, e.g. docker-push on a PR) or a neutral
-            // one did not fail. Mapping it to Failed reported it to the agent as the failure and,
-            // having no log, made the classifier treat the run as an infrastructure failure.
-            WorkflowJobConclusion.Skipped or WorkflowJobConclusion.Neutral => PipelineRunState.Passed,
+            // Skipped means the job's `if:` condition evaluated to false (e.g. docker-push / publish-chart
+            // are gated on `github.ref == 'refs/heads/main'` and are intentionally skipped on PR branches).
+            // Treating Skipped as Failed caused spurious quality-gate failures: when concurrency:cancel-in-progress
+            // killed the prior workflow run, these jobs landed as Skipped, which was then reported as
+            // "CI Cancelled. 2 job(s) failed: 'docker-push', 'publish-chart'".
+            WorkflowJobConclusion.Skipped => PipelineRunState.Passed,
             _ => PipelineRunState.Failed
         };
     }
