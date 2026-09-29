@@ -733,7 +733,7 @@ public sealed class AgentOrphanRecoveryService(
 
         var run = runType switch
         {
-            PipelineRunType.Review                => PipelineRun.CreateReview(creationParams),
+            PipelineRunType.Review => PipelineRun.CreateReview(creationParams),
             PipelineRunType.DecompositionAnalysis => PipelineRun.CreateDecomposition(creationParams),
             // TODO: [WARNING] This arm is currently unreachable: ToDefaultRunType() maps
             // WorkItemTaskType.Decomposition → PipelineRunType.DecompositionAnalysis, never
@@ -743,8 +743,8 @@ public sealed class AgentOrphanRecoveryService(
             // the arm creates a misleading signal. Consider either removing the arm (and documenting
             // the Phase-2 → Phase-1 fallback explicitly) or introducing a WorkItemTaskType for Phase 2
             // that maps here.
-            PipelineRunType.Decomposition         => PipelineRun.CreateDecomposition(creationParams),
-            _                                     => PipelineRun.CreateImplementation(creationParams),
+            PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(creationParams),
+            _ => PipelineRun.CreateImplementation(creationParams),
         };
         run.ProjectId = record.ProjectId?.ToString();
         return run;
