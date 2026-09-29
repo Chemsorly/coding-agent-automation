@@ -842,4 +842,127 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             Times.Once,
             "label swap must fire normally when CompleteRunAsync returns the run (run was alive)");
     }
+
+    // ── Orphaned path — null-label branch (lines 367-377) ────────────────────
+
+    [Fact]
+    public async Task HandleOrphanedRun_UnknownFinalStep_NullFinalLabel_NoLabelSwap_WarningLogged()
+    {
+        // When FinalStep produces no label mapping and FinalLabel is absent, the orphan-recovery
+        // label-swap path must be a no-op (label is null → warning + return).
+        // PipelineStep.Created has no arm in the step switch and is therefore a valid trigger.
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(new JobId("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#10",
+                IssueProviderConfigId = "ipc-1"
+            });
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Created, // no label mapping in step switch
+            FinalLabel = null,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // No label swap must fire when label is null
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── Orphaned path — Review run with null RepoProviderConfigId (lines 387-400) ──
+
+    [Fact]
+    public async Task HandleOrphanedRun_Review_NullRepoProviderConfigId_FallsBackToIssueProvider_LogsWarning()
+    {
+        // When a recovered Review run has no RepoProviderConfigId, the code falls back to
+        // IssueProviderConfigId (still targeting PullRequest) and logs a warning.
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(new JobId("job-1"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Review,
+                IssueIdentifier = "pr-7",
+                IssueProviderConfigId = "issue-prov",
+                RepoProviderConfigId = null  // forces the fallback branch
+            });
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // Fallback uses IssueProviderConfigId but still targets PullRequest
+        _labelService.Verify(l => l.SwapLabelAsync(
+            "issue-prov", "pr-7",
+            AgentLabels.Next, LabelTargetKind.PullRequest,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── EnqueueFeedbackOutboxEntryAsync catch branch (lines 460-466) ─────────
+
+    [Fact]
+    public async Task Regular_OutboxEnqueueThrows_LabelSwapStillFires_ExceptionSwallowed()
+    {
+        // When EnqueueAsync throws a non-cancellation exception, the label swap must still
+        // proceed (enqueue is best-effort). The exception must not propagate to the caller.
+        var run = MakeRun();
+        run.Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback(),
+            Issue = new IssueFeedback { Description = "Something went wrong" }
+        };
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            FinalLabel = AgentLabels.Done,
+            CompletedAt = DateTimeOffset.UtcNow,
+            Feedback = run.Feedback
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        // Outbox throws a transient DB error
+        _outbox
+            .Setup(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        var svc = CreateService();
+
+        // Must not propagate the exception
+        await svc.Invoking(s => s.HandleJobCompletedAsync(
+                new JobId("job-1"), null, payload, CancellationToken.None))
+            .Should().NotThrowAsync("outbox enqueue failure is best-effort and must not abort the label swap");
+
+        // Label swap must still fire despite the outbox failure
+        _issueOps.Verify(i => i.SwapLabelAsync(
+            run, AgentLabels.Done, It.IsAny<CancellationToken>()),
+            Times.Once,
+            "label swap must proceed even when the outbox enqueue throws");
+    }
 }
