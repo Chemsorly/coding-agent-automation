@@ -105,26 +105,6 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 
         _changeNotifier.NotifyChange();
 
-        var totalTokens = SumTokenUsage(result.ReviewTokenUsage, result.RefinementTokenUsage, result.DiffSummaryTokenUsage);
-
-        // Update the consolidation run status (ConsolidationRuns table — kept per issue spec;
-        // this is the write that moves a real run's ConsolidationRuns row to terminal).
-        try
-        {
-            var status = result.Success
-                ? Pipeline.Models.ConsolidationRunStatus.Succeeded
-                : Pipeline.Models.ConsolidationRunStatus.Failed;
-            var summary = result.Success ? result.Summary : result.ErrorMessage;
-
-            var sw = System.Diagnostics.Stopwatch.StartNew();
-            await _consolidationService.UpdateRunAsync(result.JobId, status, summary, ct, totalTokens);
-            _logger.Information("Consolidation run {JobId} UpdateRunAsync completed in {ElapsedMs}ms", sanitizedJobId, sw.ElapsedMilliseconds);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to update consolidation run {JobId} status", sanitizedJobId);
-        }
-
         // Route through RunLifecycleManager to write pipeline run history and transition WorkItem.
         // RunLifecycleManager.CompleteRunAsync/FailRunAsync will internally call RemoveRun (which is
         // a no-op if the ghost run is not in memory) and AddRunToHistoryAsync.
@@ -174,7 +154,4 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
 
         return debugInfo;
     }
-
-    private static long SumTokenUsage(params TokenUsage?[] usages)
-        => usages.Where(u => u is not null).Sum(u => u!.TotalTokens);
 }

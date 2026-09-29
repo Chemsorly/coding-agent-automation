@@ -75,6 +75,26 @@ public interface IPipelineRunHistoryService
     Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, CancellationToken ct = default)
         => GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, ct);
 
+    /// <summary>
+    /// Retrieves paginated run history filtered by <see cref="PipelineRunType"/> in addition to all other filters.
+    /// The <paramref name="runType"/> filter is applied in the DB query before paging.
+    /// </summary>
+    /// <param name="runType">When set, returns only runs of this <see cref="PipelineRunType"/>; null = all run types.</param>
+    /// <remarks>
+    /// The default implementation ignores <paramref name="runType"/> and delegates to the <paramref name="since"/> overload.
+    /// Only <c>PostgresPipelineRunHistoryService</c> overrides this overload to push the filter to the DB.
+    /// </remarks>
+    // TODO [WARNING]: The default implementation silently ignores the runType parameter. Any
+    // IPipelineRunHistoryService implementation that does not override this overload (including
+    // NullPipelineRunHistoryService in DatabaseMaintenanceService and in-memory test doubles) will
+    // return all run types regardless of the filter, producing incorrect results for callers that
+    // pass runType: PipelineRunType.Consolidation. Only PostgresPipelineRunHistoryService correctly
+    // applies the filter. Document this contract clearly or consider adding a compile-time guard
+    // (e.g. abstract method) to prevent silent filter-ignore in future implementations.
+    // (DotNetSpecialist review)
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, PipelineRunType? runType, CancellationToken ct = default)
+        => GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, since, ct);
+
     /// <summary>Retrieves a single pipeline run summary by run ID. Returns null if not found.</summary>
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);
 }

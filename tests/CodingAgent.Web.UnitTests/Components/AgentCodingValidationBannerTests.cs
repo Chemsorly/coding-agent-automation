@@ -100,6 +100,13 @@ public class AgentCodingValidationBannerTests : BunitContext
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
+        // IssueDrawerService now requires IPipelineApiWorkItemClient for status-aware active-issue tracking.
+        var mockApiWorkItemClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiWorkItemClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<(string, string)>());
+        mockApiWorkItemClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+        Services.AddSingleton<IPipelineApiWorkItemClient>(mockApiWorkItemClient.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
         Services.AddSingleton<IDispatchOrchestrationService>(new Mock<IDispatchOrchestrationService>().Object);
 

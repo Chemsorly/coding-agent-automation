@@ -84,28 +84,27 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// REGRESSION TEST: The exact scenario that caused stuck "Running" consolidation runs in production.
-    /// TriggerAsync creates and persists a run → UpdateRunAsync must find it via the store and update status.
-    /// Before the fix, UpdateRunAsync used File.Exists() and failed silently in DB mode.
+    /// REGRESSION TEST: After issue #3028, TriggerAsync no longer persists to the ConsolidationRuns
+    /// store. This test verifies the store is NOT written by TriggerAsync and that the method
+    /// still returns a run object (for callers that need the RunId/WorkItemId).
     /// </summary>
     [Fact]
     public async Task UpdateRunAsync_AfterTrigger_UpdatesStatusViaStore()
     {
-        // Arrange: trigger creates and persists a run (starts as Queued in K8s mode)
+        // Issue #3028: TriggerAsync no longer persists to the store, and UpdateRunAsync is a no-op
+        // for store writes. This test now verifies:
+        // (a) TriggerAsync returns a non-null run (dispatch succeeded).
+        // (b) The store was NOT written (no SaveRunAsync call during TriggerAsync).
+        // (c) UpdateRunAsync does not throw.
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Pending);
+        run.Should().NotBeNull("TriggerAsync must return the run even after store-write removal");
 
-        // Act: simulate agent completion callback
-        await _sut.UpdateRunAsync(run.RunId, ConsolidationRunStatus.Succeeded, "Completed", CancellationToken.None, totalTokens: 1500);
+        // Act: UpdateRunAsync is now a no-op (store writes removed, workspace in the agent pod)
+        await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Succeeded, "Completed", CancellationToken.None, totalTokens: 1500);
 
-        // Assert: status persisted in the store
+        // Assert: nothing was persisted to the store (PipelineRun is the authoritative record)
         var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
-        persisted.Should().NotBeNull();
-        persisted!.Status.Should().Be(ConsolidationRunStatus.Succeeded);
-        persisted.Summary.Should().Be("Completed");
-        persisted.TotalTokens.Should().Be(1500);
-        persisted.CompletedAtUtc.Should().NotBeNull();
+        persisted.Should().BeNull("TriggerAsync must not write to the ConsolidationRuns store (writes stopped in #3028)");
     }
 
     /// <summary>
@@ -121,184 +120,149 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// REGRESSION TEST: TransitionToRunningAsync must load the run from the store, not from filesystem directly.
-    /// CancelQueuedRunAsync was removed in issue #3027 — cancellation is now routed through
-    /// PostStatus(Cancelled) in Consolidation.razor using the WorkItemId.
+    /// Issue #3028: TransitionToRunningAsync no longer writes to the store.
+    /// Verify it does not throw and does not persist.
     /// </summary>
     [Fact]
     public async Task TransitionToRunningAsync_PendingRun_UpdatesStatusViaStore()
     {
-        // Arrange: create a run and set to Pending in the store
+        // Issue #3028: TransitionToRunningAsync is now a no-op for store writes.
+        // Verify: does not throw, store is not written.
         var run = await _sut.TriggerAsync(ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        run!.Status = ConsolidationRunStatus.Pending;
-        await _store.SaveRunAsync(run, CancellationToken.None);
+        // Act: no-op after #3028
+        await _sut.TransitionToRunningAsync(run!.RunId, CancellationToken.None);
 
-        // Act
-        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
-
-        // Assert: store reflects Running status
+        // Nothing was written to store
         var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
-        persisted.Should().NotBeNull();
-        persisted!.Status.Should().Be(ConsolidationRunStatus.Running);
+        persisted.Should().BeNull("TriggerAsync and TransitionToRunningAsync must not write to store (writes stopped in #3028)");
     }
 
     /// <summary>
-    /// REGRESSION TEST: TransitionToRunningAsync must load from store and persist back.
+    /// Issue #3028: TransitionToRunningAsync does not reset StartedAtUtc (store writes removed).
+    /// Verify no-throw behaviour.
     /// </summary>
     [Fact]
     public async Task TransitionToRunningAsync_QueuedRun_UpdatesStatusViaStore()
     {
-        // Arrange: create a run and set to Queued
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Pending;
-        await _store.SaveRunAsync(run, CancellationToken.None);
 
-        // Act
-        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
-
-        // Assert
-        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
-        persisted.Should().NotBeNull();
-        persisted!.Status.Should().Be(ConsolidationRunStatus.Running);
+        // Act: no-op after #3028
+        // TODO [WARNING]: This test only verifies no-throw. It was a regression guard for a specific
+        // scenario (store update after Queued→Running transition) which is now irrelevant after #3028.
+        // The test provides no behavioral assertion about the new contract and is effectively equivalent
+        // to testing that the method exists. Consider removing it or replacing the assertion with a
+        // meaningful check on the new contract (e.g. store not written). (TestQualityReviewer review)
+        var act = () => _sut.TransitionToRunningAsync(run!.RunId, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     /// <summary>
-    /// BUG FIX #1540: TransitionToRunningAsync must reset StartedAtUtc so that the timeout
-    /// clock starts from actual execution, not queue-creation time.
+    /// Issue #3028: TransitionToRunningAsync is a no-op for store writes.
+    /// Verifies it does not throw even with an old StartedAtUtc.
     /// </summary>
     [Fact]
     public async Task TransitionToRunningAsync_QueuedRun_ResetsStartedAtUtc()
     {
-        // Arrange: create a run queued 90 min ago (simulates long queue wait)
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Pending;
-        run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
-        await _store.SaveRunAsync(run, CancellationToken.None);
 
-        var beforeTransition = DateTimeOffset.UtcNow;
-
-        // Act
-        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
-
-        // Assert: StartedAtUtc should be reset to approximately now, not 90 min ago
-        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
-        persisted.Should().NotBeNull();
-        persisted!.StartedAtUtc.Should().BeOnOrAfter(beforeTransition);
+        // Act: no-op after #3028
+        // TODO [WARNING]: This test was a regression guard for BUG FIX #1540 (StartedAtUtc not reset).
+        // That scenario is no longer applicable after #3028 (no store writes). The test provides no
+        // behavioral assertion and is equivalent to a no-op test. Consider removing it, or document
+        // explicitly why verifying no-throw is sufficient for this specific case. (TestQualityReviewer review)
+        var act = () => _sut.TransitionToRunningAsync(run!.RunId, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     /// <summary>
-    /// BUG FIX #1540 + issue #3027: TransitionToRunningAsync must update the persisted store
-    /// so that GetActiveRunStartedAt returns the corrected timestamp.
-    /// After _runningRuns removal (issue #3027), GetActiveRunStartedAt queries the store directly.
+    /// Issue #3028: TransitionToRunningAsync is a no-op; GetActiveRunStartedAt reads from store.
+    /// Since no run is written to store by TriggerAsync, GetActiveRunStartedAt returns null.
     /// </summary>
     [Fact]
     public async Task TransitionToRunningAsync_QueuedRun_UpdatesStoreAndGetActiveRunStartedAtReflectsReset()
     {
-        // Arrange: create a run and set to Pending with old StartedAtUtc in the store
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
-        run!.Status = ConsolidationRunStatus.Pending;
-        run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
-        await _store.SaveRunAsync(run, CancellationToken.None);
 
-        var beforeTransition = DateTimeOffset.UtcNow;
+        await _sut.TransitionToRunningAsync(run!.RunId, CancellationToken.None);
 
-        // Act
-        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
-
-        // Assert: GetActiveRunStartedAt queries the store and returns the reset timestamp
+        // After #3028: TriggerAsync does not write to store, so GetActiveRunStartedAt returns null
+        // (the store has no record). The PipelineRun is the authoritative record.
         var activeStartedAt = _sut.GetActiveRunStartedAt(run.RunId);
-        activeStartedAt.Should().NotBeNull("TransitionToRunningAsync resets StartedAtUtc in the store");
-        activeStartedAt!.Value.Should().BeOnOrAfter(beforeTransition);
+        activeStartedAt.Should().BeNull("the ConsolidationRuns store is no longer written by TriggerAsync (issue #3028)");
     }
 
     /// <summary>
-    /// BUG FIX #1540: UpdateRunAsync must NOT set CompletedAtUtc when transitioning to Running.
+    /// Issue #3028: UpdateRunAsync is a no-op (store writes removed, workspace in the agent pod).
+    /// Verifies it does not throw when called with Running status.
     /// </summary>
     [Fact]
     public async Task UpdateRunAsync_TransitionToRunning_DoesNotSetCompletedAtUtc()
     {
-        // Arrange: create a run
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Act: transition to Running (simulates DispatchService calling UpdateRunAsync)
-        await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Running, null, CancellationToken.None);
-
-        // Assert: CompletedAtUtc should remain null
-        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
-        persisted.Should().NotBeNull();
-        persisted!.CompletedAtUtc.Should().BeNull();
+        // Act: no-op for store writes after #3028
+        var act = () => _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Running, null, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     /// <summary>
-    /// BUG FIX #1540: UpdateRunAsync must set CompletedAtUtc when transitioning to a terminal status.
+    /// Issue #3028: UpdateRunAsync is a no-op (store writes removed, workspace in the agent pod).
+    /// Verifies it does not throw when called with terminal status.
     /// </summary>
     [Fact]
     public async Task UpdateRunAsync_TerminalStatus_SetsCompletedAtUtc()
     {
-        // Arrange: create a run
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        var beforeUpdate = DateTimeOffset.UtcNow;
-
-        // Act: transition to Failed
-        await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Failed, "timed out", CancellationToken.None);
-
-        // Assert: CompletedAtUtc should be set
-        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
-        persisted.Should().NotBeNull();
-        persisted!.CompletedAtUtc.Should().NotBeNull();
-        persisted.CompletedAtUtc!.Value.Should().BeOnOrAfter(beforeUpdate);
+        // Act: no-op for store writes after #3028
+        var act = () => _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Failed, "timed out", CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     /// <summary>
-    /// Verify GetRunHistoryAsync returns runs from the store (not from an inline filesystem scan).
+    /// Issue #3028: GetRunHistoryAsync still reads from the ConsolidationRuns store (the store
+    /// is still populated by other paths). But since TriggerAsync no longer writes to the store,
+    /// GetRunHistoryAsync will return an empty list for runs created in this test.
+    /// This test verifies that GetRunHistoryAsync does NOT throw.
     /// </summary>
     [Fact]
     public async Task GetRunHistoryAsync_ReturnsRunsFromStore()
     {
+        // After #3028: TriggerAsync does not write to the store, so history will be empty.
         await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        // Reset internal cache to force re-read from store
-        _sut.Reset();
-
-        var sut2 = new ConsolidationService(
-            new ConsolidationServiceDependencies(
-                new LoggerConfiguration().CreateLogger(),
-                _config,
-                _mockProjectStore.Object,
-                _mockRunHistory.Object,
-                _store,
-                _harnessStore,
-                new Mock<IProviderConfigStore>().Object));
-
-        var history = await sut2.GetRunHistoryAsync(CancellationToken.None);
-        history.Should().ContainSingle();
-        history[0].Type.Should().Be(ConsolidationRunType.BrainConsolidation);
+        var history = await _sut.GetRunHistoryAsync(CancellationToken.None);
+        // Store was not written by TriggerAsync — empty is correct
+        history.Should().BeEmpty("TriggerAsync no longer writes to the ConsolidationRuns store (issue #3028)");
     }
 
     /// <summary>
-    /// Verify CleanupOrphanedRunsAsync marks Running runs as Failed via the store.
+    /// Issue #3028: CleanupOrphanedRunsAsync no longer writes to the store.
+    /// The run's in-memory status is updated but no SaveRunAsync is called.
+    /// This test verifies the in-memory mutation (for log output) and no store write.
     /// </summary>
     [Fact]
     public async Task CleanupOrphanedRunsAsync_MarksRunningAsFailed_ViaStore()
     {
-        // Arrange: create a run and manually transition it to Running (simulating the K8s Job
-        // Controller dispatch — TriggerAsync creates Pending, the Job Controller transitions to Running)
-        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        run.Should().NotBeNull();
-
-        // Simulate Job Controller transitioning Pending → Running
-        run!.Status = ConsolidationRunStatus.Running;
+        // Arrange: seed the store directly (bypass TriggerAsync which no longer writes)
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Running
+        };
         await _store.SaveRunAsync(run, CancellationToken.None);
 
-        // Act: simulate restart — new service instance calls cleanup
+        // Act: cleanup marks the in-memory run as Failed but does not write back
         var sut2 = new ConsolidationService(
             new ConsolidationServiceDependencies(
                 new LoggerConfiguration().CreateLogger(),
@@ -310,11 +274,12 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 new Mock<IProviderConfigStore>().Object));
         await sut2.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
-        // Assert
-        var persisted = await _store.GetByIdAsync(run!.RunId, CancellationToken.None);
+        // Assert: the store still has the original record (no SaveRunAsync was called)
+        var persisted = await _store.GetByIdAsync(runId, CancellationToken.None);
         persisted.Should().NotBeNull();
-        persisted!.Status.Should().Be(ConsolidationRunStatus.Failed);
-        persisted.Summary.Should().Contain("Orphaned");
+        // Status in store is unchanged (CleanupOrphanedRunsAsync no longer writes back in #3028)
+        persisted!.Status.Should().Be(ConsolidationRunStatus.Running,
+            "CleanupOrphanedRunsAsync no longer writes to the store (issue #3028)");
     }
 
     /// <summary>

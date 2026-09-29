@@ -56,50 +56,43 @@ public sealed class ConsolidationServiceStoreDelegationTests
     [Fact]
     public async Task UpdateRunAsync_Calls_GetByIdAsync_OnStore()
     {
+        // Issue #3028: UpdateRunAsync no longer writes to the store.
+        // It only calls CleanupWorkspaceIfSucceeded as a side effect.
+        // This test verifies the no-op behaviour: no SaveRunAsync call is made.
         var runId = Guid.NewGuid().ToString();
-        var run = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Running
-        };
-        _mockRunStore.Setup(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(run);
 
         var sut = CreateSut();
         await sut.UpdateRunAsync(runId, ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None);
 
-        _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
-        _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
-            r.RunId == runId && r.Status == ConsolidationRunStatus.Succeeded), It.IsAny<CancellationToken>()), Times.Once);
+        // Store must NOT be written — ConsolidationRuns store writes stopped in #3028
+        _mockRunStore.Verify(s => s.GetByIdAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()), Times.Never,
+            "UpdateRunAsync must not read from store (no-op after #3028)");
+        _mockRunStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Never,
+            "UpdateRunAsync must not write to ConsolidationRuns store (writes stopped in #3028)");
     }
 
     [Fact]
     public async Task TransitionToRunningAsync_Calls_GetByIdAsync_OnStore()
     {
+        // Issue #3028: TransitionToRunningAsync no longer writes to the store.
+        // The method is a no-op after store writes were stopped.
+        // This test verifies the no-op behaviour: no SaveRunAsync call is made.
         var runId = Guid.NewGuid().ToString();
-        var run = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.HarnessSuggestions,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
-        _mockRunStore.Setup(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(run);
 
         var sut = CreateSut();
         await sut.TransitionToRunningAsync(runId, CancellationToken.None);
 
-        _mockRunStore.Verify(s => s.GetByIdAsync((RunId)runId, It.IsAny<CancellationToken>()), Times.Once);
-        _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
-            r.Status == ConsolidationRunStatus.Running), It.IsAny<CancellationToken>()), Times.Once);
+        // Store must NOT be written — ConsolidationRuns store writes stopped in #3028
+        _mockRunStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Never,
+            "TransitionToRunningAsync must not write to ConsolidationRuns store (writes stopped in #3028)");
     }
 
     [Fact]
     public async Task CleanupOrphanedRunsAsync_Calls_LoadAllAndSave_OnStore()
     {
+        // Issue #3028: CleanupOrphanedRunsAsync no longer writes to the store.
+        // It mutates the in-memory ConsolidationRun status for any local callers but
+        // does NOT call SaveRunAsync — the PipelineRun is the authoritative record.
         var orphan = new ConsolidationRun
         {
             RunId = Guid.NewGuid().ToString(),
@@ -113,8 +106,12 @@ public sealed class ConsolidationServiceStoreDelegationTests
         var sut = CreateSut();
         await sut.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
-        _mockRunStore.Verify(s => s.SaveRunAsync(It.Is<ConsolidationRun>(r =>
-            r.RunId == orphan.RunId && r.Status == ConsolidationRunStatus.Failed), It.IsAny<CancellationToken>()), Times.Once);
+        // LoadAll is still called to inspect orphaned runs
+        _mockRunStore.Verify(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()), Times.Once);
+
+        // Store must NOT be written — writes stopped in #3028
+        _mockRunStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Never,
+            "CleanupOrphanedRunsAsync must not write to ConsolidationRuns store (writes stopped in #3028)");
     }
 
     [Fact]
@@ -217,21 +214,12 @@ public sealed class ConsolidationServiceStoreDelegationTests
     [Fact]
     public async Task UpdateRunAsync_WhenStoreThrows_LogsAndSwallowsException()
     {
+        // Issue #3028: UpdateRunAsync no longer accesses the store, so exceptions from
+        // the store are not possible. This test verifies the method still doesn't throw.
         var runId = new RunId(Guid.NewGuid().ToString());
-        var run = new ConsolidationRun
-        {
-            RunId = runId.Value,
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Running
-        };
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(run);
-        _mockRunStore.Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("disk error"));
 
         var sut = CreateSut();
-        // Must not throw — the catch block swallows and logs
+        // Must not throw regardless of store state
         var act = () => sut.UpdateRunAsync(runId, ConsolidationRunStatus.Succeeded, "done", CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
@@ -239,9 +227,9 @@ public sealed class ConsolidationServiceStoreDelegationTests
     [Fact]
     public async Task TransitionToRunningAsync_WhenStoreThrows_LogsAndSwallowsException()
     {
+        // Issue #3028: TransitionToRunningAsync no longer accesses the store, so exceptions
+        // from the store are not possible. This test verifies the method still doesn't throw.
         var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("disk error"));
 
         var sut = CreateSut();
         var act = () => sut.TransitionToRunningAsync(runId, CancellationToken.None);
@@ -251,9 +239,8 @@ public sealed class ConsolidationServiceStoreDelegationTests
     [Fact]
     public async Task TransitionToRunningAsync_WhenRunNotFound_DoesNotThrow()
     {
+        // Issue #3028: TransitionToRunningAsync is a no-op — store is not queried.
         var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationRun?)null);
 
         var sut = CreateSut();
         var act = () => sut.TransitionToRunningAsync(runId, CancellationToken.None);
@@ -347,16 +334,14 @@ public sealed class ConsolidationServiceStoreDelegationTests
         var sut = CreateSut();
         await sut.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
-        // TriggerAsync for a different type with the same templateId must succeed
+        // TriggerAsync for a different type with the same templateId must succeed.
+        // Issue #3028: TriggerAsync no longer writes to the store; a non-null result
+        // means the dispatch went through.
         var differentTypeRun = await sut.TriggerAsync(
             ConsolidationRunType.RefactoringDetection,
             new TemplateId("t1"),
             CancellationToken.None);
         differentTypeRun.Should().NotBeNull(
             because: "a Pending BrainConsolidation run must not block RefactoringDetection for the same template");
-        _mockRunStore.Verify(s => s.SaveRunAsync(
-            It.Is<ConsolidationRun>(r => r.Type == ConsolidationRunType.RefactoringDetection),
-            It.IsAny<CancellationToken>()), Times.AtLeastOnce,
-            "the RefactoringDetection run must be persisted to the store");
     }
 }

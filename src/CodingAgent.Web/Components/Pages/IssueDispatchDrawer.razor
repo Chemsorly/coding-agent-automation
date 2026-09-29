@@ -62,10 +62,12 @@
                     @{ var idx = 0; }
                     @foreach (var issue in FilteredItems)
                     {
-                        var isProcessing = IsBeingProcessed(issue.Identifier);
+                        var processingStatus = GetProcessingStatus(issue.Identifier);
+                        var isProcessing = processingStatus.HasValue;
                         var readiness = Readiness.GetValueOrDefault(issue.Identifier);
                         // TODO: Guard against inconsistent DependencyCheckResult where IsReady=false but BlockedBy is empty — would render "blocked by" with no issue numbers.
-                        var isBlocked = readiness is { IsReady: false };
+                        var displayState = GetIssueDisplayState(issue, readiness, processingStatus);
+                        var isBlocked = displayState == IssueDisplayState.Blocked;
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(isBlocked ? "drawer-issue-blocked" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(issue)"
@@ -73,17 +75,41 @@
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
                             <div class="drawer-issue-header">
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
-                                @if (isProcessing)
+                                @switch (displayState)
                                 {
-                                    <span class="badge-default" style="background: var(--accent-fill); color: white;">Queued</span>
-                                }
-                                else if (isBlocked)
-                                {
-                                    <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))">Blocked by @(string.Join(", ", readiness.BlockedBy.Select(n => $"#{n}")))</span>
-                                }
-                                else if (readiness is { IsReady: true })
-                                {
-                                    <span class="badge-default drawer-badge-ready">Ready</span>
+                                    case IssueDisplayState.Running:
+                                        <span class="badge-default" style="background: var(--accent-fill); color: white;">Running</span>
+                                        break;
+                                    case IssueDisplayState.Queued:
+                                        <span class="badge-default" style="background: var(--accent-fill); color: white;">Queued</span>
+                                        break;
+                                    case IssueDisplayState.InProgress:
+                                        <span class="badge-default" style="background: var(--accent-fill); color: white;">In progress</span>
+                                        break;
+                                    case IssueDisplayState.Done:
+                                        <span class="badge-default" style="background: var(--success-bg); color: var(--success);">Done</span>
+                                        break;
+                                    case IssueDisplayState.Error:
+                                        <span class="badge-default" style="background: var(--bg-error); color: var(--error);">Error</span>
+                                        break;
+                                    case IssueDisplayState.WontDo:
+                                        <span class="badge-default" style="background: var(--bg-hover); color: var(--text-muted);">Won't do</span>
+                                        break;
+                                    case IssueDisplayState.NeedsRefinement:
+                                        <span class="badge-default" style="background: var(--warning-bg); color: var(--warning);">Needs refinement</span>
+                                        break;
+                                    case IssueDisplayState.Epic:
+                                        <span class="badge-default" style="background: var(--bg-hover); color: var(--text-muted);">Epic</span>
+                                        break;
+                                    case IssueDisplayState.Parked:
+                                        <span class="badge-default" style="background: var(--bg-hover); color: var(--text-muted);">Parked</span>
+                                        break;
+                                    case IssueDisplayState.Blocked:
+                                        <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))">Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))</span>
+                                        break;
+                                    case IssueDisplayState.Ready:
+                                        <span class="badge-default drawer-badge-ready">Ready</span>
+                                        break;
                                 }
                             </div>
                             <div class="drawer-issue-title">@issue.Title</div>
@@ -136,6 +162,10 @@
                             Blocked by @(string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}")))
                         </p>
                     }
+                    @* Note: the Dispatch button is intentionally enabled for issues with lifecycle labels
+                       (agent:done, agent:error, etc.). Manual dispatch is a force-re-queue workflow that
+                       clears the blocking label via AgentLabelOperations.SwapAsync. Do not add disabled
+                       conditions for label-only states without reading IssueDrawerService.DispatchIssueAsync. *@
                     <button class="btn-save" @onclick="DispatchSelected"
                             disabled="@(IsDispatching || selectedBlocked)"
                             title="@(selectedBlocked ? $"Blocked by open dependencies: {string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}"))}" : "")"
@@ -162,6 +192,52 @@
 
     // Prevent default only disrupts scroll on arrow keys; keeping false avoids keyboard traps (Tab works normally)
     private static bool ShouldPreventDefault => false;
+
+    /// <summary>
+    /// Display state for an issue in the drawer, computed from WorkItem status, labels, and dependency check.
+    /// Precedence: WorkItem (Running/Queued) > Labels > Dependency > Ready.
+    /// </summary>
+    private enum IssueDisplayState
+    {
+        Running, Queued, InProgress, Done, Error, WontDo, NeedsRefinement, Epic, Parked, Blocked, Ready, Unknown
+    }
+
+    /// <summary>
+    /// Computes the display state for an issue based on its WorkItem status, labels, and readiness.
+    /// </summary>
+    private static IssueDisplayState GetIssueDisplayState(
+        IssueSummary issue,
+        DependencyCheckResult? readiness,
+        WorkItemStatus? processingStatus)
+    {
+        // 1. WorkItem status takes highest precedence
+        if (processingStatus == WorkItemStatus.Running || processingStatus == WorkItemStatus.Dispatched)
+            return IssueDisplayState.Running;
+        if (processingStatus == WorkItemStatus.Pending)
+            return IssueDisplayState.Queued;
+
+        // 2. Agent lifecycle labels — checked before dependency to prevent "Ready" for labelled issues
+        var labels = issue.Labels;
+        if (labels.Any(l => l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.InProgress;
+        if (labels.Any(l => l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.Done;
+        if (labels.Any(l => l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.Error;
+        if (labels.Any(l => l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
+                         || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.WontDo;
+        if (labels.Any(l => l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.NeedsRefinement;
+        if (labels.Any(l => l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.Queued;
+        if (labels.Any(l => l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
+                         || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
+                         || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.Epic;
+        if (labels.Any(l => l.Equals("backlog", StringComparison.OrdinalIgnoreCase))) return IssueDisplayState.Parked;
+
+        // 3. Dependency check
+        if (readiness is { IsReady: false }) return IssueDisplayState.Blocked;
+
+        // 4. Ready — only when none of the above applies
+        if (readiness is { IsReady: true }) return IssueDisplayState.Ready;
+
+        return IssueDisplayState.Unknown;
+    }
 
     protected override void OnParametersSet()
     {

@@ -33,14 +33,27 @@ public record LoopStartResultDto(bool Started, string? Error);
 
 /// <summary>
 /// Result of a full retention sweep triggered via POST /api/scheduler/maintenance/retention-sweep.
-/// Each field corresponds to one of the five sweep operations in DatabaseMaintenanceService.
+/// Each field corresponds to one of the sweep operations in DatabaseMaintenanceService.
 /// </summary>
 public record RetentionSweepResultDto(
     int StaleWorkItemsDeleted,
     int StalePipelineRunsDeleted,
     int StaleConsolidationRunsDeleted,
     int RetentionPipelineRunsDeleted,
-    int RetentionWorkItemsDeleted);
+    int RetentionWorkItemsDeleted,
+    int OrphanedPipelineRunsReconciled = 0,
+    int ConsolidationRunsBackfilled = 0);
 
 /// <summary>Work item count grouped by status, returned by GET /api/work-items/counts-by-status.</summary>
 public record WorkItemCountDto(string Status, string AgentSelector, long Count);
+
+/// <summary>
+/// Response wrapper for <c>GET /api/work-items/counts-by-status</c>.
+/// Contains work item counts grouped by (Status, AgentSelector) plus the oldest Pending item's
+/// creation timestamp, used by the Scheduler to feed the <c>workdistribution.pending.oldest_age_seconds</c> gauge.
+/// </summary>
+/// <param name="Counts">Work item counts by status and agent selector.</param>
+/// <param name="OldestPendingCreatedAt">
+/// The <c>CreatedAt</c> of the oldest Pending work item, or <see langword="null"/> when there are none.
+/// </param>
+public record WorkItemCountsResponseDto(WorkItemCountDto[] Counts, DateTimeOffset? OldestPendingCreatedAt);

@@ -260,14 +260,6 @@ internal sealed class CiPollingCoordinator
         finally
         {
             waitSw.Stop();
-            // Guard against genuine pipeline cancellation (ct.IsCancellationRequested).
-            // Only emit the sample when the wait completed — not when the pipeline was cancelled mid-poll.
-            if (!ct.IsCancellationRequested)
-            {
-                var stepTags = PipelineTelemetry.BuildStepTags("WaitForPostPrCi", run.RunType, run.ProjectId, run.ProjectName);
-                _metrics.StepDuration.Record(waitSw.Elapsed.TotalSeconds, stepTags);
-                _metrics.StepCount.Add(1, stepTags);
-            }
         }
 
         return new QualityGateReport

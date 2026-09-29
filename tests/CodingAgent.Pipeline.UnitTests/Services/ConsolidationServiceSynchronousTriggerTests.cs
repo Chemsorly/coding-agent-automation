@@ -10,10 +10,11 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// <summary>
 /// Acceptance criterion tests for issue #3026 — synchronous dispatch in
 /// <see cref="ConsolidationService.TriggerAsync"/>.
+/// Updated for issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
 /// <para>
 /// These tests verify:
-/// (A) A valid trigger creates exactly one <c>Pending</c> WorkItem and persists a <c>Pending</c> run.
-/// (B) A config-error trigger (permanent 422) creates no WorkItem and persists no run.
+/// (A) A valid trigger creates exactly one <c>Pending</c> WorkItem via <c>IWorkDistributor</c>.
+/// (B) A config-error trigger (permanent failure) creates no WorkItem and returns null.
 /// </para>
 /// </summary>
 public sealed class ConsolidationServiceSynchronousTriggerTests
@@ -64,7 +65,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)SelectorLabels);
 
-        // Default: run store operations succeed
+        // Default: run store operations succeed (though they should not be called for TriggerAsync after #3028)
         _mockRunStore
             .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -93,9 +94,10 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     // ── Test A: Valid trigger creates exactly one Pending WorkItem ────────────
 
     /// <summary>
-    /// Acceptance criterion (issue #3026, Test A):
-    /// A valid trigger creates exactly one <c>Pending</c> WorkItem via <c>IWorkDistributor</c>
-    /// and persists a <c>ConsolidationRun</c> with <c>Status = Pending</c>.
+    /// Acceptance criterion (issue #3026, Test A — updated for issue #3028):
+    /// A valid trigger creates exactly one WorkItem via IWorkDistributor
+    /// and returns a ConsolidationRun with Status = Pending.
+    /// After issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
     /// </summary>
     [Fact]
     public async Task TriggerAsync_ValidTrigger_CreatesExactlyOnePendingWorkItem()
@@ -142,15 +144,11 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             Times.Once,
             "the JobDistributionRequest must carry correct consolidation-specific fields");
 
-        // Assert: run was persisted to the store exactly once (first persist + WorkItemId re-persist = 2 calls)
+        // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
         _mockRunStore.Verify(
-            s => s.SaveRunAsync(
-                It.Is<ConsolidationRun>(r =>
-                    r.Status == ConsolidationRunStatus.Pending &&
-                    r.RunId == run!.RunId),
-                It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce,
-            "the Pending run must be persisted to the store at least once");
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "TriggerAsync must not write to the ConsolidationRuns store (issue #3028)");
 
         // Assert: IssueIdentifier uses the deterministic {type}:{templateId} format (issue #3027)
         _mockWorkDistributor.Verify(
@@ -165,20 +163,14 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     // ── Test B: Config-error trigger creates no WorkItem ─────────────────────
 
     /// <summary>
-    /// Acceptance criterion (issue #3026, Test B):
-    /// When <c>IWorkDistributor.DistributeAsync</c> returns a permanent failure (e.g. no job
-    /// template for the resolved agent selector — the 422 scenario), <c>TriggerAsync</c>
-    /// must return <c>null</c> and leave no net <c>ConsolidationRun</c> row in the store.
-    /// <para>
-    /// The persist-before-dispatch ordering means <c>SaveRunAsync</c> is called once (optimistic
-    /// persist) and <c>DeleteRunAsync</c> is called once on rollback — the net effect is no
-    /// persisted row, but the mock sequence is Save-then-Delete rather than never-saved.
-    /// </para>
+    /// Acceptance criterion (issue #3026, Test B — updated for issue #3028):
+    /// When IWorkDistributor.DistributeAsync returns a permanent failure,
+    /// TriggerAsync must return null. No store writes occur (issue #3028).
     /// </summary>
     [Fact]
     public async Task TriggerAsync_ConfigError_CreatesNoWorkItemAndSurfacesPermanentFailure()
     {
-        // Arrange: distributor returns permanent failure (simulates 422 from the API)
+        // Arrange: distributor returns permanent failure
         _mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(
@@ -195,37 +187,26 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             new TemplateId(Template.Id),
             CancellationToken.None);
 
-        // Assert: TriggerAsync returns null (no run visible to the caller)
-        run.Should().BeNull(
-            "a permanent dispatch failure must not create a ConsolidationRun");
+        // Assert: TriggerAsync returns null
+        run.Should().BeNull("a permanent dispatch failure must not create a ConsolidationRun");
 
-        // Assert: IWorkDistributor.DistributeAsync was called exactly once (the attempt was made)
+        // Assert: IWorkDistributor.DistributeAsync was called exactly once
         _mockWorkDistributor.Verify(
             d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "the dispatch must still be attempted even when it will fail");
-        // TODO [WARNING]: This Times.Once verify is evaluated before the mock is reconfigured for the
-        // retry path below. It cannot prevent a second DistributeAsync call during the failure scenario
-        // itself if one were ever added, because the verify runs before the retry mock setup and second
-        // TriggerAsync call. Consider splitting this test into two separate tests: one that asserts the
-        // failure behaviour (null return, never saved), and one that independently asserts the dedup key
-        // is cleared and re-trigger succeeds. Combining both in one method makes diagnosis harder if
-        // either half fails for an unexpected reason. (review-findings-testqualityreviewer.md)
 
-        // Assert: run was saved (optimistic persist) then deleted on rollback — net: no persisted row.
-        // Persist-before-dispatch: SaveRunAsync is called once before DistributeAsync, then
-        // DeleteRunAsync is called once in RollbackRunAsync when dispatch fails.
+        // Issue #3028: no store writes on failure
         _mockRunStore.Verify(
             s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "the run must be optimistically persisted before the dispatch attempt");
+            Times.Never,
+            "TriggerAsync must not write to the store (issue #3028)");
         _mockRunStore.Verify(
             s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "on dispatch failure the persisted run must be rolled back via DeleteRunAsync");
+            Times.Never,
+            "no rollback needed since nothing was persisted");
 
-        // Assert: the dedup map is clear — re-triggering after fixing config must succeed
-        // This is verified by a subsequent successful trigger returning a non-null run.
+        // Verify re-triggering after fixing config must succeed
         _mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-retry-1", ErrorMessage: null));
@@ -236,15 +217,14 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             CancellationToken.None);
 
         retryRun.Should().NotBeNull(
-            "after a permanent failure the dedup key must be cleared, allowing a re-trigger");
+            "after a permanent failure the dedup key must be clear, allowing a re-trigger");
         retryRun!.Status.Should().Be(ConsolidationRunStatus.Pending);
     }
 
     // ── Additional edge cases ─────────────────────────────────────────────────
 
     /// <summary>
-    /// Transient failure (non-permanent) also returns null and leaves no net run row.
-    /// The caller must re-trigger — there is no background retry sweep.
+    /// Transient failure returns null. No store writes (issue #3028).
     /// </summary>
     [Fact]
     public async Task TriggerAsync_TransientFailure_CreatesNoRunAndAllowsRetrigger()
@@ -266,18 +246,16 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
         run.Should().BeNull("transient failure must not create a run");
 
-        // Persist-before-dispatch: SaveRunAsync called once (optimistic), then DeleteRunAsync
-        // once on rollback — net effect is no persisted row.
+        // Issue #3028: no store writes on failure
         _mockRunStore.Verify(
             s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "run is optimistically persisted before dispatch");
+            Times.Never,
+            "TriggerAsync must not write to the store (issue #3028)");
         _mockRunStore.Verify(
             s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "run is rolled back via DeleteRunAsync when dispatch fails");
+            Times.Never);
 
-        // Verify the dedup key was NOT retained — a re-trigger can succeed immediately
+        // Verify re-triggering can succeed
         _mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-2", ErrorMessage: null));
@@ -287,12 +265,11 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             new TemplateId(Template.Id),
             CancellationToken.None);
 
-        retrigger.Should().NotBeNull("after transient failure the key must be clear for re-trigger");
+        retrigger.Should().NotBeNull("after transient failure, re-trigger must succeed");
     }
 
     /// <summary>
-    /// When selector resolver returns null (startup race / no profiles), TriggerAsync returns
-    /// null without calling the distributor at all.
+    /// When selector resolver returns null (startup race), TriggerAsync returns null without calling distributor.
     /// </summary>
     [Fact]
     public async Task TriggerAsync_NoProfiles_ReturnsNullWithoutCallingDistributor()
@@ -332,7 +309,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     [Fact]
     public async Task TriggerAsync_DuplicateWhilePending_ReturnsNull()
     {
-        // Arrange: first succeeds; second gets 409 mapped as (Success=true, WorkItemId=null)
         _mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-1", ErrorMessage: null, Queued: true))
@@ -340,24 +316,21 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
         var sut = CreateSut();
 
-        // First trigger succeeds
         var first = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation,
             new TemplateId(Template.Id),
             CancellationToken.None);
         first.Should().NotBeNull("first trigger must succeed");
 
-        // Second trigger for same (type, templateId) must be rejected
         var second = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation,
             new TemplateId(Template.Id),
             CancellationToken.None);
-        second.Should().BeNull("duplicate trigger while run is Pending must be rejected (WorkItemId=null = 409)");
+        second.Should().BeNull("duplicate trigger must be rejected (WorkItemId=null = 409)");
 
-        // Both triggers reach DistributeAsync — no in-process short-circuit after _runningRuns removal
         _mockWorkDistributor.Verify(
             d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
             Times.Exactly(2),
-            "both triggers call DistributeAsync; dedup is enforced by the API layer (partial unique index)");
+            "both triggers call DistributeAsync; dedup is enforced by the API layer");
     }
 }

@@ -703,4 +703,158 @@ public class BlockedIssuesServiceTests
         Assert.Equal("10", result.Issues[0].Identifier);
         Assert.False(result.IsTruncated);
     }
+
+    // ── New tests: label-based IsReady override (Issue #2942) ────────────────
+
+    /// <summary>Helper: builds a minimal service with a single-issue provider returning the given labels.</summary>
+    private static (BlockedIssuesService Service, Mock<IIssueProvider> Provider) BuildServiceWithLabelledIssue(string[] labels)
+    {
+        var template = new PipelineJobTemplate { Id = "t1", Name = "T", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };
+        var config = new Mock<IPipelineApiConfigClient>();
+        config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new[] { template });
+        config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        var pagedResult = new PagedResult<IssueSummary>
+        {
+            Items = new[] { new IssueSummary { Identifier = "42", Title = "Issue 42", Labels = labels, Description = "", Url = null } },
+            Page = 1, PageSize = 50, HasMore = false
+        };
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>())).ReturnsAsync(pagedResult);
+        provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>())).ReturnsAsync(pagedResult);
+
+        var factory = new Mock<IProviderFactory>();
+        factory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(provider.Object);
+
+        var dep = new Mock<IDependencyChecker>();
+        // Dep-checker says ready — the label override must still make it not-ready
+        dep.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        return (new BlockedIssuesService(config.Object, factory.Object, dep.Object), provider);
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithInProgressLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:in-progress"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.Single(result.Issues);
+        Assert.False(result.Issues[0].IsReady, "agent:in-progress must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithDoneLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:done"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:done must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithErrorLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:error"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:error must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithWontDoLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:wont-do"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:wont-do must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithCancelledLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:cancelled"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:cancelled must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithNeedsRefinementLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:needs-refinement"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:needs-refinement must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithNextLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:next"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:next (already queued) must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithBacklogLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["backlog"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "backlog label must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithEpicLabel_IsNotReady()
+    {
+        var (sut, _) = BuildServiceWithLabelledIssue(["agent:epic"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "agent:epic must suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithBacklogLabelCaseInsensitive_IsNotReady()
+    {
+        // Labels from providers may have different casing; the comparison must be case-insensitive.
+        var (sut, _) = BuildServiceWithLabelledIssue(["BACKLOG"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.False(result.Issues[0].IsReady, "backlog label check must be case-insensitive");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithUnrelatedLabel_WhenDepCheckerSaysReady_IsReady()
+    {
+        // Baseline: a label not in NotReadyLabels must not suppress readiness
+        var (sut, _) = BuildServiceWithLabelledIssue(["bug", "enhancement"]);
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.True(result.Issues[0].IsReady, "unrelated labels must not suppress IsReady");
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_IssueWithNoLabels_WhenDepCheckerSaysReady_IsReady()
+    {
+        // Baseline: no labels, dep-checker says ready → IsReady=true
+        var (sut, _) = BuildServiceWithLabelledIssue(Array.Empty<string>());
+        var result = await sut.GetBacklogAsync(null, CancellationToken.None);
+        Assert.True(result.Issues[0].IsReady, "issue with no labels and no blockers must be Ready");
+    }
+
+    [Fact]
+    public void NotReadyLabels_ContainsExpectedLabels()
+    {
+        // TODO: [WARNING] This test exercises the static NotReadyLabels set directly (an implementation
+        //   detail) rather than observable GetBacklogAsync behaviour. A refactor that replaces the
+        //   set with an inline predicate would break this test even if the feature still works, and
+        //   an incorrect set member value that still satisfies Contains() would not be caught.
+        //   The individual per-label round-trip tests above are the authoritative behavioural contract;
+        //   this test adds no additional safety net beyond them. Consider removing or converting to
+        //   a contract test that calls GetBacklogAsync and asserts IsReady=false for each label.
+        // Verify the set contains all required labels from the acceptance criteria
+        var notReady = BlockedIssuesService.NotReadyLabels;
+        Assert.Contains("agent:in-progress", notReady);
+        Assert.Contains("agent:done", notReady);
+        Assert.Contains("agent:error", notReady);
+        Assert.Contains("agent:wont-do", notReady);
+        Assert.Contains("backlog", notReady);
+        Assert.Contains("agent:next", notReady);
+        Assert.Contains("agent:epic", notReady);
+        Assert.Contains("agent:epic-approved", notReady);
+        Assert.Contains("agent:epic-review", notReady);
+    }
 }

@@ -615,7 +615,8 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<IPipelineConfigStore>()));
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
     }
 
     /// <summary>

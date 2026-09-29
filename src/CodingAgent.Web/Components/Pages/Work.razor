@@ -248,7 +248,7 @@
         <div class="cockpit-card">
             <div class="cockpit-card-header">
                 <h2>Provider backlog</h2>
-                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Issues.Count(b => b.IsReady)} ready · {(_backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}")} open")</span>
+                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Issues.Count(b => b.IsReady && !IsWorkItemActive(b))} ready · {(_backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}")} open")</span>
             </div>
             @if (_backlogLoading)
             {
@@ -287,13 +287,39 @@
                                         }
                                     </td>
                                     <td>
-                                        @if (b.IsReady)
+                                        @{
+                                            var (readinessText, readinessStyle) = GetReadinessDisplay(b);
+                                            var isActive = IsWorkItemActive(b);
+                                            var effectiveIsReady = b.IsReady && !isActive;
+                                            // TODO: [WARNING] When isActive==true the text is forced to "Running" below,
+                                            //   but finalStyle retains the label's style (e.g. "error" for agent:error,
+                                            //   "warning" for agent:needs-refinement). The chip therefore reads "Running"
+                                            //   but is painted with the error/warning colour — a cosmetic mismatch.
+                                            //   Consider setting finalStyle = "accent" when isActive so the chip colour
+                                            //   matches the "Running" text.
+                                            var finalStyle = effectiveIsReady ? "success" : readinessStyle;
+                                            string finalText;
+                                            if (effectiveIsReady)
+                                                finalText = readinessText;
+                                            else if (isActive)
+                                                finalText = "Running";
+                                            else
+                                                finalText = readinessText;
+                                        }
+                                        @if (effectiveIsReady)
                                         {
-                                            <span class="cockpit-chip" style="color: var(--success); background: var(--success-bg);">Ready</span>
+                                            <span class="cockpit-chip" style="color: var(--success); background: var(--success-bg);">@finalText</span>
                                         }
                                         else
                                         {
-                                            <span class="cockpit-chip" style="color: var(--warning); background: var(--warning-bg);">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</span>
+                                            var chipStyle = finalStyle switch
+                                            {
+                                                "error" => "color: var(--error); background: var(--bg-error);",
+                                                "warning" => "color: var(--warning); background: var(--warning-bg);",
+                                                "accent" => "color: var(--accent); background: var(--accent-fill);",
+                                                _ => "color: var(--text-muted); background: var(--bg-hover);"
+                                            };
+                                            <span class="cockpit-chip" style="@chipStyle">@finalText</span>
                                         }
                                     </td>
                                     <td style="text-align: right;">
@@ -460,6 +486,59 @@
         }
         catch (OperationCanceledException) { }
         catch { /* keep last-known data until the next tick */ }
+    }
+
+    /// <summary>
+    /// Returns true if the backlog issue has a matching active (Running/Dispatched) or pending
+    /// (Queued) WorkItem in the current work-item lists. Used to override the backlog readiness
+    /// display — an issue with an active work item is never "Ready" regardless of label state.
+    /// </summary>
+    // TODO: BacklogIssue has no IssueProviderConfigId, so matching is done on IssueIdentifier alone.
+    //   In a multi-provider pipeline project, two issues from different providers can share the same
+    //   numeric identifier. An active work item for provider A / issue "#42" will cause provider B's
+    //   "#42" to also show "Running" and be excluded from the "N ready" count. Consider adding
+    //   IssueProviderConfigId to BacklogIssue (it is available on PendingWorkItemDto and could be
+    //   surfaced on ActiveWorkItemDto) to restore the precise (IssueIdentifier, ProviderConfigId) match.
+    private bool IsWorkItemActive(BacklogIssue b)
+        => _active.Any(a => a.IssueIdentifier == b.Identifier)
+        || _pending.Any(p => p.IssueIdentifier == b.Identifier);
+
+    /// <summary>
+    /// Returns the display text and CSS style class for a backlog issue's readiness chip.
+    /// Uses label-precedence ordering (matching BlockedIssuesService.NotReadyLabels) to pick
+    /// a meaningful badge when the issue is not ready due to a lifecycle label.
+    /// </summary>
+    private static (string Text, string StyleClass) GetReadinessDisplay(BacklogIssue b)
+    {
+        if (b.IsReady) return ("Ready", "success");
+        if (b.BlockedBy.Count > 0)
+            return ($"Blocked by {string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))}", "warning");
+        // Not ready due to a lifecycle label — determine the most specific display text.
+        return FindLabelDisplay(b.Labels) ?? ("Not ready", "muted");
+    }
+
+    /// <summary>
+    /// Scans <paramref name="labels"/> for a recognised lifecycle label and returns its display text
+    /// and style class. Returns null when no recognised label is present.
+    /// </summary>
+    private static (string Text, string StyleClass)? FindLabelDisplay(IReadOnlyList<string>? labels)
+    {
+        if (labels is null) return null;
+        foreach (var l in labels)
+        {
+            if (l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase)) return ("In progress", "accent");
+            if (l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase)) return ("Done", "muted");
+            if (l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase)) return ("Error", "error");
+            if (l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
+             || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase)) return ("Won't do", "muted");
+            if (l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase)) return ("Needs refinement", "warning");
+            if (l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase)) return ("Queued", "accent");
+            if (l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
+             || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
+             || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase)) return ("Epic", "muted");
+            if (l.Equals("backlog", StringComparison.OrdinalIgnoreCase)) return ("Parked", "muted");
+        }
+        return null;
     }
 
     private static string StatusColor(WorkItemStatus s) => s switch

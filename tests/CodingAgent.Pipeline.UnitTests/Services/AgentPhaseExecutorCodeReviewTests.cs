@@ -4,8 +4,6 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
-using CodingAgent.Web.TestUtilities;
-using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -23,7 +21,6 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     private readonly PipelineConfiguration _config;
     private readonly AgentPhaseExecutor _executor;
     private readonly string _workspacePath;
-    private readonly TestMeterFactory _meterFactory = new();
 
     public AgentPhaseExecutorCodeReviewTests()
     {
@@ -58,7 +55,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             }
         };
 
-        _executor = new AgentPhaseExecutor(_mockLogger.Object, _meterFactory);
+        _executor = new AgentPhaseExecutor(_mockLogger.Object);
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
@@ -69,7 +66,6 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
     public void Dispose()
     {
-        _meterFactory.Dispose();
         try { Directory.Delete(_workspacePath, recursive: true); } catch { }
     }
 
@@ -196,42 +192,6 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _mockAgent.Verify(
             a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Never);
-    }
-
-    [Fact]
-    public async Task WhenFlattenedAgentsIsEmpty_IncrementsReviewSkippedCounter()
-    {
-        // TODO: [WARNING] No test currently verifies that CodeReviewOrchestrator emits
-        // pipeline.step.duration and pipeline.step.count (with step_name="AcceptanceCriteriaCheck")
-        // after the meterFactory branch was removed. _stepDuration and _stepCount now unconditionally
-        // resolve to the static PipelineTelemetry instruments, which are NOT wired to _meterFactory,
-        // so a MetricCollector subscribed to _meterFactory would silently capture zero measurements.
-        // A future regression that drops the finally-block metric emission would go undetected.
-        // Add a test that enables AcceptanceCriteriaEnabled=true and verifies the static instruments
-        // are recorded (e.g. via a custom MeterListener or by checking observable state).
-        var configs = new[]
-        {
-            new ReviewerConfiguration
-            {
-                DisplayName = "Empty",
-                Agents = Array.Empty<ReviewAgent>()
-            }
-        };
-
-        using var collector = new MetricCollector<long>(
-            _meterFactory, PipelineTelemetry.SourceName, "pipeline.review.skipped");
-
-        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None,
-            resolvedReviewerConfigs: configs);
-
-        // TODO: Also assert telemetry tags emitted by PipelineTelemetry.BuildTags (run_type,
-        // pipeline.project_id, pipeline.project_name). Currently, a regression that passes the
-        // wrong PipelineRun or omits tags entirely would still satisfy this assertion because
-        // MetricCollector records Value independently of Tags. The same gap exists in the
-        // analogous empty-configs counter tests added in #2228. Tighten by checking e.g.:
-        // collector.GetMeasurementSnapshot().Should().ContainSingle(
-        //     m => m.Value == 1 && m.Tags.ToList().Any(t => t.Key == "run_type"));
-        collector.GetMeasurementSnapshot().Should().ContainSingle(m => m.Value == 1);
     }
 
     [Fact]

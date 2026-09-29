@@ -77,7 +77,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage());
 
         // IAgentHubConnection is injected into Runs.razor for SignalR subscriptions.
@@ -106,7 +106,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -124,7 +124,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -142,7 +142,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", issueUrl: "https://github.com/owner/repo/issues/42")));
 
         var cut = Render<Runs>();
@@ -161,7 +161,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", issueUrl: null, prUrl: null)));
 
         var cut = Render<Runs>();
@@ -183,7 +183,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", prUrl: "https://github.com/owner/repo/pull/7")));
 
         var cut = Render<Runs>();
@@ -202,7 +202,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", prUrl: null)));
 
         var cut = Render<Runs>();
@@ -220,7 +220,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1",
                 issueUrl: "https://github.com/owner/repo/issues/10",
                 prUrl: "https://github.com/owner/repo/pull/11")));
@@ -239,7 +239,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -264,7 +264,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(older, newer));  // older first from server
 
         var cut = Render<Runs>();
@@ -297,7 +297,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(longRun, shortRun));
 
         var cut = Render<Runs>();
@@ -331,7 +331,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -361,7 +361,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -383,7 +383,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(implRun, reviewRun));
 
         var cut = Render<Runs>();
@@ -413,7 +413,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(run1, run2));
 
         var cut = Render<Runs>();
@@ -437,7 +437,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -469,7 +469,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(completedRun));
 
         var cut = Render<Runs>();
@@ -501,7 +501,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -529,7 +529,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -557,7 +557,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         // Navigate to the Runs page with an existing sort query string before rendering
@@ -585,7 +585,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var nav = Services.GetRequiredService<NavigationManager>();
@@ -645,7 +645,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", initiatedBy: "loop:issue")));
 
         var cut = Render<Runs>();
@@ -662,7 +662,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", initiatedBy: "loop:issue", runMode: RunMode.New)));
 
         var cut = Render<Runs>();
@@ -686,7 +686,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1", initiatedBy: "loop:issue", runMode: RunMode.Rework)));
 
         var cut = Render<Runs>();
@@ -714,7 +714,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(loopRun, manualRun));
 
         var cut = Render<Runs>();
@@ -742,7 +742,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(loopRun, manualRun));
 
         var cut = Render<Runs>();
@@ -767,7 +767,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary(runId, runType: PipelineRunType.Consolidation,
                 initiatedBy: "consolidation:manual")));
 
@@ -807,7 +807,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary(runId, runType: PipelineRunType.Implementation)));
 
         var cut = Render<Runs>();
@@ -840,7 +840,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(implRun));
 
         var cut = Render<Runs>();
@@ -866,7 +866,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(implRun));
 
         var cut = Render<Runs>();
@@ -898,7 +898,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(implRun, reviewRun));
 
         var cut = Render<Runs>();
@@ -922,7 +922,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(run1, run2));
 
         var cut = Render<Runs>();
@@ -948,7 +948,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(run1, run2));
 
         var cut = Render<Runs>();
@@ -974,7 +974,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -993,7 +993,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(MakeSummary("r1")));
 
         var cut = Render<Runs>();
@@ -1019,7 +1019,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage());
 
         var cut = Render<Runs>();
@@ -1041,7 +1041,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage());
 
         var cut = Render<Runs>();
@@ -1067,7 +1067,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage());
 
         var cut = Render<Runs>();
@@ -1089,7 +1089,7 @@ public class RunsPageComponentTests : BunitContext
         _mockRunHistory
             .Setup(c => c.GetRunHistoryAsync(
                 It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(OnePage(
                 MakeSummary("r1", PipelineStep.ConflictRestart, issueIdentifier: "1"),
                 MakeSummary("r2", PipelineStep.PrMerged, issueIdentifier: "2"),

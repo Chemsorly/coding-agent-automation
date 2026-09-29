@@ -44,6 +44,9 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 |--------|------|------|------|-------------|
 | `pipeline.run.outcomes` | Counter | `{run}` | `run_type`, `outcome`, `failure_reason`, `pipeline.project_name` | Terminal pipeline run outcomes — recorded exactly once per transition by the API (`WorkItemStatusTransitionService`). Pre-initialized at process start for all closed-tag combinations (excluding `pipeline.project_name`, which has unbounded cardinality). |
 | `pipeline.run.duration` | Histogram | seconds | `run_type`, `outcome` | Total duration of a pipeline run from dispatch to terminal status |
+| `pipeline.run.step.duration` | Histogram | seconds | `run_type`, `step` | Duration of each pipeline step — recorded by the API on every step transition in `HandleStepTransition`. One sample per step visit (revisited steps each produce their own sample). Not pre-initialized. |
+| `pipeline.run.sub_issues` | Counter | `{issue}` | `result` | Sub-issue creation results per decomposition run — recorded once per run when `DecompositionSubIssuesAttempted` first becomes non-zero. Pre-initialized at process start for `result=created` and `result=failed`. |
+| `pipeline.run.brain_updates` | Counter | `{run}` | `result` | Brain update result at run completion — recorded once per non-consolidation run. Pre-initialized at process start for `result=pushed` and `result=none`. |
 | `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
 | `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
 | `pipeline.loop.dispatch_decisions` | Counter | — | `decision` | Incremented for each dispatch decision made by the loop |
@@ -55,8 +58,6 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
 | `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
-| `pipeline.step.duration` | Histogram | seconds | `step_name`, `run_type`, `pipeline.project_id`, `pipeline.project_name` | Duration of individual pipeline steps |
-| `pipeline.step.count` | Counter | — | `step_name`, `run_type`, `pipeline.project_id`, `pipeline.project_name` | Pipeline step execution count |
 | `agent.tokens.used` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Agent tokens consumed |
 | `agent.cost.usd` | Counter | USD | `run_type`, `pipeline.project_id`, `pipeline.project_name` | LLM cost in USD |
 | `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
@@ -73,15 +74,7 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
 | `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
 | `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue (not currently emitted) |
-| `brain.syncs.completed` | Counter | — | — | Successful brain pre-run sync operations |
-| `brain.updates.committed` | Counter | — | — | Brain post-run commits pushed |
-| `brain.updates.empty` | Counter | — | — | Runs where agent produced no brain changes |
-| `brain.files.written` | Counter | — | — | Total brain files committed across all runs |
-| `brain.sync.duration` | Histogram | seconds | — | Duration of brain sync operations |
-| `brain.sync.skipped` | Counter | — | `reason` | Brain post-run sync skipped (tagged by reason) |
 | `agent.signalr.failures` | Counter | — | — | Failed or dropped SignalR messages from agent |
-| `pipeline.decomposition.sub_issues.created` | Counter | — | — | Sub-issues created by decomposition |
-| `pipeline.decomposition.sub_issues.failed` | Counter | — | — | Sub-issue creation failures |
 | `pipeline.decomposition.duration` | Histogram | seconds | `pipeline.project_id`, `pipeline.project_name`, `phase` | Duration of decomposition phases (`phase`: `analysis` or `creation`) |
 | `pipeline.housekeeping.triggered` | Counter | — | `repo_provider_id` | Server-side branch updates triggered |
 | `pipeline.housekeeping.succeeded` | Counter | — | `repo_provider_id` | Server-side branch updates completed successfully |
@@ -103,7 +96,9 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `run_type` | `implementation`, `review`, `decomposition`, `decompositionanalysis`, `consolidation` | Pipeline run type (lowercase). Resolved from `PipelineRunEntity.RunType`; falls back to `WorkItemEntity.TaskType` for legacy rows without a `PipelineRun`. |
 | `outcome` | `cancelled`, `conflict_restart`, `needs_refinement`, `wont_do`, `pr_created`, `draft_pr`, `succeeded`, `timeout`, `failed` | Terminal run outcome derived from `JobCompletionPayload` — see [Outcome mapping](#outcome-mapping) |
 | `failure_reason` | `none`, `timeout`, `infrastructure_failure`, `agent_error`, `token_refresh_failure`, `exit_code_failure`, `quality_gate_exhausted`, `gate_rejected` | Failure classification in snake_case. `none` for all non-failure outcomes including `needs_refinement` and `wont_do`. |
-| `result` | `success`, `failure` | Poll cycle outcome |
+| `step` | PipelineStep enum name (e.g., `Created`, `GeneratingCode`, `RunningQualityGates`) | Pipeline step name in PascalCase — only present on `pipeline.run.step.duration`. Matches `PipelineStep` C# enum member names. |
+| `result` | `created` / `failed` (for `pipeline.run.sub_issues`); `pushed` / `none` (for `pipeline.run.brain_updates`) | Sub-issue creation or brain update result — only present on the respective counters. |
+| `result` | `success`, `failure` | Poll cycle outcome (for loop metrics) |
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
 | `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
@@ -133,11 +128,13 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 All counters with closed tag sets are pre-initialized to `0` at API process start, then `MeterProvider.ForceFlush()` is called once. This ensures that Prometheus `increase()` is visible from the very first increment after a deploy, eliminating the "first-series zero" problem that affected ephemeral agent pods.
 
 **Rules:**
-- Agent pods do **not** record run-level metrics (`pipeline.run.outcomes`, `pipeline.run.duration`). They are ephemeral and subject to the first-series problem. Only the long-lived API process records run outcomes.
+- Agent pods do **not** record run-level metrics (`pipeline.run.outcomes`, `pipeline.run.duration`, `pipeline.run.step.duration`, `pipeline.run.sub_issues`, `pipeline.run.brain_updates`). They are ephemeral and subject to the first-series problem. Only the long-lived API process records these metrics.
 - `pipeline.project_name` is a tag on `pipeline.run.outcomes` but is **excluded from pre-initialization**. It has unbounded cardinality, so pre-initializing it would exceed the ≈100 series limit. Pre-initialized series have 3 tags; live series have 4 tags (including `pipeline.project_name`). This means the first event for a brand-new project name still shows 0 in `increase()` until a second event arrives, but the closed dimensions are pre-initialized correctly.
-- Histograms (`pipeline.run.duration`, `workdistribution.job_execution_duration_seconds`) cannot be pre-initialized and are left as-is.
+- Histograms (`pipeline.run.duration`, `pipeline.run.step.duration`, `workdistribution.job_execution_duration_seconds`) cannot be pre-initialized and are left as-is.
 - `pipeline.run.outcomes` is pre-initialized with **75 series** (3-tag): 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
 - `workdistribution.workitems_terminated` is pre-initialized with **24 series**: 3 statuses × (1 none + 7 failure_reasons).
+- `pipeline.run.sub_issues` is pre-initialized with **2 series**: `result=created`, `result=failed`.
+- `pipeline.run.brain_updates` is pre-initialized with **2 series**: `result=pushed`, `result=none`.
 
 ### Prompt Cache and Per-Phase Token Data
 
@@ -172,7 +169,7 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 | Metric | Boundaries (seconds) |
 |--------|---------------------|
 | `pipeline.run.duration` | 60, 300, 600, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 21600, 28800, 43200 |
-| `pipeline.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
+| `pipeline.run.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800 |
 | `quality_gate.process.duration` | 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600 |
 | `quality_gate.post_pr_ci.duration` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
 | `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
@@ -183,14 +180,19 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 
 Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
 
-### Run Outcome Metrics (API-only)
+### Step & Run-Level Metrics (API-only)
 
-`pipeline.run.outcomes` (Prometheus: `pipeline_run_outcomes_total`) and `pipeline.run.duration` (`pipeline_run_duration_seconds`) are emitted **only by the API** (`WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync`), which receives every terminal status POST from both the agent pod and the Job Controller.
+`pipeline.run.outcomes` (`pipeline_run_outcomes_total`), `pipeline.run.duration` (`pipeline_run_duration_seconds`), `pipeline.run.step.duration` (`pipeline_run_step_duration_seconds`), `pipeline.run.sub_issues` (`pipeline_run_sub_issues_total`), and `pipeline.run.brain_updates` (`pipeline_run_brain_updates_total`) are emitted **only by the API**.
 
 **Why API-only?**
-- Agent pods (ephemeral K8s Jobs) start fresh OTel series on every run; Prometheus `rate()`/`increase()` can't see the first increment of a series. Anything recorded once per run reads zero.
-- The Job Controller previously cross-emitted `pipeline.jobs.*` from `LogTerminalStatus()` after POSTing status to the API, causing double-counting (≈45% inflation in production).
-- Recording in the API solves both: the API is a long-lived process with pre-initialized series, and it receives exactly one terminal POST per WorkItem transition.
+- Agent pods (ephemeral K8s Jobs) start fresh OTel series on every run; Prometheus `rate()`/`increase()` can't see the first increment of a series. Anything recorded once per run (or once per step) reads zero.
+- The same root cause was fixed for run-outcome metrics in #2967. This issue (#2974) extends that fix to step durations, sub-issue counts, and brain-update results.
+- Recording in the API solves both: the API is a long-lived process with pre-initialized counter series, and it receives all step transitions via `HandleStepTransition` and all completion payloads via `HandleJobCompletedAsync`.
+
+**Recording points:**
+- `pipeline.run.step.duration`: emitted by `AgentJobLifecycleService.HandleStepTransition` on every step change. Duration = difference between the new transition's timestamp and the previous `LastStepChangeAt` from the shared run store. Multi-replica safe (uses the stored value, not a process-local clock).
+- `pipeline.run.sub_issues`: emitted by `AgentJobLifecycleService.HandleStepTransition` when `DecompositionSubIssuesAttempted` metadata first becomes non-zero. Once per run.
+- `pipeline.run.brain_updates`: emitted by `AgentJobLifecycleService.HandleJobCompletedAsync` for every non-consolidation run. `BrainUpdatesPushed` is set by `JobCompletionMapper.Apply` from the completion payload.
 
 **Reliable sources by use case:**
 
@@ -198,6 +200,9 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 |----------|--------------------|
 | Count of terminal runs by outcome | `increase(pipeline_run_outcomes_total[24h])` |
 | Run duration percentiles | `pipeline_run_duration_seconds` |
+| Step duration percentiles | `pipeline_run_step_duration_seconds{step=...}` |
+| Sub-issues created/failed | `increase(pipeline_run_sub_issues_total[24h])` |
+| Brain update rates | `increase(pipeline_run_brain_updates_total[24h])` |
 | Exact job counts (alerts) | `workdistribution_workitems_terminated_total` (exact, pre-initialized) |
 
 **Breaking change in issue #2967:** `workdistribution_workitems_terminated_total{failure_reason=...}` values changed from PascalCase (e.g. `"Timeout"`) to snake_case (e.g. `"timeout"`). Update any Grafana panels or alert rules that filter on `failure_reason` labels.

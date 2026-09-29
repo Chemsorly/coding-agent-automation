@@ -18,4 +18,10 @@ public sealed record LocalPipelineExecutorDependencies(
     IBrainUpdateService? BrainUpdateService = null,
     IPipelineRunHistoryService? HistoryService = null,
     AgentId? AgentIdentity = null,
-    IPipelineReporterFactory? ReporterFactory = null);
+    IPipelineReporterFactory? ReporterFactory = null,
+    /// <summary>
+    /// When non-null, overrides the internal <see cref="AgentProviderFactory"/> during provider
+    /// resolution. Use in tests to substitute fake repository and agent providers without
+    /// needing a real Kiro CLI, git remote, or cloud credentials.
+    /// </summary>
+    IProviderFactory? ProviderFactoryOverride = null);

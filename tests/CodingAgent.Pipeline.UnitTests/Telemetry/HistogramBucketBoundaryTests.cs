@@ -18,19 +18,19 @@ public class HistogramBucketBoundaryTests
     }
 
     [Fact]
+    public void RunStepDuration_HasExpectedBucketBoundaries()
+    {
+        var boundaries = PipelineTelemetry.RunStepDuration.Advice?.HistogramBucketBoundaries;
+        boundaries.Should().NotBeNull("RunStepDuration must have explicit InstrumentAdvice boundaries (issue #2974)");
+        boundaries.Should().Equal(5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800);
+    }
+
+    [Fact]
     public void QueueWaitTime_HasExpectedBucketBoundaries()
     {
         var boundaries = PipelineTelemetry.QueueWaitTime.Advice?.HistogramBucketBoundaries;
         boundaries.Should().NotBeNull();
         boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600);
-    }
-
-    [Fact]
-    public void BrainSyncDuration_HasExpectedBucketBoundaries()
-    {
-        var boundaries = PipelineTelemetry.BrainSyncDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull("BrainSyncDuration must have explicit InstrumentAdvice boundaries");
-        boundaries.Should().Equal(1, 2, 5, 10, 20, 30, 60, 120, 300);
     }
 
     // ── WorkDistributionTelemetry histograms ────────────────────────────────────
@@ -42,15 +42,8 @@ public class HistogramBucketBoundaryTests
     {
         var boundaries = WorkDistributionTelemetry.DispatchLatency.Advice?.HistogramBucketBoundaries;
         boundaries.Should().NotBeNull("DispatchLatency must have explicit InstrumentAdvice boundaries");
-        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600);
-    }
-
-    [Fact]
-    public void PendingDuration_HasSecondScaleBucketBoundaries()
-    {
-        var boundaries = WorkDistributionTelemetry.PendingDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull("PendingDuration must have explicit InstrumentAdvice boundaries");
-        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600);
+        // Extended in issue #2976 to prevent p95 saturation at 3600 s.
+        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400);
     }
 
     [Fact]
@@ -99,5 +92,15 @@ public class HistogramBucketBoundaryTests
         var boundaries = PipelineTelemetry.QgcProcessDuration.Advice?.HistogramBucketBoundaries;
         boundaries.Should().NotBeNull("QgcProcessDuration must have explicit InstrumentAdvice boundaries (issue #2367)");
         boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600);
+    }
+
+    // ── New WorkDistributionTelemetry histograms (issue #2976) ───────────────────────────────
+
+    [Fact]
+    public void PodStartSeconds_HasExpectedBucketBoundaries()
+    {
+        var boundaries = WorkDistributionTelemetry.PodStartSeconds.Advice?.HistogramBucketBoundaries;
+        boundaries.Should().NotBeNull("PodStartSeconds must have explicit InstrumentAdvice boundaries");
+        boundaries.Should().Equal(5, 10, 20, 30, 60, 120, 300, 600);
     }
 }

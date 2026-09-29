@@ -1180,9 +1180,7 @@ public class CiPollingCoordinatorTests
             new CiLogWriter(_mockLogger.Object),
             new CiPollingMetrics(
                 PipelineTelemetry.ExternalCiDuration,
-                PipelineTelemetry.PostPrCiDuration,
-                PipelineTelemetry.StepDuration,
-                PipelineTelemetry.StepCount));
+                PipelineTelemetry.PostPrCiDuration));
 
     /// <summary>
     /// True mid-loop scenario: N-1 CI-not-started iterations push empty re-trigger commits,

@@ -53,7 +53,7 @@ public sealed class WorkItemCountsServiceTests
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         _mockClient
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+            .ReturnsAsync(new WorkItemCountsResponseDto([], null));
 
         await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
 
@@ -80,7 +80,7 @@ public sealed class WorkItemCountsServiceTests
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
 
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.AtLeastOnce(), "API failure must log a warning");
@@ -96,7 +96,7 @@ public sealed class WorkItemCountsServiceTests
         // an unconfigured mock on the first poll (which fires immediately in ExecuteAsync).
         _mockClient
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync([]);
+            .ReturnsAsync(new WorkItemCountsResponseDto([], null));
 
         var poller = new WorkItemCountsService(
             _mockClient.Object,

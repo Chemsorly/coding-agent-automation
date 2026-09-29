@@ -150,24 +150,17 @@ public sealed class ConsolidationServiceDedupTests
             Times.Exactly(2),
             "both triggers call DistributeAsync; dedup is enforced by the API-layer partial unique index");
 
-        // Assert: two optimistic persists (one per trigger), one rollback for the second
-        // TODO [WARNING]: This verify uses Times.AtLeast(2) without pinning which run IDs were saved.
-        // A scenario where the WorkItemId re-persist (step 9) is accidentally skipped on the first run
-        // would still pass because both initial persists satisfy AtLeast(2). Consider splitting into:
-        // (1) SaveRunAsync for runs matching first.RunId expecting Times.AtLeast(2), plus
-        // (2) an explicit assertion that first.WorkItemId is non-null (already present at line 168).
-        // (review-findings-testqualityreviewer.md)
+        // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
+        // SaveRunAsync must NOT be called.
         _mockRunStore.Verify(
-            s => s.SaveRunAsync(
-                It.Is<ConsolidationRun>(r => r.Status == ConsolidationRunStatus.Pending),
-                It.IsAny<CancellationToken>()),
-            Times.AtLeast(2),
-            "each TriggerAsync call optimistically persists a run before dispatch");
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "TriggerAsync must not write to the ConsolidationRuns store (issue #3028)");
 
         _mockRunStore.Verify(
             s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "only the second (duplicate-rejected) run must be rolled back via DeleteRunAsync");
+            Times.Never,
+            "no rollback needed since nothing was persisted");
     }
 
     /// <summary>

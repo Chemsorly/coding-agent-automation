@@ -27,6 +27,7 @@ public interface ISchedulerApiClient
     /// </summary>
     Task<RetentionSweepResultDto> TriggerRetentionSweepAsync(CancellationToken ct = default);
 
-    /// <summary>GET /api/work-items/counts-by-status on the API — work item counts grouped by status.</summary>
-    Task<WorkItemCountDto[]> GetWorkItemCountsAsync(CancellationToken ct = default);
+    /// <summary>GET /api/work-items/counts-by-status on the API — work item counts grouped by status,
+    /// plus the oldest Pending item's creation timestamp for the pending-age gauge.</summary>
+    Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default);
 }

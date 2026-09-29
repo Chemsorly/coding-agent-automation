@@ -181,15 +181,21 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_ValidTemplate_PersistsRunToDisk()
     {
-        // Validates: Requirement 3.1, 9.2
+        // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
+        // This test now verifies that TriggerAsync returns a valid run object with the
+        // correct fields even without store persistence.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        run.Should().NotBeNull();
-        var filePath = Path.Combine(_runsDir, $"{run!.RunId}.json");
-        File.Exists(filePath).Should().BeTrue();
+        run.Should().NotBeNull("TriggerAsync must return a run even without store persistence");
+        run!.RunId.Should().NotBeNullOrEmpty();
+        run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
+        run.Status.Should().Be(ConsolidationRunStatus.Pending, "new runs start as Pending");
+        // Store must NOT be written (issue #3028)
+        var filePath = Path.Combine(_runsDir, $"{run.RunId}.json");
+        File.Exists(filePath).Should().BeFalse("TriggerAsync must not write to the ConsolidationRuns store (issue #3028)");
     }
 
     [Fact]
@@ -226,33 +232,17 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_WithProjectId_ProjectIdSurvivesPersistenceRoundTrip()
     {
-        // Validates: ConsolidationRun.ProjectId is persisted at trigger time and survives
-        // serialization/deserialization (scheduler restart rehydration requirement).
+        // Issue #3028: TriggerAsync no longer persists to the store.
+        // This test now verifies that the in-memory ConsolidationRun object has the correct ProjectId.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        // TODO [WARNING]: This assertion only checks NotBeNull, not the concrete GUID value.
-        // If run.ProjectId were set to a non-null but wrong value (e.g. empty string), this
-        // assertion would pass while the round-trip assertion below would fail with a confusing
-        // null-vs-value mismatch rather than a clear "wrong value before reload" message.
-        // Prefer asserting the concrete GUID here as well:
-        //   run!.ProjectId.Should().Be(WellKnownIds.DefaultProjectId, "in-memory run must have the correct ProjectId before reload");
-        run!.ProjectId.Should().NotBeNull("template-scoped run must have a non-null ProjectId");
-
-        // Reload from the file-system store — simulates what happens after a scheduler restart
-        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
-        // TODO [WARNING]: ContainSingle(predicate) passes as long as exactly one element satisfies
-        // the predicate, but succeeds even when the collection contains other non-matching elements.
-        // This is safe here because _runsDir is Guid-suffixed per test instance (no cross-test pollution),
-        // but a future copy-paste into a test class with a shared _runsDir could produce a false-positive.
-        // If this test is ever moved or the fixture is refactored, prefer a stricter assertion such as
-        // history.Should().HaveCount(1).And.ContainSingle(r => r.RunId == run.RunId).
-        var reloaded = history.Should().ContainSingle(r => r.RunId == run.RunId).Subject;
-        reloaded.ProjectId.Should().Be(WellKnownIds.DefaultProjectId,
-            "ProjectId must survive the JSON serialization round-trip through FileSystemConsolidationRunStore");
+        run!.ProjectId.Should().Be(WellKnownIds.DefaultProjectId,
+            "ProjectId must be populated from the owning PipelineProject.Id at trigger time");
+        run.ProjectName.Should().Be("Default");
     }
 
     #endregion
@@ -335,31 +325,23 @@ public sealed class ConsolidationServiceTests : IDisposable
 
     #endregion
 
-    #region UpdateRunAsync — persists status change
+    #region UpdateRunAsync — persists status change (updated for issue #3028)
 
     [Fact]
     public async Task UpdateRunAsync_ChangesStatusAndSetsCompletedAt()
     {
-        // Validates: Requirement 3.3
+        // Issue #3028: UpdateRunAsync is now a no-op (store writes removed, workspace in the agent pod).
+        // This test verifies the method does not throw and returns without error.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        var before = DateTimeOffset.UtcNow;
-        await sut.UpdateRunAsync(
+        // UpdateRunAsync is now a no-op for store writes; must not throw
+        var act = () => sut.UpdateRunAsync(
             run!.RunId, ConsolidationRunStatus.Succeeded, "All done", CancellationToken.None);
-
-        // Verify by reading back from history
-        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
-        var updated = history.First(r => r.RunId == run.RunId);
-        updated.Status.Should().Be(ConsolidationRunStatus.Succeeded);
-        updated.Summary.Should().Be("All done");
-        updated.CompletedAtUtc.Should().NotBeNull();
-        updated.CompletedAtUtc!.Value.Should().BeOnOrAfter(before,
-            because: "CompletedAtUtc must be set when UpdateRunAsync marks the run complete");
-        updated.CompletedAtUtc.Value.Should().BeOnOrBefore(before.AddSeconds(10));
+        await act.Should().NotThrowAsync("UpdateRunAsync must not throw (issue #3028)");
     }
 
     [Fact]
@@ -391,30 +373,19 @@ public sealed class ConsolidationServiceTests : IDisposable
     [InlineData(ConsolidationRunStatus.Cancelled)]
     public async Task UpdateRunAsync_TerminalStatus_RejectsSubsequentOverwrite(ConsolidationRunStatus terminalStatus)
     {
-        // Reproduces production bug: progress timeout monitor calls UpdateRunAsync(Failed)
-        // after the run has already been marked Succeeded by the completion handler.
-        // UpdateRunAsync must guard against overwriting terminal statuses.
+        // Issue #3028: UpdateRunAsync is now a no-op for store writes.
+        // This test now verifies that multiple calls to UpdateRunAsync do not throw.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Mark as terminal
-        await sut.UpdateRunAsync(
-            run!.RunId, terminalStatus, "Completed normally", CancellationToken.None);
+        var act1 = () => sut.UpdateRunAsync(run!.RunId, terminalStatus, "Completed normally", CancellationToken.None);
+        await act1.Should().NotThrowAsync();
 
-        // Attempt to overwrite with a different status (simulates timeout monitor firing late)
-        await sut.UpdateRunAsync(
-            run.RunId, ConsolidationRunStatus.Failed, "Timeout exceeded", CancellationToken.None);
-
-        // Assert: original terminal status is preserved, NOT overwritten
-        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
-        var persisted = history.First(r => r.RunId == run.RunId);
-        persisted.Status.Should().Be(terminalStatus,
-            "UpdateRunAsync must not overwrite a terminal status — the progress timeout fired after completion");
-        persisted.Summary.Should().Be("Completed normally",
-            "Summary must not be overwritten once the run reaches a terminal state");
+        var act2 = () => sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Failed, "Timeout exceeded", CancellationToken.None);
+        await act2.Should().NotThrowAsync("UpdateRunAsync must not throw regardless of call order (issue #3028)");
     }
 
     #endregion
@@ -424,20 +395,23 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task GetRunHistoryAsync_ReturnsRunsOrderedByStartedAtDescending()
     {
-        // Validates: Requirement 3.1
-        var sut = CreateSut();
+        // Issue #3028: TriggerAsync no longer writes to the store.
+        // This test now seeds runs directly into the store and verifies GetRunHistoryAsync ordering.
+        var store = new FileSystemConsolidationRunStore(_runsDir);
+        var run1 = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-10), Status = ConsolidationRunStatus.Succeeded };
+        var run2 = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5), Status = ConsolidationRunStatus.Succeeded };
+        await store.SaveRunAsync(run1, CancellationToken.None);
+        await store.SaveRunAsync(run2, CancellationToken.None);
 
-        var run1 = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        await Task.Delay(50); // Ensure different timestamps
-        var run2 = await sut.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
+            store, new InMemoryHarnessSuggestionStore(), _mockProviderConfigStore.Object));
 
         var history = await sut.GetRunHistoryAsync(CancellationToken.None);
 
         history.Should().HaveCount(2);
-        history[0].RunId.Should().Be(run2!.RunId); // Most recent first
-        history[1].RunId.Should().Be(run1!.RunId);
+        history[0].RunId.Should().Be(run2.RunId, "most recent run must be first");
+        history[1].RunId.Should().Be(run1.RunId);
     }
 
     [Fact]
@@ -534,18 +508,23 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task DeletePersistedRunAsync_FileExists_DeletesFile()
     {
-        // Arrange
-        var sut = CreateSut();
-        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        run.Should().NotBeNull();
-        var filePath = Path.Combine(_runsDir, $"{run!.RunId}.json");
-        File.Exists(filePath).Should().BeTrue();
+        // Issue #3028: TriggerAsync no longer writes to the store.
+        // Seed a run file directly.
+        Directory.CreateDirectory(_runsDir);
+        var runId = Guid.NewGuid().ToString();
+        var store = new FileSystemConsolidationRunStore(_runsDir);
+        var run = new ConsolidationRun { RunId = runId, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Succeeded };
+        await store.SaveRunAsync(run, CancellationToken.None);
+        var filePath = Path.Combine(_runsDir, $"{runId}.json");
+        File.Exists(filePath).Should().BeTrue("file must exist after direct seeding");
 
-        // Act
-        await sut.DeletePersistedRunAsync(run.RunId);
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
+            store, new InMemoryHarnessSuggestionStore(), _mockProviderConfigStore.Object));
 
-        // Assert
-        File.Exists(filePath).Should().BeFalse();
+        await sut.DeletePersistedRunAsync(runId);
+
+        File.Exists(filePath).Should().BeFalse("DeletePersistedRunAsync must delete the file");
     }
 
     [Fact]
@@ -644,20 +623,17 @@ public sealed class ConsolidationServiceTests : IDisposable
         File.WriteAllText(Path.Combine(_runsDir, $"{runId}.json"), json);
     }
 
-    #region TriggerAsync — persist failure rollback (Req 8.1)
+    #region TriggerAsync — persist failure rollback (Req 8.1) — updated for issue #3028
 
     [Fact]
     public async Task TriggerAsync_WhenPersistFails_ReturnsNull()
     {
-        // Validates: Requirement 8.1 — TriggerAsync returns null when persist fails.
-        // Strategy: Create a FILE at the path where the runs directory should be.
-        // This causes Directory.CreateDirectory inside FileSystemConsolidationRunStore.SaveRunAsync
-        // to throw IOException. PersistRunAsync does NOT catch it — the exception propagates to
-        // the try/catch in TriggerAsync, which calls RollbackRunAsync and returns null.
-
-        // Use a path that's a file (not directory) to block Directory.CreateDirectory
-        var blockerDir = Path.Combine(_tempDir, "blocked-runs");
-        File.WriteAllText(blockerDir, "I am a file, not a directory");
+        // Issue #3028: TriggerAsync no longer persists to the store.
+        // The old persist-fail path no longer exists. This test now verifies that
+        // DistributeAsync failure (transient) causes TriggerAsync to return null.
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: false, WorkItemId: null, ErrorMessage: "transient error"));
 
         var sut = new ConsolidationService(
             new ConsolidationServiceDependencies(
@@ -665,7 +641,7 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _config,
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
-                new FileSystemConsolidationRunStore(blockerDir),
+                new FileSystemConsolidationRunStore(_runsDir),
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 WorkDistributor: _mockWorkDistributor.Object));
@@ -673,40 +649,18 @@ public sealed class ConsolidationServiceTests : IDisposable
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        // Assert: persist failure is caught, rolled back, and null returned
-        run.Should().BeNull("TriggerAsync must return null when PersistRunAsync throws");
-
-        // Assert: RollbackRunAsync was called — a second trigger for the same (type, templateId)
-        // key must be possible without hitting an in-process block.
-        // After _runningRuns removal (issue #3027), there is no in-memory dedup key to wedge;
-        // the second call simply attempts DistributeAsync again. The second call still uses the
-        // broken store and will fail again due to the persist error — this is the expected path.
-        var run2 = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        // The second call fails via persist-fail path (store is still broken), not via a
-        // duplicate-guard block (which no longer exists). Both paths return null, but the
-        // persist-fail path always logs a Serilog Error — no assertion needed beyond null.
-        run2.Should().BeNull("second call must also return null via persist-fail path");
-        _ = sut; // suppress unused variable warning
+        run.Should().BeNull("TriggerAsync must return null when DistributeAsync fails");
     }
 
     [Fact]
     public async Task TriggerAsync_HarnessSuggestions_WhenPersistFails_ClearsFeedbackCache()
     {
-        // Validates: Issue #1762 — When PersistRunAsync fails for a HarnessSuggestions run,
-        // the feedback cache must be cleared to prevent a permanent ConcurrentDictionary leak.
-        //
-        // Strategy: Block directory creation so FileSystemConsolidationRunStore.SaveRunAsync
-        // throws IOException (Directory.CreateDirectory fails on a path that is a file).
-        // Use a mock IConsolidationFeedbackCache so we can verify ClearFeedbackDataForRun
-        // is called — a real ConsolidationFeedbackCache cannot be used here because
-        // PrepareFeedbackDataAsync early-returns when feedbackEntries.Count == 0 (the test
-        // class mocks run history to return empty), meaning the cache is never populated and
-        // any null-check on GetFeedbackDataForRun would be a false-green regardless of the fix.
-        //
-        // The blocker path is distinct from _runsDir to avoid interfering with other tests.
-        var blockerDir = Path.Combine(_tempDir, "blocked-harness-runs");
-        File.WriteAllText(blockerDir, "I am a file, not a directory");
+        // Issue #3028: TriggerAsync no longer persists to the store.
+        // The old persist-fail path no longer exists. This test now verifies that when
+        // DistributeAsync fails for a HarnessSuggestions run, the feedback cache is cleared.
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: false, WorkItemId: null, ErrorMessage: "transient error"));
 
         var mockFeedbackCache = new Mock<IConsolidationFeedbackCache>();
         mockFeedbackCache
@@ -719,7 +673,7 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _config,
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
-                new FileSystemConsolidationRunStore(blockerDir),
+                new FileSystemConsolidationRunStore(_runsDir),
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 FeedbackCache: mockFeedbackCache.Object,
@@ -729,16 +683,10 @@ public sealed class ConsolidationServiceTests : IDisposable
         var run = await sut.TriggerAsync(
             ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
 
-        // Assert: TriggerAsync returns null on persist failure
+        // Assert: TriggerAsync returns null on dispatch failure
         run.Should().BeNull();
 
-        // Assert: ClearFeedbackDataForRun was called exactly once (no cache leak)
-        // TODO: Strengthen assertion to verify the correct RunId was passed.
-        // Currently uses It.IsAny<string>() because TriggerAsync returns null on failure,
-        // making the internally-generated RunId inaccessible post-call. To fix, capture the
-        // ConsolidationRun.RunId from the PrepareFeedbackDataAsync mock callback and assert
-        // that exact ID was passed here — this would catch a regression where the wrong ID
-        // (e.g. "" or a hardcoded value) is passed to ClearFeedbackDataForRun.
+        // Assert: ClearFeedbackDataForRun was called (no cache leak)
         mockFeedbackCache.Verify(
             c => c.ClearFeedbackDataForRun(It.IsAny<RunId>()),
             Times.Once);
@@ -747,12 +695,12 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task TriggerAsync_BrainConsolidation_WhenPersistFails_ClearsFeedbackCacheViaRollback()
     {
-        // Validates: Issue #2101 — RollbackRunAsync is called unconditionally regardless of run type.
-        // Before this refactor, ClearFeedbackDataForRun was gated on
-        // type == ConsolidationRunType.HarnessSuggestions. After extraction to RollbackRunAsync,
-        // it must be called for ALL run types to ensure consistent cleanup.
-        var blockerDir = Path.Combine(_tempDir, "blocked-brain-runs");
-        File.WriteAllText(blockerDir, "I am a file, not a directory");
+        // Issue #3028: TriggerAsync no longer persists to the store, so there is no persist-fail path.
+        // This test now verifies that when DistributeAsync fails for a BrainConsolidation run,
+        // the feedback cache is cleared (RollbackRunAsync path via feedback cache clear).
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(Success: false, WorkItemId: null, ErrorMessage: "transient error"));
 
         var mockFeedbackCache = new Mock<IConsolidationFeedbackCache>();
         mockFeedbackCache
@@ -765,27 +713,21 @@ public sealed class ConsolidationServiceTests : IDisposable
                 _config,
                 _mockProjectStore.Object,
                 _mockRunHistory.Object,
-                new FileSystemConsolidationRunStore(blockerDir),
+                new FileSystemConsolidationRunStore(_runsDir),
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 FeedbackCache: mockFeedbackCache.Object,
                 WorkDistributor: _mockWorkDistributor.Object));
 
-        // Act: use BrainConsolidation type (not HarnessSuggestions)
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        // Assert: TriggerAsync returns null on persist failure
-        run.Should().BeNull();
+        run.Should().BeNull("TriggerAsync returns null on dispatch failure");
 
-        // Assert: RollbackRunAsync calls ClearFeedbackDataForRun unconditionally
-        // TODO: Strengthen assertion to verify the correct RunId was passed.
-        // Currently uses It.IsAny<RunId>() because TriggerAsync returns null on failure,
-        // making the internally-generated RunId inaccessible post-call.
         mockFeedbackCache.Verify(
             c => c.ClearFeedbackDataForRun(It.IsAny<RunId>()),
             Times.Once,
-            "RollbackRunAsync must clear feedback cache for all run types, not just HarnessSuggestions");
+            "ClearFeedbackDataForRun must be called for all run types, not just HarnessSuggestions");
     }
 
     #endregion
@@ -802,56 +744,37 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task IsRunActive_AcceptsRunId_AndImplicitStringConversion()
     {
-        // Arrange: trigger a run so it's persisted in the store (Pending status = active)
-        // After _runningRuns removal (issue #3027), IsRunActive queries the store.
-        var sut = CreateSut();
-        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        run.Should().NotBeNull();
+        // Issue #3028: TriggerAsync no longer writes to the store. IsRunActive reads from the store.
+        // Seed a run directly into the store.
+        var store = new FileSystemConsolidationRunStore(_runsDir);
+        var run = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Pending };
+        await store.SaveRunAsync(run, CancellationToken.None);
 
-        var runIdStr = run!.RunId; // string
-        RunId runIdTyped = runIdStr; // explicit RunId from string via implicit conversion
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
+            store, new InMemoryHarnessSuggestionStore(), _mockProviderConfigStore.Object));
 
-        // Act + Assert: both ways of calling IsRunActive should work
-        // The run is Pending (non-terminal) so IsRunActive must return true.
-        sut.IsRunActive(runIdTyped).Should().BeTrue("RunId-typed call must work; Pending run is active");
-        sut.IsRunActive(runIdStr).Should().BeTrue("string literal implicit conversion must also work");
+        var runIdStr = run.RunId;
+        RunId runIdTyped = runIdStr;
 
-        // Act + Assert: GetActiveRunStartedAt accepts RunId
+        sut.IsRunActive(runIdTyped).Should().BeTrue("Pending run is active");
+        sut.IsRunActive(runIdStr).Should().BeTrue("implicit string conversion must also work");
+
         var startedAt = sut.GetActiveRunStartedAt(runIdTyped);
         startedAt.Should().NotBeNull("active run has a StartedAtUtc in the store");
-
-        var startedAtFromString = sut.GetActiveRunStartedAt(runIdStr);
-        startedAtFromString.Should().Be(startedAt, "implicit conversion produces equivalent RunId");
     }
 
     [Fact]
     public async Task UpdateRunAsync_AcceptsRunId_AtInterfaceBoundary()
     {
-        // Arrange: create a run and store it
+        // Issue #3028: UpdateRunAsync is now a no-op for store writes.
+        // Verify it accepts RunId type and doesn't throw.
         var runId = Guid.NewGuid().ToString();
-        var run = new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Running
-        };
-        var store = new FileSystemConsolidationRunStore(_runsDir);
-        await store.SaveRunAsync(run, CancellationToken.None);
+        var sut = CreateSut();
 
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
-            store, new InMemoryHarnessSuggestionStore(),
-            _mockProviderConfigStore.Object));
-
-        // Act: call via RunId (not string)
         RunId typedRunId = runId;
-        await sut.UpdateRunAsync(typedRunId, ConsolidationRunStatus.Succeeded, "done", CancellationToken.None);
-
-        // Assert: update persisted
-        var updated = await store.GetByIdAsync(runId, CancellationToken.None);
-        updated.Should().NotBeNull();
-        updated!.Status.Should().Be(ConsolidationRunStatus.Succeeded);
+        var act = () => sut.UpdateRunAsync(typedRunId, ConsolidationRunStatus.Succeeded, "done", CancellationToken.None);
+        await act.Should().NotThrowAsync("UpdateRunAsync must accept RunId and not throw");
     }
 
     #endregion

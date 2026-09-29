@@ -73,6 +73,16 @@ public sealed class ScriptedAgentProvider : IAgentProvider
         return this;
     }
 
+    /// <summary>Enqueues a decomposition plan script for Phase 1 decomposition runs.</summary>
+    public ScriptedAgentProvider EnqueueDecompositionPlan(string? content = null)
+    {
+        _scripts.Enqueue(new DecompositionPlanScript
+        {
+            PlanContent = content ?? new string('x', 200)
+        });
+        return this;
+    }
+
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         if (PauseBeforeExecution is not null)
@@ -149,5 +159,25 @@ public sealed class ReviewScript : AgentScript
         var agentDir = Path.Combine(workspacePath, ".agent");
         Directory.CreateDirectory(agentDir);
         File.WriteAllText(Path.Combine(agentDir, "review-findings.md"), Findings);
+    }
+}
+
+/// <summary>
+/// Writes a decomposition plan file to .agent/decomposition-plan.md so the
+/// DecompositionAnalysisStep validates and advances the run.
+/// Also writes the adversarial review file so the review sub-step succeeds.
+/// </summary>
+public sealed class DecompositionPlanScript : AgentScript
+{
+    public string PlanContent { get; init; } = new string('x', 200);
+
+    public override void Execute(string workspacePath)
+    {
+        var agentDir = Path.Combine(workspacePath, ".agent");
+        Directory.CreateDirectory(agentDir);
+        // Primary plan file the pipeline validates
+        File.WriteAllText(Path.Combine(agentDir, "decomposition-plan.md"), PlanContent);
+        // Review agent output (adversarial review sub-step)
+        File.WriteAllText(Path.Combine(agentDir, "decomposition-review.md"), "No blocking issues found.");
     }
 }

@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Prompts;
@@ -17,28 +16,11 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     internal const int MinAnalysisLength = PipelineConstants.MinAnalysisLength;
 
     private readonly Serilog.ILogger _logger;
-    private readonly Counter<long> _analysisGateOutcomes;
-    private readonly Counter<long> _reviewSkipped;
-    private readonly IMeterFactory? _meterFactory;
 
-    public AgentPhaseExecutor(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
+    public AgentPhaseExecutor(Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
-        _meterFactory = meterFactory;
-
-        if (meterFactory is not null)
-        {
-            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
-            _analysisGateOutcomes = meter.CreateCounter<long>("pipeline.analysis.gate_outcome", "{outcome}", "Analysis gate decision outcomes");
-            _reviewSkipped = meter.CreateCounter<long>("pipeline.review.skipped", "{skip}",
-                "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
-        }
-        else
-        {
-            _analysisGateOutcomes = PipelineTelemetry.AnalysisGateOutcomes;
-            _reviewSkipped = PipelineTelemetry.ReviewSkipped;
-        }
     }
 
     /// <summary>
@@ -205,25 +187,5 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     {
         if (File.Exists(path))
             File.Delete(path);
-    }
-
-    /// <summary>
-    /// Records an analysis gate outcome using the instance counter (injectable or static).
-    /// </summary>
-    private void RecordAnalysisGateOutcome(AnalysisGateResult outcome, PipelineRun run)
-    {
-        var outcomeTag = outcome switch
-        {
-            AnalysisGateResult.Ready => "ready",
-            AnalysisGateResult.NotReady => "not_ready",
-            AnalysisGateResult.WontDo => "wont_do",
-            _ => ActivityTags.Unknown
-        };
-
-        _analysisGateOutcomes.Add(1,
-            new KeyValuePair<string, object?>(ActivityTags.Outcome, outcomeTag),
-            PipelineTelemetry.RunTypeTag(run.RunType),
-            PipelineTelemetry.ProjectIdTag(run.ProjectId),
-            PipelineTelemetry.ProjectNameTag(run.ProjectName));
     }
 }

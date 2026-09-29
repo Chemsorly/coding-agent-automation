@@ -85,6 +85,6 @@ public sealed class FakeSchedulerApiClient : ISchedulerApiClient
     public Task<RetentionSweepResultDto> TriggerRetentionSweepAsync(CancellationToken ct = default)
         => Task.FromResult(new RetentionSweepResultDto(0, 0, 0, 0, 0));
 
-    public Task<WorkItemCountDto[]> GetWorkItemCountsAsync(CancellationToken ct = default)
-        => Task.FromResult(Array.Empty<WorkItemCountDto>());
+    public Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default)
+        => Task.FromResult(new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null));
 }

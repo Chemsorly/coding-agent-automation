@@ -25,6 +25,7 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         PipelineStep? finalStep = null,
         string? projectId = null,
         DateTimeOffset? since = null,
+        PipelineRunType? runType = null,
         CancellationToken ct = default)
     {
         var url = $"/api/pipeline-runs?page={page}&pageSize={pageSize}&feedbackOnly={feedbackOnly}&includeActive={includeActive}";
@@ -34,6 +35,8 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
             url += $"&projectId={Uri.EscapeDataString(projectId)}";
         if (since is { } sinceValue)
             url += $"&since={Uri.EscapeDataString(sinceValue.ToString("O"))}";
+        if (runType is { } rt)
+            url += $"&runType={rt}";
 
         var result = await _http.GetFromJsonAsync<PagedResult<PipelineRunSummary>>(
             url,

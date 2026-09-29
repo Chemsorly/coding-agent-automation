@@ -6,6 +6,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.AgentGateway;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
@@ -13,12 +14,15 @@ namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
 /// Tests for Consolidation Run History Actions column visibility (issue #2939).
-/// The Actions column must only render when at least one run is cancellable.
+/// After issue #3028, the page reads from IPipelineApiRunHistoryClient (not IConsolidationService).
+/// A run is cancellable when WorkItemId.HasValue &amp;&amp; CompletedAtOffset == null.
 /// </summary>
 public class ConsolidationActionsColumnTests : BunitContext
 {
-    private readonly Mock<IConsolidationService> _mockService = new();
+    private readonly Mock<IConsolidationService> _mockService = new(MockBehavior.Strict);
     private readonly Mock<IPipelineApiConfigClient> _mockConfigClient = new();
+    private readonly Mock<IPipelineApiRunHistoryClient> _mockRunHistoryClient = new();
+    private readonly Mock<IAgentHubConnection> _mockHubConnection = new();
     private readonly ConsolidationBadgeService _badgeService = new();
 
     public ConsolidationActionsColumnTests()
@@ -29,34 +33,93 @@ public class ConsolidationActionsColumnTests : BunitContext
             .ReturnsAsync(Array.Empty<PipelineProject>());
         _mockConfigClient.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+
+        // Strict mock: only GetHarnessSuggestionsAsync is allowed (GetRunHistoryAsync and GetLastRunAsync must not be called)
         _mockService.Setup(s => s.GetHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((HarnessSuggestions?)null);
+
+        // Hub mock: return a no-op disposable for event subscription
+        _mockHubConnection
+            .Setup(h => h.On<string, JobCompletionPayload>(It.IsAny<string>(), It.IsAny<Action<string, JobCompletionPayload>>()))
+            .Returns(Mock.Of<IDisposable>());
+        _mockHubConnection.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        // Default run history: empty
+        _mockRunHistoryClient
+            .Setup(s => s.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
+                It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary>
+            {
+                Items = Array.Empty<PipelineRunSummary>().ToList(), Page = 1, PageSize = 200, HasMore = false
+            });
+
         Services.AddSingleton<IConsolidationService>(_mockService.Object);
         Services.AddSingleton(_mockConfigClient.Object);
+        Services.AddSingleton<IPipelineApiRunHistoryClient>(_mockRunHistoryClient.Object);
+        Services.AddSingleton<IAgentHubConnection>(_mockHubConnection.Object);
         Services.AddSingleton(_badgeService);
-        // Required by Consolidation.razor after issue #3027 (cancel via PostStatus)
         Services.AddSingleton(new Mock<IPipelineApiWorkItemClient>().Object);
     }
 
-    private static ConsolidationRun MakeRun(ConsolidationRunStatus status, string id = "run-1", string? workItemId = null) => new()
+    /// <summary>
+    /// Creates a terminal (completed) PipelineRunSummary — not cancellable.
+    /// </summary>
+    private static PipelineRunSummary MakeTerminalRun(PipelineStep finalStep, string? runId = null) => new()
     {
-        RunId = id,
-        Type = ConsolidationRunType.BrainConsolidation,
-        StartedAtUtc = DateTime.UtcNow.AddMinutes(-5),
-        Status = status,
-        WorkItemId = workItemId,
+        RunId = runId ?? Guid.NewGuid().ToString(),
+        IssueIdentifier = "BrainConsolidation:t1",
+        IssueTitle = "BrainConsolidation",
+        RunType = PipelineRunType.Consolidation,
+        ConsolidationType = ConsolidationRunType.BrainConsolidation,
+        ConsolidationTemplateId = "t1",
+        FinalStep = finalStep,
+        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-10),
+        CompletedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-1),
+        InitiatedBy = ConsolidationConstants.InitiatedBy
     };
+
+    /// <summary>
+    /// Creates an active (non-terminal) PipelineRunSummary with a WorkItemId — cancellable.
+    /// </summary>
+    private static PipelineRunSummary MakeActiveRun(Guid? workItemId, string? runId = null) => new()
+    {
+        RunId = runId ?? Guid.NewGuid().ToString(),
+        IssueIdentifier = "BrainConsolidation:t1",
+        IssueTitle = "BrainConsolidation",
+        RunType = PipelineRunType.Consolidation,
+        ConsolidationType = ConsolidationRunType.BrainConsolidation,
+        ConsolidationTemplateId = "t1",
+        FinalStep = PipelineStep.Created,
+        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-2),
+        CompletedAtOffset = null,  // null = active/in-flight
+        WorkItemId = workItemId,
+        InitiatedBy = ConsolidationConstants.InitiatedBy
+    };
+
+    private void SetupRunHistory(IReadOnlyList<PipelineRunSummary> runs)
+    {
+        _mockRunHistoryClient
+            .Setup(s => s.GetRunHistoryAsync(
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
+                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
+                It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary>
+            {
+                Items = runs.ToList(), Page = 1, PageSize = 200, HasMore = false
+            });
+    }
 
     [Fact]
     public void Consolidation_HidesActionsColumn_WhenNoRunIsCancellable()
     {
-        _mockService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>
-            {
-                MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                MakeRun(ConsolidationRunStatus.Failed, "r2"),
-                MakeRun(ConsolidationRunStatus.Cancelled, "r3"),
-            });
+        SetupRunHistory(new List<PipelineRunSummary>
+        {
+            MakeTerminalRun(PipelineStep.Completed),
+            MakeTerminalRun(PipelineStep.Failed),
+            MakeTerminalRun(PipelineStep.Cancelled),
+        });
 
         var cut = Render<Consolidation>();
 
@@ -68,15 +131,14 @@ public class ConsolidationActionsColumnTests : BunitContext
     }
 
     [Fact]
-    public void Consolidation_ShowsActionsColumn_WhenSomeRunIsPending()
+    public void Consolidation_ShowsActionsColumn_WhenSomeRunIsActiveWithWorkItemId()
     {
-        _mockService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>
-            {
-                MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                // WorkItemId must be set for the cancel button to appear (issue #3027)
-                MakeRun(ConsolidationRunStatus.Pending, "r2", workItemId: Guid.NewGuid().ToString()),
-            });
+        // A run is cancellable when CompletedAtOffset == null AND WorkItemId.HasValue
+        SetupRunHistory(new List<PipelineRunSummary>
+        {
+            MakeTerminalRun(PipelineStep.Completed),
+            MakeActiveRun(workItemId: Guid.NewGuid()),
+        });
 
         var cut = Render<Consolidation>();
 
@@ -84,23 +146,39 @@ public class ConsolidationActionsColumnTests : BunitContext
             .Select(e => e.TextContent.Trim())
             .ToList();
         headers.Should().Contain("Actions",
-            "the Actions column must be visible when at least one run is Pending with a WorkItemId");
+            "the Actions column must be visible when at least one active run has a WorkItemId");
     }
 
     [Fact]
-    public void Consolidation_ShowsCancelButton_OnlyForPendingRuns()
+    public void Consolidation_HidesActionsColumn_WhenActiveRunHasNoWorkItemId()
     {
-        _mockService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>
-            {
-                MakeRun(ConsolidationRunStatus.Succeeded, "r1"),
-                // WorkItemId must be set for the cancel button to appear (issue #3027)
-                MakeRun(ConsolidationRunStatus.Pending, "r2", workItemId: Guid.NewGuid().ToString()),
-            });
+        // Active but no WorkItemId — not cancellable
+        SetupRunHistory(new List<PipelineRunSummary>
+        {
+            MakeActiveRun(workItemId: null),
+        });
+
+        var cut = Render<Consolidation>();
+
+        var headers = cut.FindAll(".monitoring-table thead th")
+            .Select(e => e.TextContent.Trim())
+            .ToList();
+        headers.Should().NotContain("Actions",
+            "the Actions column must be hidden when active runs have no WorkItemId");
+    }
+
+    [Fact]
+    public void Consolidation_ShowsCancelButton_OnlyForActiveRunsWithWorkItemId()
+    {
+        SetupRunHistory(new List<PipelineRunSummary>
+        {
+            MakeTerminalRun(PipelineStep.Completed),
+            MakeActiveRun(workItemId: Guid.NewGuid()),
+        });
 
         var cut = Render<Consolidation>();
 
         var cancelButtons = cut.FindAll(".btn-cancel-run");
-        cancelButtons.Should().HaveCount(1, "only the Pending run with a WorkItemId must have a Cancel button");
+        cancelButtons.Should().HaveCount(1, "only the active run with a WorkItemId must have a Cancel button");
     }
 }

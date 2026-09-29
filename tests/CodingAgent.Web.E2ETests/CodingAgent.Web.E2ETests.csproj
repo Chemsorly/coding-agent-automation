@@ -63,6 +63,9 @@
     <!-- The harness also runs the JobController in-process: the real ReconciliationLoop is hosted
          via JobControllerE2EWebApplicationFactory and driven deterministically in E2E tests. -->
     <ProjectReference Include="..\..\src\CodingAgent.JobController\CodingAgent.JobController.csproj" />
+    <!-- The real agent worker (issue #3086): RealAgentWorkerHarness builds WorkItemAgentService
+         in-process against the E2E API host to cover the end-to-end wire contract. -->
+    <ProjectReference Include="..\..\src\CodingAgent.Agent\CodingAgent.Agent.csproj" />
     <ProjectReference Include="..\CodingAgent.Web.TestUtilities\CodingAgent.Web.TestUtilities.csproj" />
   </ItemGroup>
 

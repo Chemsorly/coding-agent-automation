@@ -870,10 +870,11 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        // Assert: 200 returned
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
+        // Assert: 200 returned with dispatched:true
+        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         okResult.Should().NotBeNull("dispatch of a Pending item must succeed");
-        okResult!.Value.Should().Be(entity.Id);
+        okResult!.Value.Should().NotBeNull();
+        okResult.Value!.Dispatched.Should().BeTrue("successful dispatch returns dispatched:true");
 
         // WorkItem is now Dispatched
         await using var db = await dbFactory.CreateDbContextAsync();
@@ -931,8 +932,11 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             existingId, dbFactory, lifecycle, templateStore, resolver, mockLock.Object, CreateDispatchService(templateStore), CancellationToken.None);
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "a non-Pending item must return 409 immediately");
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
+            "a non-Pending item must return 200 with dispatched:false (issue #2976)");
+        var deferredResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferredResult.Value!.Dispatched.Should().BeFalse();
+        deferredResult.Value.Reason.Should().Be("not_pending");
         lockAcquired.Should().BeFalse("the advisory lock must not be acquired for a non-Pending item (fast path)");
     }
 
@@ -951,7 +955,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>("no template → 409");
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>("no template → 200/deferred");
+        var deferredResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferredResult.Value!.Dispatched.Should().BeFalse();
+        deferredResult.Value.Reason.Should().Be("no_template");
 
         // Item must remain Pending (re-dispatchable)
         await using var db = await dbFactory.CreateDbContextAsync();
@@ -996,8 +1003,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: profile fallback resolved template → dispatch succeeds
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "profile fallback must resolve the template and dispatch the item");
+        var okResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        okResult.Value!.Dispatched.Should().BeTrue();
         k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Once);
 
@@ -1031,7 +1040,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>("concurrency limit → 409");
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>("concurrency limit → 200/deferred");
+        var deferredResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferredResult.Value!.Dispatched.Should().BeFalse();
+        deferredResult.Value.Reason.Should().Be("concurrency_limit");
 
         await using var db = await dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
@@ -1091,7 +1103,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>();
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>();
 
         // Gauge must have been updated to the available count (2)
         ReadCredentialPoolAvailable().Should().Be(2,
@@ -1187,16 +1199,16 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         var results = await Task.WhenAll(task1, task2);
 
-        // Exactly one 200 and one non-200
-        var okCount = results.Count(r => r is Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>);
-        okCount.Should().Be(1, "exactly one concurrent dispatch must succeed");
+        // Exactly one 200 with dispatched:true and one non-dispatched response
+        var dispatchedCount = results.Count(r =>
+            r is Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse> ok && ok.Value?.Dispatched == true);
+        dispatchedCount.Should().Be(1, "exactly one concurrent dispatch must succeed");
 
-        // TODO [WARNING]: The assertion above only confirms that exactly one call returned 200. It
-        // does not constrain what the losing call returned — an unhandled exception (500) or a 503
-        // would also satisfy okCount == 1. Consider adding:
-        //   results.Count(r => r is not Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>).Should().Be(1)
-        // or a tighter assertion on the losing result type to prevent silent exception propagation
-        // from masking test failures.
+        // TODO [WARNING]: The assertion above only confirms that exactly one call returned 200 with
+        // dispatched:true. It does not constrain what the losing call returned — an unhandled
+        // exception (500) or a 503 would also satisfy dispatchedCount == 1. Consider asserting
+        // that the losing result is Ok<DispatchPendingResponse> with Dispatched=false (deferred/not_pending)
+        // to prevent a silent regression where the loser throws rather than returning a structured response.
 
         // TODO [CRITICAL→REMOVED]: A conflictCount.Should().Be(1) assertion was here, but it was
         // tautological: task1 and task2 execute cooperatively/sequentially (same sync context, no
@@ -1294,10 +1306,13 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, racingLockMock.Object, CreateDispatchService(templateStore), CancellationToken.None);
 
-        // The post-lock re-read must detect the non-Pending status and return 409 Conflict.
+        // The post-lock re-read must detect the non-Pending status and return 200/deferred (not_pending).
         // Without the fix this would return 503 (lifecycle early-return → dispatched=false).
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "when the item is dispatched between fast-path check and lock acquisition, the endpoint must return 409 Conflict");
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
+            "when the item is dispatched between fast-path check and lock acquisition, the endpoint must return 200/deferred (not_pending) (issue #2976)");
+        var deferredResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferredResult.Value!.Dispatched.Should().BeFalse();
+        deferredResult.Value.Reason.Should().Be("not_pending");
 
         // TODO [WARNING]: This test only exercises the Dispatched transition during the TOCTOU
         // window. The post-lock condition `postLockCheck.Status != WorkItemStatus.Pending` fires
@@ -1361,8 +1376,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var entity2 = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
         var result2 = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity2.Id, dbFactory, lifecycle2, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
-        result2.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+        result2.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "PVC must be released after K8s failure — Failed item no longer holds the credential slot");
+        var ok2 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result2;
+        ok2.Value!.Dispatched.Should().BeTrue();
     }
 
     // ── Test 17: FailWorkItemAsync throws → 503, Warning logged, item remains Pending ──
@@ -1512,8 +1529,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "non-kiro dispatch must succeed without a PVC");
+        var okResult = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        okResult.Value!.Dispatched.Should().BeTrue();
 
         await using var db = await dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
@@ -1567,9 +1586,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
                 itemId, dbFactory, lc, ts, res, CreateNoOpLockProvider(), CreateDispatchService(ts), CancellationToken.None);
         }
 
-        // All gate rejections must be non-200
-        result.Should().NotBeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
-            $"scenario '{scenario}' must not return 200");
+        // All gate rejections must not be dispatched (either 200/deferred or 503)
+        var isDispatched = result is Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse> ok && ok.Value?.Dispatched == true;
+        isDispatched.Should().BeFalse(
+            $"scenario '{scenario}' must not dispatch the item");
 
         // Item must remain Pending — gate rejections never reach the CAS
         await using var db = await dbFactory.CreateDbContextAsync();
@@ -1635,25 +1655,24 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        // Assert: result is a 409 Conflict
-        var conflictResult = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
-        conflictResult.Should().NotBeNull("a selector with no matching template must return 409 Conflict");
+        // Assert: result is a 200/deferred with no_template reason (issue #2976)
+        var deferredResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        deferredResult.Should().NotBeNull("a selector with no matching template must return 200/deferred");
+        deferredResult!.Value!.Dispatched.Should().BeFalse();
+        deferredResult.Value.Reason.Should().Be("no_template");
 
-        var body = conflictResult!.Value!;
-
-        // The raw CRLF must NOT appear verbatim in the response body
-        body.Should().NotContain("\r", "raw CR in the Conflict body enables log injection");
-        body.Should().NotContain("\n", "raw LF in the Conflict body enables log injection");
-
-        // The escaped form MUST appear — proving the sanitizer ran, not that the value was silently dropped
-        body.Should().Contain("\\r", "CR must be escaped as \\r in the sanitized response");
-        body.Should().Contain("\\n", "LF must be escaped as \\n in the sanitized response");
-        // TODO [WARNING]: The assertions above only verify that \\r and \\n appear somewhere in the body.
-        // They would pass even if the selector were replaced with a hardcoded literal containing those
-        // escape sequences. Consider asserting the full sanitized selector text, e.g.:
-        //   body.Should().Contain("kiro\\r\\nINJECTED-fake-log-line");
-        // This would catch scenarios where the selector is silently dropped or replaced with a
-        // generic placeholder (e.g. "[redacted]") rather than sanitized and reflected.
+        // The sanitizer must not inject raw CRLF into the reason string
+        // (the reason is a fixed constant, not the selector, so CRLF is not a risk here).
+        // For completeness, verify the sanitized selector was logged (not reflected directly in the response body).
+        // TODO [WARNING]: The CRLF assertions below are vacuous — Reason is the compile-time constant
+        // "no_template", which can never contain CR or LF regardless of endpoint behaviour. The
+        // original test verified that user-supplied input (the malicious selector) was sanitised before
+        // being reflected in the response body. That property is no longer testable via this code path
+        // because the endpoint no longer reflects the selector in the response at all. If the endpoint
+        // is ever changed to include selector information in the response, the sanitisation requirement
+        // should be anchored by a new test that asserts on the selector-derived field, not the fixed reason.
+        deferredResult.Value.Reason.Should().NotContain("\r", "reason value must not contain raw CR");
+        deferredResult.Value.Reason.Should().NotContain("\n", "reason value must not contain raw LF");
     }
 
     // ── Test 16: Log injection — concurrency Conflict body does not reflect raw CRLF ─
@@ -1702,25 +1721,23 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
-        // Assert: result is a 409 Conflict (concurrency path)
-        var conflictResult = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
-        conflictResult.Should().NotBeNull("concurrency limit reached must return 409 Conflict");
+        // Assert: result is a 200/deferred with concurrency_limit reason (issue #2976)
+        var deferredResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        deferredResult.Should().NotBeNull("concurrency limit reached must return 200/deferred");
+        deferredResult!.Value!.Dispatched.Should().BeFalse();
+        deferredResult.Value.Reason.Should().Be("concurrency_limit",
+            "the concurrency gate must be exercised (not the no-template gate)");
 
-        var body = conflictResult!.Value!;
-
-        // The raw CRLF must NOT appear verbatim in the Conflict body
-        body.Should().NotContain("\r", "raw CR in the Conflict body enables log injection");
-        body.Should().NotContain("\n", "raw LF in the Conflict body enables log injection");
-
-        // The escaped form MUST appear — proving the sanitizer ran
-        body.Should().Contain("\\r", "CR must be escaped as \\r in the sanitized response");
-        body.Should().Contain("\\n", "LF must be escaped as \\n in the sanitized response");
-        // TODO [WARNING]: This test relies on LoadFromJson correctly parsing JSON \r/\n escape sequences
-        // to literal CR/LF bytes and NormalizeLabels preserving them as dictionary keys. If the template
-        // lookup misses (e.g. LoadFromJson parses differently), the test falls through to the no-template
-        // 409 branch — giving a false pass on the wrong code path. Consider asserting the specific
-        // Conflict message text to confirm the concurrency branch was exercised, e.g.:
-        //   body.Should().Contain("Concurrency limit", "must be the concurrency-limit 409, not the no-template 409");
+        // The reason is a fixed constant — no CRLF risk.
+        // TODO [WARNING]: The CRLF assertions below are vacuous — Reason is the compile-time constant
+        // "concurrency_limit", which can never contain CR or LF regardless of endpoint behaviour.
+        // The original test verified that user-supplied input was sanitised before being reflected in
+        // the HTTP response body. That property is no longer testable via this code path because the
+        // endpoint no longer reflects the selector in the response. If the endpoint is ever changed to
+        // include selector information in the response, the sanitisation requirement should be
+        // anchored by a new test that asserts on the selector-derived field, not the fixed reason.
+        deferredResult.Value.Reason.Should().NotContain("\r");
+        deferredResult.Value.Reason.Should().NotContain("\n");
     }
 
     // ── Test 18: Profile fallback — projection.AgentSelector must be the canonical selector ──
@@ -1799,8 +1816,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert: dispatch succeeded
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "profile fallback must resolve the template and dispatch the item");
+        var ok18 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        ok18.Value!.Dispatched.Should().BeTrue();
 
         // Assert: the profile fallback path was actually entered (not the direct-resolve path)
         profileStoreMock.Verify(
@@ -1895,10 +1914,13 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Assert: concurrency limit must be respected using the canonical selector "dotnet,kiro"
         // Current (broken) code: checks normalizedSelector="dotnet" → count=0 → gate passes → returns 200
-        // Fixed code: checks effectiveSelector="dotnet,kiro" → count=1 ≥ maxConcurrent=1 → returns 409
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
+        // Fixed code: checks effectiveSelector="dotnet,kiro" → count=1 ≥ maxConcurrent=1 → returns 200/deferred
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "concurrency limit for 'dotnet,kiro' (count=1, maxConcurrent=1) must block dispatch even when the item's " +
             "stored selector is the partial form 'dotnet' that requires profile-fallback resolution");
+        var deferred19 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferred19.Value!.Dispatched.Should().BeFalse();
+        deferred19.Value.Reason.Should().Be("concurrency_limit");
 
         // Confirm the item remains Pending (gate rejection must not change state)
         await using var db = await dbFactory.CreateDbContextAsync();
@@ -1991,9 +2013,12 @@ public sealed class DispatchPendingWorkItemEndpointTests
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
         counting = false;
 
-        // Gate result: concurrency limit fires first → 409, not 503.
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "concurrency gate fires before the PVC gate — combined rejection must return 409");
+        // Gate result: concurrency limit fires first → 200/deferred(concurrency_limit), not 503.
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
+            "concurrency gate fires before the PVC gate — combined rejection must return 200/deferred");
+        var deferred20 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferred20.Value!.Dispatched.Should().BeFalse();
+        deferred20.Value.Reason.Should().Be("concurrency_limit");
 
         // Counter must NOT have been incremented (this was the bug).
         Interlocked.Read(ref exhaustionCount).Should().Be(0,
@@ -2108,8 +2133,11 @@ public sealed class DispatchPendingWorkItemEndpointTests
             entity.Id, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
         counting = false;
 
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
-            "concurrency limit with PVCs available must return 409");
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
+            "concurrency limit with PVCs available must return 200/deferred (issue #2976)");
+        var deferred22 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        deferred22.Value!.Dispatched.Should().BeFalse();
+        deferred22.Value.Reason.Should().Be("concurrency_limit");
 
         Interlocked.Read(ref exhaustionCount).Should().Be(0,
             "PvcPoolExhaustions must not fire when only the concurrency gate rejects the request");
@@ -2278,8 +2306,10 @@ public sealed class DispatchPendingWorkItemEndpointTests
             entityId, dbFactory, lifecycle, templateStore, resolver, lockProvider, CreateDispatchService(templateStore), CancellationToken.None);
 
         // Assert 1: dispatch succeeded
-        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "a Pending WorkItem with TraceParent must dispatch successfully");
+        var traceOk = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
+        traceOk.Value!.Dispatched.Should().BeTrue();
 
         // Assert 2: the K8s Job contains TRACEPARENT with the exact value from WorkItemEntity.TraceParent.
         // This is the core fix for issue #2977: TraceParent must flow through ctx.WorkItem (WorkItemEntity),
