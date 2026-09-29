@@ -1,3 +1,4 @@
+using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -19,6 +20,7 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     private readonly IProviderFactory _providerFactory;
     private readonly IDependencyChecker _dependencyChecker;
     private readonly IWorkDistributor _workDistributor;
+    private readonly IPipelineApiWorkItemClient _apiClient;
     private readonly IDispatchOrchestrationService _dispatchOrchestration;
 
     private readonly DrawerStateService<IssueSummary> _issueDrawer;
@@ -27,11 +29,13 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IProviderFactory providerFactory,
         IDependencyChecker dependencyChecker,
         IWorkDistributor workDistributor,
-        IDispatchOrchestrationService dispatchOrchestration)
+        IDispatchOrchestrationService dispatchOrchestration,
+        IPipelineApiWorkItemClient apiClient)
     {
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
         _workDistributor = workDistributor;
+        _apiClient = apiClient;
         _dispatchOrchestration = dispatchOrchestration;
 
         _issueDrawer = new DrawerStateService<IssueSummary>(
@@ -53,7 +57,13 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     public Dictionary<string, DependencyCheckResult> DrawerReadiness { get; private set; } = new();
 
-    public HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
+    /// <summary>
+    /// Status-aware map of active issues. Keys are (IssueIdentifier, IssueProviderConfigId) tuples;
+    /// values are the WorkItemStatus of the corresponding work item (Pending = Queued, Running/Dispatched = Running).
+    /// Populated by <see cref="RefreshActiveIssuesAsync"/>.
+    /// </summary>
+    public IReadOnlyDictionary<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId), WorkItemStatus> ActiveIssues { get; private set; } =
+        new Dictionary<(IssueIdentifier, ProviderConfigId), WorkItemStatus>();
 
     // ── Data loading ──
 
@@ -331,13 +341,62 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     // ── Active issues ──
 
+    // TODO: [WARNING] RefreshActiveIssuesAsync passes CancellationToken.None to both API calls because
+    //   the method signature accepts no CancellationToken. Callers that own a cancellation token
+    //   (e.g. component disposal, navigation-away) cannot forward it, so the two in-flight HTTP
+    //   requests run to completion even after the owning service/component is disposed or navigated
+    //   away, then write into a stale ActiveIssues dictionary. Consider adding a CancellationToken
+    //   parameter to RefreshActiveIssuesAsync and threading it through both API calls.
     public async Task RefreshActiveIssuesAsync()
     {
-        ActiveIssues = await _workDistributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
+        // Build a status-aware map by combining:
+        //   1. GetActiveIdentifiersAsync — all (IssueIdentifier, ProviderConfigId) pairs with active or
+        //      recently-terminal WorkItems. Items in this set are Dispatched/Running unless also pending.
+        //   2. GetPendingAsync — Pending (Queued) items, which include both IssueIdentifier AND
+        //      IssueProviderConfigId (ActiveWorkItemDto lacks IssueProviderConfigId so we cannot use
+        //      GetActiveAsync for the full key).
+        // Strategy:
+        //   - All pending items → WorkItemStatus.Pending (Queued badge)
+        //   - All active-identifier items not in the pending set → WorkItemStatus.Running (Running badge)
+        //     (these are Dispatched or Running status on the server; both show as "Running" in the UI)
+        // TODO: GetActiveIdentifiersAsync returns pairs for recently-terminal work items (Succeeded/Failed/
+        //   Cancelled within DefaultRestartDedupCooldown) in addition to truly-active ones. A recently-failed
+        //   issue that is not in the pending set is classified as Running here, showing a false "Running" badge
+        //   in the dispatch drawer. Consider excluding recently-terminal pairs from the Running classification
+        //   (e.g. cross-check against GetActiveAsync which exposes the actual WorkItemStatus).
+        var activeIdentifiers = await _apiClient.GetActiveIdentifiersAsync(CancellationToken.None);
+        // TODO: GetPendingAsync is capped at maxResults:200. If more than 200 work items are Pending, items
+        //   beyond the cap are absent from pendingKeys and are misclassified as Running. Consider paging until
+        //   exhausted or raising the cap to exceed the realistic maximum queue depth.
+        var pendingItems = await _apiClient.GetPendingAsync(maxResults: 200, ct: CancellationToken.None);
+
+        var pendingKeys = pendingItems
+            .Select(p => ((IssueIdentifier)p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
+            .ToHashSet();
+
+        var map = new Dictionary<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId), WorkItemStatus>();
+        foreach (var (issueId, provId) in activeIdentifiers)
+        {
+            var key = ((IssueIdentifier)issueId, (ProviderConfigId)provId);
+            map[key] = pendingKeys.Contains(key) ? WorkItemStatus.Pending : WorkItemStatus.Running;
+        }
+
+        ActiveIssues = map;
+    }
+
+    /// <summary>
+    /// Returns the WorkItemStatus of the issue's current work item, or null if the issue has no
+    /// active work item. <see cref="WorkItemStatus.Pending"/> means "Queued";
+    /// <see cref="WorkItemStatus.Running"/> means "Running or Dispatched".
+    /// </summary>
+    public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, string issueProviderConfigId)
+    {
+        var key = (issueIdentifier, (ProviderConfigId)issueProviderConfigId);
+        return ActiveIssues.TryGetValue(key, out var status) ? status : null;
     }
 
     public bool IsIssueActive(IssueIdentifier issueIdentifier, string issueProviderConfigId)
-        => ActiveIssues.Contains((issueIdentifier, issueProviderConfigId));
+        => ActiveIssues.ContainsKey((issueIdentifier, (ProviderConfigId)issueProviderConfigId));
 
     public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
         => _workDistributor.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId, CancellationToken.None);

@@ -199,12 +199,12 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         await codingPage.SelectTemplateAsync("Test Template");
         await codingPage.ClickBrowsePrsAsync();
 
-        // Assert: the PR row shows the Queued badge and reduced opacity. "DISPATCHED" was the
-        // wording while dispatch pushed to a connected agent; the PR drawer now says "Queued" like
-        // the issue drawer, because a pod has yet to be started.
+        // Assert: the PR row shows the Running badge and reduced opacity. After JobAssigned fires,
+        // the agent has re-registered with an ActiveJob — the work item is Running/Dispatched, not
+        // merely Pending/Queued. "Queued" would only appear if the job were still waiting for a pod.
         var prRow = Page.Locator("[data-testid='pr-row-77']");
-        var hasQueuedBadge = await prRow.Locator("text=Queued").CountAsync();
-        Assert.True(hasQueuedBadge > 0, "PR already being processed should show the Queued badge");
+        var hasRunningBadge = await prRow.Locator("text=Running").CountAsync();
+        Assert.True(hasRunningBadge > 0, "PR already being processed should show Running badge");
 
         var opacity = await prRow.EvaluateAsync<string>("el => getComputedStyle(el).opacity");
         Assert.NotEqual("1", opacity);
