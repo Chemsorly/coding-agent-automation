@@ -44,6 +44,12 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IAgentProviderResolver _providerResolver;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
+    /// <summary>
+    /// When non-null, overrides the internal <see cref="AgentProviderFactory"/> so test code
+    /// can substitute fake repository and agent providers. Set via
+    /// <see cref="LocalPipelineExecutorDependencies.ProviderFactoryOverride"/>.
+    /// </summary>
+    private readonly IProviderFactory? _providerFactoryOverride;
 
     public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
     {
@@ -66,6 +72,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
                 deps.BrainUpdateService, deps.HistoryService, finalization));
         _logger = deps.Logger;
+        _providerFactoryOverride = deps.ProviderFactoryOverride;
     }
 
     /// <summary>
@@ -91,22 +98,37 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         var config = job.PipelineConfiguration;
 
-        // Resolve provider configs from the job assignment
-        // TODO: These two mandatory lookups use TryGetProviderConfig + manual null-check-and-throw rather than
-        // GetRequiredProviderConfig, because GetRequiredProviderConfig skips the structured _logger.Error call that
-        // precedes the throw. If the error-logging requirement is relaxed, migrate to GetRequiredProviderConfig to
-        // consolidate the "lookup + throw" pattern as originally intended by the extract.
-        var repoConfig = job.ProviderConfigs.TryGetProviderConfig(job.RepoProviderConfigId);
-        if (repoConfig is null)
+        // Resolve provider configs from the job assignment.
+        // When a ProviderFactoryOverride is injected (test seam), the factory ignores ProviderConfig
+        // contents entirely, so we skip the mandatory lookup and use a dummy config instead.
+        // This allows smoke tests to insert minimal work-item rows without a fully-populated payload.
+        ProviderConfig repoConfig;
+        ProviderConfig agentConfig;
+        if (_providerFactoryOverride is not null)
         {
-            _logger.Error("Repository provider config '{RepoProviderConfigId}' not found in job assignment for job {JobId}", job.RepoProviderConfigId, job.JobId);
-            throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
+            // The override factory ignores ProviderConfig contents entirely, so we use
+            // placeholder values. The only required members are populated to satisfy the compiler.
+            repoConfig = new ProviderConfig { DisplayName = "test-repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" };
+            agentConfig = new ProviderConfig { DisplayName = "test-agent", Kind = ProviderKind.Agent, ProviderType = "KiroCli" };
         }
-        var agentConfig = job.ProviderConfigs.TryGetProviderConfig(job.AgentProviderConfigId);
-        if (agentConfig is null)
+        else
         {
-            _logger.Error("Agent provider config '{AgentProviderConfigId}' not found in job assignment for job {JobId}", job.AgentProviderConfigId, job.JobId);
-            throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+            // TODO: These two mandatory lookups use TryGetProviderConfig + manual null-check-and-throw rather than
+            // GetRequiredProviderConfig, because GetRequiredProviderConfig skips the structured _logger.Error call that
+            // precedes the throw. If the error-logging requirement is relaxed, migrate to GetRequiredProviderConfig to
+            // consolidate the "lookup + throw" pattern as originally intended by the extract.
+            repoConfig = job.ProviderConfigs.TryGetProviderConfig(job.RepoProviderConfigId)!;
+            if (repoConfig is null)
+            {
+                _logger.Error("Repository provider config '{RepoProviderConfigId}' not found in job assignment for job {JobId}", job.RepoProviderConfigId, job.JobId);
+                throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
+            }
+            agentConfig = job.ProviderConfigs.TryGetProviderConfig(job.AgentProviderConfigId)!;
+            if (agentConfig is null)
+            {
+                _logger.Error("Agent provider config '{AgentProviderConfigId}' not found in job assignment for job {JobId}", job.AgentProviderConfigId, job.JobId);
+                throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+            }
         }
 
         // Override blacklist settings from repo provider config (per-repo takes precedence)
@@ -123,11 +145,16 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // as done in LocalConsolidationExecutor. Not a defect since Dispose() is idempotent, but
         // the alias introduces maintenance risk around ownership. (.NET Specialist Review)
         using var issueOpsDisposable = issueOps; // ensure _tokenCacheLock is disposed after the job completes
-        var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
+        // When a ProviderFactoryOverride is injected (test seam), use it instead of constructing
+        // a real AgentProviderFactory. This allows fake repository / agent providers to be
+        // substituted without modifying the rest of the execution path.
+        var providerFactory = _providerFactoryOverride
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         // The project repositories a project epic clones next to its own use the token vended into
         // their own config: the proxy's token refresh covers only this job's primary repository.
-        var projectRepoFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
+        var projectRepoFactory = _providerFactoryOverride
+            ?? (IProviderFactory)new AgentProviderFactory(_orchestrator, _httpClientFactory, config);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
