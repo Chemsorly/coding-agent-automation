@@ -511,8 +511,8 @@
     private static (string Text, string StyleClass) GetReadinessDisplay(BacklogIssue b)
     {
         if (b.IsReady) return ("Ready", "success");
-        if (b.BlockedBy.Count > 0)
-            return ($"Blocked by {string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))}", "warning");
+        if (b.BlockedBy.Count > 0 || (b.BlockedByUrls?.Count ?? 0) > 0)
+            return ($"Blocked by {string.Join(", ", b.BlockedBy.Select(n => $"#{n}").Concat(b.BlockedByUrls ?? []))}", "warning");
         // Not ready due to a lifecycle label — determine the most specific display text.
         return FindLabelDisplay(b.Labels) ?? ("Not ready", "muted");
     }

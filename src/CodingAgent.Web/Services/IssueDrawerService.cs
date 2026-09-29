@@ -195,9 +195,21 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         if (depProviderConfig != null)
         {
             await using var issueProvider = _providerFactory.CreateIssueProvider(depProviderConfig);
+            // TODO: The single-provider CheckAsync overload is used here. It forwards to the
+            // cross-tracker overload with empty allProviders/providerUrlPrefixes, which means
+            // any URL-based cross-tracker dependency (e.g. "Depends on https://github.com/acme/api/issues/40"
+            // written by the decomposition step) will always be logged as "No configured issue
+            // provider matches URL dependency" and treated as unresolved — permanently blocking
+            // dispatch from the drawer even after the dependency closes. Fix: pass all configured
+            // issue providers and their URL prefixes (derived from issueProviders) to the full
+            // cross-tracker overload so URL deps are resolved correctly here too.
             var depResult = await _dependencyChecker.CheckAsync(issue.Identifier, issue.Description, issueProvider, new Dictionary<int, bool>(), CancellationToken.None);
             if (!depResult.IsReady)
-                return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
+            {
+                var allBlocked = depResult.BlockedBy.Select(n => $"#{n}")
+                    .Concat(depResult.BlockedByUrls ?? []);
+                return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", allBlocked)}", null);
+            }
         }
 
         // EpicReview is a terminal state in the epic decomposition workflow. Unlike other terminal

@@ -77,8 +77,8 @@ public sealed class BlockedIssuesService
     {
         var backlog = await GetBacklogAsync(projectId, ct);
         return backlog.Issues
-            .Where(b => !b.IsReady && b.BlockedBy.Count > 0)
-            .Select(b => new BlockedIssue(b.Identifier, b.Title, b.BlockedBy, b.Url))
+            .Where(b => !b.IsReady && (b.BlockedBy.Count > 0 || (b.BlockedByUrls?.Count ?? 0) > 0))
+            .Select(b => new BlockedIssue(b.Identifier, b.Title, b.BlockedBy, b.Url, b.BlockedByUrls))
             .ToList();
     }
 
@@ -169,7 +169,7 @@ public sealed class BlockedIssuesService
                         // dispatch readiness, regardless of what the dependency checker returned.
                         var isReady = check.IsReady
                             && (issue.Labels is null || !issue.Labels.Any(l => NotReadyLabels.Contains(l)));
-                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors));
+                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors, check.BlockedByUrls));
                         providerFetched++;
                     }
 
