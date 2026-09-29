@@ -187,6 +187,22 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             var responseText = await chatPage.GetResponseTextAsync(timeoutMs: 15_000);
             Assert.NotNull(responseText);
             Assert.Contains("The answer is 4.", responseText, StringComparison.OrdinalIgnoreCase);
+
+            // ── Cleanup: end the chat session explicitly before the test exits ──
+            // This ensures the Blazor component calls TerminateChatSessionAsync synchronously
+            // (inside the test, while the API host is still fully alive) rather than deferring
+            // it to circuit teardown during E2ETestBase.DisposeAsync(). Without this, the
+            // deferred TerminateChatSessionAsync makes an HTTP call to the API host AFTER the
+            // test exits but BEFORE E2EFixture.DisposeAsync() completes — the in-flight HTTP
+            // call can race with _apiFactory.DisposeAsync() and throw ObjectDisposedException
+            // during collection cleanup.
+            //
+            // WaitForLaunchStateAsync is the reliable sentinel that EndChatK8sModeAsync has
+            // completed: AgentChat.EndChat() calls StateHasChanged() only after EndChatK8sModeAsync
+            // returns, so #template-select is not rendered until the HTTP TerminateChat call
+            // has finished. This means the HTTP call is done by the time this await returns.
+            await chatPage.EndChatAsync();
+            await chatPage.WaitForLaunchStateAsync(timeoutMs: 40_000);
         }
     }
 
