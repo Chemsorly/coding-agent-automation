@@ -781,6 +781,203 @@ public sealed class ConsolidationServiceTests : IDisposable
 
     #endregion
 
+    #region TriggerAsync — DistributeAsync throws exception
+
+    [Fact]
+    public async Task TriggerAsync_WhenDistributeAsyncThrows_ReturnsNullAndClearsFeedbackCache()
+    {
+        // Covers: ConsolidationService.cs lines 303-309 (catch block when DistributeAsync throws)
+        // The catch path clears the feedback cache and returns null — distinct from the
+        // IsPermanentFailure / transient-failure paths which go through !result.Success.
+        var mockFeedbackCache = new Mock<IConsolidationFeedbackCache>();
+        mockFeedbackCache
+            .Setup(c => c.PrepareFeedbackDataAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated distributor failure"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            new InMemoryHarnessSuggestionStore(),
+            _mockProviderConfigStore.Object,
+            FeedbackCache: mockFeedbackCache.Object,
+            WorkDistributor: _mockWorkDistributor.Object));
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().BeNull("TriggerAsync must return null when DistributeAsync throws");
+        mockFeedbackCache.Verify(
+            c => c.ClearFeedbackDataForRun(It.IsAny<RunId>()),
+            Times.Once,
+            "feedback cache must be cleared even when DistributeAsync throws");
+    }
+
+    #endregion
+
+    #region GetLastRunAsync — returns most recent matching run
+
+    [Fact]
+    public async Task GetLastRunAsync_WithMatchingRuns_ReturnsMostRecent()
+    {
+        // Covers: ConsolidationService.cs lines 371-378 (GetLastRunAsync method body)
+        // Seeds two runs of the same type+template; verifies the most recent is returned.
+        var store = new FileSystemConsolidationRunStore(_runsDir);
+        var older = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            TemplateId = "tmpl-1",
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-20),
+            Status = ConsolidationRunStatus.Succeeded
+        };
+        var newer = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.BrainConsolidation,
+            TemplateId = "tmpl-1",
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Status = ConsolidationRunStatus.Succeeded
+        };
+        var differentType = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "tmpl-1",
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Succeeded
+        };
+        await store.SaveRunAsync(older, CancellationToken.None);
+        await store.SaveRunAsync(newer, CancellationToken.None);
+        await store.SaveRunAsync(differentType, CancellationToken.None);
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
+            store, new InMemoryHarnessSuggestionStore(), _mockProviderConfigStore.Object));
+
+        var result = await sut.GetLastRunAsync(
+            ConsolidationRunType.BrainConsolidation, new TemplateId("tmpl-1"), CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.RunId.Should().Be(newer.RunId, "GetLastRunAsync must return the most recent matching run");
+    }
+
+    [Fact]
+    public async Task GetLastRunAsync_NoMatchingRuns_ReturnsNull()
+    {
+        // Covers: GetLastRunAsync returns null (FirstOrDefault fallback) when no runs match.
+        var sut = CreateSut();
+
+        var result = await sut.GetLastRunAsync(
+            ConsolidationRunType.BrainConsolidation, new TemplateId("tmpl-1"), CancellationToken.None);
+
+        result.Should().BeNull("GetLastRunAsync must return null when no matching runs exist");
+    }
+
+    #endregion
+
+    #region UpdateRunAsync — null/empty runId guard
+
+    [Fact]
+    public async Task UpdateRunAsync_WithEmptyRunId_IsNoOpAndDoesNotThrow()
+    {
+        // Covers: ConsolidationService.cs lines 393-395
+        // The null/empty guard in UpdateRunAsync (no-op path introduced in issue #3028).
+        var sut = CreateSut();
+
+        var act = () => sut.UpdateRunAsync(
+            new RunId(""),
+            ConsolidationRunStatus.Succeeded,
+            "summary",
+            CancellationToken.None);
+
+        await act.Should().NotThrowAsync(
+            "UpdateRunAsync must not throw for empty RunId (it's a no-op after #3028)");
+    }
+
+    [Fact]
+    public async Task UpdateRunAsync_WithWhitespaceRunId_IsNoOpAndDoesNotThrow()
+    {
+        // Covers the whitespace branch of string.IsNullOrWhiteSpace in UpdateRunAsync.
+        var sut = CreateSut();
+
+        var act = () => sut.UpdateRunAsync(
+            new RunId("   "),
+            ConsolidationRunStatus.Succeeded,
+            null,
+            CancellationToken.None);
+
+        await act.Should().NotThrowAsync(
+            "UpdateRunAsync must not throw for whitespace RunId");
+    }
+
+    #endregion
+
+    #region GetHarnessSuggestionsAsync / SaveHarnessSuggestionsAsync — exception paths
+
+    [Fact]
+    public async Task GetHarnessSuggestionsAsync_WhenStoreThrows_ReturnsNull()
+    {
+        // Covers: ConsolidationService.cs line 427 (catch block in GetHarnessSuggestionsAsync)
+        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
+        mockHarnessStore
+            .Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated read failure"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            mockHarnessStore.Object,
+            _mockProviderConfigStore.Object));
+
+        var result = await sut.GetHarnessSuggestionsAsync(CancellationToken.None);
+
+        result.Should().BeNull("GetHarnessSuggestionsAsync must return null when the store throws");
+    }
+
+    [Fact]
+    public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_DoesNotThrow()
+    {
+        // Covers: ConsolidationService.cs line 452 (catch block in SaveHarnessSuggestionsAsync)
+        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
+        mockHarnessStore
+            .Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated write failure"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            mockHarnessStore.Object,
+            _mockProviderConfigStore.Object));
+
+        var suggestions = new HarnessSuggestions
+        {
+            GeneratedAtUtc = DateTime.UtcNow,
+            BasedOnRunCount = 1,
+            SuccessRate = 1.0m,
+            Suggestions = []
+        };
+
+        var act = () => sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
+
+        await act.Should().NotThrowAsync(
+            "SaveHarnessSuggestionsAsync must swallow store exceptions and not propagate them");
+    }
+
+    #endregion
+
     #region IConsolidationRunTracker
 
     [Fact]
