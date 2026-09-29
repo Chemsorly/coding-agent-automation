@@ -29,7 +29,7 @@ internal sealed partial class DispatchScheduler
             if (!decompositionQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
                 return DispatchAttemptResult.Skip;
 
-            // Re-check concurrency limit before each dispatch
+            // Re-check concurrency limit before each dispatch.
             // TODO: [WARNING] additionalDecompDispatches is a closure variable mutated inside this lambda and
             // read here for the concurrency guard. DispatchRoundAsync invokes the lambda sequentially, so
             // this is safe today. If DispatchRoundAsync is ever changed to invoke delegates concurrently,
@@ -45,65 +45,78 @@ internal sealed partial class DispatchScheduler
             var epic = TryDequeueValidEpic(queue, ctx);
             if (epic is null) return DispatchAttemptResult.Skip;
 
-            var epicItem = epic.Value;
-            var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-
-            ctx.TrackingReportIssue(epicItem.Issue.Identifier);
-            ctx.ReportStatus($"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'");
-            ctx.NotifyChange();
-
-            var decompProject = ctx.TemplateProjectLookup.GetValueOrDefault(template.Id);
-            var dispatchOutcome = await DispatchViaOrchestrationAsync(
-                async ct => await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
-                    new DecompositionDispatchOrchestrationRequest
-                    {
-                        EpicIdentifier = epicItem.Issue.Identifier,
-                        EpicTitle = epicItem.Issue.Title ?? "",
-                        PhaseType = epicItem.Phase,
-                        IssueProviderId = epicItem.IssueProviderId,
-                        RepoProviderId = template.RepoProviderId,
-                        BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = InitiatedByConstants.LoopDecomposition,
-                        // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
-                        // to guard against regression and validate fallback PipelineProject behavior downstream.
-                        Project = decompProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
-                    },
-                    ct),
-                stopToken);
-
-            if (dispatchOutcome == DispatchAttemptOutcome.AlreadyQueued)
-            {
-                // 409 — live WorkItem already exists. Do not count as dispatched, do not consume budget.
-                // TODO [WARNING]: ActiveIssueIdentifiers is not updated here, so if a second template
-                // in the same cycle also queues this epic, it will reach PrepareDecompositionDistributionRequestAsync
-                // and call the API again, receiving a second 409. This is safe (handled correctly) but
-                // results in an extra prepare+distribute round-trip per duplicate per cycle. Consider
-                // adding the identifier to ctx.ActiveIssueIdentifiers on AlreadyQueued to short-circuit
-                // the redundant API call in the second template's turn.
-                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-                    PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                return DispatchAttemptResult.Skip;
-            }
-
-            var dispatched = dispatchOutcome == DispatchAttemptOutcome.Dispatched;
-
-            if (dispatched)
-            {
-                additionalDecompDispatches++;
-                _logger.Information("Dispatched epic #{EpicIdentifier} in tracker {IssueProviderId} ({Phase}) from template '{Template}'",
-                    epicItem.Issue.Identifier, epicItem.IssueProviderId, epicItem.Phase, template.Name);
-                // Add to the in-cycle active set so a second template queuing the same epic
-                // in this cycle sees it as already active and skips it.
-                ctx.ActiveIssueIdentifiers.Add((epicItem.Issue.Identifier, epicItem.IssueProviderId));
-            }
-
-            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-                dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
-
-            return new DispatchAttemptResult(dispatched);
+            var (result, dispatched) = await DispatchDecompositionCandidateAsync(epic.Value, template, ctx, stopToken);
+            if (dispatched) additionalDecompDispatches++;
+            return result;
         }, ctx.RemainingBudget, ctx.GetCurrentIssueIdentifier, stoppingToken, ct);
 
         return (madeProgress, consumed, processed, failed, additionalDecompDispatches);
+    }
+
+    /// <summary>
+    /// Prepares and dispatches a single epic candidate. Returns the dispatch attempt result and
+    /// whether a new WorkItem was actually dispatched (vs skipped due to 409 or no agent).
+    /// </summary>
+    private async Task<(DispatchAttemptResult result, bool dispatched)> DispatchDecompositionCandidateAsync(
+        EpicCandidate epicItem,
+        PipelineJobTemplate template,
+        RoundDispatchContext ctx,
+        CancellationToken stopToken)
+    {
+        var phaseLabel = epicItem.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+
+        ctx.TrackingReportIssue(epicItem.Issue.Identifier);
+        ctx.ReportStatus($"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'");
+        ctx.NotifyChange();
+
+        var decompProject = ctx.TemplateProjectLookup.GetValueOrDefault(template.Id);
+        var dispatchOutcome = await DispatchViaOrchestrationAsync(
+            async ct => await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                new DecompositionDispatchOrchestrationRequest
+                {
+                    EpicIdentifier = epicItem.Issue.Identifier,
+                    EpicTitle = epicItem.Issue.Title ?? "",
+                    PhaseType = epicItem.Phase,
+                    IssueProviderId = epicItem.IssueProviderId,
+                    RepoProviderId = template.RepoProviderId,
+                    BrainProviderId = template.BrainProviderId,
+                    InitiatedBy = InitiatedByConstants.LoopDecomposition,
+                    // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
+                    // to guard against regression and validate fallback PipelineProject behavior downstream.
+                    Project = decompProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
+                },
+                ct),
+            stopToken);
+
+        if (dispatchOutcome == DispatchAttemptOutcome.AlreadyQueued)
+        {
+            // 409 — live WorkItem already exists. Do not count as dispatched, do not consume budget.
+            // TODO [WARNING]: ActiveIssueIdentifiers is not updated here, so if a second template
+            // in the same cycle also queues this epic, it will reach PrepareDecompositionDistributionRequestAsync
+            // and call the API again, receiving a second 409. This is safe (handled correctly) but
+            // results in an extra prepare+distribute round-trip per duplicate per cycle. Consider
+            // adding the identifier to ctx.ActiveIssueIdentifiers on AlreadyQueued to short-circuit
+            // the redundant API call in the second template's turn.
+            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+            return (DispatchAttemptResult.Skip, false);
+        }
+
+        var dispatched = dispatchOutcome == DispatchAttemptOutcome.Dispatched;
+
+        if (dispatched)
+        {
+            _logger.Information("Dispatched epic #{EpicIdentifier} in tracker {IssueProviderId} ({Phase}) from template '{Template}'",
+                epicItem.Issue.Identifier, epicItem.IssueProviderId, epicItem.Phase, template.Name);
+            // Add to the in-cycle active set so a second template queuing the same epic
+            // in this cycle sees it as already active and skips it.
+            ctx.ActiveIssueIdentifiers.Add((epicItem.Issue.Identifier, epicItem.IssueProviderId));
+        }
+
+        PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+            dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
+
+        return (new DispatchAttemptResult(dispatched), dispatched);
     }
 
     /// <summary>
