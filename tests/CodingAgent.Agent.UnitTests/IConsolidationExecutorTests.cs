@@ -11,7 +11,6 @@ namespace CodingAgent.Agent.UnitTests;
 /// Defines the behavioral contract:
 /// - LocalConsolidationExecutor implements IConsolidationExecutor
 /// - WorkItemExecutorRouter depends on IConsolidationExecutor (not concrete)
-/// - AgentWorkerService depends on IConsolidationExecutor (not concrete)
 /// - DI resolves IConsolidationExecutor
 /// </summary>
 public class IConsolidationExecutorTests
@@ -54,9 +53,6 @@ public class IConsolidationExecutorTests
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationExecutor");
     }
-
-    // ── ConsolidationJobExecutor depends on interface ─────────────────────
-
 
     // ── Interface definition ─────────────────────────────────────────────
 

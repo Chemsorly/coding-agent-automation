@@ -44,7 +44,6 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
     public event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
     public event Func<string, Task>? OnCancelChat;
     public event Func<FetchModelsRequest, Task>? OnFetchModels;
-    public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
     public event Func<Task>? OnForceDisconnect;
     public event Func<string?, Task>? OnReconnected;
     public event Func<Exception?, Task>? OnClosed;

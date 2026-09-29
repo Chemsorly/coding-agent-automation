@@ -22,13 +22,12 @@ public class ParameterObjectTests
     [Fact]
     public void AgentWorkerServiceDependencies_AllRequiredPropertiesAssigned()
     {
-        // AgentConnectionLifecycle, AgentJobSlotManager, ChatJobExecutor, ConsolidationJobExecutor
-        // are sealed — use null! for the dependency object tests (we test that the record stores
-        // values, not that the classes are functional)
+        // AgentConnectionLifecycle, AgentJobSlotManager and ChatJobExecutor are sealed — use null!
+        // for the dependency object tests (we test that the record stores values, not that the
+        // classes are functional)
         AgentConnectionLifecycle connectionLifecycle = null!;
         AgentJobSlotManager slotManager = null!;
         ChatJobExecutor chatHandler = null!;
-        ConsolidationJobExecutor consolidationHandler = null!;
         var executor = Mock.Of<IPipelineExecutor>();
         var completionReporter = Mock.Of<IJobCompletionReporter>();
         var logger = Mock.Of<Serilog.ILogger>();
@@ -37,7 +36,6 @@ public class ParameterObjectTests
             connectionLifecycle,
             slotManager,
             chatHandler,
-            consolidationHandler,
             executor,
             completionReporter,
             logger);
@@ -45,7 +43,6 @@ public class ParameterObjectTests
         deps.ConnectionLifecycle.Should().BeNull();
         deps.SlotManager.Should().BeNull();
         deps.ChatHandler.Should().BeNull();
-        deps.ConsolidationHandler.Should().BeNull();
         deps.Executor.Should().BeSameAs(executor);
         deps.CompletionReporter.Should().BeSameAs(completionReporter);
         deps.Logger.Should().BeSameAs(logger);

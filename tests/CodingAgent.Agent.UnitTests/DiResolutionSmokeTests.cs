@@ -362,11 +362,6 @@ public class DiResolutionSmokeTests
                 IsOpenCodeProvider: false,
                 IsChatMode: false,
                 Logger: Log.Logger)),
-            new ConsolidationJobExecutor(
-                sp.GetRequiredService<AgentConnectionLifecycle>(),
-                sp.GetRequiredService<AgentJobSlotManager>(),
-                sp.GetRequiredService<IConsolidationExecutor>(),
-                Log.Logger),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
             Log.Logger)));

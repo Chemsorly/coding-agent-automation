@@ -15,9 +15,8 @@ namespace CodingAgent.Agent;
 /// <summary>
 /// Background service that coordinates the agent lifecycle by composing
 /// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection),
-/// <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control),
-/// <see cref="ChatJobExecutor"/> (chat session and model-fetch handling), and
-/// <see cref="ConsolidationJobExecutor"/> (consolidation job handling).
+/// <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control), and
+/// <see cref="ChatJobExecutor"/> (chat session and model-fetch handling).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -46,12 +45,11 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly AgentJobSlotManager _slotManager;
-    // S1450 suppressed: these fields are used only in the constructor for event wiring, but they
-    // must remain as fields so tests can access the handler instances via reflection to verify
+    // S1450 suppressed: this field is used only in the constructor for event wiring, but it
+    // must remain a field so tests can access the handler instance via reflection to verify
     // handler behavior in integration with the service's slot manager and lifecycle.
 #pragma warning disable S1450
     private readonly ChatJobExecutor _chatJobHandler;
-    private readonly ConsolidationJobExecutor _consolidationJobHandler;
 #pragma warning restore S1450
     private readonly IPipelineExecutor _executor;
     private readonly IJobCompletionReporter _completionReporter;
@@ -64,7 +62,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle);
         ArgumentNullException.ThrowIfNull(deps.SlotManager);
         ArgumentNullException.ThrowIfNull(deps.ChatHandler);
-        ArgumentNullException.ThrowIfNull(deps.ConsolidationHandler);
         ArgumentNullException.ThrowIfNull(deps.Executor);
         ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
         ArgumentNullException.ThrowIfNull(deps.Logger);
@@ -72,7 +69,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _connectionLifecycle = deps.ConnectionLifecycle;
         _slotManager = deps.SlotManager;
         _chatJobHandler = deps.ChatHandler;
-        _consolidationJobHandler = deps.ConsolidationHandler;
         _executor = deps.Executor;
         _completionReporter = deps.CompletionReporter;
         _logger = deps.Logger;
@@ -88,7 +84,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _connectionLifecycle.OnCancelChat += _chatJobHandler.HandleCancelChatAsync;
         _connectionLifecycle.OnCancelJob += HandleCancelJobAsync;
         _connectionLifecycle.OnFetchModels += _chatJobHandler.HandleFetchModelsAsync;
-        _connectionLifecycle.OnAssignConsolidationJob += _consolidationJobHandler.HandleAssignConsolidationJobAsync;
 
         if (isChatMode)
         {

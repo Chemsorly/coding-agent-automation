@@ -82,9 +82,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>Fired when the orchestrator requests a model list fetch.</summary>
     public event Func<FetchModelsRequest, Task>? OnFetchModels;
 
-    /// <summary>Fired when the orchestrator assigns a consolidation job.</summary>
-    public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
-
     public AgentConnectionLifecycle( // NOSONAR S107 — constructor consolidates all DI-resolved deps for this lifecycle manager
         IHubConnectionManager hubManager,
         IHubConnectionManagerFactory hubManagerFactory,
@@ -309,7 +306,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         hubManager.OnAssignChatPrompt += msg => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnCancelChat += sessionId => OnCancelChat?.Invoke(sessionId) ?? Task.CompletedTask;
         hubManager.OnFetchModels += request => OnFetchModels?.Invoke(request) ?? Task.CompletedTask;
-        hubManager.OnAssignConsolidationJob += msg => OnAssignConsolidationJob?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnReconnected += HandleReconnectedAsync;
         hubManager.OnClosed += error => HandleTerminalClosedAsync(error);
     }

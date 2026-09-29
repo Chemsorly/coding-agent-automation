@@ -81,30 +81,6 @@ public class AgentWorkerServiceJobSlotTests
         GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"new-job");
     }
 
-    // ── Rejection Notification ───────────────────────────────────────────
-
-    [Fact]
-    public async Task HandleAssignConsolidationJob_WhenBusy_RejectionPathCompletes()
-    {
-        var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-
-        var message = new ConsolidationJobMessage
-        {
-            JobId = "consolidation-rejected",
-            Type = ConsolidationRunType.BrainConsolidation,
-            ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        var consolidationJobHandler = GetConsolidationJobHandler(service);
-        await consolidationJobHandler.HandleAssignConsolidationJobAsync(message);
-
-        // Handler completes without throwing; active job unchanged
-        GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId").Should().Be((JobId)"existing-job");
-    }
-
     // ── Concurrency Race ─────────────────────────────────────────────────
 
     [Fact]
@@ -238,13 +214,5 @@ public class AgentWorkerServiceJobSlotTests
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_slotManager' not found");
         return (AgentJobSlotManager)field.GetValue(service)!;
-    }
-
-    private static ConsolidationJobExecutor GetConsolidationJobHandler(AgentWorkerService service)
-    {
-        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
-        return (ConsolidationJobExecutor)field.GetValue(service)!;
     }
 }

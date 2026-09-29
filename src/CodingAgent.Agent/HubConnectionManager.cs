@@ -65,11 +65,6 @@ public sealed class HubConnectionManager : IHubConnectionManager
     public event Func<string?, Task>? OnReconnected;
 
     /// <summary>
-    /// Fired when the orchestrator assigns a consolidation job to this agent.
-    /// </summary>
-    public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
-
-    /// <summary>
     /// Fired when the orchestrator requests a forced disconnection of this agent.
     /// After subscribers are notified, the connection is stopped automatically.
     /// </summary>
@@ -179,7 +174,6 @@ public sealed class HubConnectionManager : IHubConnectionManager
         _connection.On<ChatPromptMessage>("AssignChatPrompt", HandleAssignChatPromptAsync);
         _connection.On<string>("CancelChat", HandleCancelChatAsync);
         _connection.On<FetchModelsRequest>("RequestFetchModels", HandleRequestFetchModelsAsync);
-        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", HandleAssignConsolidationJobAsync);
         _connection.On("ForceDisconnect", HandleForceDisconnectAsync);
     }
 
@@ -209,14 +203,6 @@ public sealed class HubConnectionManager : IHubConnectionManager
         _logger.Information("Received FetchModels request {RequestId}", request.RequestId);
         if (OnFetchModels is not null)
             await OnFetchModels(request);
-    }
-
-    private async Task HandleAssignConsolidationJobAsync(string agentId, ConsolidationJobMessage message)
-    {
-        _logger.Information("Received consolidation job assignment {JobId} of type {Type}",
-            message.JobId, message.Type);
-        if (OnAssignConsolidationJob is not null)
-            await OnAssignConsolidationJob(message);
     }
 
     private async Task HandleForceDisconnectAsync()
