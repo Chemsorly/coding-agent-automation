@@ -11,6 +11,13 @@ public sealed record DependencyCheckResult
     /// <summary>Issue numbers that are still open (blocking dispatch).</summary>
     public required IReadOnlyList<int> BlockedBy { get; init; }
 
+    /// <summary>
+    /// Full issue URLs that are still open or unresolvable (blocking dispatch).
+    /// Populated when cross-tracker dependencies are found via <see cref="IDependencyChecker"/>
+    /// URL routing. Empty for same-tracker numeric dependencies.
+    /// </summary>
+    public IReadOnlyList<string> BlockedByUrls { get; init; } = Array.Empty<string>();
+
     /// <summary>Total number of dependency references found in the issue body.</summary>
     public required int TotalDependencies { get; init; }
 
@@ -19,6 +26,7 @@ public sealed record DependencyCheckResult
     {
         IsReady = true,
         BlockedBy = Array.Empty<int>(),
+        BlockedByUrls = Array.Empty<string>(),
         TotalDependencies = 0
     };
 }

@@ -18,6 +18,15 @@ public class DecompositionDependencyPropertyTests
 {
     private static readonly ILogger s_logger = new Mock<ILogger>().Object;
 
+    /// <summary>
+    /// Sentinel provider ID used in all property tests — all issues are in the same single
+    /// tracker, so every dependency always resolves to the #N short form.
+    /// </summary>
+    private const string SingleProviderId = "p-test";
+    private const string BaseUrl = "https://github.com/acme/repo/issues/";
+
+    private static string IssueUrl(string number) => $"{BaseUrl}{number}";
+
     #region P8: Dependency Resolution Correctness
 
     /// <summary>
@@ -34,14 +43,14 @@ public class DecompositionDependencyPropertyTests
 
         var issueNumber = issueNum.Get.ToString();
         var resolver = new DependencyResolver();
-        resolver.Register(title, issueNumber);
+        resolver.Register(title, issueNumber, IssueUrl(issueNumber), SingleProviderId);
 
         // Resolve with different casing
         var upperTitle = title.ToUpperInvariant();
         var lowerTitle = title.ToLowerInvariant();
 
-        var resultUpper = resolver.Resolve([upperTitle], s_logger);
-        var resultLower = resolver.Resolve([lowerTitle], s_logger);
+        var resultUpper = resolver.Resolve([upperTitle], SingleProviderId, s_logger);
+        var resultLower = resolver.Resolve([lowerTitle], SingleProviderId, s_logger);
 
         resultUpper.Should().HaveCount(1);
         resultUpper[0].Should().Be($"Depends on #{issueNumber}");
@@ -64,11 +73,11 @@ public class DecompositionDependencyPropertyTests
 
         var issueNumber = issueNum.Get.ToString();
         var resolver = new DependencyResolver();
-        resolver.Register(title, issueNumber);
+        resolver.Register(title, issueNumber, IssueUrl(issueNumber), SingleProviderId);
 
         // Resolve with extra whitespace
         var paddedTitle = $"   {title}   ";
-        var result = resolver.Resolve([paddedTitle], s_logger);
+        var result = resolver.Resolve([paddedTitle], SingleProviderId, s_logger);
 
         result.Should().HaveCount(1);
         result[0].Should().Be($"Depends on #{issueNumber}");
@@ -91,10 +100,10 @@ public class DecompositionDependencyPropertyTests
         var secondNumber = (secondNum.Get + 1000).ToString(); // Ensure different number
 
         var resolver = new DependencyResolver();
-        resolver.Register(title, firstNumber);
-        resolver.Register(title.ToUpperInvariant(), secondNumber); // Same title, different case
+        resolver.Register(title, firstNumber, IssueUrl(firstNumber), SingleProviderId);
+        resolver.Register(title.ToUpperInvariant(), secondNumber, IssueUrl(secondNumber), SingleProviderId); // Same title, different case
 
-        var result = resolver.Resolve([title], s_logger);
+        var result = resolver.Resolve([title], SingleProviderId, s_logger);
 
         result.Should().HaveCount(1);
         result[0].Should().Be($"Depends on #{firstNumber}");
@@ -119,9 +128,9 @@ public class DecompositionDependencyPropertyTests
             return;
 
         var resolver = new DependencyResolver();
-        resolver.Register(registeredTitle, issueNum.Get.ToString());
+        resolver.Register(registeredTitle, issueNum.Get.ToString(), IssueUrl(issueNum.Get.ToString()), SingleProviderId);
 
-        var result = resolver.Resolve([unresolvedTitle], s_logger);
+        var result = resolver.Resolve([unresolvedTitle], SingleProviderId, s_logger);
 
         result.Should().BeEmpty();
     }
@@ -144,7 +153,7 @@ public class DecompositionDependencyPropertyTests
         {
             var title = $"Issue Title {i}";
             var number = (i + 100).ToString();
-            resolver.Register(title, number);
+            resolver.Register(title, number, IssueUrl(number), SingleProviderId);
             registeredTitles.Add((title, number));
         }
 
@@ -162,7 +171,7 @@ public class DecompositionDependencyPropertyTests
         dependencies.Add("Nonexistent Title A");
         dependencies.Add("Nonexistent Title B");
 
-        var result = resolver.Resolve(dependencies, s_logger);
+        var result = resolver.Resolve(dependencies, SingleProviderId, s_logger);
 
         // Only resolved dependencies should appear
         result.Should().HaveCount(expectedResults.Count);
@@ -180,9 +189,9 @@ public class DecompositionDependencyPropertyTests
     public void DependencyResolution_EmptyDependencies_ProducesEmptyResult(PositiveInt issueNum)
     {
         var resolver = new DependencyResolver();
-        resolver.Register("Some Title", issueNum.Get.ToString());
+        resolver.Register("Some Title", issueNum.Get.ToString(), IssueUrl(issueNum.Get.ToString()), SingleProviderId);
 
-        var result = resolver.Resolve([], s_logger);
+        var result = resolver.Resolve([], SingleProviderId, s_logger);
 
         result.Should().BeEmpty();
     }
