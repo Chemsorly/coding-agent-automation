@@ -23,6 +23,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 ///   only rows with a non-null Description are written.
 /// - After a successful inline post, MarkCompletedAsync is called so the relay skips the row.
 /// </summary>
+[Collection("Metrics")]
 public sealed class FeedbackCommentOutboxEnqueueTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
