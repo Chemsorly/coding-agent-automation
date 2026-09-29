@@ -247,12 +247,40 @@ Each agent run's spans are connected to the API request that created the WorkIte
 ```
 POST /api/work-items (API request span)
 └── WorkItemAgent.Execute (K8s agent pod)
-    ├── CloneRepository
-    ├── AnalyzeIssue
-    ├── GenerateCode
-    ├── RunQualityGates
-    └── CreatePullRequest
+    └── ExecutePipeline
+        ├── Step CloneRepository
+        │   └── CloneRepository
+        ├── Step VerifyBaseline
+        │   └── VerifyBaseline
+        ├── Step AnalyzeCode
+        │   └── AnalyzeIssue
+        ├── Step GenerateCode
+        │   └── GenerateCode
+        ├── Step RunQualityGates
+        │   └── RunQualityGates
+        │       ├── QualityGate.Compilation
+        │       ├── QualityGate.Tests
+        │       └── WaitForCi  (pre-PR external CI)
+        ├── Step CreatePullRequest
+        │   └── CreatePullRequest
+        │       └── WaitForCi  (post-PR external CI, inside FinalizePullRequest)
+        └── PrePrCleanup
 ```
+
+**Span structure rules:**
+
+- `PipelineStepRunner` creates one `Step {StepName}` span per step with `pipeline.step` and `pipeline.run_id` tags.
+- Steps that start their own inner span (e.g. `CloneRepository`, `AnalyzeIssue`) nest that inner span inside the runner-created `Step` span — giving two span levels per step.
+- Steps without an inner span (`VerifyBaseline`, `FetchIssue`, etc.) have only the runner-created span.
+- `VerifyBaseline` is a named inner span with `pipeline.run_id` and `pipeline.issue` tags.
+- `WaitForCi` is emitted for both the pre-PR CI path (`QualityGateExecutor.RunExternalCiPollAsync`) and the post-PR CI path (`CiPollingCoordinator.WaitForPostPrCiAsync`). Tags: `pipeline.run_id`, `pipeline.run_type`, `pipeline.ci_path` (`pre_pr` or `post_pr`), `pipeline.ci_status`, `pipeline.ci_infra_retries`.
+- `PrePrCleanup` is emitted by `PipelineCleanup.RunAsync` as a child of `ExecutePipeline`.
+
+**Error status rules:**
+
+- A step span (`Step X`) has Error status only when that step operation failed (unhandled exception from `ExecuteAsync`, or `TryCriticalAsync` failure).
+- Non-critical failures (`TryNonCriticalAsync`) add an `exception` event with `pipeline.non_critical=true` to the current step span. The span status remains Unset — no Error.
+- `ExecutePipeline` has Error status only when the run ends `PipelineStep.Failed`. All other terminal states (`Completed`, `ConflictRestart`, `PrMerged`, `PrClosed`, `Cancelled`) leave it Ok or Unset.
 
 This is achieved by capturing the W3C `traceparent` from the API request span at WorkItem creation time (`WorkItemDispatchEndpoints.cs`, `DispatchWorkItemService.cs`), storing it in `WorkItemEntity.TraceParent`, and injecting it as the `TRACEPARENT` environment variable in the K8s Job (`DispatchLifecycleService.CreateK8sJobAsync` → `JobSpecBuilder.Build`). The agent process restores this context in `WorkItemAgentService.ExecuteAsync` and starts `WorkItemAgent.Execute` as a child.
 
@@ -283,8 +311,10 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
-| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
+| `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution. Error status set only when run ends `Failed`. |
+| `Step {StepName}` | `pipeline.step`, `pipeline.run_id` | Runner-created span per step (emitted by `PipelineStepRunner`). Error status set on unhandled exception. Non-critical failures add exception event, no Error. |
+| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace (child of `Step CloneRepository`) |
+| `VerifyBaseline` | `pipeline.run_id`, `pipeline.issue` | Agent health check + workspace baseline verification (child of `Step VerifyBaseline`). Error status set on fatal health-check failure only. |
 | `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
 | `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
 | `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
@@ -294,6 +324,7 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |
 | `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
+| `WaitForCi` | `pipeline.run_id`, `pipeline.run_type`, `pipeline.ci_path`, `pipeline.ci_status`, `pipeline.ci_infra_retries` | External CI polling span. `pipeline.ci_path` is `pre_pr` (inside `RunExternalCiPollAsync`) or `post_pr` (inside `WaitForPostPrCiAsync`). |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
 | `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `pipeline.review_agent`, `pipeline.isolated` | Individual review agent execution (child of CodeReview.Iteration) |
@@ -311,6 +342,7 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 | `Reflection` | `pipeline.run_id` | Post-PR reflection prompt (child of FinalizePullRequest) |
 | `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run (child of FinalizePullRequest) |
 | `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection (child of FinalizePullRequest) |
+| `PrePrCleanup` | `pipeline.run_id` | Workspace deletion + reporter disposal (child of ExecutePipeline, emitted by `PipelineCleanup.RunAsync`) |
 | `Hub.ReportJobCompleted` | `job_id`, `success` | Hub business logic for job completion |
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
@@ -444,38 +476,53 @@ Expected span hierarchy for an implementation run:
 
 ```
 ExecutePipeline
-├── AnalyzeIssue
-├── GenerateCode
-├── ReviewCode
-│   ├── CodeReview.Iteration
-│   │   ├── CodeReview.Agent (per agent)
-│   │   └── ...
-│   └── ...
-├── RunQualityGates
-│   ├── QualityGate.Compilation
-│   └── QualityGate.Tests
-├── CreatePullRequest
-├── GeneratePrDescription
-└── FinalizePullRequest
-    ├── Reflection
-    ├── BrainSyncPostRun
-    └── FeedbackCollection
+├── Step CloneRepository
+│   └── CloneRepository
+├── Step VerifyBaseline
+│   └── VerifyBaseline
+├── Step AnalyzeCode
+│   └── AnalyzeIssue
+├── Step GenerateCode
+│   └── GenerateCode
+├── Step ReviewCode
+│   └── ReviewCode
+│       ├── CodeReview.Iteration
+│       │   ├── CodeReview.Agent (per agent)
+│       │   └── ...
+│       └── ...
+├── Step RunQualityGates
+│   └── RunQualityGates
+│       ├── QualityGate.Compilation
+│       ├── QualityGate.Tests
+│       └── WaitForCi  (pre-PR external CI, pipeline.ci_path=pre_pr)
+├── Step CreatePullRequest
+│   └── CreatePullRequest
+│       ├── GeneratePrDescription
+│       └── FinalizePullRequest
+│           ├── WaitForCi  (post-PR external CI, pipeline.ci_path=post_pr)
+│           ├── Reflection
+│           ├── BrainSyncPostRun
+│           └── FeedbackCollection
+└── PrePrCleanup
 ```
 
 For a review run:
 
 ```
 ExecutePipeline
-├── ExtractLinkedIssues
-├── ReviewCode
-└── PostReviewFindings
+├── Step ExtractLinkedIssues
+├── Step ReviewCode
+│   └── ReviewCode
+├── Step PostReviewFindings
+│   └── PostReviewFindings
+└── PrePrCleanup
 ```
 
 For a decomposition run (Phase 1):
 
 ```
 ExecutePipeline
-└── DecompositionAnalysis
+└── Step DecompositionAnalysis
     └── PostDecompositionPlan
 ```
 
