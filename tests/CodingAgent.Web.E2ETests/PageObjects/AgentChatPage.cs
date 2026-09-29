@@ -94,12 +94,30 @@ public sealed class AgentChatPage
     }
 
     /// <summary>
-    /// Waits until the launch error message appears in the page (e.g. timeout or no PVC).
+    /// Waits until the launch ERROR message appears in the page (e.g. connect timeout or no PVC).
     /// Returns the error text.
+    ///
+    /// <para>
+    /// Both the in-progress "Launching chat pod..." indicator and the final error message use the
+    /// <c>.agent-detail-warning</c> CSS class (see <c>AgentChat.razor</c>). This method waits
+    /// until the element is present AND does NOT contain the transient "Launching" text, ensuring
+    /// callers only receive control once the actual error message has been rendered (i.e., after
+    /// <c>_launching</c> is set to <c>false</c> in the component's <c>finally</c> block).
+    /// </para>
     /// </summary>
     public async Task<string?> WaitForLaunchErrorAsync(int timeoutMs = 30_000)
     {
-        var errorEl = await _page.WaitForSelectorAsync(".agent-detail-warning", new() { Timeout = timeoutMs });
+        // Wait until .agent-detail-warning is present AND does not contain "Launching"
+        // (the in-progress counter). Once _launching = false and _launchError is set the
+        // "Launching…" div is removed and the error div takes its place.
+        await _page.WaitForFunctionAsync(
+            "() => { " +
+            "  const el = document.querySelector('.agent-detail-warning'); " +
+            "  return el && !el.textContent.includes('Launching'); " +
+            "}",
+            null,
+            new PageWaitForFunctionOptions { Timeout = timeoutMs });
+        var errorEl = await _page.QuerySelectorAsync(".agent-detail-warning");
         if (errorEl is null) return null;
         return await errorEl.InnerTextAsync();
     }
