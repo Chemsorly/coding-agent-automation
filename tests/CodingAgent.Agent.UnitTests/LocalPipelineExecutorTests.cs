@@ -409,6 +409,76 @@ public class LocalPipelineExecutorTests : IDisposable
         ex.WithMessage("*non-existent-agent-config*");
     }
 
+    [Fact]
+    public async Task ExecuteAsync_WithProviderFactoryOverride_BypassesProviderConfigLookup()
+    {
+        // Arrange — job has empty ProviderConfigs (simulates a smoke-test work item with minimal payload).
+        // Without the override, this would throw "not found". With the override, the factory is used
+        // instead and the dummy ProviderConfig placeholders are substituted for the lookup.
+        var mockFactory = new Mock<IProviderFactory>();
+        var mockRepo = new Mock<IRepositoryProvider>();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockRepo.Setup(r => r.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockAgent.Setup(a => a.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockAgent.SetupGet(a => a.PipelineInjectedPaths).Returns([]);
+        mockAgent.SetupGet(a => a.ProviderType).Returns(AgentProviderType.KiroCli);
+        mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(mockRepo.Object);
+        mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgent.Object);
+
+        var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object,
+            _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object,
+            AgentIdentity: new AgentId("test-agent"),
+            ProviderFactoryOverride: mockFactory.Object));
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "smoke-test-job",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            // Intentionally empty — no provider configs in the payload (smoke test scenario)
+            RepoProviderConfigId = "",
+            AgentProviderConfigId = "",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "smoke-test"
+        };
+
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+
+        // Act — the pipeline proceeds past the provider config lookup (no "not found" exception).
+        // It may complete or fail from a different cause (disconnected hub, missing workspace, etc.),
+        // but must NOT throw InvalidOperationException about missing provider configs.
+        Exception? thrownException = null;
+        try
+        {
+            await executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found in job assignment"))
+        {
+            // This is the specific exception the override must suppress — fail the test explicitly.
+            false.Should().BeTrue(
+                $"ExecuteAsync threw 'not found in job assignment' even though ProviderFactoryOverride is set. Message: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // Any other exception (from disconnected hub, pipeline steps, etc.) is acceptable.
+            thrownException = ex;
+            _ = thrownException; // suppress unused variable warning
+        }
+
+        // Verify the override factory was actually called (proving the if-branch was hit)
+        mockFactory.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.AtLeastOnce(),
+            "provider factory override must be used for repository provider creation");
+        mockFactory.Verify(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>()), Times.AtLeastOnce(),
+            "provider factory override must be used for agent provider creation");
+    }
+
     // ── BuildCompletionPayload ───────────────────────────────────────────
 
     [Fact]

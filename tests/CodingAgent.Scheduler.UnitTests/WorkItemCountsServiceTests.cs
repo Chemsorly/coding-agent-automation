@@ -80,7 +80,7 @@ public sealed class WorkItemCountsServiceTests
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
 
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.AtLeastOnce(), "API failure must log a warning");

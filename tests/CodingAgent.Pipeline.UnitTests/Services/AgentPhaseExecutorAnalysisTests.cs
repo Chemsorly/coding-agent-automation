@@ -4,8 +4,6 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
-using CodingAgent.Web.TestUtilities;
-using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests;
@@ -24,8 +22,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     private readonly PipelineConfiguration _config;
     private readonly AgentPhaseExecutor _executor;
     private readonly string _workspacePath;
-
-    private readonly TestMeterFactory _meterFactory = new();
 
     public AgentPhaseExecutorAnalysisTests()
     {
@@ -56,7 +52,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             AnalysisReviewEnabled = false
         };
 
-        _executor = new AgentPhaseExecutor(_mockLogger.Object, _meterFactory);
+        _executor = new AgentPhaseExecutor(_mockLogger.Object);
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
@@ -70,7 +66,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
     public void Dispose()
     {
-        _meterFactory.Dispose();
         try { Directory.Delete(_workspacePath, recursive: true); } catch { }
     }
 
@@ -466,51 +461,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
 
         capturedPrompt.Should().NotContain("## Rework Context");
         capturedPrompt.Should().NotContain("rework run");
-    }
-
-    // --- Analysis gate outcome metric tests ---
-
-    [Fact]
-    public async Task EvaluateAnalysisGate_NotReadyAssessment_EmitsNotReadyMetric()
-    {
-        // not_ready recommendation with no blocking issues — unambiguously exercises the not_ready path
-        SetupAgentWithValidAnalysis("not_ready");
-        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.analysis.gate_outcome");
-
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
-
-        result.Should().BeFalse();
-        _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.NotReady);
-        collector.GetMeasurementSnapshot().Should().Contain(m =>
-            m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "not_ready")));
-    }
-
-    [Fact]
-    public async Task EvaluateAnalysisGate_WontDoAssessment_EmitsWontDoMetric()
-    {
-        SetupAgentWithValidAnalysis("wont_do");
-        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.analysis.gate_outcome");
-
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
-
-        result.Should().BeFalse();
-        _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
-        collector.GetMeasurementSnapshot().Should().Contain(m =>
-            m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "wont_do")));
-    }
-
-    [Fact]
-    public async Task EvaluateAnalysisGate_ReadyAssessment_EmitsReadyMetricAndReturnsTrue()
-    {
-        SetupAgentWithValidAnalysis("ready");
-        using var collector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "pipeline.analysis.gate_outcome");
-
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
-
-        result.Should().BeTrue();
-        _run.AnalysisRecommendation.Should().Be(AnalysisGateResult.Ready);
-        collector.GetMeasurementSnapshot().Should().Contain(m =>
-            m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "ready")));
     }
 
     // --- Gate FailureCategory tests (issue #2956) ---

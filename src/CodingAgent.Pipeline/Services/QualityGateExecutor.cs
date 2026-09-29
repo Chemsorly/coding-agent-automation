@@ -27,8 +27,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private readonly Histogram<double> _postPrCiDuration;
     private readonly Counter<long> _qualityGateRetries;
     private readonly Counter<long> _qualityGateEvaluations;
-    private readonly Histogram<double> _stepDuration;
-    private readonly Counter<long> _stepCount;
     private readonly Histogram<double> _externalCiDuration;
     private readonly Counter<long> _stallWarnings;
     private readonly Counter<long> _stallKills;
@@ -65,9 +63,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
                 advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600] });
             _qualityGateRetries = meter.CreateCounter<long>("quality_gate.retries", "{retry}", "Quality gate retry attempts");
             _qualityGateEvaluations = meter.CreateCounter<long>("quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
-            _stepDuration = meter.CreateHistogram<double>("pipeline.step.duration", "s", "Duration of individual pipeline steps",
-                advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600] });
-            _stepCount = meter.CreateCounter<long>("pipeline.step.count", "{step}", "Pipeline step execution count");
             _externalCiDuration = meter.CreateHistogram<double>(
                 "quality_gate.external_ci.duration", "s", "Time waiting for external CI",
                 advice: new InstrumentAdvice<double>
@@ -84,8 +79,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _postPrCiDuration = PipelineTelemetry.PostPrCiDuration;
             _qualityGateRetries = PipelineTelemetry.QualityGateRetries;
             _qualityGateEvaluations = PipelineTelemetry.QualityGateEvaluations;
-            _stepDuration = PipelineTelemetry.StepDuration;
-            _stepCount = PipelineTelemetry.StepCount;
             _externalCiDuration = PipelineTelemetry.ExternalCiDuration;
             _stallWarnings = PipelineTelemetry.StallWarnings;
             _stallKills = PipelineTelemetry.StallKills;
@@ -97,7 +90,7 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         _ciPollingCoordinator = new CiPollingCoordinator(
             logger,
             ciLogWriter,
-            new CiPollingMetrics(_externalCiDuration, _postPrCiDuration, _stepDuration, _stepCount));
+            new CiPollingMetrics(_externalCiDuration, _postPrCiDuration));
     }
 
     private const string GateStatusPassed = "PASSED";

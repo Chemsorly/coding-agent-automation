@@ -371,9 +371,6 @@ public partial class AgentPhaseExecutor
         run.AnalysisConcerns = assessment?.Concerns ?? Array.Empty<string>();
         run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
 
-        if (run.AnalysisRecommendation is not null)
-            RecordAnalysisGateOutcome(run.AnalysisRecommendation.Value, run);
-
         // isNotReady is checked first: non-empty blockingIssues forces not_ready regardless of recommendation
         var isNotReady = assessment != null && (
             run.AnalysisRecommendation == AnalysisGateResult.NotReady

@@ -52,17 +52,38 @@ public static class PipelineTelemetry
             HistogramBucketBoundaries = [60, 300, 600, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 21600, 28800, 43200]
         });
 
-    public static readonly Counter<long> SubIssuesCreated = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.created");
-    public static readonly Counter<long> SubIssuesFailed = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.failed");
-
-    public static readonly Histogram<double> StepDuration = Meter.CreateHistogram<double>(
-        "pipeline.step.duration", "s", "Duration of individual pipeline steps",
+    /// <summary>
+    /// Histogram: per-step duration recorded by the API on each step transition.
+    /// Tags: run_type, step (PipelineStep name).
+    /// Not pre-initialized (histograms cannot be pre-initialized).
+    /// Recorded once per step visit in <c>HandleStepTransition</c>.
+    /// </summary>
+    public static readonly Histogram<double> RunStepDuration = Meter.CreateHistogram<double>(
+        "pipeline.run.step.duration", "s", "Duration of each pipeline step (API-recorded)",
         advice: new InstrumentAdvice<double>
         {
-            HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+            HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800]
         });
-    public static readonly Counter<long> StepCount = Meter.CreateCounter<long>(
-        "pipeline.step.count", "{step}", "Pipeline step execution count");
+
+    /// <summary>
+    /// Counter: sub-issues created or failed per decomposition run. Recorded once per run.
+    /// Tags: result (created / failed).
+    /// Pre-initialized in <c>Program.EmitPreInitCounters</c> for all 2 tag combinations.
+    /// </summary>
+    public static readonly Counter<long> RunSubIssues = Meter.CreateCounter<long>(
+        "pipeline.run.sub_issues", "{issue}", "Sub-issue creation results per decomposition run");
+
+    /// <summary>
+    /// Counter: brain update result per run (pushed / none). Recorded once per non-consolidation run.
+    /// Tags: result (pushed / none).
+    /// Pre-initialized in <c>Program.EmitPreInitCounters</c> for all 2 tag combinations.
+    /// </summary>
+    // TODO: [WARNING] Unit is UnitRun = "{run}" (confirmed correct per OTel spec). If this constant is
+    // ever changed (e.g. to "run" without braces), the Prometheus exporter will emit a non-standard unit
+    // annotation. RunSubIssues uses "{issue}" — the unit mismatch between the two new counters is
+    // intentional per the requirements table. See review findings [WARNING] DotNetSpecialist L87.
+    public static readonly Counter<long> RunBrainUpdates = Meter.CreateCounter<long>(
+        "pipeline.run.brain_updates", UnitRun, "Brain update results at run completion");
     public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
         "agent.tokens.used", "{token}", "Agent tokens consumed");
     public static readonly Counter<double> CostUsd = Meter.CreateCounter<double>(
@@ -74,9 +95,6 @@ public static class PipelineTelemetry
         "quality_gate.duration", "s", "Total time in quality gate phase");
     public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
         "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
-    public static readonly Counter<long> ReviewSkipped = Meter.CreateCounter<long>(
-        "pipeline.review.skipped", "{skip}",
-        "Code review phase skipped due to empty resolved reviewer configs (all deleted or disabled)");
     public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
         "quality_gate.external_ci.duration", "s", "Time waiting for external CI",
         advice: new InstrumentAdvice<double>
@@ -121,23 +139,7 @@ public static class PipelineTelemetry
         "consolidation.dispatch.permanent_failures", UnitFailure,
         "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
 
-    // Brain metrics
-    public static readonly Counter<long> BrainSyncsCompleted = Meter.CreateCounter<long>(
-        "brain.syncs.completed", UnitSync, "Successful brain pre-run sync operations");
-    public static readonly Counter<long> BrainUpdatesCommitted = Meter.CreateCounter<long>(
-        "brain.updates.committed", "{commit}", "Brain post-run commits pushed");
-    public static readonly Counter<long> BrainUpdatesEmpty = Meter.CreateCounter<long>(
-        "brain.updates.empty", UnitSync, "Runs where agent produced no brain changes");
-    public static readonly Counter<long> BrainFilesWritten = Meter.CreateCounter<long>(
-        "brain.files.written", "{file}", "Total brain files committed across all runs");
-    public static readonly Counter<long> BrainSyncSkipped = Meter.CreateCounter<long>(
-        "brain.sync.skipped", UnitSync, "Runs where post-run brain sync was skipped (tagged by reason)");
-    public static readonly Histogram<double> BrainSyncDuration = Meter.CreateHistogram<double>(
-        "brain.sync.duration", "s", "Duration of brain sync operations",
-        advice: new InstrumentAdvice<double>
-        {
-            HistogramBucketBoundaries = [1, 2, 5, 10, 20, 30, 60, 120, 300]
-        });
+    // Brain metrics (kept: BrainPushRetries used in BrainUpdateService in Infrastructure.Providers)
     public static readonly Counter<long> BrainPushRetries = Meter.CreateCounter<long>(
         "brain.push.retries", UnitRetry, "Brain repo push retry attempts on non-fast-forward conflict");
 
@@ -405,18 +407,6 @@ public static class PipelineTelemetry
         return StallPhases.Unknown;
     }
 
-    /// <summary>
-    /// Builds a <see cref="TagList"/> for per-step metrics, including step_name and project context.
-    /// </summary>
-    public static TagList BuildStepTags(string stepName, PipelineRunType runType, string? projectId, string? projectName) =>
-        new(
-        [
-            new KeyValuePair<string, object?>("step_name", stepName),
-            RunTypeTag(runType),
-            ProjectIdTag(projectId),
-            ProjectNameTag(projectName)
-        ]);
-
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());
@@ -437,9 +427,6 @@ public static class PipelineTelemetry
         activity?.SetTag("pipeline.project_id", projectId ?? ActivityTags.Unknown);
         activity?.SetTag("pipeline.project_name", projectName ?? ActivityTags.Unknown);
     }
-
-    public static readonly Counter<long> AnalysisGateOutcomes = Meter.CreateCounter<long>(
-        "pipeline.analysis.gate_outcome", "{outcome}", "Analysis gate decision outcomes");
 
     /// <summary>
     /// Builds a <see cref="TagList"/> containing run_type, project_id, and project_name tags.
@@ -464,28 +451,6 @@ public static class PipelineTelemetry
             ProjectNameTag(projectName),
             new KeyValuePair<string, object?>("phase", phase)
         ]);
-
-    /// <summary>
-    /// Records an analysis gate outcome (ready/not_ready/wont_do) as a counter metric.
-    /// </summary>
-    public static void RecordAnalysisGateOutcome(AnalysisGateResult outcome, PipelineRunType runType, string? projectId, string? projectName)
-    {
-        var outcomeTag = outcome switch
-        {
-            AnalysisGateResult.Ready => "ready",
-            AnalysisGateResult.NotReady => "not_ready",
-            AnalysisGateResult.WontDo => "wont_do",
-            _ => ActivityTags.Unknown
-        };
-
-        AnalysisGateOutcomes.Add(1, new TagList
-        {
-            new(ActivityTags.Outcome, outcomeTag),
-            RunTypeTag(runType),
-            ProjectIdTag(projectId),
-            ProjectNameTag(projectName)
-        });
-    }
 
     /// <summary>
     /// Records an error on the given <see cref="Activity"/>. For graceful cancellation

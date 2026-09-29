@@ -98,8 +98,6 @@ public partial class AgentPhaseExecutor
                 "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 run.RunId);
-            _reviewSkipped.Add(1,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
             return;
         }
 
@@ -109,8 +107,6 @@ public partial class AgentPhaseExecutor
                 "Pipeline {RunId} reviewer configurations matched but resolved to zero agents — review phase skipped. " +
                 "Ensure each enabled ReviewerConfiguration has at least one agent defined.",
                 run.RunId);
-            _reviewSkipped.Add(1,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
             return;
         }
 
