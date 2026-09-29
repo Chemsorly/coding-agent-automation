@@ -649,6 +649,20 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
 
+        // Guard: CleanupSession uses entry.Cleaned for idempotency, but DeleteJobAsync is called
+        // before CleanupSession here and has no guard of its own. If a concurrent path (e.g. the
+        // watcher's idle-kill callback) already ran ForceDeleteAndCleanupAsync and set entry.Cleaned,
+        // skip the delete to prevent a double DeleteJobAsync call.
+        if (Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) != 0)
+        {
+            _logger.Debug(
+                "ChatJobDispatcher: ForceDeleteAndCleanupAsync skipped for {JobName} — already cleaned by concurrent path",
+                entry.JobName);
+            return;
+        }
+
+        _activeWatchers.TryRemove(agentId.Value, out _);
+
         try
         {
             await _jobClient.DeleteJobAsync(entry.JobName, _options.Namespace, CancellationToken.None);
@@ -663,7 +677,20 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _registry.Deregister(agentId);
 
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-        CleanupSession(agentId, entry, selectorEncoded, "force_deleted");
+        // Do not call CleanupSession here: we already took the Cleaned CAS above, so CleanupSession
+        // would be a no-op for _activeWatchers/Cleaned (already handled above) but we still need
+        // it to run telemetry and WatcherCts disposal.
+        var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
+        ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+        if (entry.ClaimedPvc is not null)
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+        var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
+        ChatTelemetry.SessionDuration.Record(duration, selectorTag, new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
+        try { entry.WatcherCts.Dispose(); }
+        catch { /* already disposed */ }
+        if (_heartbeatTracker is not null)
+            _ = _heartbeatTracker.DeleteRedisHeartbeatAsync(agentId);
+
         ChatTelemetry.PodForceTerminations.Add(1,
             new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded));
     }
