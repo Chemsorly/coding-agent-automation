@@ -447,6 +447,73 @@ public sealed class AgentHubDecompositionPartialTests
         mockProvider.Verify(p => p.ListClosedIssuesAsync(1, 50, null, null, It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_RunNotFound_ThrowsHubException()
+    {
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("ghost"), "ip-1", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*No active run*");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_ProviderConfigNotFound_ThrowsHubException()
+    {
+        var run = CreateRun();
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _facade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "missing-provider", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*missing-provider*not found*");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_AllowsOwnTracker()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var providerConfig = MakeProviderConfig("ip-1");
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockProvider.Setup(p => p.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], HasMore = false, Page = 1, PageSize = 50 });
+
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _facade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new[] { providerConfig });
+        _facade.Setup(f => f.CreateIssueProvider(providerConfig)).Returns(mockProvider.Object);
+
+        var hub = CreateHub();
+        // Passing the run's own IssueProviderConfigId — must succeed without scope check
+        var result = await hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "ip-1", 1, 50, null, since: null);
+
+        result.Should().NotBeNull();
+        mockProvider.Verify(p => p.ListClosedIssuesAsync(1, 50, null, null, It.IsAny<CancellationToken>()), Times.Once);
+        _facade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "own-tracker access must bypass scope check without loading project data");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_RejectsNonDecompositionRun()
+    {
+        var run = CreateRun(projectId: "proj-A", issueProviderConfigId: "ip-1", runType: PipelineRunType.Implementation);
+        SetupScopeCheckForListing(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "ip-allowed", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-allowed*not in the scope*");
+    }
+
     /// <summary>
     /// Sets up scope check for listing operations (read-only). Unlike <see cref="SetupScopeCheck"/>,
     /// the mock provider here returns list results instead of issue creation results.
