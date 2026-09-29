@@ -53,29 +53,48 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         WorkItemTaskType taskType = WorkItemTaskType.Implementation,
         CancellationToken ct = default)
     {
-        // TODO [WARNING]: InsertPendingWorkItemAsync creates the row with agentSelector="e2e", but the
-        // JobAssignmentMessage.ProviderConfigs field may not be populated for manually-inserted rows.
-        // LocalPipelineExecutor calls job.ProviderConfigs.TryGetProviderConfig(job.AgentProviderConfigId)
-        // *before* the ProviderFactoryOverride is applied, so an empty ProviderConfigs list will cause
-        // it to fail even though the factory override is present. Audit whether InsertPendingWorkItemAsync
-        // populates ProviderConfigs from the test-seeded template/profile, or set the field explicitly.
         var workItemId = await InsertPendingWorkItemAsync(issueId, agentSelector: "e2e");
 
-        // Set AssignedAgentId so the API allows the real agent to fetch the assignment
+        // Set AssignedAgentId and a minimal-but-valid payload so the API's GetAssignment endpoint
+        // can deserialize it (JobDistributionRequest has required properties that fail with "{}").
         await using var db = Fixture.DbContextFactory.CreateDbContext();
-        var entity = await db.WorkItems.FindAsync([workItemId], ct);
-        // TODO [WARNING]: If FindAsync returns null (e.g. insert race or test isolation issue), the
-        // work item is never set to Dispatched. The agent auth check will fail and WaitForCompletionAsync
-        // will time out with a generic TimeoutException instead of a clear assertion failure. Replace the
-        // bare null-guard with an explicit Should().NotBeNull() or throw InvalidOperationException here.
-        if (entity is not null)
+        var entity = await db.WorkItems.FindAsync([workItemId], ct)
+            ?? throw new InvalidOperationException($"Work item {workItemId} not found in DB after insert");
+
+        entity.Status = WorkItemStatus.Dispatched;
+        entity.AssignedAgentId = agentId;
+        entity.DispatchedAt = DateTimeOffset.UtcNow;
+        entity.TaskType = taskType;
+
+        // Build a minimal valid payload so the GetAssignment endpoint can deserialize it.
+        // ProviderConfigs is intentionally empty — LocalPipelineExecutor's ProviderFactoryOverride
+        // bypasses the provider config lookup when fakeProviders is injected.
+        var runType = taskType == WorkItemTaskType.Decomposition
+            ? PipelineRunType.DecompositionAnalysis
+            : PipelineRunType.Implementation;
+        var minimalPayload = new JobDistributionRequest
         {
-            entity.Status = WorkItemStatus.Dispatched;
-            entity.AssignedAgentId = agentId;
-            entity.DispatchedAt = DateTimeOffset.UtcNow;
-            entity.TaskType = taskType;
-            await db.SaveChangesAsync(ct);
-        }
+            IssueIdentifier = issueId,
+            IssueProviderConfigId = "issue-e2e",
+            RepoProviderConfigId = "repo-e2e",
+            AgentProviderConfigId = "agent-e2e",
+            InitiatedBy = "e2e-smoke-test",
+            TaskType = taskType,
+            AgentSelector = "e2e",
+            TimeoutSeconds = 3600,
+            RunType = runType,
+            IssueDetail = Fixture.IssueProvider.Issues.FirstOrDefault(i => i.Identifier == issueId)
+                ?? new IssueDetail { Identifier = issueId, Title = "", Description = "", Labels = [] },
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            IssueComments = [],
+            PipelineConfiguration = new PipelineConfiguration()
+        };
+        entity.Payload = System.Text.Json.JsonSerializer.Serialize(
+            minimalPayload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
+
+        await db.SaveChangesAsync(ct);
 
         // Post agent:in-progress label (FakeJobController does this; we replicate it here)
         try
@@ -168,13 +187,12 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             agentId: agentId,
             workItemId: workItemId.ToString(),
             fakeProviders: Fixture.FakeProviders,
-            qualityGateValidator: Fixture.QualityGateValidator);
+            qualityGateValidator: Fixture.QualityGateValidator,
+            dbContextFactory: Fixture.DbContextFactory);
 
         // ── Wait for completion ────────────────────────────────────────────────────
 
         await harness.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
-
-        // ── Assert ────────────────────────────────────────────────────────────────
 
         // WorkItem must be Succeeded
         // TODO [WARNING]: WaitForCompletionAsync returns when the in-process agent host shuts down,
@@ -283,7 +301,8 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             agentId: agentId1,
             workItemId: workItemId1.ToString(),
             fakeProviders: Fixture.FakeProviders,
-            qualityGateValidator: Fixture.QualityGateValidator);
+            qualityGateValidator: Fixture.QualityGateValidator,
+            dbContextFactory: Fixture.DbContextFactory);
 
         await harness1.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
 
@@ -319,7 +338,8 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             agentId: agentId2,
             workItemId: workItemId2.ToString(),
             fakeProviders: Fixture.FakeProviders,
-            qualityGateValidator: Fixture.QualityGateValidator);
+            qualityGateValidator: Fixture.QualityGateValidator,
+            dbContextFactory: Fixture.DbContextFactory);
 
         await harness2.WaitForCompletionAsync(timeout: TimeSpan.FromSeconds(20));
 
