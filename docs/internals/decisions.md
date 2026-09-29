@@ -1087,7 +1087,7 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 **Reassess when:** Never for the single-source principle. If a "maximum agent lifetime cap" independent of `AgentTimeout` is needed (safety floor), add an explicit `MaxAgentTimeoutCap` with a clear name — do not re-introduce a shadow of the same field.
 
-**Status:** Currently broken (#2179 tracks the fix; depends on #2171 for `TimeoutSeconds` propagation).
+**Status:** Resolved — `AgentJobTimeoutSeconds` removed in #2179 (closed 2026-08-29); `PipelineConfiguration.AgentTimeout` is now the single source of truth.
 
 ---
 
@@ -1460,13 +1460,13 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 **Date:** 2026-07-04
 **Category:** scope
 
-**Decision:** `BrainReadOnly=true` means the brain is synced pre-run (agent reads knowledge) but NOT written post-run (no reflection, no `.brain/` artifacts committed). Use case: when a template wants brain context but doesn't trust its own runs to contribute quality knowledge — either because it's new, experimental, or a secondary consumer of shared knowledge. The setting should ideally live on the `PipelineJobTemplate` (per-template granularity) rather than only at project/global level — this allows "template A writes to the brain, template B only reads" within the same project.
+**Decision:** `BrainReadOnly=true` means the brain is synced pre-run (agent reads knowledge) but NOT written post-run (no reflection, no `.brain/` artifacts committed). Use case: when a template wants brain context but doesn't trust its own runs to contribute quality knowledge — either because it's new, experimental, or a secondary consumer of shared knowledge. Template-level `BrainReadOnly` is now implemented on `PipelineJobTemplate` — this allows "template A writes to the brain, template B only reads" within the same project. The setting is one-directional at the template level: it can only switch read-only on (never off), so a template with `BrainReadOnly: true` overrides any project-level `BrainReadOnly: false`.
 
-**Context:** Currently `BrainReadOnly` is on `PipelineConfiguration` (global) with a per-project nullable override. Moving to template-level would give proper granularity for shared brain scenarios. The general pattern is: primary/trusted templates write, secondary/experimental templates read-only.
+**Context:** `BrainReadOnly` is on `PipelineConfiguration` (global) with a per-project nullable override and a per-template boolean (`PipelineJobTemplate.BrainReadOnly`). Template-level overrides are applied by `PipelineConfigurationResolver.ApplyTemplateOverrides` after project overrides. The general pattern is: primary/trusted templates write, secondary/experimental templates read-only.
 
 **Alternatives considered:** Brain access as a provider-level setting (too coarse), per-run override (too granular, no UI for it).
 
-**Reassess when:** Template-level `BrainReadOnly` is implemented. Note: the current project-level override still serves the "all templates in this project are read-only" case.
+**Reassess when:** N/A — template-level `BrainReadOnly` is implemented. The current project-level override still serves the "all templates in this project are read-only" case.
 
 ---
 
@@ -1742,6 +1742,7 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 **Date:** 2026-08-28
 **Category:** configuration
+**Superseded by:** session "AgentJobTimeoutSeconds: removed — #2179" (2026-08-29)
 
 **Decision:** `AgentJobTimeoutSeconds` (renamed from `ChatSessionMaxDurationSeconds`, default 7200s) governs `activeDeadlineSeconds` for all K8s Job types: work-item agents, consolidation agents, and chat pods. The rename makes the semantics correct — the previous name was misleading because the field always applied to all jobs, not only chat. For chat pods, the circuit-based idle-kill mechanism (`ChatIdleTimeoutSeconds=90s`) terminates the pod when the browser window closes; `AgentJobTimeoutSeconds` is a last-resort backstop for orphaned resources (e.g., browser crash with no idle-kill firing, Redis unavailable for heartbeat cross-replica delivery).
 

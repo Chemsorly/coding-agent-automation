@@ -106,7 +106,7 @@
                     <div class="cockpit-run-row" data-testid="attention-blocked-row-@b.Identifier" style="cursor: default;">
                         <div style="min-width: 0;">
                             <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">#@b.Identifier @b.Title</div>
-                            <div style="font-size: 12px; color: var(--warning); margin-top: 2px;">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))</div>
+                            <div style="font-size: 12px; color: var(--warning); margin-top: 2px;">Blocked by @string.Join(", ", b.BlockedBy.Select(n => $"#{n}").Concat(b.BlockedByUrls ?? []))</div>
                         </div>
                         @if (!string.IsNullOrEmpty(b.Url))
                         {
