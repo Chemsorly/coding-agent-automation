@@ -291,7 +291,7 @@ A background `DatabaseMaintenanceService` periodically deletes terminal records 
 > - `PipelineRunRetentionCount` (in `PipelineConfiguration`) — count-based cap per project; default `-1` (disabled)
 > - `WorkDistribution:Reconciliation:PipelineRunRetentionDays` (on `DatabaseMaintenanceOptions`) — age-based deletion; default `30` days
 >
-> Both run on each maintenance sweep. Set `PipelineRunRetentionCount` to limit row count; set `PipelineRunRetentionDays` to limit row age. The `MaintenanceIntervalHours` config key no longer exists — it was replaced by `DbRetentionSweepInterval` in `PipelineConfiguration`. `ConsolidationRunRetentionDays` still exists on `DatabaseMaintenanceOptions` (default: **30 days**) and controls how long consolidation run history is kept.
+> Both run on each maintenance sweep. Set `PipelineRunRetentionCount` to limit row count; set `PipelineRunRetentionDays` to limit row age. The `MaintenanceIntervalHours` config key no longer exists — it was replaced by `DbRetentionSweepInterval` in `PipelineConfiguration`. Consolidation run history is now covered by the standard `PipelineRunRetentionDays` (default: **30 days**) age-based sweep — since `BackfillConsolidationRunsAsync` migrates `ConsolidationRuns` rows into `PipelineRuns`, the age-based PipelineRun cleanup covers consolidation history automatically.
 
 The maintenance service is triggered by the Scheduler via `POST /api/scheduler/maintenance/retention-sweep`. In multi-replica Scheduler deployments, the Scheduler's leader election (`caa-{release}-scheduler-lock`) ensures only one Scheduler replica triggers sweeps.
 

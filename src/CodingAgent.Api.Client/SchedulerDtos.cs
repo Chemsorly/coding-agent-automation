@@ -38,7 +38,6 @@ public record LoopStartResultDto(bool Started, string? Error);
 public record RetentionSweepResultDto(
     int StaleWorkItemsDeleted,
     int StalePipelineRunsDeleted,
-    int StaleConsolidationRunsDeleted,
     int RetentionPipelineRunsDeleted,
     int RetentionWorkItemsDeleted,
     int OrphanedPipelineRunsReconciled = 0,

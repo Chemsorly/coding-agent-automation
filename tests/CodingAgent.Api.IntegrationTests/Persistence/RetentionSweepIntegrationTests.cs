@@ -60,7 +60,6 @@ public class RetentionSweepIntegrationTests : IDisposable
             {
                 ["WorkDistribution:Reconciliation:StaleRetentionDays"] = "7",
                 ["WorkDistribution:Reconciliation:PipelineRunRetentionDays"] = "90",
-                ["WorkDistribution:Reconciliation:ConsolidationRunRetentionDays"] = "90",
             })
             .Build();
     }

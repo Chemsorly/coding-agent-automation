@@ -55,7 +55,7 @@ public sealed class HttpSchedulerApiClient : ISchedulerApiClient
         var response = await _http.PostAsync("/api/scheduler/maintenance/retention-sweep", content: null, ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<RetentionSweepResultDto>(PipelineJsonOptions.Default, ct);
-        return result ?? new RetentionSweepResultDto(0, 0, 0, 0, 0);
+        return result ?? new RetentionSweepResultDto(0, 0, 0, 0);
     }
 
     public async Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default)

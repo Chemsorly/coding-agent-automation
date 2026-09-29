@@ -52,9 +52,12 @@ public sealed class SchedulerEndpointTests
         // Counts are >= 0 (may be 0 in a fresh test DB — that's valid)
         body!.StaleWorkItemsDeleted.Should().BeGreaterThanOrEqualTo(0);
         body.StalePipelineRunsDeleted.Should().BeGreaterThanOrEqualTo(0);
-        body.StaleConsolidationRunsDeleted.Should().BeGreaterThanOrEqualTo(0);
         body.RetentionPipelineRunsDeleted.Should().BeGreaterThanOrEqualTo(0);
         body.RetentionWorkItemsDeleted.Should().BeGreaterThanOrEqualTo(0);
+        // TODO [WARNING]: No assertion verifies that StaleConsolidationRunsDeleted is absent from the JSON response.
+        // If the endpoint accidentally serialised a stale 5-field DTO shape, these >= 0 assertions would still pass.
+        // Consider deserialising to a JsonDocument and asserting the property does not exist, or adding a
+        // field-count assertion, to catch DTO shape regressions on future removals.
     }
 
     [Fact]
