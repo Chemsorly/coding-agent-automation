@@ -86,9 +86,6 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
         builder.Logging.ClearProviders();
         builder.WebHost.UseUrls("http://127.0.0.1:0"); // random port, not used
 
-        // Write harness diagnostic to temp file for debugging
-        var diagPath = Path.Combine(Path.GetTempPath(), $"harness-diag-{workItemId}.txt");
-        System.IO.File.WriteAllText(diagPath, $"[{DateTime.Now:HH:mm:ss.fff}] Harness StartAsync called. WorkItemId={workItemId} AgentId={agentId} HubUrl={agentHubUrl}\n");
         // TODO [WARNING]: WorkspaceDirectory uses a shared temp path that is never cleaned up between
         // test runs or after DisposeAsync. Concurrent or re-run tests accumulate workspace dirs in
         // the temp folder. Consider using Path.Combine(Path.GetTempPath(), $"e2e-agent-workspaces-{Guid.NewGuid():N}")
