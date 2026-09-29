@@ -71,8 +71,6 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _store,
                 _harnessStore,
                 new Mock<IProviderConfigStore>().Object,
-                WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config),
                 WorkDistributor: mockWorkDistributor.Object));
     }
 
@@ -101,7 +99,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull("TriggerAsync must return the run even after store-write removal");
 
-        // Act: UpdateRunAsync is now a no-op for store writes (just calls workspace cleanup)
+        // Act: UpdateRunAsync is now a no-op (store writes removed, workspace in the agent pod)
         await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Succeeded, "Completed", CancellationToken.None, totalTokens: 1500);
 
         // Assert: nothing was persisted to the store (PipelineRun is the authoritative record)
@@ -199,7 +197,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// Issue #3028: UpdateRunAsync is a no-op for store writes (workspace cleanup only).
+    /// Issue #3028: UpdateRunAsync is a no-op (store writes removed, workspace in the agent pod).
     /// Verifies it does not throw when called with Running status.
     /// </summary>
     [Fact]
@@ -214,7 +212,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// Issue #3028: UpdateRunAsync is a no-op for store writes (workspace cleanup only).
+    /// Issue #3028: UpdateRunAsync is a no-op (store writes removed, workspace in the agent pod).
     /// Verifies it does not throw when called with terminal status.
     /// </summary>
     [Fact]
@@ -273,9 +271,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _mockRunHistory.Object,
                 _store,
                 _harnessStore,
-                new Mock<IProviderConfigStore>().Object,
-                WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config)));
+                new Mock<IProviderConfigStore>().Object));
         await sut2.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
         // Assert: the store still has the original record (no SaveRunAsync was called)

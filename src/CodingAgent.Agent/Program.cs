@@ -138,7 +138,8 @@ try
     builder.Services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
-        Log.Logger));
+        Log.Logger,
+        sp.GetRequiredService<IBrainUpdateService>()));
 
     // ── Agent worker service (mode-conditional) ──
     if (startupConfig.IsWorkItemMode)

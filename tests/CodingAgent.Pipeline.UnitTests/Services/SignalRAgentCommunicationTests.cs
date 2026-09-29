@@ -25,7 +25,6 @@ public sealed class SignalRAgentCommunicationTests
         _clients.Setup(c => c.Client(It.IsAny<string>())).Returns(_client.Object);
         _client.Setup(c => c.RequestFetchModels(It.IsAny<FetchModelsRequest>())).Returns(Task.CompletedTask);
         _client.Setup(c => c.CancelJob(It.IsAny<JobId>())).Returns(Task.CompletedTask);
-        _client.Setup(c => c.AssignConsolidationJob(It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>())).Returns(Task.CompletedTask);
 
         _sut = new SignalRAgentCommunication(_hubContext.Object);
     }
@@ -75,35 +74,6 @@ public sealed class SignalRAgentCommunicationTests
     public async Task RequestFetchModelsAsync_NullRequest_Throws()
     {
         var act = () => _sut.RequestFetchModelsAsync("conn-1", null!);
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    private static ConsolidationJobMessage MakeConsolidationMsg() => new()
-    {
-        JobId = "j1",
-        Type = ConsolidationRunType.BrainConsolidation,
-        ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration()
-    };
-
-    [Fact]
-    public async Task AssignConsolidationJobAsync_NullConnectionId_Throws()
-    {
-        var act = () => _sut.AssignConsolidationJobAsync(null!, new AgentId("a1"), MakeConsolidationMsg());
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignConsolidationJobAsync_NullAgentIdValue_Throws()
-    {
-        var act = () => _sut.AssignConsolidationJobAsync("conn-1", new AgentId(null!), MakeConsolidationMsg());
-        await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    [Fact]
-    public async Task AssignConsolidationJobAsync_NullJob_Throws()
-    {
-        var act = () => _sut.AssignConsolidationJobAsync("conn-1", new AgentId("a1"), null!);
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 }

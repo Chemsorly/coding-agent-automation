@@ -98,5 +98,4 @@ public interface IAgentHubClient
     Task CancelChat(string sessionId);
     Task ForceDisconnect();
     Task RequestFetchModels(FetchModelsRequest request);
-    Task AssignConsolidationJob(AgentId agentId, ConsolidationJobMessage job);
 }

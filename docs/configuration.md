@@ -26,8 +26,8 @@ Projects can override most general settings on a per-project basis using a nulla
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
 | `stallWarningInterval` | 00:02:00 | Time without agent output before a stall warning is logged |
 | `stallPollInterval` | 00:00:30 | How often to check for agent silence |
-| `brainReadOnly` | false | If true, brain repo is synced pre-run but not written to post-run |
-| `brainPushMaxRetries` | 3 | Max retries for pushing brain repo changes (handles concurrent push conflicts) |
+| `brainReadOnly` | false | If true, brain repo is synced pre-run but not written to post-run, and brain consolidation does not run (see [Brain Consolidation](feedback-and-consolidation.md#brain-consolidation-per-brain)) |
+| `brainPushMaxRetries` | 3 | Max attempts for pushing brain repo changes, by runs and by brain consolidation (handles concurrent push conflicts) |
 | `outputBufferCapacity` | 10000 | Max lines of agent output kept in memory for the UI |
 | `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
 | `agentBusyProgressTimeout` | 01:00:00 | How long a busy agent can go without reporting progress before being marked stuck |
@@ -210,7 +210,7 @@ Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-cod
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
 | HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
-| BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
+| BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings: its runs do not write to the brain, and brain consolidation does not run from it. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
 
 ## Environment Variables
 

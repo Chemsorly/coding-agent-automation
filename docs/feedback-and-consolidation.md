@@ -32,9 +32,15 @@ The feedback prompt includes previously-used category labels from the last 50 ru
 
 Three maintenance loops that review accumulated state and produce improvements. All are manually triggered from the **Consolidation** page in the sidebar.
 
-### Brain Consolidation (per template)
+### Brain Consolidation (per brain)
 
-Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge repository. Runs a 5-phase process:
+Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge repository. Several repositories usually feed one brain, so brain consolidation works on the brain, not on a template:
+
+- **Trigger:** from the card of any template that uses the brain. The run uses that template's settings (its project's overrides and its repository's agent labels).
+- **One run per brain at a time:** templates that share a brain share its running state and its last run on the Consolidation page, and a second trigger for the same brain is rejected as already running.
+- **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain.
+
+It runs a 5-phase process:
 
 1. **Orient** — Scan all files, build inventory
 2. **Gather Signal** — Identify drift, duplicates, contradictions
@@ -44,7 +50,7 @@ Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge 
 
 After the agent produces changes, an **adversarial review** pass evaluates the diff summary (`.agent/brain-consolidation-diff.md`). The discriminator checks for incorrectly removed entries, bad merges, contradictions, and inaccurate factual updates. If CRITICAL or WARNING findings are found, a refinement pass revises the `.brain/` files.
 
-Changes are committed and pushed automatically. Git history provides rollback.
+Changes are committed and pushed to the brain's base branch automatically. Git history provides rollback. Runs of the other repositories keep pushing their lessons to the brain while a consolidation works on its clone. When the push is rejected because the brain moved on, the consolidation is merged on top of it: the consolidated files are kept, and the lines the other runs added to them are appended, so nothing they learned is lost. A file the consolidation deleted comes back with only those lines. The next consolidation folds them in. The push is tried up to `BrainPushMaxRetries` times (default 3), like the runs' own brain pushes; no force push is used.
 
 Configuration: `BrainConsolidationReviewEnabled` (default: `true`) controls whether the adversarial review runs.
 
@@ -102,7 +108,8 @@ Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the 
 
 Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mode, dispatch originates from the Orchestrator (Web) via `ConsolidationJobPreparationService` and routes through the Pipeline API's synchronous dispatch endpoint, using the `caa-{release}-dispatch-lock` lease for deduplication. (`ConsolidationDispatchService`, a standalone background loop that previously ran in the Job Controller, was removed in #2323.) The job naming format `caa-cons-{12 hex chars}` is preserved for compatibility with any in-flight Jobs created before that change. The service enforces:
 
-- **Deduplication:** The same `RunId` cannot be enqueued twice
+- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. While a work item with that key is live, another trigger is rejected as already running.
+- **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
 - **Dispatch retries:** Up to `maxConsolidationDispatchRetries` retry attempts (default: 5) before permanent failure. See [Configuration — Consolidation Dispatch](configuration.md#consolidation-dispatch).
 
 ### Consolidation Page

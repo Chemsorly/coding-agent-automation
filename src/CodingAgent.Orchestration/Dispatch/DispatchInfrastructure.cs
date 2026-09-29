@@ -305,6 +305,41 @@ public class DispatchInfrastructure
     // ── Issue Context Building (inlined from IssueContextBuilder) ─────────────────
 
     /// <summary>
+    /// Builds the context of a review from the pull request it is about. A review's subject is a pull
+    /// request in the repository, not an issue in the tracker: in GitLab, and whenever the tracker is a
+    /// different system than the repository, issue #N and pull request !N are different things. So the
+    /// pull request's own title and description stand in for the issue, and there are no issue comments,
+    /// no existing analysis and no staleness signals.
+    /// </summary>
+    internal IssueContextResult BuildPullRequestContext(IssueDetail pullRequest)
+    {
+        IReadOnlyList<ImageReference> images = [];
+        try
+        {
+            images = ExtractImages(pullRequest.Description, [], pullRequest.Identifier);
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex,
+                "BuildPullRequestContext: image extraction failed for pull request {Identifier} — continuing with empty image list",
+                pullRequest.Identifier);
+        }
+
+        var detail = new IssueDetail
+        {
+            Identifier = pullRequest.Identifier,
+            Title = pullRequest.Title,
+            Description = pullRequest.Description,
+            Labels = pullRequest.Labels,
+            Images = images,
+            Url = pullRequest.Url
+        };
+        return new IssueContextResult(
+            detail, new IssueDescriptionParser().Parse(detail.Description), [],
+            ExistingAnalysis: null, ForceRefreshAnalysis: false, StalenessSignal: null, RefreshCount: 0);
+    }
+
+    /// <summary>
     /// Pre-fetches issue details, comments, and detects existing analysis with staleness signals
     /// (gate_rejection, gate_wont_do, agent_error_since). Returns <c>null</c> if the issue
     /// provider config is not found.
@@ -505,7 +540,10 @@ public class DispatchInfrastructure
         var resolvedReviewerConfigs = await Resolution.ResolveReviewersAsync(requiredLabels, ct);
 
         // ── Step 2: Build issue context (pre-fetch details, comments, basic staleness) ──
-        var issueContext = await BuildIssueContextAsync(issueIdentifier, issueProviderId, ct);
+        // A review is about a pull request, so its context comes from the pull request, never from the tracker.
+        var issueContext = request.PullRequest is { } pullRequest
+            ? BuildPullRequestContext(pullRequest)
+            : await BuildIssueContextAsync(issueIdentifier, issueProviderId, ct);
         if (issueContext is null)
         {
             logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);

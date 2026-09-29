@@ -11,6 +11,11 @@ public class WorkItemEntity
     public Guid Id { get; set; }
     public WorkItemTaskType TaskType { get; set; }
     public string IssueIdentifier { get; set; } = "";
+
+    /// <summary>
+    /// The provider config that holds the subject: the tracker for issues and epics, the repository for a
+    /// review's pull request. Together with <see cref="IssueIdentifier"/> it is the work item's key.
+    /// </summary>
     public string IssueProviderConfigId { get; set; } = "";
     public WorkItemStatus Status { get; set; }
 

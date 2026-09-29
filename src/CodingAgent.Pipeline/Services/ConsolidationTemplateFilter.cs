@@ -22,6 +22,22 @@ public static class ConsolidationTemplateFilter
     }
 
     /// <summary>
+    /// Whether the brain is read-only for the template's runs. Brain consolidation writes to the brain, so it
+    /// does not run from a template whose brain is read-only. The template's own flag can only make the brain
+    /// read-only; otherwise the global setting with the project's override decides, as for the runs themselves.
+    /// </summary>
+    /// <param name="template">The template the brain consolidation would run from.</param>
+    /// <param name="project">The template's project, or <c>null</c> when it has none.</param>
+    /// <param name="globalConfig">The current global configuration.</param>
+    public static bool IsBrainReadOnly(PipelineJobTemplate template, PipelineProject? project, PipelineConfiguration globalConfig)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        ArgumentNullException.ThrowIfNull(globalConfig);
+        return template.BrainReadOnly
+            || PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project).BrainReadOnly;
+    }
+
+    /// <summary>
     /// Returns <c>true</c> if the template has both a repo provider and an issue provider configured,
     /// which are required for refactoring detection (clone repo + create issues).
     /// </summary>

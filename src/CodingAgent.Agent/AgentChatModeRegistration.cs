@@ -12,13 +12,12 @@ namespace CodingAgent.Agent;
 /// Extension methods for registering chat-pod agent services (T23, arch-audit 2026-08-22).
 /// Previously named <c>AgentSignalRModeRegistration</c> — renamed because both modes use SignalR;
 /// the essential difference is that this mode owns no durable WorkItem row and serves interactive
-/// chat sessions and consolidation jobs.
+/// chat sessions. Consolidation runs are work items, like every other run type.
 /// Reached when the agent pod is started without <c>--work-item-id</c> (chat mode).
 /// Registers <see cref="AgentWorkerService"/> and the full SignalR hub connection stack
 /// (<see cref="AgentConnectionLifecycle"/>, <see cref="AgentJobSlotManager"/>,
-/// <see cref="ChatJobExecutor"/>, <see cref="ConsolidationJobExecutor"/>,
-/// <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
-/// so the pod can serve interactive chat sessions and consolidation jobs.
+/// <see cref="ChatJobExecutor"/>, <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
+/// so the pod can serve interactive chat sessions.
 /// </summary>
 internal static class AgentChatModeRegistration
 {
@@ -103,16 +102,10 @@ internal static class AgentChatModeRegistration
                 IsChatMode: isChatMode,
                 Logger: logger));
         });
-        services.AddSingleton<ConsolidationJobExecutor>(sp => new ConsolidationJobExecutor(
-            sp.GetRequiredService<AgentConnectionLifecycle>(),
-            sp.GetRequiredService<AgentJobSlotManager>(),
-            sp.GetRequiredService<IConsolidationExecutor>(),
-            logger));
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<ChatJobExecutor>(),
-            sp.GetRequiredService<ConsolidationJobExecutor>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
             logger)));

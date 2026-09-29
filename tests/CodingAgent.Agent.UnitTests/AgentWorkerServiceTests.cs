@@ -56,7 +56,7 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockLogger = new Mock<Serilog.ILogger>();
 
-        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, null!, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
+        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionLifecycle");
     }
 
@@ -65,10 +65,10 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var (_, slotManager, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
-        var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, mockLogger.Object);
+        var chatHandler = CreateChatHandler(lifecycle, slotManager, mockLogger.Object);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, null!, Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, null!, Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Executor");
     }
 
@@ -77,10 +77,10 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var (_, slotManager, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
         var logger = new Mock<Serilog.ILogger>().Object;
-        var (chatHandler, consolidationHandler) = CreateHandlersForLifecycle(lifecycle, slotManager, logger);
+        var chatHandler = CreateChatHandler(lifecycle, slotManager, logger);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, consolidationHandler, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), null!));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), null!));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
@@ -462,32 +462,6 @@ public class AgentWorkerServiceTests : IDisposable
     // ── Bug Fix Characterization Tests ─────────────────────────────────
 
     [Fact]
-    public async Task HandleAssignConsolidationJob_WhenBusy_NotifiesOrchestrator()
-    {
-        // Arrange — the handler should complete without throwing even when
-        // InvokeAsync("JobRejected") fails (disconnected connection).
-        var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-
-        var message = new ConsolidationJobMessage
-        {
-            JobId = "consolidation-job-1",
-            Type = ConsolidationRunType.BrainConsolidation,
-            ProviderConfigs = [],
-            PipelineConfiguration = new PipelineConfiguration()
-        };
-
-        // Act — invoke the handler; the try/catch around JobRejected should swallow the error
-        var consolidationJobHandler = GetConsolidationJobHandler(service);
-        await consolidationJobHandler.HandleAssignConsolidationJobAsync(message);
-
-        // Assert — handler completed without throwing, active job unchanged
-        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
-        activeJobId.Should().Be((JobId)"existing-job");
-    }
-
-    [Fact]
     public void HandleAssignJob_SetsJobCtsInsideLock()
     {
         // Verify that after setting _activeJobId, _jobCts is also set atomically
@@ -798,24 +772,8 @@ public class AgentWorkerServiceTests : IDisposable
             AgentIdentity: new Pipeline.Models.AgentId("test-agent")));
     }
 
-    private static LocalConsolidationExecutor CreateMockConsolidationExecutor()
-    {
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockHttpClientFactory = new Mock<System.Net.Http.IHttpClientFactory>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalConsolidationExecutor(
-            mockOrchestrator.Object,
-            mockHttpClientFactory.Object,
-            mockLogger.Object);
-    }
-
-    private static (ChatJobExecutor chatHandler, ConsolidationJobExecutor consolidationHandler)
-        CreateHandlersForLifecycle(AgentConnectionLifecycle lifecycle, AgentJobSlotManager slotManager, Serilog.ILogger logger)
-    {
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, logger: logger);
-        var consolidationHandler = TestAgentWorkerServiceFactory.CreateConsolidationJobExecutor(lifecycle, slotManager, logger: logger);
-        return (chatHandler, consolidationHandler);
-    }
+    private static ChatJobExecutor CreateChatHandler(AgentConnectionLifecycle lifecycle, AgentJobSlotManager slotManager, Serilog.ILogger logger) =>
+        TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, logger: logger);
 
     private static ChatJobExecutor GetChatJobHandler(AgentWorkerService service)
     {
@@ -823,14 +781,6 @@ public class AgentWorkerServiceTests : IDisposable
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_chatJobHandler' not found");
         return (ChatJobExecutor)field.GetValue(service)!;
-    }
-
-    private static ConsolidationJobExecutor GetConsolidationJobHandler(AgentWorkerService service)
-    {
-        var field = typeof(AgentWorkerService).GetField("_consolidationJobHandler",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Field '_consolidationJobHandler' not found");
-        return (ConsolidationJobExecutor)field.GetValue(service)!;
     }
 
     private static AgentWorkerService CreateService(TimeSpan? chatGracePeriod = null)

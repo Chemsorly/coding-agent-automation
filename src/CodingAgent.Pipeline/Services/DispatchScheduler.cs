@@ -163,7 +163,7 @@ internal sealed partial class DispatchScheduler
         int activeDecompositionCount = _orchestration.GetAllActiveRuns()
             .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
 
-        var cycleStateCache = new Dictionary<int, bool>();
+        var cycleStateCaches = new Dictionary<string, Dictionary<int, bool>>(StringComparer.Ordinal);
         var templateProjectLookup = request.FlattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
 
         string? lastReportedIssue = null;
@@ -193,7 +193,7 @@ internal sealed partial class DispatchScheduler
             };
 
             var turnResult = await ExecuteTurnAsync(
-                selectedTurn, request, roundCtx, cycleStateCache,
+                selectedTurn, request, roundCtx, cycleStateCaches,
                 new TurnEligibility(hasIssues, hasPrs, hasDecomp, activeDecompositionCount),
                 stoppingToken, ct);
 
@@ -231,7 +231,7 @@ internal sealed partial class DispatchScheduler
         var floorResult = await RunFloorPassAsync(
             request, floorEnabled, issueDispatchedThisCycle, issueFloor,
             totalBudget, processedCount, failedCount, activeDecompositionCount,
-            templateProjectLookup, trackingReportIssue, cycleStateCache,
+            templateProjectLookup, trackingReportIssue, cycleStateCaches,
             stoppingToken, ct);
         remaining -= floorResult.Consumed;
         processedCount += floorResult.Processed;
@@ -266,7 +266,7 @@ internal sealed partial class DispatchScheduler
         int activeDecompositionCount,
         Dictionary<string, PipelineProject> templateProjectLookup,
         Action<string?> trackingReportIssue,
-        Dictionary<int, bool> cycleStateCache,
+        Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
@@ -304,7 +304,7 @@ internal sealed partial class DispatchScheduler
             GetCurrentIssueIdentifier = () => lastReportedIssue
         };
         var (_, count, p, f) = await DispatchIssueRoundAsync(
-            floorCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
+            floorCtx, request.IssueQueues, cycleStateCaches, stoppingToken, ct);
         // TODO: [WARNING] In the unlimited-budget path, `remaining` in the caller is
         // `int.MaxValue - n` (still effectively int.MaxValue), so subtracting `count`
         // does not change the observable value. For telemetry, `totalRemaining` in the
@@ -340,7 +340,7 @@ internal sealed partial class DispatchScheduler
         DispatchTurn currentTurn,
         DispatchRoundRobinRequest request,
         RoundDispatchContext roundCtx,
-        Dictionary<int, bool> cycleStateCache,
+        Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
         TurnEligibility eligibility,
         CancellationToken stoppingToken,
         CancellationToken ct)
@@ -351,7 +351,7 @@ internal sealed partial class DispatchScheduler
         if (currentTurn == DispatchTurn.Issues && eligibility.HasIssues)
         {
             var (progress, count, p, f) = await DispatchIssueRoundAsync(
-                roundCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
+                roundCtx, request.IssueQueues, cycleStateCaches, stoppingToken, ct);
             issueMadeProgress = progress; consumed += count; processed += p; failed += f;
         }
 

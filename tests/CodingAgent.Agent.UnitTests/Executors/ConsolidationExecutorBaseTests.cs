@@ -15,15 +15,14 @@ public class ConsolidationExecutorBaseTests
 
     private TestableExecutor CreateExecutor() => new(_mockLogger.Object);
 
-    private static ConsolidationJobMessage CreateJob(string? jobId = null, string? workspacePath = null) => new()
+    private static ConsolidationJobMessage CreateJob(string? jobId = null, string workspaceBaseDirectory = "/workspaces") => new()
     {
         JobId = jobId ?? Guid.NewGuid().ToString(),
         Type = ConsolidationRunType.BrainConsolidation,
         TemplateId = "template-1",
         TemplateName = "Test Template",
         ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration(),
-        WorkspacePath = workspacePath
+        PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBaseDirectory }
     };
 
     [Fact]
@@ -72,26 +71,15 @@ public class ConsolidationExecutorBaseTests
     }
 
     [Fact]
-    public void ResolveWorkspacePath_WithJobWorkspacePath_CombinesWithSuffix()
+    public void ResolveWorkspacePath_IsTheJobsDirectoryUnderTheWorkspaceBaseDirectory()
     {
-        var executor = CreateExecutor();
-        var job = CreateJob(workspacePath: "/tmp/my-workspace");
-
-        var result = executor.InvokeResolveWorkspacePath(job);
-
-        result.Should().Be(Path.Combine("/tmp/my-workspace", "test-suffix"));
-    }
-
-    [Fact]
-    public void ResolveWorkspacePath_NullJobWorkspacePath_UsesTempPath()
-    {
-        var executor = CreateExecutor();
         var jobId = Guid.NewGuid().ToString();
-        var job = CreateJob(jobId: jobId, workspacePath: null);
+        var job = CreateJob(jobId: jobId, workspaceBaseDirectory: "/workspaces");
 
-        var result = executor.InvokeResolveWorkspacePath(job);
+        var result = TestableExecutor.InvokeResolveWorkspacePath(job);
 
-        result.Should().Be(Path.Combine(Path.GetTempPath(), "consolidation", jobId, "test-suffix"));
+        result.Should().Be(Path.Combine("/workspaces", jobId),
+            "the agent chooses the workspace itself, as a pipeline run works in {WorkspaceBaseDirectory}/{RunId}");
     }
 
     [Fact]
@@ -280,13 +268,12 @@ public class ConsolidationExecutorBaseTests
     /// </summary>
     private sealed class TestableExecutor : ConsolidationExecutorBase
     {
-        protected override string WorkspaceSuffix => "test-suffix";
         protected override string ExecutorName => "Test executor";
 
         public TestableExecutor(Serilog.ILogger logger) : base(logger) { }
 
         public ConsolidationJobResult? InvokeValidateJobId(ConsolidationJobMessage job) => ValidateJobId(job);
-        public string InvokeResolveWorkspacePath(ConsolidationJobMessage job) => ResolveWorkspacePath(job);
+        public static string InvokeResolveWorkspacePath(ConsolidationJobMessage job) => ResolveWorkspacePath(job);
         public static ConsolidationJobResult InvokeCreateFailureResult(string jobId, string msg) => CreateFailureResult(jobId, msg);
         public static ConsolidationJobResult InvokeCreateCancelledResult(string jobId) => CreateCancelledResult(jobId);
 

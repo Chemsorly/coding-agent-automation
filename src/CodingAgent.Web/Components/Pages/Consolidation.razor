@@ -50,6 +50,7 @@
                 {
                     var supportsBrain = ConsolidationTemplateFilter.SupportsBrainConsolidation(template);
                     var supportsRefactoring = ConsolidationTemplateFilter.SupportsRefactoringDetection(template);
+                    var brainReadOnly = _readOnlyBrainTemplates.Contains(template.Id);
                     var lastBrain = _lastRuns.GetValueOrDefault((ConsolidationRunType.BrainConsolidation, template.Id));
                     var lastRefactoring = _lastRuns.GetValueOrDefault((ConsolidationRunType.RefactoringDetection, template.Id));
 
@@ -70,6 +71,10 @@
                                 else
                                 {
                                     <span class="consolidation-card-value consolidation-muted">Never run</span>
+                                }
+                                @if (brainReadOnly)
+                                {
+                                    <span class="consolidation-card-value consolidation-muted">— read-only for this template</span>
                                 }
                             }
                             else
@@ -103,7 +108,8 @@
                         <div class="consolidation-card-actions">
                             @if (supportsBrain)
                             {
-                                <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.BrainConsolidation, template.Id)"
+                                <button class="btn-trigger" disabled="@(brainReadOnly || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
+                                        title="@(brainReadOnly ? BrainReadOnlyHint : null)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
                                     <Icon Name="brain" Size="14" /> Brain Consolidation
                                 </button>
@@ -281,8 +287,18 @@
 }
 
 @code {
+    private const string BrainReadOnlyHint =
+        "The brain is read-only for this template. Trigger brain consolidation from a template that writes to this brain.";
+
     private IReadOnlyList<PipelineJobTemplate> _templates = [];
     private Dictionary<(ConsolidationRunType, string?), PipelineRunSummary?> _lastRuns = new();
+
+    // Brain consolidation works on a brain, and several templates can share one: the last run and the
+    // running state shown for a template are those of its brain. Keyed by template id, all templates.
+    private Dictionary<string, string> _brainByTemplate = new(StringComparer.Ordinal);
+
+    // Templates whose brain is read-only: brain consolidation does not run from them.
+    private HashSet<string> _readOnlyBrainTemplates = new(StringComparer.Ordinal);
     private IReadOnlyList<PipelineRunSummary> _runHistory = [];
     private bool _anyRunCancellable;
     private HarnessSuggestions? _harnessSuggestions;
@@ -366,11 +382,19 @@
                 .Select(tid => templateLookup[tid])
                 .Where(t => t.Enabled)
                 .ToList();
+
+            _brainByTemplate = allTemplates
+                .Where(t => !string.IsNullOrEmpty(t.BrainProviderId))
+                .ToDictionary(t => t.Id, t => t.BrainProviderId!, StringComparer.Ordinal);
+
+            await LoadReadOnlyBrainTemplatesAsync(projects);
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load templates for consolidation page");
             _templates = [];
+            _brainByTemplate = new(StringComparer.Ordinal);
+            _readOnlyBrainTemplates = new(StringComparer.Ordinal);
         }
 
         try
@@ -400,29 +424,62 @@
             _harnessSuggestions = null;
         }
 
-        // Derive last-run per (type, templateId) from the already-loaded history (no per-template API calls).
-        // _runHistory is ordered by StartedAt DESC, so FirstOrDefault gives the most recent run.
-        // TODO [WARNING]: When includeActive:true merges in-flight runs, the API prepends active runs to
-        // the paged history without re-sorting (inFlightSummaries.Concat(result.Items)). The comment
-        // "ordered by StartedAt DESC" is therefore not strictly true for the merged list. In practice this
-        // produces the correct result (active runs are the newest activity and appear first), but the
-        // assumption is fragile if the merge order ever changes. Consider sorting _runHistory by
-        // StartedAtOffset descending after load for defensive correctness. (review-findings correctness)
+        // Last runs per template and type, from the history loaded above (no per-template API calls).
+        // A template's last brain consolidation is the last one of its brain, whichever template it was
+        // triggered from. MaxBy rather than the first match: with includeActive the API puts in-flight
+        // runs ahead of the paged history without re-sorting, so the list is not strictly newest first.
         _lastRuns.Clear();
         foreach (var template in _templates)
         {
-            _lastRuns[(ConsolidationRunType.BrainConsolidation, template.Id)] =
-                _runHistory.FirstOrDefault(r =>
-                    r.ConsolidationType == ConsolidationRunType.BrainConsolidation &&
-                    r.ConsolidationTemplateId == template.Id);
-
-            _lastRuns[(ConsolidationRunType.RefactoringDetection, template.Id)] =
-                _runHistory.FirstOrDefault(r =>
-                    r.ConsolidationType == ConsolidationRunType.RefactoringDetection &&
-                    r.ConsolidationTemplateId == template.Id);
+            foreach (var type in new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection })
+            {
+                _lastRuns[(type, template.Id)] = _runHistory
+                    .Where(r => r.ConsolidationType == type && IsSameScope(r, template.Id))
+                    .MaxBy(r => r.StartedAtOffset);
+            }
         }
 
         _isLoading = false;
+    }
+
+    /// <summary>
+    /// Loads which templates have a read-only brain: the template's own flag, or the global setting with
+    /// the project's override. On failure no button is disabled; the trigger still refuses the run.
+    /// </summary>
+    private async Task LoadReadOnlyBrainTemplatesAsync(IReadOnlyList<PipelineProject> projects)
+    {
+        try
+        {
+            var globalConfig = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+            _readOnlyBrainTemplates = _templates
+                .Where(ConsolidationTemplateFilter.SupportsBrainConsolidation)
+                .Where(t => ConsolidationTemplateFilter.IsBrainReadOnly(
+                    t, projects.FirstOrDefault(p => p.TemplateIds.Contains(t.Id)), globalConfig))
+                .Select(t => t.Id)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load the configuration for brain read-only checks on the consolidation page");
+            _readOnlyBrainTemplates = new(StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="run"/> worked on what the template's consolidation of the same type works on:
+    /// the same brain for brain consolidation, the same template otherwise.
+    /// </summary>
+    private bool IsSameScope(PipelineRunSummary run, string? templateId)
+    {
+        if (run.ConsolidationTemplateId == templateId)
+            return true;
+
+        return run.ConsolidationType == ConsolidationRunType.BrainConsolidation
+            && templateId is not null
+            && run.ConsolidationTemplateId is not null
+            && _brainByTemplate.TryGetValue(templateId, out var brain)
+            && _brainByTemplate.TryGetValue(run.ConsolidationTemplateId, out var runBrain)
+            && string.Equals(brain, runBrain, StringComparison.Ordinal);
     }
 
     private async Task OpenRefactoringModal(string templateId, string templateName)
@@ -522,7 +579,7 @@
         // A run is considered active when it has no CompletedAtOffset (i.e. not yet terminal).
         return _runHistory.Any(r =>
             r.ConsolidationType == type &&
-            r.ConsolidationTemplateId == templateId &&
+            IsSameScope(r, templateId) &&
             r.CompletedAtOffset == null);
     }
 

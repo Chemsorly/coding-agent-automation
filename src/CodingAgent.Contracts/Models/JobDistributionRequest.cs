@@ -9,7 +9,12 @@ public record JobDistributionRequest
     /// <summary>Issue identifier (e.g., "owner/repo#123").</summary>
     public required IssueIdentifier IssueIdentifier { get; init; }
 
-    /// <summary>ID of the issue provider config used to fetch this issue.</summary>
+    /// <summary>
+    /// ID of the provider config that holds the work item's subject: the issue tracker for issues and epics,
+    /// the repository for a review's pull request. A pull request is identified by its repository and number,
+    /// an issue by its tracker and number, so the two never share a work item key (in GitLab, issue #N and
+    /// pull request !N are different things).
+    /// </summary>
     public required string IssueProviderConfigId { get; init; }
 
     /// <summary>ID of the repository provider config for the work target.</summary>
@@ -143,9 +148,6 @@ public record JobDistributionRequest
     /// <summary>Template ID for template-scoped consolidation runs (null for global).</summary>
     public string? ConsolidationTemplateId { get; init; }
 
-    /// <summary>Workspace path for the consolidation run.</summary>
-    public string? ConsolidationWorkspacePath { get; init; }
-
     /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and
     /// <c>agent:next</c> labels. Propagated through the queue/drain/K8s path to ensure
@@ -227,6 +229,8 @@ public record JobDistributionRequest
             PipelineRunType.Review, projectId, projectName))
         with
         {
+            // A pull request is identified by its repository, not by the tracker (see IssueProviderConfigId).
+            IssueProviderConfigId = template.RepoProviderId,
             IssueDetail = new IssueDetail
             {
                 Identifier = pr.Identifier,

@@ -10,8 +10,7 @@ namespace CodingAgent.Agent.UnitTests;
 /// <summary>
 /// Shared factory for creating <see cref="AgentWorkerService"/> instances in tests.
 /// Encapsulates the construction of <see cref="AgentConnectionLifecycle"/>,
-/// <see cref="AgentJobSlotManager"/>, <see cref="ChatJobExecutor"/>,
-/// <see cref="ConsolidationJobExecutor"/>, and the coordinator service.
+/// <see cref="AgentJobSlotManager"/>, <see cref="ChatJobExecutor"/>, and the coordinator service.
 /// </summary>
 internal static class TestAgentWorkerServiceFactory
 {
@@ -57,12 +56,10 @@ internal static class TestAgentWorkerServiceFactory
             isChatMode: string.Equals(
                 Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase),
             chatGracePeriod: chatGracePeriod);
-        var consolidationHandler = CreateConsolidationJobExecutor(lifecycle, slotManager, mockOrchestrator, mockLogger);
 
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             chatHandler,
-            consolidationHandler,
             CreateMockExecutor(mockOrchestrator),
             reporter,
             mockLogger));
@@ -119,24 +116,6 @@ internal static class TestAgentWorkerServiceFactory
         });
     }
 
-    /// <summary>
-    /// Creates a standalone <see cref="ConsolidationJobExecutor"/> for direct unit testing.
-    /// </summary>
-    public static ConsolidationJobExecutor CreateConsolidationJobExecutor(
-        AgentConnectionLifecycle connectionLifecycle,
-        AgentJobSlotManager slotManager,
-        KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
-        Serilog.ILogger? logger = null)
-    {
-        var mockLogger = logger ?? new Mock<Serilog.ILogger>().Object;
-        var mockOrchestrator = orchestrator ?? new Mock<KiroCliLib.Core.IKiroCliOrchestrator>().Object;
-        return new ConsolidationJobExecutor(
-            connectionLifecycle,
-            slotManager,
-            CreateMockConsolidationExecutor(mockOrchestrator),
-            mockLogger);
-    }
-
     public static HubConnectionManager CreateTestHubManager(Serilog.ILogger? logger = null)
     {
         var l = logger ?? new Mock<Serilog.ILogger>().Object;
@@ -161,15 +140,5 @@ internal static class TestAgentWorkerServiceFactory
             mockQualityGateValidator.Object,
             mockLogger.Object,
             AgentIdentity: new AgentId("test-agent")));
-    }
-
-    private static LocalConsolidationExecutor CreateMockConsolidationExecutor(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
-    {
-        var mockHttpClientFactory = new Mock<IHttpClientFactory>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalConsolidationExecutor(
-            orchestrator,
-            mockHttpClientFactory.Object,
-            mockLogger.Object);
     }
 }

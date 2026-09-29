@@ -143,7 +143,7 @@ Decomposition runs use the same workspace path as all other run types:
 {WorkspaceBaseDirectory}/{runId}/
 ```
 
-There is no `decomposition/` subdirectory. (Consolidation runs are the exception — they use `{WorkspaceBaseDirectory}/consolidation/{runId}/` via `ConsolidationWorkspaceManager`.)
+There is no `decomposition/` subdirectory. Consolidation runs work the same way: the agent uses `{WorkspaceBaseDirectory}/{jobId}/`, with the work item id as the job id.
 
 ### Agent Workspace Paths
 

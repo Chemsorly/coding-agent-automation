@@ -86,8 +86,6 @@ public sealed class ConsolidationServiceDedupTests
             _mockRunStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(), cfg),
             WorkDistributor: mockDistributor.Object,
             SelectorResolver: _mockSelectorResolver.Object));
     }
@@ -266,10 +264,10 @@ public sealed class ConsolidationServiceDedupTests
         mockDistributor.Verify(
             d => d.DistributeAsync(
                 It.Is<JobDistributionRequest>(r =>
-                    r.IssueIdentifier == $"{ConsolidationRunType.BrainConsolidation}:{Template.Id}"),
+                    r.IssueIdentifier == $"{ConsolidationRunType.BrainConsolidation}:{Template.BrainProviderId}"),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            "BrainConsolidation must use IssueIdentifier 'BrainConsolidation:{templateId}'");
+            "BrainConsolidation must use IssueIdentifier 'BrainConsolidation:{brainProviderId}': one brain consolidation per brain");
 
         mockDistributor.Verify(
             d => d.DistributeAsync(

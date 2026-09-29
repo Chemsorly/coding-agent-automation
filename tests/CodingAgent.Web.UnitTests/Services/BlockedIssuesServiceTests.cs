@@ -305,7 +305,7 @@ public class BlockedIssuesServiceTests
     }
 
     [Fact]
-    public async Task GetBacklogAsync_DedupesIssuesAcrossProviders()
+    public async Task GetBacklogAsync_SameNumbersInTwoTrackers_ListsEachTrackersIssues()
     {
         var t1 = new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };
         var t2 = new PipelineJobTemplate { Id = "t2", Name = "T2", IssueProviderId = "prov2", RepoProviderId = "repo2", Enabled = true };
@@ -320,7 +320,8 @@ public class BlockedIssuesServiceTests
                 new ProviderConfig { Id = "prov2", DisplayName = "P2", Kind = ProviderKind.Issue, ProviderType = "GitHub" },
             });
 
-        // Both providers return the same issues ("10", "11"); the service dedupes by identifier.
+        // Both trackers have a #10 and a #11. Issue numbers are unique only within a tracker, so these
+        // are four different issues and the backlog lists all of them (#3145).
         var provider = new Mock<IIssueProvider>();
         provider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(TwoIssues());
@@ -339,9 +340,51 @@ public class BlockedIssuesServiceTests
 
         var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
 
-        Assert.Equal(2, result.Issues.Count);
-        Assert.Single(result.Issues, b => b.Identifier == "10");
-        Assert.Single(result.Issues, b => b.Identifier == "11");
+        Assert.Equal(4, result.Issues.Count);
+        Assert.Equal(2, result.Issues.Count(b => b.Identifier == "10"));
+        Assert.Equal(2, result.Issues.Count(b => b.Identifier == "11"));
+    }
+
+    [Fact]
+    public async Task GetBacklogAsync_SameIssueTwiceFromOneTracker_ListsItOnce()
+    {
+        // Paging can return an issue twice when issues move between pages; within a tracker the
+        // number identifies the issue, so the duplicate is dropped.
+        var t1 = new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };
+        var config = new Mock<IPipelineApiConfigClient>();
+        config.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new[] { t1 });
+        config.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { new ProviderConfig { Id = "prov1", DisplayName = "P1", Kind = ProviderKind.Issue, ProviderType = "GitHub" } });
+
+        var page1 = new PagedResult<IssueSummary>
+        {
+            Items = new[] { new IssueSummary { Identifier = "10", Title = "I10", Labels = Array.Empty<string>(), Description = "", Url = null } },
+            Page = 1,
+            PageSize = 50,
+            HasMore = true
+        };
+        var page2 = new PagedResult<IssueSummary>
+        {
+            Items = new[] { new IssueSummary { Identifier = "10", Title = "I10", Labels = Array.Empty<string>(), Description = "", Url = null } },
+            Page = 2,
+            PageSize = 50,
+            HasMore = false
+        };
+        var provider = new Mock<IIssueProvider>();
+        provider.SetupSequence(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(page1).ReturnsAsync(page2);
+        var factory = new Mock<IProviderFactory>();
+        factory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(provider.Object);
+        var dep = new Mock<IDependencyChecker>();
+        dep.Setup(d => d.CheckAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string?>(),
+                It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        var sut = new BlockedIssuesService(config.Object, factory.Object, dep.Object);
+
+        var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
+
+        Assert.Single(result.Issues);
     }
 
     // ── New tests: pagination and truncation ─────────────────────────────────
@@ -528,11 +571,11 @@ public class BlockedIssuesServiceTests
     }
 
     [Fact]
-    public async Task GetBacklogAsync_DedupesAcrossProviders_WithMultiplePages()
+    public async Task GetBacklogAsync_SameNumberInTwoTrackers_WithMultiplePages_ListsBoth()
     {
         // Provider 1: page 1 has issue "10", page 2 has issue "12", HasMore=false.
-        // Provider 2: returns issue "10" (duplicate) and "11" (unique).
-        // Final result should contain "10", "12", "11" — 3 unique issues.
+        // Provider 2: returns its own issue "10" and "11".
+        // Final result: "10" and "12" from provider 1, "10" and "11" from provider 2 (#3145).
         var t1 = new PipelineJobTemplate { Id = "t1", Name = "T1", IssueProviderId = "prov1", RepoProviderId = "repo1", Enabled = true };
         var t2 = new PipelineJobTemplate { Id = "t2", Name = "T2", IssueProviderId = "prov2", RepoProviderId = "repo2", Enabled = true };
 
@@ -596,8 +639,8 @@ public class BlockedIssuesServiceTests
 
         var result = await sut.GetBacklogAsync(projectId: null, CancellationToken.None);
 
-        Assert.Equal(3, result.Issues.Count);
-        Assert.Single(result.Issues, b => b.Identifier == "10"); // deduped — first occurrence wins
+        Assert.Equal(4, result.Issues.Count);
+        Assert.Equal(new[] { "I10", "I10-dup" }, result.Issues.Where(b => b.Identifier == "10").Select(b => b.Title));
         Assert.Single(result.Issues, b => b.Identifier == "11");
         Assert.Single(result.Issues, b => b.Identifier == "12");
         Assert.False(result.IsTruncated);

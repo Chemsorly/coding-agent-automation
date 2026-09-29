@@ -530,7 +530,7 @@ public sealed class GetAssignmentTests
         minimal.ReviewPrDescription.Should().Be("Fix the bug");
         minimal.ReviewPrAuthor.Should().Be("alice");
         // TODO: [WARNING] No test verifies that consolidation identity fields are preserved:
-        // ConsolidationRunType, ConsolidationTemplateId, ConsolidationWorkspacePath, AutoDispatch,
+        // ConsolidationRunType, ConsolidationTemplateId, AutoDispatch,
         // ProjectContext (decomposition), and LinkedIssueContexts (review). These are all listed
         // in the issue as non-reconstructable identity fields. Add a separate test method for them.
     }
@@ -550,7 +550,6 @@ public sealed class GetAssignmentTests
             TimeoutSeconds = 3600,
             ConsolidationRunType = CodingAgent.Pipeline.Models.ConsolidationRunType.RefactoringDetection,
             ConsolidationTemplateId = "tmpl-preserve-1",
-            ConsolidationWorkspacePath = "/workspaces/consolidation",
             AutoDispatch = true,
         };
 
@@ -564,8 +563,6 @@ public sealed class GetAssignmentTests
             "ConsolidationRunType must be preserved — it determines which providers and scopes are resolved");
         minimal.ConsolidationTemplateId.Should().Be("tmpl-preserve-1",
             "ConsolidationTemplateId must be preserved — it is used to resolve repo/brain providers at assignment time");
-        minimal.ConsolidationWorkspacePath.Should().Be("/workspaces/consolidation",
-            "ConsolidationWorkspacePath must be preserved — it cannot be reconstructed from the template at assignment time");
         minimal.AutoDispatch.Should().BeTrue(
             "AutoDispatch must be preserved — it controls whether created issues are auto-dispatched");
 

@@ -54,7 +54,7 @@ internal sealed class ConsolidationSelectorResolver : IConsolidationSelectorReso
         // is consumed at step 2 via liveConfig.DefaultRequiredAgentLabels. If DefaultRequiredAgentLabels
         // is updated at runtime, step 1 reads the stale startup value while step 2 reads the updated
         // value. A repoConfig with empty RequiredLabels can silently route to the wrong agent selector
-        // depending on which step fires. This dual-config design is inherited from ConsolidationDispatcher.
+        // depending on which step fires. This dual-config design was inherited from the former ConsolidationDispatcher.
         // Document this asymmetry explicitly if intentional, or unify both steps to use liveConfig.
         // (review-findings-dotnetspecialist.md, review-findings-securityreviewer.md)
         return Resolve(repoConfig, config, liveConfig, profiles);

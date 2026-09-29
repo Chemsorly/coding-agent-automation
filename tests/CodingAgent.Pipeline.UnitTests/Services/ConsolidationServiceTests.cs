@@ -124,7 +124,6 @@ public sealed class ConsolidationServiceTests : IDisposable
         new FileSystemConsolidationRunStore(_runsDir),
         new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
-        WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config),
         WorkDistributor: _mockWorkDistributor.Object));
 
     #region TriggerAsync — creates run and persists
@@ -169,8 +168,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
             new InMemoryHarnessSuggestionStore(),
-            _mockProviderConfigStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithoutLabels)));
+            _mockProviderConfigStore.Object));
 
         // Without a WorkDistributor injected, TriggerAsync throws InvalidOperationException.
         // This verifies the guard is in place (no silent no-op).
@@ -332,7 +330,7 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task UpdateRunAsync_ChangesStatusAndSetsCompletedAt()
     {
-        // Issue #3028: UpdateRunAsync is now a no-op for store writes (workspace cleanup only).
+        // Issue #3028: UpdateRunAsync is now a no-op (store writes removed, workspace in the agent pod).
         // This test verifies the method does not throw and returns without error.
         var sut = CreateSut();
 
@@ -425,54 +423,6 @@ public sealed class ConsolidationServiceTests : IDisposable
         var history = await sut.GetRunHistoryAsync(CancellationToken.None);
 
         history.Should().BeEmpty();
-    }
-
-    #endregion
-
-    #region GetLastRunAsync — filters correctly
-
-    [Fact]
-    public async Task GetLastRunAsync_ReturnsOnlyMatchingTypeAndTemplate()
-    {
-        // Issue #3028: TriggerAsync no longer writes to the store.
-        // Seed runs directly into the store.
-        var store = new FileSystemConsolidationRunStore(_runsDir);
-        var brain1 = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.BrainConsolidation, TemplateId = "tmpl-1", StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-10), Status = ConsolidationRunStatus.Succeeded };
-        var refactor1 = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.RefactoringDetection, TemplateId = "tmpl-1", StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-9), Status = ConsolidationRunStatus.Succeeded };
-        var brain2 = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.BrainConsolidation, TemplateId = "tmpl-2", StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-8), Status = ConsolidationRunStatus.Succeeded };
-        await store.SaveRunAsync(brain1, CancellationToken.None);
-        await store.SaveRunAsync(refactor1, CancellationToken.None);
-        await store.SaveRunAsync(brain2, CancellationToken.None);
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
-            store, new InMemoryHarnessSuggestionStore(), _mockProviderConfigStore.Object));
-
-        var result = await sut.GetLastRunAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        result.Should().NotBeNull();
-        result!.RunId.Should().Be(brain1.RunId);
-        result.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
-        result.TemplateId.Should().Be("tmpl-1");
-    }
-
-    [Fact]
-    public async Task GetLastRunAsync_NoMatch_ReturnsNull()
-    {
-        // Validates: Requirement 9.4
-        var store = new FileSystemConsolidationRunStore(_runsDir);
-        var run = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.BrainConsolidation, TemplateId = "tmpl-1", StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Succeeded };
-        await store.SaveRunAsync(run, CancellationToken.None);
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            _logger, _config, _mockProjectStore.Object, _mockRunHistory.Object,
-            store, new InMemoryHarnessSuggestionStore(), _mockProviderConfigStore.Object));
-
-        var result = await sut.GetLastRunAsync(
-            ConsolidationRunType.RefactoringDetection, "tmpl-2", CancellationToken.None);
-
-        result.Should().BeNull();
     }
 
     #endregion

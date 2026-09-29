@@ -38,9 +38,10 @@ public class ConsolidationPageComponentTests : BunitContext
     private void RegisterServices(
         IReadOnlyList<PipelineJobTemplate>? templates = null,
         IReadOnlyList<PipelineRunSummary>? runHistory = null,
-        HarnessSuggestions? harnessSuggestions = null)
+        HarnessSuggestions? harnessSuggestions = null,
+        PipelineConfiguration? pipelineConfig = null)
     {
-        var config = new PipelineConfiguration();
+        var config = pipelineConfig ?? new PipelineConfiguration();
 
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
@@ -106,7 +107,9 @@ public class ConsolidationPageComponentTests : BunitContext
         string? templateName = "Test Template",
         PipelineStep finalStep = PipelineStep.Completed,
         string? summary = "3 files modified",
-        DateTimeOffset? completedAt = null) => new()
+        DateTimeOffset? completedAt = null,
+        DateTimeOffset? startedAt = null,
+        bool running = false) => new()
         {
             RunId = Guid.NewGuid().ToString(),
             IssueIdentifier = $"{type}:{(templateId ?? "global")}",
@@ -117,8 +120,8 @@ public class ConsolidationPageComponentTests : BunitContext
             ConsolidationTemplateName = templateName,
             ConsolidationResultSummary = summary,
             FinalStep = finalStep,
-            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-10),
-            CompletedAtOffset = completedAt ?? DateTimeOffset.UtcNow.AddMinutes(-1),
+            StartedAtOffset = startedAt ?? DateTimeOffset.UtcNow.AddMinutes(-10),
+            CompletedAtOffset = running ? null : completedAt ?? DateTimeOffset.UtcNow.AddMinutes(-1),
             InitiatedBy = ConsolidationConstants.InitiatedBy
         };
 
@@ -257,6 +260,120 @@ public class ConsolidationPageComponentTests : BunitContext
         var buttons = cut.FindAll(".btn-trigger");
         Assert.Contains(buttons, b => b.TextContent.Contains("Brain Consolidation"));
     }
+
+    // ═══ Brain consolidation works on the brain, which templates can share ═══
+
+    [Fact]
+    public void BrainButton_DisabledWithTheReason_WhenTheTemplatesBrainIsReadOnly()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(id: "t1", name: "Reader") with { BrainReadOnly = true },
+            CreateTemplate(id: "t2", name: "Writer", repoProviderId: "repo-2", issueProviderId: "issue-2")
+        };
+        RegisterServices(templates: templates);
+
+        var cut = Render<Consolidation>();
+
+        Assert.True(BrainButton(cut, "Reader").HasAttribute("disabled"));
+        Assert.Contains("read-only for this template", Card(cut, "Reader").TextContent);
+        Assert.False(BrainButton(cut, "Writer").HasAttribute("disabled"),
+            "another template that writes to the same brain can still consolidate it");
+    }
+
+    [Fact]
+    public void BrainButton_Disabled_WhenBrainWritesAreOffGlobally()
+    {
+        RegisterServices(
+            templates: new List<PipelineJobTemplate> { CreateTemplate(name: "Repo") },
+            pipelineConfig: new PipelineConfiguration { BrainReadOnly = true });
+
+        var cut = Render<Consolidation>();
+
+        Assert.True(BrainButton(cut, "Repo").HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void BrainButton_DisabledWhileAnotherTemplateConsolidatesTheSameBrain()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(id: "t1", name: "Repo A", brainProviderId: "brain-shared"),
+            CreateTemplate(id: "t2", name: "Repo B", brainProviderId: "brain-shared", repoProviderId: "repo-2", issueProviderId: "issue-2"),
+            CreateTemplate(id: "t3", name: "Repo C", brainProviderId: "brain-other", repoProviderId: "repo-3", issueProviderId: "issue-3")
+        };
+        var runs = new List<PipelineRunSummary>
+        {
+            CreateConsolidationRun(ConsolidationRunType.BrainConsolidation, "t1", "Repo A", running: true)
+        };
+        RegisterServices(templates: templates, runHistory: runs);
+
+        var cut = Render<Consolidation>();
+
+        Assert.True(BrainButton(cut, "Repo B").HasAttribute("disabled"), "Repo B shares the brain that Repo A is consolidating");
+        Assert.False(BrainButton(cut, "Repo C").HasAttribute("disabled"), "Repo C has its own brain");
+        var refactoringB = Card(cut, "Repo B").QuerySelectorAll(".btn-trigger").Single(b => b.TextContent.Contains("Refactoring Scan"));
+        Assert.False(refactoringB.HasAttribute("disabled"), "a refactoring scan works on the repository, not the brain");
+    }
+
+    [Fact]
+    public void LastBrainRun_IsTheBrainsLastRun_WhicheverTemplateTriggeredIt()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(id: "t1", name: "Repo A", brainProviderId: "brain-shared"),
+            CreateTemplate(id: "t2", name: "Repo B", brainProviderId: "brain-shared", repoProviderId: "repo-2", issueProviderId: "issue-2")
+        };
+        var runs = new List<PipelineRunSummary>
+        {
+            CreateConsolidationRun(ConsolidationRunType.BrainConsolidation, "t1", "Repo A", PipelineStep.Completed)
+        };
+        RegisterServices(templates: templates, runHistory: runs);
+
+        var cut = Render<Consolidation>();
+
+        var brainRowB = Card(cut, "Repo B").QuerySelectorAll(".consolidation-card-row")
+            .Single(r => r.TextContent.Contains("Brain Consolidation:"));
+        Assert.Contains("Succeeded", brainRowB.TextContent);
+        Assert.DoesNotContain("Never run", brainRowB.TextContent);
+    }
+
+    [Fact]
+    public void LastRefactoringRun_IsTheTemplatesNewestRun_OtherTemplatesDoNotCount()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(id: "t1", name: "Repo A", brainProviderId: "brain-shared"),
+            CreateTemplate(id: "t2", name: "Repo B", brainProviderId: "brain-shared", repoProviderId: "repo-2", issueProviderId: "issue-2")
+        };
+        var now = DateTimeOffset.UtcNow;
+        // Oldest first: the page must pick the newest run by start time, not the first in the list
+        // (the API puts in-flight runs ahead of the paged history without re-sorting).
+        var runs = new List<PipelineRunSummary>
+        {
+            CreateConsolidationRun(ConsolidationRunType.RefactoringDetection, "t1", "Repo A", PipelineStep.Failed, startedAt: now.AddHours(-3)),
+            CreateConsolidationRun(ConsolidationRunType.RefactoringDetection, "t1", "Repo A", PipelineStep.Completed, startedAt: now.AddHours(-1)),
+            CreateConsolidationRun(ConsolidationRunType.RefactoringDetection, "t2", "Repo B", PipelineStep.Cancelled, startedAt: now)
+        };
+        RegisterServices(templates: templates, runHistory: runs);
+
+        var cut = Render<Consolidation>();
+
+        var refactoringRowA = Card(cut, "Repo A").QuerySelectorAll(".consolidation-card-row")
+            .Single(r => r.TextContent.Contains("Refactoring Scan:"));
+        Assert.Contains("Succeeded", refactoringRowA.TextContent);
+        Assert.DoesNotContain("Failed", refactoringRowA.TextContent);
+        // A refactoring scan works on its template's repository, so another template's scan does not count.
+        Assert.DoesNotContain("Cancelled", refactoringRowA.TextContent);
+    }
+
+    private static AngleSharp.Dom.IElement Card(IRenderedComponent<Consolidation> cut, string templateName) =>
+        cut.FindAll(".consolidation-card")
+            .Single(c => c.QuerySelector(".consolidation-card-title")!.TextContent == templateName);
+
+    private static AngleSharp.Dom.IElement BrainButton(IRenderedComponent<Consolidation> cut, string templateName) =>
+        Card(cut, templateName).QuerySelectorAll(".btn-trigger")
+            .Single(b => b.TextContent.Contains("Brain Consolidation"));
 
     [Fact]
     public void HidesBrainButton_WhenNoBrainProvider()

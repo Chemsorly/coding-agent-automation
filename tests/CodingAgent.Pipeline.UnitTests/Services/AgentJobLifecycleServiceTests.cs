@@ -249,6 +249,47 @@ public sealed class AgentJobLifecycleServiceTests
     }
 
     [Fact]
+    public async Task HandleJobRejectedAsync_ReviewRetriesExhausted_MarksThePullRequestNotAnIssue()
+    {
+        // A review's labels live on its pull request in the repository. Marking issue #5 in the tracker
+        // would mark an unrelated issue wherever pull requests are numbered separately, as in GitLab.
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = PipelineRun.CreateReview(new PipelineRunCreationParams
+        {
+            RunId = "job-1",
+            IssueIdentifier = "5",
+            IssueTitle = "Review !5",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-provider-1",
+            RunType = PipelineRunType.Review
+        });
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.GetWorkItemRetryCountAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+        _facade.Setup(f => f.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed,
+            It.IsAny<CancellationToken>(), It.IsAny<string>(), FailureReason.InfrastructureFailure))
+            .ReturnsAsync(true);
+        _labelService
+            .Setup(l => l.SwapLabelAsync(
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.HandleJobRejectedAsync(jobId, agent, "crash", CancellationToken.None);
+
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.Is<ProviderConfigId>(p => p.Value == "repo-provider-1"),
+            It.Is<IssueIdentifier>(i => i.Value == "5"),
+            AgentLabels.Error,
+            LabelTargetKind.PullRequest,
+            It.IsAny<CancellationToken>()), Times.Once);
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task HandleJobRejectedAsync_WhenRequeueFails_FallsBackToPermanentFail()
     {
         var agent = MakeAgent();

@@ -31,6 +31,10 @@ public sealed partial class PipelineRun
     public required string IssueTitle { get; set; }
     /// <summary>Web URL of the issue on the provider, or null if unknown (populated from the fetched issue).</summary>
     public string? IssueUrl { get; set; }
+    /// <summary>
+    /// The provider config that holds the run's subject: the tracker for an issue or epic, the repository
+    /// for a review's pull request (see <see cref="JobDistributionRequest.IssueProviderConfigId"/>).
+    /// </summary>
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
 
