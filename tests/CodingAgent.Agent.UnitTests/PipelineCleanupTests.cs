@@ -232,6 +232,35 @@ public class PipelineCleanupTests : IAsyncDisposable
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task RunAsync_EmitsPrePrCleanupSpan()
+    {
+        // Verify that PipelineCleanup.RunAsync emits a PrePrCleanup span nested under any ambient span.
+        var activities = new List<System.Diagnostics.Activity>();
+        using var listener = new System.Diagnostics.ActivityListener
+        {
+            ShouldListenTo = source => source.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName,
+            Sample = (ref System.Diagnostics.ActivityCreationOptions<System.Diagnostics.ActivityContext> _) =>
+                System.Diagnostics.ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = a => activities.Add(a)
+        };
+        System.Diagnostics.ActivitySource.AddActivityListener(listener);
+
+        var run = CreateRun();
+        var reporter = CreateReporter(run);
+
+        // Start a parent span to simulate the ExecutePipeline context.
+        using var execSpan = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.ActivitySource
+            .StartActivity("ExecutePipeline");
+
+        await PipelineCleanup.RunAsync(null, null, run, reporter, _mockLogger.Object);
+
+        activities.Should().Contain(a => a.DisplayName == "PrePrCleanup",
+            "PipelineCleanup.RunAsync must emit a PrePrCleanup span");
+        var cleanupSpan = activities.First(a => a.DisplayName == "PrePrCleanup");
+        cleanupSpan.GetTagItem("pipeline.run_id").Should().Be(run.RunId);
+    }
+
     private static HubConnection CreateDisconnectedHubConnection()
     {
         return new HubConnectionBuilder()

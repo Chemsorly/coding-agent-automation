@@ -194,8 +194,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             instrumentation.Activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
             if (result.FinalStep == PipelineStep.Cancelled)
                 instrumentation.Activity?.SetTag("pipeline.cancelled", true);
-            else if (result.FinalStep != PipelineStep.Completed)
-                instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
+            else if (result.FinalStep == PipelineStep.Failed)
+                instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, result.FailureReason ?? result.FinalStep.ToString());
             return result;
         }
         catch (Exception ex)
@@ -312,6 +312,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
         finally
         {
+            // TODO: [WARNING] If PipelineCleanup.RunAsync throws, the exception propagates to the outer
+            // catch (Exception ex) in ExecuteAsync which calls instrumentation.Activity?.RecordError(ex, ct),
+            // setting Error on ExecutePipeline due to a cleanup failure rather than a pipeline-logic failure.
+            // This is pre-existing behaviour (not introduced by this diff), but should be noted: a cleanup
+            // failure can misrepresent a successful pipeline run as errored in traces.
             await PipelineCleanup.RunAsync(buildResult.LocalCts, stepContext, run, reporter, _logger);
         }
     }

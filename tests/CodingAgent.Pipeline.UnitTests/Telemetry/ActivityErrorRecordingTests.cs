@@ -83,9 +83,9 @@ public class ActivityErrorRecordingTests : IDisposable
     [Fact]
     public async Task PipelineStepRunner_RecordsErrorOnParentActivity_WhenStepThrows()
     {
-        // When a step throws, its using-var activity is disposed before the catch in
-        // PipelineStepRunner fires, so Activity.Current reverts to the parent.
-        // PipelineStepRunner records error on whatever Activity.Current is (the parent).
+        // After PipelineStepRunner adds a per-step span, the error is recorded on
+        // the "Step TestThrow" span (runner-created), NOT on the parent span.
+        // The parent span remains clean (Unset status, no error).
         using var parentActivity = PipelineTelemetry.ActivitySource.StartActivity("ParentSpan");
         var step = new ThrowingStep();
         var context = BuildContext();
@@ -93,9 +93,14 @@ public class ActivityErrorRecordingTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None));
 
-        // The parent activity gets the error (the step's own activity is already stopped)
-        parentActivity!.Status.Should().Be(ActivityStatusCode.Error);
-        parentActivity.StatusDescription.Should().Be("step failed");
+        // The runner-created "Step TestThrow" span gets the error.
+        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step TestThrow");
+        stepSpan.Should().NotBeNull("PipelineStepRunner must create a Step span for each step");
+        stepSpan!.Status.Should().Be(ActivityStatusCode.Error);
+        stepSpan.StatusDescription.Should().Be("step failed");
+
+        // The parent span is NOT marked Error — the error stays on the step span.
+        parentActivity!.Status.Should().Be(ActivityStatusCode.Unset);
     }
 
     [Fact]
@@ -110,8 +115,15 @@ public class ActivityErrorRecordingTests : IDisposable
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => PipelineStepRunner.ExecuteAsync([step], context, cts.Token));
 
+        // After adding per-step spans, the cancelled tag is on the step span, not the parent.
+        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step TestCancel");
+        stepSpan.Should().NotBeNull("PipelineStepRunner must create a Step span for each step");
+        stepSpan!.Status.Should().Be(ActivityStatusCode.Unset);
+        stepSpan.GetTagItem("pipeline.cancelled").Should().Be(true);
+
+        // Parent span remains clean.
         parentActivity!.Status.Should().Be(ActivityStatusCode.Unset);
-        parentActivity.GetTagItem("pipeline.cancelled").Should().Be(true);
+        parentActivity.GetTagItem("pipeline.cancelled").Should().BeNull();
     }
 
     [Fact]
@@ -143,8 +155,12 @@ public class ActivityErrorRecordingTests : IDisposable
             "TestAction");
 
         result.Should().Be(StepResult.Continue);
-        activity!.Status.Should().Be(ActivityStatusCode.Error);
-        activity.StatusDescription.Should().Be("non-critical failure");
+        // Non-critical failures do NOT set Error status — the span remains Unset.
+        activity!.Status.Should().Be(ActivityStatusCode.Unset);
+        // Instead, an exception event with pipeline.non_critical=true is added.
+        var exceptionEvent = activity.Events.Should().ContainSingle(e => e.Name == "exception").Which;
+        exceptionEvent.Tags.Should().Contain(t => t.Key == "pipeline.non_critical" && true.Equals(t.Value));
+        exceptionEvent.Tags.Should().Contain(t => t.Key == "exception.message" && "non-critical failure".Equals(t.Value));
     }
 
     private static PipelineStepContext BuildContext()
