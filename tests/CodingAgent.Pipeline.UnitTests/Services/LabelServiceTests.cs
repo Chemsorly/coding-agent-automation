@@ -374,10 +374,11 @@ public sealed class LabelServiceTests
             new ProviderConfigId("github"), new IssueIdentifier("GH-1"),
             AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
 
-        // Assert: full sweep — all labels except the new one are removed.
+        // Assert: full sweep — all swap-target labels except the new one are removed.
+        // agent:generated is not a swap target and must not be removed (see AgentLabels.SwapTargets).
         mockProvider.Verify(
             p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Exactly(AgentLabels.All.Count - 1));
+            Times.Exactly(AgentLabels.SwapTargets.Count - 1));
         // The add still fires.
         mockProvider.Verify(
             p => p.AddLabelAsync(new IssueIdentifier("GH-1"), AgentLabels.Done, It.IsAny<CancellationToken>()),

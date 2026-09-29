@@ -2630,6 +2630,62 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         var act = () => _service.RevertFailedDistributionAsync(request, CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
+
+    [Fact]
+    public async Task RevertFailedDistribution_DecompositionAnalysis_SwapsLabelBackToEpic()
+    {
+        // AC: A failed POST /api/work-items for a DecompositionAnalysis candidate leaves the epic
+        // with agent:epic — not agent:next.
+        // TODO: [WARNING] No test covers the default (non-epic) RunType case. There is no assertion
+        // that RunType = PipelineRunType.Implementation (or similar) produces agent:next. The existing
+        // characterisation test (RevertFailedDistribution_OcePropagates_AfterMigration) omits RunType,
+        // so it relies on the default(PipelineRunType) value hitting the switch's _ arm by accident.
+        // Add a test with an explicitly set RunType = PipelineRunType.Implementation verifying
+        // agent:next is returned. See review findings (TestQualityReviewer, line 2634).
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#50",
+            IssueProviderConfigId = "ipc-epic",
+            RepoProviderConfigId = "rpc-epic",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Decomposition,
+            RunType = PipelineRunType.DecompositionAnalysis,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync("ipc-epic", "owner/repo#50", AgentLabels.Epic,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_Decomposition_SwapsLabelBackToEpicApproved()
+    {
+        // AC: A failed POST /api/work-items for a Decomposition (Phase 2) candidate leaves the epic
+        // with agent:epic-approved — not agent:next.
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#51",
+            IssueProviderConfigId = "ipc-epic-approved",
+            RepoProviderConfigId = "rpc-epic-approved",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Decomposition,
+            RunType = PipelineRunType.Decomposition,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync("ipc-epic-approved", "owner/repo#51", AgentLabels.EpicApproved,
+                LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
 }
 
 /// <summary>
