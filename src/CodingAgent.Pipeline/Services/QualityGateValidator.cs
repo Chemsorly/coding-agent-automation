@@ -92,67 +92,7 @@ public class QualityGateValidator : IQualityGateValidator
 
         foreach (var qgc in qualityGateConfigs)
         {
-            var (result, shouldStop) = await RunSingleQgcAsync(workspacePath, qgc, ct, reportEvent: null);
-            qgcResults.Add(result);
-            if (shouldStop)
-                break;
-        }
-
-        return BuildAggregateReport(qgcResults);
-    }
-
-    /// <summary>
-    /// Same as <see cref="ValidateAsync"/> but also fires a server-side
-    /// <c>process_timeout</c> event via <paramref name="reportEvent"/> when a QGC process
-    /// exceeds its timeout (issue #2979). Called by <see cref="QualityGateExecutor"/> when a
-    /// <see cref="Models.QualityGateContext.ReportPipelineRunEvent"/> delegate is wired.
-    /// </summary>
-    // TODO [WARNING]: This method duplicates the full directory-cleanup prologue (TestResults +
-    // QualityGatesOutputDirectory deletion) from ValidateAsync. If the cleanup logic in ValidateAsync
-    // is changed (e.g. new directories added), this method will silently diverge. Refactor to extract
-    // the cleanup into a shared private helper (e.g. CleanWorkspacePrologueAsync) used by both paths,
-    // or add an optional reportEvent parameter to ValidateAsync and delegate the cleanup from there.
-    // (DotNetSpecialist #2979)
-    internal async Task<QualityGateReport> ValidateWithServerSideReportingAsync(
-        WorkspacePath workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
-        CancellationToken ct, Action<PipelineRunEventReport> reportEvent, string? baseBranch = null)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
-        ArgumentNullException.ThrowIfNull(qualityGateConfigs);
-        ArgumentNullException.ThrowIfNull(reportEvent);
-
-        // Reuse cleanup logic by delegating to the base method would duplicate cleanup;
-        // instead call directly to avoid duplication.
-        var testResultsRoot = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
-        try
-        {
-            if (Directory.Exists(testResultsRoot))
-            {
-                Directory.Delete(testResultsRoot, recursive: true);
-                _logger.Debug("Cleaned up previous test results at {TestResultsRoot}", testResultsRoot);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to clean up previous test results at {TestResultsRoot}", testResultsRoot);
-        }
-
-        var qualityGatesDir = Path.Combine(workspacePath, AgentWorkspacePaths.QualityGatesOutputDirectory);
-        try
-        {
-            if (Directory.Exists(qualityGatesDir))
-                Directory.Delete(qualityGatesDir, recursive: true);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
-        }
-
-        var qgcResults = new List<QgcExecutionResult>();
-
-        foreach (var qgc in qualityGateConfigs)
-        {
-            var (result, shouldStop) = await RunSingleQgcAsync(workspacePath, qgc, ct, reportEvent);
+            var (result, shouldStop) = await RunSingleQgcAsync(workspacePath, qgc, ct);
             qgcResults.Add(result);
             if (shouldStop)
                 break;
@@ -172,10 +112,9 @@ public class QualityGateValidator : IQualityGateValidator
     // WorkspacePath through the private helpers or at minimum documenting that the implicit conversion is
     // intentional and safe here.
     private async Task<(QgcExecutionResult Result, bool ShouldStop)> RunSingleQgcAsync(
-        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct,
-        Action<PipelineRunEventReport>? reportEvent)
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {
-        var compilationResult = await RunQgcCompilationAsync(workspacePath, qgc, ct, reportEvent);
+        var compilationResult = await RunQgcCompilationAsync(workspacePath, qgc, ct);
 
         if (compilationResult is { Passed: false })
         {
@@ -188,7 +127,7 @@ public class QualityGateValidator : IQualityGateValidator
             }, true);
         }
 
-        var testsResult = await RunQgcTestsAsync(workspacePath, qgc, ct, reportEvent);
+        var testsResult = await RunQgcTestsAsync(workspacePath, qgc, ct);
 
         if (testsResult is { Passed: false })
         {
@@ -296,15 +235,6 @@ public class QualityGateValidator : IQualityGateValidator
                 new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName));
             ctx.Activity?.SetTag("qgc.timed_out", true);
             ctx.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-
-            // Report process_timeout stall event server-side (issue #2979).
-            ctx.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
-            {
-                Kind = PipelineRunEventKind.AgentStall,
-                Stage = PipelineTelemetry.StallPhases.QgcRetryAgent,
-                Result = PipelineTelemetry.AgentStallKinds.ProcessTimeout
-            });
-
             throw new QgcProcessTimedOutException(ctx.TimeoutSeconds, ex);
         }
         catch (OperationCanceledException)
@@ -341,16 +271,7 @@ public class QualityGateValidator : IQualityGateValidator
         string QgcDisplayName,
         string WorkspacePath,
         int TimeoutSeconds,
-        Activity? Activity)
-    {
-        /// <summary>
-        /// Optional delegate to report a <c>process_timeout</c> stall event server-side (issue #2979).
-        /// When non-null, called with the normalized phase when <see cref="RunQgcProcessAsync"/> detects
-        /// a process timeout, so the API can record <c>pipeline.run.agent_stalls</c> with
-        /// <c>kind=process_timeout</c> instead of only the agent-side <c>quality_gate.process.timeout</c> counter.
-        /// </summary>
-        public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
-    }
+        Activity? Activity);
 
     /// <summary>Thrown by <see cref="RunQgcProcessAsync"/> when the process exceeds its timeout.</summary>
     // TODO [WARNING]: This class was changed from private to public. It is an internal implementation
@@ -369,8 +290,7 @@ public class QualityGateValidator : IQualityGateValidator
     /// Runs the compilation command for a single QGC. Returns null if no compilation command is defined.
     /// </summary>
     private async Task<GateResult?> RunQgcCompilationAsync(
-        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct,
-        Action<PipelineRunEventReport>? reportEvent = null)
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(qgc.CompilationCommand))
             return null;
@@ -390,10 +310,7 @@ public class QualityGateValidator : IQualityGateValidator
         {
             (exitCode, stdout, stderr) = await RunQgcProcessAsync(
                 qgc.CompilationCommand, arguments,
-                new QgcProcessContext("compilation", qgc.DisplayName, workspacePath, qgc.ProcessTimeoutSeconds, activity)
-                {
-                    ReportPipelineRunEvent = reportEvent
-                },
+                new QgcProcessContext("compilation", qgc.DisplayName, workspacePath, qgc.ProcessTimeoutSeconds, activity),
                 ct);
         }
         catch (QgcProcessTimedOutException ex)
@@ -434,8 +351,7 @@ public class QualityGateValidator : IQualityGateValidator
     /// are used as-is and test counts are parsed from stdout.
     /// </summary>
     private async Task<GateResult?> RunQgcTestsAsync(
-        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct,
-        Action<PipelineRunEventReport>? reportEvent = null)
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(qgc.TestCommand))
             return null;
@@ -473,10 +389,7 @@ public class QualityGateValidator : IQualityGateValidator
         {
             (exitCode, stdout, stderr) = await RunQgcProcessAsync(
                 qgc.TestCommand, fullArgs,
-                new QgcProcessContext("tests", qgc.DisplayName, workspacePath, qgc.ProcessTimeoutSeconds, activity)
-                {
-                    ReportPipelineRunEvent = reportEvent
-                },
+                new QgcProcessContext("tests", qgc.DisplayName, workspacePath, qgc.ProcessTimeoutSeconds, activity),
                 ct);
         }
         catch (QgcProcessTimedOutException ex)
@@ -589,24 +502,16 @@ public class QualityGateValidator : IQualityGateValidator
     internal static string BuildCiFailureDetails(
         PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
     {
-        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
-        var cancelledJobs = status.Jobs.Where(j => j.State == PipelineRunState.Cancelled).ToList();
-
-        var details = new System.Text.StringBuilder($"CI {status.State}.");
-        if (failedJobs.Count > 0 || cancelledJobs.Count == 0)
-        {
-            var jobNames = failedJobs.Count > 0
-                ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
-                : "unknown";
-            details.Append($" {failedJobs.Count} job(s) failed: {jobNames}.");
-        }
-        if (cancelledJobs.Count > 0)
-        {
-            var jobNames = string.Join(", ", cancelledJobs.Select(j => $"'{j.Name}'"));
-            details.Append($" {cancelledJobs.Count} job(s) cancelled before finishing: {jobNames}.");
-            details.Append(" A cancelled job usually exceeded its timeout or hung on a test; its log shows how far it got.");
-        }
-        return details.ToString();
+        // When the overall run was Cancelled (e.g. by concurrency:cancel-in-progress), dependent
+        // jobs cascade to Failure conclusion even though no code failed. Do not report those as
+        // "failed jobs" — they are artefacts of the cancellation, not real code failures.
+        var failedJobs = status.State == PipelineRunState.Cancelled
+            ? new List<PipelineJobResult>()
+            : status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
+        var jobNames = failedJobs.Count > 0
+            ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
+            : "unknown";
+        return $"CI {status.State}. {failedJobs.Count} job(s) failed: {jobNames}.";
     }
 
     /// <summary>
