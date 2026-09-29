@@ -33,8 +33,7 @@ public class DatabaseMaintenanceServiceBackfillTests : IDisposable
         .AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["WorkDistribution:Reconciliation:StaleRetentionDays"] = "7",
-            ["WorkDistribution:Reconciliation:PipelineRunRetentionDays"] = "90",
-            ["WorkDistribution:Reconciliation:ConsolidationRunRetentionDays"] = "90"
+            ["WorkDistribution:Reconciliation:PipelineRunRetentionDays"] = "90"
         })
         .Build();
 
