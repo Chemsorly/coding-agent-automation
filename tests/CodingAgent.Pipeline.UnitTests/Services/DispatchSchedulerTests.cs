@@ -2002,5 +2002,133 @@ public class DispatchSchedulerTests
                 "prepare must be called exactly once for the duplicate issue");
     }
 
+    /// <summary>
+    /// When the first decomposition dispatch in a cycle fills the remaining concurrency slot,
+    /// the per-dispatch concurrency check inside DispatchDecompositionRoundAsync must return
+    /// Abort for the second template — even though activeDecompositionCount (from the prior cycle)
+    /// is 0. This verifies the in-round guard on additionalDecompDispatches, not ComputeQueueAvailability.
+    /// </summary>
+    [Fact]
+    public async Task WhenDecompositionConcurrencyLimitFilledInRound_SecondTemplateIsAborted()
+    {
+        var t1 = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "Template t1",
+            IssueProviderId = "provider-t1",
+            RepoProviderId = "repo-t1",
+            DecompositionEnabled = true
+        };
+        var t2 = new PipelineJobTemplate
+        {
+            Id = "t2", Name = "Template t2",
+            IssueProviderId = "provider-t2",
+            RepoProviderId = "repo-t2",
+            DecompositionEnabled = true
+        };
+        var project = CreateProject("p1");
+        var pollable = new List<PipelineJobTemplate> { t1, t2 };
+        var flattened = new List<(PipelineJobTemplate, PipelineProject)> { (t1, project), (t2, project) };
+
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
+        {
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis, "provider-t1") },
+            ["t2"] = new() { new EpicCandidate(CreateIssueSummary("epic-2"), PipelineRunType.DecompositionAnalysis, "provider-t2") }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                // Limit = 1, ActiveDecompositionCount = 0 → first dispatch fills the slot;
+                // second template's per-dispatch guard aborts.
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 1 },
+                MaxRunsPerCycle = 10,
+                ActiveDecompositionCount = 0,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = decompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        _decompDispatchCount.Should().Be(1,
+            "only the first template's epic should be dispatched; the second is blocked by the in-round concurrency guard");
+        result.ProcessedCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// When a decomposition dispatch returns AlreadyQueued (409), it must not count as a
+    /// processed dispatch and must not consume the per-cycle budget.
+    /// Uses two templates: t1's epic gets a 409 (skip, no budget consumed), t2's epic dispatches.
+    /// </summary>
+    [Fact]
+    public async Task WhenDecompositionDispatchReturnsAlreadyQueued_ProcessedCountNotIncrementedAndBudgetNotConsumed()
+    {
+        var t1 = new PipelineJobTemplate
+        {
+            Id = "t1", Name = "Template t1",
+            IssueProviderId = "provider-t1",
+            RepoProviderId = "repo-t1",
+            DecompositionEnabled = true
+        };
+        var t2 = new PipelineJobTemplate
+        {
+            Id = "t2", Name = "Template t2",
+            IssueProviderId = "provider-t2",
+            RepoProviderId = "repo-t2",
+            DecompositionEnabled = true
+        };
+        var project = CreateProject("p1");
+        var pollable = new List<PipelineJobTemplate> { t1, t2 };
+        var flattened = new List<(PipelineJobTemplate, PipelineProject)> { (t1, project), (t2, project) };
+
+        // First DistributeAndFinalizeAsync call → 409; second → success.
+        var callCount = 0;
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1) return new DispatchOutcome(true, true, null) { AlreadyExists = true };
+                return new DispatchOutcome(true, false, null);
+            });
+
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
+        {
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-already-running"), PipelineRunType.DecompositionAnalysis, "provider-t1") },
+            ["t2"] = new() { new EpicCandidate(CreateIssueSummary("epic-new"), PipelineRunType.DecompositionAnalysis, "provider-t2") }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                // MaxRunsPerCycle = 2 with 3 effective candidates (t1=409, t2=success):
+                // if the 409 consumed a budget slot, t2 would be blocked and ProcessedCount == 0.
+                // Since 409 must not consume budget, t2 dispatches and ProcessedCount == 1.
+                MaxRunsPerCycle = 2,
+                ActiveDecompositionCount = 0,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = decompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1,
+            "the 409 (t1 epic) must not increment ProcessedCount; only the genuine dispatch (t2 epic) must count");
+        _decompDispatchCount.Should().BeGreaterThanOrEqualTo(1,
+            "PrepareDecompositionDistributionRequestAsync must be called at least once");
+    }
+
     #endregion
 }
