@@ -58,8 +58,10 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
 | `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
-| `agent.tokens.used` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Agent tokens consumed |
-| `agent.cost.usd` | Counter | USD | `run_type`, `pipeline.project_id`, `pipeline.project_name` | LLM cost in USD |
+| `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider` | LLM tokens consumed per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
+| `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost in USD per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
+| `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per run, per phase — recorded **API-side** at terminal status time. Pre-initialized with `model=unknown` for all `run_type × phase × provider` combinations. |
+| `pipeline.run.agent_time` | Counter | `s` | `run_type`, `phase`, `provider` | Agent execution time (seconds) per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
 | `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
 | `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
@@ -98,6 +100,9 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `failure_reason` | `none`, `timeout`, `infrastructure_failure`, `agent_error`, `token_refresh_failure`, `exit_code_failure`, `quality_gate_exhausted`, `gate_rejected` | Failure classification in snake_case. `none` for all non-failure outcomes including `needs_refinement` and `wont_do`. |
 | `step` | PipelineStep enum name (e.g., `Created`, `GeneratingCode`, `RunningQualityGates`) | Pipeline step name in PascalCase — only present on `pipeline.run.step.duration`. Matches `PipelineStep` C# enum member names. |
 | `result` | `created` / `failed` (for `pipeline.run.sub_issues`); `pushed` / `none` (for `pipeline.run.brain_updates`) | Sub-issue creation or brain update result — only present on the respective counters. |
+| `phase` | `analysis`, `analysis_review`, `codegen`, `review`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | Normalized pipeline phase for LLM usage counters. Per-reviewer names (e.g. `review_correctness`) collapse into `review`. |
+| `provider` | `kiro`, `opencode`, `unknown` | Agent provider for LLM usage counters. |
+| `model` | provider-specific model name (e.g. `claude-sonnet-4-5`) | Model name for `pipeline.run.agent_sessions`. Value `unknown` is used in pre-initialization and when the provider doesn't report a model. |
 | `result` | `success`, `failure` | Poll cycle outcome (for loop metrics) |
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
@@ -135,10 +140,11 @@ All counters with closed tag sets are pre-initialized to `0` at API process star
 - `workdistribution.workitems_terminated` is pre-initialized with **24 series**: 3 statuses × (1 none + 7 failure_reasons).
 - `pipeline.run.sub_issues` is pre-initialized with **2 series**: `result=created`, `result=failed`.
 - `pipeline.run.brain_updates` is pre-initialized with **2 series**: `result=pushed`, `result=none`.
+- `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_sessions`, and `pipeline.run.agent_time` are pre-initialized with **135 series each** (5 run_types × 9 phases × 3 providers). `model` is excluded from pre-init (unbounded cardinality).
 
 ### Prompt Cache and Per-Phase Token Data
 
-Each `PipelineRun` accumulates token and cost data beyond the simple totals exposed by `agent.tokens.used` and `agent.cost.usd`. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
+Each `PipelineRun` accumulates token and cost data beyond the simple totals. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
 
 #### Cache Token Fields
 
@@ -162,7 +168,65 @@ The breakdown is rendered on the Run page (`/runs/{id}`), in the pipeline-progre
 
 **API exposure:** `PhaseBreakdown` is included in the `GET /api/export/runs.json` export. Fields will be absent (`null`) for runs that pre-date the phase breakdown feature.
 
-### Histogram Bucket Boundaries
+### Kiro CLI Usage Data Investigation
+
+**Investigation result (2026-09-29): Kiro CLI does not expose token or cost data.**
+
+During a code audit of `KiroCliAgentProvider` and `KiroCliLib`, the following was verified:
+
+- `KiroCliOrchestrator` and `KiroCliLib.Core.OutputParser` parse CLI output line-by-line to extract test results (via `TestResults` property) and session IDs (via `kiro chat --list-sessions`), but do not parse any token count or credit data.
+- `kiro-cli` output does not contain token counts, credit usage, or cost information in any format (JSON blocks, text lines, or metadata).
+- `KiroCliAgentProvider.ExecuteAsync` returns `AgentResult.Usage = null` and `AgentResult.Cost = null`. This is correct and expected.
+- As a result, `pipeline.run.tokens` and `pipeline.run.cost_usd` will be zero for all phases on Kiro-powered runs. `pipeline.run.agent_sessions` and `pipeline.run.agent_time` **will** be populated for Kiro runs (these are tracked by the agent harness, not the CLI).
+
+**What to watch for:** If a future Kiro CLI version exposes usage data (e.g., in a structured JSON output line like `{"tokens": {"input": ..., "output": ...}}`), `KiroCliOrchestrator` will need to be updated to parse it and populate `AgentResult.Usage`. At that point, the `TokenUsage` fields would flow through to `PhaseBreakdown` automatically via `AccumulateTokenUsage`.
+
+### LLM Usage Telemetry Architecture
+
+The four `pipeline.run.*` usage counters (`tokens`, `cost_usd`, `agent_sessions`, `agent_time`) follow the API-at-terminal-time pattern introduced in issue #2967:
+
+1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-session OTel span with GenAI semantic convention attributes (see "Session Spans" below) and accumulates session data into `PipelineRun.Metrics.PhaseBreakdown` via `AccumulateAgentSession`.
+2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` (`IReadOnlyDictionary<string, PhaseUsagePayload>`) for transmission to the orchestrator.
+3. **API side** — `WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync` reads `PhaseBreakdown` from the deserialized payload and calls `RecordRunUsageMetrics`, which emits the 4 counters with normalized phase tags.
+
+**Phase normalization** is performed by `PipelineTelemetry.NormalizeRunPhase(string?)`, which maps the raw phase keys (e.g., `"review_correctness"`, `"codegen"`, `"code generation"`) to a closed set:
+
+| Raw phase key pattern | Normalized tag |
+|-----------------------|---------------|
+| `analysis` | `analysis` |
+| `analysis_review` / `analysisreview` | `analysis_review` |
+| `codegen` / `code_gen` / `code generation` | `codegen` |
+| `review` | `review` |
+| `review_*` / `review *` | `review` (per-reviewer names collapse) |
+| `acceptance_criteria` / `acceptancecriteria` | `acceptance_criteria` |
+| `pr_description` / `prdescription` | `pr_description` |
+| `reflection` | `reflection` |
+| `decomposition` / `decomposition_review` | `decomposition` |
+| anything else / empty / null | `other` |
+
+### Session Spans (GenAI Semantic Conventions)
+
+Every agent CLI invocation creates a child span under the current `ExecutePipeline` span:
+
+| Span name | `invoke_agent {phase}` (e.g. `invoke_agent analysis`) |
+|-----------|------------------------------------------------------|
+| `gen_ai.operation.name` | `invoke_agent` |
+| `gen_ai.provider.name` | `kiro` or `opencode` |
+| `gen_ai.request.model` | model name if configured, omitted otherwise |
+| `pipeline.phase` | normalized phase tag (same as metric `phase` tag) |
+| `agent.session.resumed` | `true` if `UseResume=true` or `ResumeSessionId` is set |
+| `agent.exit_code` | integer exit code from the CLI process |
+| `gen_ai.usage.input_tokens` | input tokens (OpenCode only; Kiro always omitted) |
+| `gen_ai.usage.output_tokens` | output tokens (OpenCode only; Kiro always omitted) |
+| `gen_ai.usage.total_tokens` | total tokens when > 0 (OpenCode only; Kiro always omitted) |
+
+Stall events are recorded as span events:
+
+| Event name | When | Tags |
+|------------|------|------|
+| `agent.stall_warning` | agent silence exceeds `stallWarningInterval` | `silence_minutes` |
+| `agent.stall_kill` | agent killed due to silence timeout | `silence_minutes`, `kill_timeout_minutes` |
+| `agent.process_death` | agent process died unexpectedly | `pid` |
 
 Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instrument creation time:
 

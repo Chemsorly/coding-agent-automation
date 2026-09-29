@@ -366,8 +366,33 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         TotalTokens = run.TotalTokens,
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel,
-        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION")
+        HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION"),
+        PhaseBreakdown = BuildPhaseBreakdownPayload(run.Metrics.PhaseBreakdown)
     };
+
+    /// <summary>
+    /// Converts the in-memory <see cref="RunMetrics.PhaseBreakdown"/> to a
+    /// <see cref="PhaseUsagePayload"/> dictionary suitable for wire serialization.
+    /// Returns null when the breakdown is empty.
+    /// </summary>
+    private static IReadOnlyDictionary<string, PhaseUsagePayload>? BuildPhaseBreakdownPayload(
+        System.Collections.Concurrent.ConcurrentDictionary<string, PhaseUsage> breakdown)
+    {
+        if (breakdown.IsEmpty)
+            return null;
+
+        return breakdown.ToDictionary(
+            kvp => kvp.Key,
+            kvp => new PhaseUsagePayload
+            {
+                Tokens = kvp.Value.Tokens,
+                Cost = kvp.Value.Cost,
+                SessionCount = kvp.Value.SessionCount,
+                AgentTimeSeconds = kvp.Value.AgentTimeSeconds,
+                Provider = kvp.Value.Provider,
+                Model = kvp.Value.Model
+            });
+    }
 
     /// <summary>
     /// Emits a warning when an implementation-type run has no brain provider configured.
