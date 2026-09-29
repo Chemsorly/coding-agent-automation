@@ -137,15 +137,17 @@ secrets:
   # Optional: OTEL exporter authorization header (e.g., "Api-Token dt0c01.xxx" for Dynatrace)
   otelHeaders: ""
 
-  # Optional: OpenCode configuration JSON content (mounted as file for opencode agents)
-  # Multi-line JSON string containing the opencode provider configuration.
+  # Optional: OpenCode configuration JSON content for opencode providerType agent jobs.
+  # When empty (default), the key is omitted from the chart-managed Secret entirely, allowing
+  # operators to patch it manually via kubectl without it being overwritten on helm upgrade.
+  # When set, this value takes precedence over any live-patched value in the Secret.
   opencodeConfigContent: ""
 
 # Name of an existing Kubernetes Secret to use instead of creating one.
 # When set, the chart does NOT create a Secret resource and references this name
 # in all volume mounts and env var sources.
-# The referenced Secret must contain keys: agent-api-key, otel-headers,
-# opencode-config-content
+# The referenced Secret must contain keys: agent-api-key, otel-headers.
+# opencode-config-content is optional — only required when using opencode providerType agent templates.
 existingSecret: ""
 
 # ── Secret Initialization Hook ───────────────────────────────────────────────
