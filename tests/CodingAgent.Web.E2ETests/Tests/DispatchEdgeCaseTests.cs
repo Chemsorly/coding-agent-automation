@@ -140,7 +140,7 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase
         // and be non-interactive.
         var issueRow = Page.Locator("[data-testid='issue-row-51']");
         var hasRunningBadge = await issueRow.Locator("text=Running").CountAsync();
-        Assert.True(hasRunningBadge > 0, "Issue already being processed should show Queued badge");
+        Assert.True(hasRunningBadge > 0, "Issue already being processed should show Running badge");
 
         // The row should have reduced opacity (pointer-events: none)
         var opacity = await issueRow.EvaluateAsync<string>("el => getComputedStyle(el).opacity");

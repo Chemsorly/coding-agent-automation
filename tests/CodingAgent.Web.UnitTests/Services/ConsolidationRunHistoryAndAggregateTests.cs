@@ -88,13 +88,10 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
             "normal runs must still be returned");
 
         // ── Assert 2: success-rate aggregate excludes the consolidation run ─
-        // TODO(#3025): This assertion calls RunOutcomeDisplay.SuccessRate against the pre-write
-        // in-memory collection [consolidationSummary, normalSummary] rather than the list returned
-        // by GetRunHistoryAsync(). The two asserts therefore exercise independent code paths with no
-        // linkage. To fully satisfy the acceptance criterion phrasing ("aggregate computed over the
-        // same data set"), consider changing this to RunOutcomeDisplay.SuccessRate(history) so the
-        // aggregate is computed over the data actually returned by the read path.
-        var rate = RunOutcomeDisplay.SuccessRate([consolidationSummary, normalSummary]);
+        // Computed over the same data set returned by the read path (history), so both asserts
+        // share a single code path. This satisfies the acceptance criterion phrasing for #3025:
+        // "aggregate computed over the same data set" that GetRunHistoryAsync() returns.
+        var rate = RunOutcomeDisplay.SuccessRate(history);
 
         // With consolidation excluded: 0 succeeded / 1 decided (normal-failed) → 0%
         // Without the filter: 1 succeeded / 2 decided (consolidation-completed + normal-failed) → 50%

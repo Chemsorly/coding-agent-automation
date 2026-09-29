@@ -795,6 +795,13 @@ public class BlockedIssuesServiceTests
     [Fact]
     public void NotReadyLabels_ContainsExpectedLabels()
     {
+        // TODO: [WARNING] This test exercises the static NotReadyLabels set directly (an implementation
+        //   detail) rather than observable GetBacklogAsync behaviour. A refactor that replaces the
+        //   set with an inline predicate would break this test even if the feature still works, and
+        //   an incorrect set member value that still satisfies Contains() would not be caught.
+        //   The individual per-label round-trip tests above are the authoritative behavioural contract;
+        //   this test adds no additional safety net beyond them. Consider removing or converting to
+        //   a contract test that calls GetBacklogAsync and asserts IsReady=false for each label.
         // Verify the set contains all required labels from the acceptance criteria
         var notReady = BlockedIssuesService.NotReadyLabels;
         Assert.Contains("agent:in-progress", notReady);

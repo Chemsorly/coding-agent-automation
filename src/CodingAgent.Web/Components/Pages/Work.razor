@@ -289,9 +289,22 @@
                                     <td>
                                         @{
                                             var (readinessText, readinessStyle) = GetReadinessDisplay(b);
-                                            var effectiveIsReady = b.IsReady && !IsWorkItemActive(b);
+                                            var isActive = IsWorkItemActive(b);
+                                            var effectiveIsReady = b.IsReady && !isActive;
+                                            // TODO: [WARNING] When isActive==true the text is forced to "Running" below,
+                                            //   but finalStyle retains the label's style (e.g. "error" for agent:error,
+                                            //   "warning" for agent:needs-refinement). The chip therefore reads "Running"
+                                            //   but is painted with the error/warning colour — a cosmetic mismatch.
+                                            //   Consider setting finalStyle = "accent" when isActive so the chip colour
+                                            //   matches the "Running" text.
                                             var finalStyle = effectiveIsReady ? "success" : readinessStyle;
-                                            var finalText = effectiveIsReady ? readinessText : (IsWorkItemActive(b) ? "Running" : readinessText);
+                                            string finalText;
+                                            if (effectiveIsReady)
+                                                finalText = readinessText;
+                                            else if (isActive)
+                                                finalText = "Running";
+                                            else
+                                                finalText = readinessText;
                                         }
                                         @if (effectiveIsReady)
                                         {
@@ -501,21 +514,31 @@
         if (b.BlockedBy.Count > 0)
             return ($"Blocked by {string.Join(", ", b.BlockedBy.Select(n => $"#{n}"))}", "warning");
         // Not ready due to a lifecycle label — determine the most specific display text.
-        if (b.Labels is not null)
+        return FindLabelDisplay(b.Labels) ?? ("Not ready", "muted");
+    }
+
+    /// <summary>
+    /// Scans <paramref name="labels"/> for a recognised lifecycle label and returns its display text
+    /// and style class. Returns null when no recognised label is present.
+    /// </summary>
+    private static (string Text, string StyleClass)? FindLabelDisplay(IReadOnlyList<string>? labels)
+    {
+        if (labels is null) return null;
+        foreach (var l in labels)
         {
-            if (b.Labels.Any(l => l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase))) return ("In progress", "accent");
-            if (b.Labels.Any(l => l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase))) return ("Done", "muted");
-            if (b.Labels.Any(l => l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase))) return ("Error", "error");
-            if (b.Labels.Any(l => l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
-                                || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase))) return ("Won't do", "muted");
-            if (b.Labels.Any(l => l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase))) return ("Needs refinement", "warning");
-            if (b.Labels.Any(l => l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase))) return ("Queued", "accent");
-            if (b.Labels.Any(l => l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
-                                || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
-                                || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase))) return ("Epic", "muted");
-            if (b.Labels.Any(l => l.Equals("backlog", StringComparison.OrdinalIgnoreCase))) return ("Parked", "muted");
+            if (l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase)) return ("In progress", "accent");
+            if (l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase)) return ("Done", "muted");
+            if (l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase)) return ("Error", "error");
+            if (l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
+             || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase)) return ("Won't do", "muted");
+            if (l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase)) return ("Needs refinement", "warning");
+            if (l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase)) return ("Queued", "accent");
+            if (l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
+             || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
+             || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase)) return ("Epic", "muted");
+            if (l.Equals("backlog", StringComparison.OrdinalIgnoreCase)) return ("Parked", "muted");
         }
-        return ("Not ready", "muted");
+        return null;
     }
 
     private static string StatusColor(WorkItemStatus s) => s switch

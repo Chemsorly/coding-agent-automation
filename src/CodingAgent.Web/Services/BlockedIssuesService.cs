@@ -5,8 +5,6 @@ using Serilog;
 
 namespace CodingAgent.Web.Services;
 
-
-
 /// <summary>
 /// Computes the "blocked issues" shown on the Attention screen: open provider issues that cannot be
 /// dispatched yet because they depend on issues that are still open. Reuses the same issue-provider +
@@ -169,7 +167,8 @@ public sealed class BlockedIssuesService
                         // dispatch readiness, regardless of what the dependency checker returned.
                         var isReady = check.IsReady
                             && (issue.Labels is null || !issue.Labels.Any(l => NotReadyLabels.Contains(l)));
-                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors));                        providerFetched++;
+                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors));
+                        providerFetched++;
                     }
 
                     if (!pageResult.HasMore || providerFetched >= MaxIssuesPerProvider)

@@ -204,7 +204,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase
         // merely Pending/Queued. "Queued" would only appear if the job were still waiting for a pod.
         var prRow = Page.Locator("[data-testid='pr-row-77']");
         var hasRunningBadge = await prRow.Locator("text=Running").CountAsync();
-        Assert.True(hasRunningBadge > 0, "PR already being processed should show the Queued badge");
+        Assert.True(hasRunningBadge > 0, "PR already being processed should show Running badge");
 
         var opacity = await prRow.EvaluateAsync<string>("el => getComputedStyle(el).opacity");
         Assert.NotEqual("1", opacity);

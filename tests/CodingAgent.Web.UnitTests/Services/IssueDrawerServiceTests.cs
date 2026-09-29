@@ -333,6 +333,12 @@ public class IssueDrawerServiceTests
 
         await _service.RefreshActiveIssuesAsync();
 
+        // TODO: [WARNING] This assertion only checks IsIssueActive (bool) and does not verify the
+        //   stored WorkItemStatus value. A regression that inverts Pending/Running classification
+        //   would not be caught here. The GetIssueWorkItemStatus_WhenIssueIsPending_ReturnsPending
+        //   test below covers the status value separately; consider merging or adding an explicit
+        //   Assert.Equal(WorkItemStatus.Pending, _service.GetIssueWorkItemStatus("42", "ip-1"))
+        //   to this test so it validates both presence and status in one place.
         Assert.True(_service.IsIssueActive("42", "ip-1"));
         Assert.False(_service.IsIssueActive("99", "ip-1"));
     }

@@ -341,6 +341,12 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     // ── Active issues ──
 
+    // TODO: [WARNING] RefreshActiveIssuesAsync passes CancellationToken.None to both API calls because
+    //   the method signature accepts no CancellationToken. Callers that own a cancellation token
+    //   (e.g. component disposal, navigation-away) cannot forward it, so the two in-flight HTTP
+    //   requests run to completion even after the owning service/component is disposed or navigated
+    //   away, then write into a stale ActiveIssues dictionary. Consider adding a CancellationToken
+    //   parameter to RefreshActiveIssuesAsync and threading it through both API calls.
     public async Task RefreshActiveIssuesAsync()
     {
         // Build a status-aware map by combining:

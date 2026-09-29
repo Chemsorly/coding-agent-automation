@@ -25,6 +25,11 @@ public class WorkComponentTests : BunitContext
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<IDependencyChecker> _mockDependencyChecker = new();
 
+    // Static label arrays reused across multiple tests. Using static readonly avoids allocating a
+    // new array per test invocation (CA1861).
+    private static readonly string[] s_inProgressLabels = ["agent:in-progress"];
+    private static readonly string[] s_doneLabels = ["agent:done"];
+
     /// <summary>
     /// Builds a minimal <see cref="PendingWorkItemDto"/> suitable for queue-table rendering tests.
     /// </summary>
@@ -794,9 +799,16 @@ public class WorkComponentTests : BunitContext
     public async Task BacklogCard_IssueWithInProgressLabel_ShowsInProgressBadge_NotReady()
     {
         // An issue with agent:in-progress must NOT show "Ready" — BlockedIssuesService sets IsReady=false.
+        // TODO: [WARNING] This test verifies rendering given the IsReady flag computed by the real
+        //   BlockedIssuesService (wired through DI via SetupBacklogProvider). If BlockedIssuesService
+        //   stopped setting IsReady=false for agent:in-progress but the component still read the label
+        //   directly and rendered "In progress", the NotContain(">Ready<") assertion would still pass
+        //   for the wrong reason. Consider adding an assertion on the BacklogIssue.IsReady value
+        //   (or a dedicated BlockedIssuesService unit test for this label) to pin the intermediate
+        //   computation — which already exists in BlockedIssuesServiceTests.GetBacklogAsync_IssueWithInProgressLabel_IsNotReady.
         SetupBacklogProvider(new[]
         {
-            new IssueSummary { Identifier = "42", Title = "Running issue", Labels = new[] { "agent:in-progress" }, Description = "", Url = null },
+            new IssueSummary { Identifier = "42", Title = "Running issue", Labels = s_inProgressLabels, Description = "", Url = null },
         });
 
         var cut = Render<Work>();
@@ -811,7 +823,7 @@ public class WorkComponentTests : BunitContext
     {
         SetupBacklogProvider(new[]
         {
-            new IssueSummary { Identifier = "42", Title = "Done issue", Labels = new[] { "agent:done" }, Description = "", Url = null },
+            new IssueSummary { Identifier = "42", Title = "Done issue", Labels = s_doneLabels, Description = "", Url = null },
         });
 
         var cut = Render<Work>();
@@ -828,13 +840,13 @@ public class WorkComponentTests : BunitContext
         SetupBacklogProvider(new[]
         {
             new IssueSummary { Identifier = "10", Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
-            new IssueSummary { Identifier = "11", Title = "In-progress issue", Labels = new[] { "agent:in-progress" }, Description = "", Url = null },
+            new IssueSummary { Identifier = "11", Title = "In-progress issue", Labels = s_inProgressLabels, Description = "", Url = null },
         });
 
         var cut = Render<Work>();
         await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
 
-        var headerSpan = cut.FindAll(".cockpit-card-header span").Last();
+        var headerSpan = cut.FindAll(".cockpit-card-header span")[^1];
         headerSpan.TextContent.Should().StartWith("1 ready",
             "header count must exclude the agent:in-progress issue from the ready count");
         headerSpan.TextContent.Should().Contain("2 open",
@@ -885,7 +897,7 @@ public class WorkComponentTests : BunitContext
         var cut = Render<Work>();
         await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
 
-        var headerSpan = cut.FindAll(".cockpit-card-header span").Last();
+        var headerSpan = cut.FindAll(".cockpit-card-header span")[^1];
         headerSpan.TextContent.Should().StartWith("1 ready",
             "header count must not include the issue that has an active work item");
         headerSpan.TextContent.Should().Contain("2 open",
