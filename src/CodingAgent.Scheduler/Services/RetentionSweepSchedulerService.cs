@@ -60,10 +60,9 @@ public sealed class RetentionSweepSchedulerService : BackgroundService
                 var result = await _apiClient.TriggerRetentionSweepAsync(stoppingToken);
                 _logger.Information(
                     "Retention sweep complete: staleWi={StaleWi}, staleRuns={StaleRuns}, " +
-                    "staleConsolidation={StaleConsolidation}, retentionRuns={RetentionRuns}, retentionWi={RetentionWi}",
+                    "retentionRuns={RetentionRuns}, retentionWi={RetentionWi}",
                     result.StaleWorkItemsDeleted, result.StalePipelineRunsDeleted,
-                    result.StaleConsolidationRunsDeleted, result.RetentionPipelineRunsDeleted,
-                    result.RetentionWorkItemsDeleted);
+                    result.RetentionPipelineRunsDeleted, result.RetentionWorkItemsDeleted);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

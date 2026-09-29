@@ -117,5 +117,5 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 
 Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
 
-- **ConsolidationRun records:** Deleted when older than `WorkDistribution:Reconciliation:ConsolidationRunRetentionDays` (default: `30` days). Configured on the Job Controller — not a `PipelineConfiguration` property.
+- **PipelineRun records (backfilled consolidation history):** Consolidation run history is migrated into `PipelineRuns` by `BackfillConsolidationRunsAsync` and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps.
 - **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).

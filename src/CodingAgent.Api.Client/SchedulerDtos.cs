@@ -25,7 +25,8 @@ public record LoopStatusDto(
     public LoopStatusDto() : this(
         false, "", null, 0, 0, 0, false, null, 0, 0,
         Array.Empty<string>(),
-        new Dictionary<string, ConfigStatusSnapshot>()) { }
+        new Dictionary<string, ConfigStatusSnapshot>())
+    { }
 }
 
 /// <summary>Response from POST /loop/start.</summary>
@@ -38,7 +39,6 @@ public record LoopStartResultDto(bool Started, string? Error);
 public record RetentionSweepResultDto(
     int StaleWorkItemsDeleted,
     int StalePipelineRunsDeleted,
-    int StaleConsolidationRunsDeleted,
     int RetentionPipelineRunsDeleted,
     int RetentionWorkItemsDeleted,
     int OrphanedPipelineRunsReconciled = 0,

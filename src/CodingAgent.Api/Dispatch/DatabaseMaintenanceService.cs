@@ -17,7 +17,7 @@ namespace CodingAgent.Orchestration.Dispatch;
 
 /// <summary>
 /// Periodic background service for database retention cleanup.
-/// Cleans up terminal WorkItems, PipelineRuns, and ConsolidationRuns past their retention period,
+/// Cleans up terminal WorkItems and PipelineRuns past their retention period,
 /// plus per-project count-based retention sweeps. Gates all work behind leader election
 /// (when available) for multi-replica safety.
 /// </summary>
@@ -27,6 +27,11 @@ public class DatabaseMaintenanceService
 
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    // TODO(#9): _consolidationService is unused after CleanupStaleConsolidationRunsAsync was removed.
+    // Remove this field and constructor parameter when IConsolidationService is fully dropped (sub-issue #9).
+    // [WARNING] Until removed, verify IConsolidationService is registered as a singleton. DatabaseMaintenanceService
+    // is a singleton (Spec 047); holding a scoped/transient IConsolidationService here would be a captured-dependency
+    // bug where the scoped service (and any scoped DbContext it holds) lives for the singleton's lifetime.
     private readonly IConsolidationService _consolidationService;
     private readonly IPipelineRunHistoryService _pipelineRunHistoryService;
     private readonly DatabaseMaintenanceOptions _options;
@@ -70,7 +75,6 @@ public class DatabaseMaintenanceService
         // override in tests, or a missing catch in future code) cannot prevent later sweeps from running.
         var staleWi = await RunSweepAsync(CleanupStaleWorkItemsAsync, "CleanupStaleWorkItems", ct);
         var staleRuns = await RunSweepAsync(CleanupStalePipelineRunsAsync, "CleanupStalePipelineRuns", ct);
-        var staleConsolidation = await RunSweepAsync(CleanupStaleConsolidationRunsAsync, "CleanupStaleConsolidationRuns", ct);
         var retentionRuns = await RunSweepAsync(SweepPipelineRunRetentionAsync, "SweepPipelineRunRetention", ct);
         var retentionWi = await RunSweepAsync(SweepWorkItemRetentionAsync, "SweepWorkItemRetention", ct);
         var reconciled = await RunSweepAsync(ReconcileOrphanedPipelineRunsAsync, "ReconcileOrphanedPipelineRuns", ct);
@@ -82,7 +86,7 @@ public class DatabaseMaintenanceService
         // that operators should manually trigger POST /api/scheduler/maintenance/retention-sweep immediately
         // after deploy to eliminate the data-visibility gap. (review-findings correctness)
         var backfilled = await RunSweepAsync(BackfillConsolidationRunsAsync, "BackfillConsolidationRuns", ct);
-        return new RetentionSweepResult(staleWi, staleRuns, staleConsolidation, retentionRuns, retentionWi, reconciled, backfilled);
+        return new RetentionSweepResult(staleWi, staleRuns, retentionRuns, retentionWi, reconciled, backfilled);
     }
 
     private static async Task<int> RunSweepAsync(Func<CancellationToken, Task<int>> sweep, string name, CancellationToken ct)
@@ -106,7 +110,6 @@ public class DatabaseMaintenanceService
     public sealed record RetentionSweepResult(
         int StaleWorkItemsDeleted,
         int StalePipelineRunsDeleted,
-        int StaleConsolidationRunsDeleted,
         int RetentionPipelineRunsDeleted,
         int RetentionWorkItemsDeleted,
         int OrphanedPipelineRunsReconciled = 0,
@@ -178,52 +181,6 @@ public class DatabaseMaintenanceService
         catch (Exception ex)
         {
             Log.Warning(ex, "DatabaseMaintenanceService: failed to cleanup stale pipeline runs (non-fatal)");
-            return 0;
-        }
-    }
-
-    /// <summary>
-    /// Terminal ConsolidationRuns older than retention period → DELETE via IConsolidationService.
-    /// Returns the number of runs deleted.
-    /// </summary>
-    // Note: GetRunHistoryAsync → LoadAllRunsAsync is bounded to Take(1000) ordered by Id DESC.
-    internal async Task<int> CleanupStaleConsolidationRunsAsync(CancellationToken ct)
-    {
-        try
-        {
-            var cutoff = DateTimeOffset.UtcNow.AddDays(-_options.ConsolidationRunRetentionDays);
-            var runs = await _consolidationService.GetRunHistoryAsync(ct);
-            var deletedCount = 0;
-
-            foreach (var run in runs)
-            {
-                if (ct.IsCancellationRequested) break;
-
-                if (run.Status is not (ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled))
-                    continue;
-
-                var anchor = run.CompletedAtUtc ?? run.StartedAtUtc;
-                if (anchor >= cutoff)
-                    continue;
-
-                await _consolidationService.DeleteRunAsync(run.RunId, ct);
-                deletedCount++;
-            }
-
-            if (deletedCount > 0)
-            {
-                Log.Information("DatabaseMaintenanceService: cleaned up {Count} stale consolidation runs (retention={Days}d)",
-                    deletedCount, _options.ConsolidationRunRetentionDays);
-            }
-            return deletedCount;
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            return 0;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DatabaseMaintenanceService: failed to cleanup stale consolidation runs (non-fatal)");
             return 0;
         }
     }
