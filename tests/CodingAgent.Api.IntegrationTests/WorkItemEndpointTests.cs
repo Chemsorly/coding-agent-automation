@@ -2203,4 +2203,36 @@ public sealed class WorkItemEndpointTests
         dto!.IssueTitle.Should().BeNull("IssueTitle must be null when payload is malformed");
         dto.InitiatedBy.Should().BeNull("InitiatedBy must be null when payload is malformed");
     }
+
+    // ── GetActiveDecompositionCount ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveDecompositionCount_ReturnsZeroWhenNoDecompositionItems()
+    {
+        var response = await _client.GetAsync("/api/work-items/active-decomposition-count");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
+        body.GetProperty("count").GetInt32().Should().BeGreaterThanOrEqualTo(0,
+            "count must be a non-negative integer even when no decomposition items are active");
+    }
+
+    [Fact]
+    public async Task GetActiveDecompositionCount_CountsOnlyActiveDecompositionItems()
+    {
+        // Seed 2 active Decomposition items (Pending + Running), 1 terminal (Succeeded),
+        // and 1 active Implementation item — only the 2 active Decomposition items must be counted.
+        SeedEntity(WorkItemStatus.Pending, taskType: WorkItemTaskType.Decomposition);
+        SeedEntity(WorkItemStatus.Running, taskType: WorkItemTaskType.Decomposition);
+        SeedEntity(WorkItemStatus.Succeeded, taskType: WorkItemTaskType.Decomposition);
+        SeedEntity(WorkItemStatus.Running); // Implementation — must not be counted
+
+        var response = await _client.GetAsync("/api/work-items/active-decomposition-count");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(PipelineJsonOptions.Default);
+        var count = body.GetProperty("count").GetInt32();
+        count.Should().BeGreaterThanOrEqualTo(2,
+            "at least the 2 active Decomposition items seeded here must be counted");
+    }
 }

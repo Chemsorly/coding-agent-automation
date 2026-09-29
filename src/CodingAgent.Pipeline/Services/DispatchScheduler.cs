@@ -49,6 +49,20 @@ internal sealed partial class DispatchScheduler
     internal enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2 }
 
     /// <summary>
+    /// Outcome of a single dispatch attempt via <see cref="DispatchViaOrchestrationAsync"/>.
+    /// Used to distinguish a genuine dispatch from a 409 duplicate-skip and a prepare failure.
+    /// </summary>
+    internal enum DispatchAttemptOutcome
+    {
+        /// <summary>The work item was successfully enqueued as Pending.</summary>
+        Dispatched,
+        /// <summary>A live WorkItem already exists for this issue (HTTP 409). Do not count as dispatched.</summary>
+        AlreadyQueued,
+        /// <summary>Prepare returned null (no eligible agent) or distribution failed.</summary>
+        Failed
+    }
+
+    /// <summary>
     /// Result of a single-template dispatch attempt within <see cref="DispatchRoundAsync"/>.
     /// </summary>
     internal readonly record struct DispatchAttemptResult(bool Dispatched, bool Attempted = true, bool AbortRemaining = false)
@@ -107,6 +121,15 @@ internal sealed partial class DispatchScheduler
 
         /// <summary>Callback to notify UI of a state change.</summary>
         public required Action NotifyChange { get; init; }
+
+        /// <summary>
+        /// Count of decomposition WorkItems currently active (Pending, Dispatched, or Running)
+        /// across all poll cycles, loaded at cycle start via
+        /// <see cref="IWorkDistributor.GetActiveDecompositionCountAsync"/>.
+        /// Used to enforce <see cref="PipelineConfiguration.MaxConcurrentDecompositions"/>
+        /// across cycles, not just within the current cycle.
+        /// </summary>
+        public int ActiveDecompositionCount { get; init; }
     }
 
     /// <summary>
@@ -160,8 +183,12 @@ internal sealed partial class DispatchScheduler
         int remaining = priorityBudget;
         int processedCount = 0;
         int failedCount = 0;
-        int activeDecompositionCount = _orchestration.GetAllActiveRuns()
-            .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+
+        // Use the API-backed count loaded at cycle start — GetAllActiveRuns() always returns []
+        // in the Scheduler process (SchedulerRunQueryService stub), so the cross-cycle cap would
+        // otherwise be ineffective. activeDecompositionCount is incremented below as new
+        // decompositions are dispatched within this cycle.
+        int activeDecompositionCount = request.ActiveDecompositionCount;
 
         var cycleStateCaches = new Dictionary<string, Dictionary<int, bool>>(StringComparer.Ordinal);
         var templateProjectLookup = request.FlattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
@@ -223,6 +250,15 @@ internal sealed partial class DispatchScheduler
             }
 
             if (ct.IsCancellationRequested || remaining <= 0) break;
+            // TODO [WARNING]: Treating a 409 as DispatchAttemptResult.Skip (Attempted=false) means
+            // AnyProgress stays false when every template in a round returns Skip (AlreadyQueued).
+            // For PR and decomposition queues (which have no floor pass), a single leading 409 in
+            // the queue causes the outer while-loop to break here, stranding subsequent items in that
+            // queue until the next poll cycle. Example: single template with [PR_A→409, PR_B, PR_C] —
+            // PR_A returns Skip, AnyProgress=false, loop breaks; PR_B and PR_C are deferred one cycle.
+            // Issues are shielded by RunFloorPassAsync. To fix, consider setting madeProgress=true on
+            // AlreadyQueued while still not incrementing processed/consumed, or keep a separate
+            // "hasSkipped" flag that prevents the AnyProgress break when only 409s were seen.
             if (!turnResult.AnyProgress) break;
         }
 

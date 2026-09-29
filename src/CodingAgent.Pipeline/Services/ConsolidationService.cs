@@ -303,15 +303,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
         // ── 8. Detect duplicate rejection from the API layer ─────────────────
         // KubernetesWorkDistributor maps a 409 Conflict from POST /api/work-items to
-        // DistributionResult(Success: true, WorkItemId: null, Queued: true). This happens
-        // when the partial unique index on (IssueIdentifier, IssueProviderConfigId) rejects
-        // a duplicate insert because a live WorkItem already exists for this consolidation type.
-        // TODO [WARNING]: The null-WorkItemId sentinel is an implicit coupling to KubernetesWorkDistributor's
-        // internal 409-handling convention. DistributionResult.WorkItemId is documented as "null if not
-        // applicable", so any future or alternate IWorkDistributor that returns Success=true, WorkItemId=null
-        // for a legitimate non-duplicate enqueue would be silently misclassified as a duplicate here.
-        // Consider adding an explicit AlreadyExists/Duplicate flag to DistributionResult.
-        if (result.WorkItemId is null)
+        // DistributionResult(Success: true, WorkItemId: null, Queued: true, AlreadyExists: true).
+        // This happens when the partial unique index on (IssueIdentifier, IssueProviderConfigId)
+        // rejects a duplicate insert because a live WorkItem already exists for this consolidation type.
+        if (result.AlreadyExists)
         {
             _logger.Warning(
                 "ConsolidationService: duplicate rejected for {Type}/{TemplateId} — " +

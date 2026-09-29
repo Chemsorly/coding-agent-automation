@@ -58,6 +58,14 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIdentifiersAsync(CancellationToken ct = default);
 
     /// <summary>
+    /// Returns the count of decomposition WorkItems that are currently active
+    /// (Pending, Dispatched, or Running). Used by <c>KubernetesWorkDistributor</c> to enforce
+    /// <c>MaxConcurrentDecompositions</c> across poll cycles.
+    /// Calls <c>GET /api/work-items/active-decomposition-count</c>.
+    /// </summary>
+    Task<int> GetActiveDecompositionCountAsync(CancellationToken ct = default);
+
+    /// <summary>
     /// Calls <c>POST /api/work-items/dispatch</c> to synchronously dispatch a work item:
     /// PVC selection, K8s Job creation, and <c>Dispatched</c> state write happen atomically
     /// in the API. Returns the new WorkItem ID on success.
