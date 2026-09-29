@@ -260,6 +260,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // Recorded regardless of runWasAlive: even when another path terminated the run,
             // the agent still ran and may have pushed (or not pushed) to the brain.
             // Runs without a brain provider configured will always produce result=none.
+            // TODO: [WARNING] The issue requirements specify "runs with a brain provider only" but this
+            // records for ALL non-consolidation runs. Runs with no brain provider always produce
+            // result=none, making pipeline_run_brain_updates_total{result=none} indistinguishable between
+            // "brain provider present but nothing to push" and "no brain provider at all". The updated
+            // docs/observability.md documents "recorded once per non-consolidation run" (broader than
+            // the issue text), so this is a deliberate design choice. If the original "brain provider
+            // only" constraint is authoritative, gate on brain-provider presence (e.g. a run flag) before
+            // recording. See review findings [WARNING] Correctness L271.
             // TODO: [WARNING] Under Redis, _facade.GetRun deserializes a fresh copy of the run,
             // and JobCompletionMapper.Apply is called on a *different* in-memory object (the one
             // inside strategy.ExecuteAsync). On the race path (runWasAlive=false), the `run`

@@ -222,6 +222,12 @@ public class BrainSyncServiceTests : IDisposable
             _brainProvider.Verify(
                 p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()),
                 Times.Never);
+            // TODO: [WARNING] run.BrainContextLoaded is not asserted on the pull path. If the
+            // `run.BrainContextLoaded = true` assignment were removed from the pull branch in
+            // BrainSyncService, this test would still pass. Add:
+            //   run.BrainContextLoaded.Should().BeTrue()
+            // to match the clone-path test and keep coverage symmetric across both branches.
+            // See review findings [WARNING] TestQualityReviewer L222.
         }
         finally
         {

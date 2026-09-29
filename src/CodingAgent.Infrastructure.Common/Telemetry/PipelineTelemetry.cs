@@ -78,6 +78,10 @@ public static class PipelineTelemetry
     /// Tags: result (pushed / none).
     /// Pre-initialized in <c>Program.EmitPreInitCounters</c> for all 2 tag combinations.
     /// </summary>
+    // TODO: [WARNING] Unit is UnitRun = "{run}" (confirmed correct per OTel spec). If this constant is
+    // ever changed (e.g. to "run" without braces), the Prometheus exporter will emit a non-standard unit
+    // annotation. RunSubIssues uses "{issue}" — the unit mismatch between the two new counters is
+    // intentional per the requirements table. See review findings [WARNING] DotNetSpecialist L87.
     public static readonly Counter<long> RunBrainUpdates = Meter.CreateCounter<long>(
         "pipeline.run.brain_updates", UnitRun, "Brain update results at run completion");
     public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(

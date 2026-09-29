@@ -197,8 +197,8 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             context.Logger.Error(
                 "Sub-issue '{Title}' is not created: the project epic has no target tracker (its executor template is not in the project's repository list)",
                 proposal.Title);
-            PipelineTelemetry.SubIssuesFailed.Add(1,
-                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
+            // Note: sub-issue failure metrics are recorded by the API (AgentJobLifecycleService.HandleStepTransition),
+            // not by agent pods. Agent pods are ephemeral and subject to the first-series problem (issue #2974).
             return new SubIssueCreationResult
             {
                 Title = proposal.Title,
