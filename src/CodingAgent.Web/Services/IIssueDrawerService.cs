@@ -22,7 +22,7 @@ public interface IIssueDrawerService
     // ── State ──
 
     Dictionary<string, DependencyCheckResult> DrawerReadiness { get; }
-    HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; }
+    IReadOnlyDictionary<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId), WorkItemStatus> ActiveIssues { get; }
 
     // ── Dispatch ──
 
@@ -57,6 +57,7 @@ public interface IIssueDrawerService
 
     Task RefreshActiveIssuesAsync();
     bool IsIssueActive(IssueIdentifier issueIdentifier, string issueProviderConfigId);
+    WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, string issueProviderConfigId);
     Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId);
 
     // ── Cross-drawer coordination ──

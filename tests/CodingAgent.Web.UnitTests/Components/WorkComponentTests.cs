@@ -25,6 +25,11 @@ public class WorkComponentTests : BunitContext
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<IDependencyChecker> _mockDependencyChecker = new();
 
+    // Static label arrays reused across multiple tests. Using static readonly avoids allocating a
+    // new array per test invocation (CA1861).
+    private static readonly string[] s_inProgressLabels = ["agent:in-progress"];
+    private static readonly string[] s_doneLabels = ["agent:done"];
+
     /// <summary>
     /// Builds a minimal <see cref="PendingWorkItemDto"/> suitable for queue-table rendering tests.
     /// </summary>
@@ -786,5 +791,116 @@ public class WorkComponentTests : BunitContext
 
         cut.Markup.Should().Contain("No open issues found",
             "the empty-state message must be shown when no issues are returned");
+    }
+
+    // ── Backlog readiness rendering — label-based and work-item-based (Issue #2942) ──
+
+    [Fact]
+    public async Task BacklogCard_IssueWithInProgressLabel_ShowsInProgressBadge_NotReady()
+    {
+        // An issue with agent:in-progress must NOT show "Ready" — BlockedIssuesService sets IsReady=false.
+        // TODO: [WARNING] This test verifies rendering given the IsReady flag computed by the real
+        //   BlockedIssuesService (wired through DI via SetupBacklogProvider). If BlockedIssuesService
+        //   stopped setting IsReady=false for agent:in-progress but the component still read the label
+        //   directly and rendered "In progress", the NotContain(">Ready<") assertion would still pass
+        //   for the wrong reason. Consider adding an assertion on the BacklogIssue.IsReady value
+        //   (or a dedicated BlockedIssuesService unit test for this label) to pin the intermediate
+        //   computation — which already exists in BlockedIssuesServiceTests.GetBacklogAsync_IssueWithInProgressLabel_IsNotReady.
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Running issue", Labels = s_inProgressLabels, Description = "", Url = null },
+        });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        cut.Markup.Should().NotContain(">Ready<", "agent:in-progress issues must never show Ready");
+        cut.Markup.Should().Contain("In progress", "agent:in-progress issue must show 'In progress' badge");
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithDoneLabel_ShowsDoneBadge_NotReady()
+    {
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Done issue", Labels = s_doneLabels, Description = "", Url = null },
+        });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        cut.Markup.Should().NotContain(">Ready<", "agent:done issues must never show Ready");
+        cut.Markup.Should().Contain("Done", "agent:done issue must show 'Done' badge");
+    }
+
+    [Fact]
+    public async Task BacklogCard_HeaderReadyCount_ExcludesLabelledIssues()
+    {
+        // 1 ready issue + 1 agent:in-progress issue → header must show "1 ready · 2 open"
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "10", Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+            new IssueSummary { Identifier = "11", Title = "In-progress issue", Labels = s_inProgressLabels, Description = "", Url = null },
+        });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var headerSpan = cut.FindAll(".cockpit-card-header span")[^1];
+        headerSpan.TextContent.Should().StartWith("1 ready",
+            "header count must exclude the agent:in-progress issue from the ready count");
+        headerSpan.TextContent.Should().Contain("2 open",
+            "header must still count all open issues");
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithActiveWorkItem_ShowsRunningBadge_NotReady()
+    {
+        // An issue that is Ready (no blocking labels) but has an active work item must show "Running"
+        // and not count toward the ready total.
+        var issueIdentifier = "42";
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = issueIdentifier, Title = "Running issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+
+        // Seed an active work item for the same issue
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), issueIdentifier) });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        // The active work item overrides the backlog readiness for this issue
+        cut.Markup.Should().NotContain(">Ready<", "issue with active work item must not show Ready");
+        cut.Markup.Should().Contain("Running", "issue with active work item must show Running badge");
+    }
+
+    [Fact]
+    public async Task BacklogCard_HeaderReadyCount_ExcludesActiveWorkItemIssues()
+    {
+        // Issue #42: IsReady=true in backlog, but also has an active work item → must not count
+        // Issue #43: IsReady=true, no active work item → must count
+        var activeIssueId = "42";
+        var readyIssueId = "43";
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = activeIssueId, Title = "Active issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+            new IssueSummary { Identifier = readyIssueId, Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), activeIssueId) });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var headerSpan = cut.FindAll(".cockpit-card-header span")[^1];
+        headerSpan.TextContent.Should().StartWith("1 ready",
+            "header count must not include the issue that has an active work item");
+        headerSpan.TextContent.Should().Contain("2 open",
+            "both issues should still be counted as open");
     }
 }
