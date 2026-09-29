@@ -402,6 +402,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var rowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(rowText);
         Assert.Contains("Brain Consolidation", rowText);
+        // TODO [WARNING]: Assert.Contains("Failed") is a free-text substring match. The word "Failed"
+        // could appear in error messages or adjacent columns and still satisfy the assertion. A more
+        // precise check would query the CSS class of the status cell (e.g. QuerySelectorAsync for
+        // ".consolidation-status-failed" scoped to the row) rather than the full row text string,
+        // consistent with the card-level assertions elsewhere in this class.
         Assert.Contains("Failed", rowText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Brain provider unavailable", rowText);
 
@@ -527,6 +532,11 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         var rowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(rowText);
+        // TODO [WARNING]: Assert.Contains("Succeeded") is a free-text substring match. The word
+        // "Succeeded" can appear in error messages or adjacent column text and still satisfy the
+        // assertion. A more precise check would query the CSS class of the status cell (e.g.
+        // QuerySelectorAsync for ".consolidation-status-succeeded" scoped to the row), consistent
+        // with the card-level assertions in Scenario 1.
         Assert.Contains("Succeeded", rowText, StringComparison.OrdinalIgnoreCase);
 
         // Assert: the two created issues were processed by the hub.
@@ -535,6 +545,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // of CreatedIssues is the badge increment: 2 issues → BadgeCount == 2.
         // Resolve from the API host: HubConsolidationOperations increments the badge service
         // registered in the API host's DI container, not the Web host's.
+        // TODO [WARNING]: The badge count is a second-order side-effect of created-issue handling.
+        // The acceptance criterion "The history row lists both issue numbers" is not directly
+        // verified here. If the hub increments the badge but does not surface issue identifiers
+        // in the row text, this assertion still passes. If the UI is updated to render created-issue
+        // links or counts in the history row, add an Assert.Contains("42", rowText) assertion here
+        // and replace the badge assertion below.
         // TODO(WARNING): If the UI is later updated to render created-issue links or counts in the
         // history row, replace the badge assertion below with a row-text assertion for "42"/"43".
         var badgeService = Fixture.ApiServices.GetRequiredService<ConsolidationBadgeService>();
@@ -761,10 +777,10 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await WaitUntilAsync(async () =>
         {
             var p = await Fixture.WorkItems.GetPendingAsync(10);
-            if (p.Count > 0) return true;
+            if (p.Any()) return true;
             // Also check active (Dispatched/Running) in case the background poll already claimed it.
             var a = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600);
-            return a.Count > 0;
+            return a.Any();
         });
 
         // Assert: exactly one non-terminal WorkItem exists — dedup collapsed the second insert.

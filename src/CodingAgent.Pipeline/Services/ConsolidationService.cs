@@ -23,13 +23,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly PipelineConfiguration _config;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
-    private readonly IConsolidationWorkspaceManager _workspaceManager;
     private readonly IConsolidationFeedbackCache _feedbackCache;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
     private readonly IConsolidationSelectorResolver? _selectorResolver;
+    private readonly IPipelineConfigStore? _pipelineConfigStore;
 
     /// <inheritdoc />
     public event Action? OnChange;
@@ -84,13 +84,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _config = deps.Config;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
-        _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
         _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
         _projectStore = deps.ProjectStore;
         _workDistributor = deps.WorkDistributor;
         _selectorResolver = deps.SelectorResolver;
+        _pipelineConfigStore = deps.PipelineConfigStore;
     }
 
     /// <inheritdoc />
@@ -142,25 +142,38 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     {
         var templateIdValue = templateId?.Value;
 
+        // ── 0. Load live configuration ────────────────────────────────────────
+        // Prefer the live config from the store so that operator-updated settings
+        // (e.g. timeout, BrainReadOnly, DefaultRequiredAgentLabels) are used immediately
+        // without a service restart. Fall back to the bootstrap config in tests and
+        // legacy call sites that do not inject IPipelineConfigStore.
+        var liveConfig = _pipelineConfigStore is not null
+            ? await _pipelineConfigStore.LoadPipelineConfigAsync(ct)
+            : _config;
+
         // ── 1. Resolve template + project ────────────────────────────────────
         string? templateName;
         string? projectName = null;
         string? projectId = null;
+        PipelineProject? project = null;
         ProviderConfig? repoConfig = null;
         string repoProviderId = "";
         string? brainProviderId = null;
+        PipelineJobTemplate? template = null;
 
         if (templateId is not null)
         {
-            var (template, resolvedProjectName, resolvedProjectId) = await _templateResolver.ResolveTemplateWithProjectAsync(templateIdValue!, ct);
-            if (template is null)
+            var (resolvedTemplate, resolvedProject) = await _templateResolver.ResolveTemplateAndProjectAsync(templateIdValue!, ct);
+            if (resolvedTemplate is null)
             {
                 _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateIdValue);
                 return null;
             }
+            template = resolvedTemplate;
+            project = resolvedProject;
             templateName = template.Name;
-            projectName = resolvedProjectName;
-            projectId = resolvedProjectId;
+            projectName = project?.Name;
+            projectId = project?.Id;
 
             // Resolve repo ProviderConfig (for selector resolution).
             repoConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
@@ -173,6 +186,19 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         else
         {
             templateName = "Global";
+        }
+
+        // ── 1b. Reject brain consolidation for read-only brains ───────────────
+        // Brain consolidation writes to the brain — it must not run if the brain is read-only.
+        // The template flag can only make a brain read-only. The global config with the project's
+        // override decides when the template flag is false.
+        if (type == ConsolidationRunType.BrainConsolidation && template is not null
+            && ConsolidationTemplateFilter.IsBrainReadOnly(template, project, liveConfig))
+        {
+            _logger.Warning(
+                "Consolidation run rejected: brain is read-only for template {TemplateId}",
+                templateIdValue);
+            return null;
         }
 
         // ── 2. Guard: WorkDistributor required ───────────────────────────────
@@ -190,7 +216,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         IReadOnlyList<string>? selectorLabels;
         if (_selectorResolver is not null)
         {
-            selectorLabels = await _selectorResolver.ResolveAsync(repoConfig, _config, ct);
+            // Use the live config so that operator-updated DefaultRequiredAgentLabels are applied.
+            selectorLabels = await _selectorResolver.ResolveAsync(repoConfig, liveConfig, ct);
             if (selectorLabels is null)
             {
                 _logger.Warning(
@@ -203,30 +230,50 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         else
         {
             // Fallback when no resolver is injected (tests, or legacy call sites).
-            selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, _config);
+            selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, liveConfig);
         }
 
         // ── 4. Prepare feedback data (harness suggestions path) ───────────────
         // Build a temporary run object to pass to PrepareFeedbackDataAsync (which needs RunId).
         // This run is NOT persisted to the store.
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
+        // TODO [WARNING]: `_config` (the bootstrap PipelineConfiguration injected at startup) is
+        // passed to BuildNewRun instead of `liveConfig` (the live-loaded config resolved at step 0).
+        // The `config` parameter is not currently read inside BuildNewRun's object initializer, so
+        // there is no immediate regression. However, if a future field on ConsolidationRun is seeded
+        // from `config`, the wrong (startup-time) value will be used. Pass `liveConfig` here to
+        // ensure any future config-derived field reflects the operator-current settings.
         var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch, _config);
         run.TraceParent = traceContext?.GetValueOrDefault("traceparent");
 
         if (type == ConsolidationRunType.HarnessSuggestions)
             await _feedbackCache.PrepareFeedbackDataAsync(run, ct);
 
+        // ── 4b. Resolve effective timeout ────────────────────────────────────
+        // Brain consolidation works per brain, so use the project-level timeout override
+        // when the run is template-scoped. Harness suggestions are global so they always
+        // use the global timeout. ApplyProjectOverrides handles the null-project case.
+        var effectiveConfig = project is not null && templateId is not null
+            ? PipelineConfigurationResolver.ApplyProjectOverrides(liveConfig, project)
+            : liveConfig;
+        var timeoutSeconds = (int)effectiveConfig.AgentTimeout.TotalSeconds;
+
         // ── 5. Build and submit the JobDistributionRequest ───────────────────
         // Issue #3028: dispatch FIRST, no persist-before-dispatch. The ConsolidationRun
         // object returned to the caller is built from memory only.
         //
-        // IssueIdentifier format: "{type}:{templateId|global}" (issue #3027).
+        // IssueIdentifier format (issue #3027, updated for brain scope):
+        //   - BrainConsolidation: "{type}:{brainProviderId}" — one per brain, regardless of template.
+        //     Multiple templates that share a brain use the same dedup key so only one runs at a time.
+        //   - Other types: "{type}:{templateId|global}" — one per template.
         // This deterministic format feeds the partial unique index on
         // (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses in
         // PipelineDbContext.OnModelCreating, providing cross-replica dedup.
-        var issueIdentifier = templateIdValue is not null
-            ? $"{type}:{templateIdValue}"
-            : $"{type}:global";
+        var issueIdentifier = type == ConsolidationRunType.BrainConsolidation && !string.IsNullOrEmpty(brainProviderId)
+            ? $"{type}:{brainProviderId}"
+            : templateIdValue is not null
+                ? $"{type}:{templateIdValue}"
+                : $"{type}:global";
 
         var request = new JobDistributionRequest
         {
@@ -237,12 +284,9 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             InitiatedBy = ConsolidationConstants.InitiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
             AgentSelector = AgentSelectorKey.From(selectorLabels),
-            TimeoutSeconds = (int)_config.AgentTimeout.TotalSeconds,
+            TimeoutSeconds = timeoutSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = templateIdValue,
-            // Use run.RunId (not a fresh Guid) so the workspace path is consistent with what
-            // CleanupWorkspaceIfSucceeded targets.
-            ConsolidationWorkspacePath = _workspaceManager.GetWorkspacePath(run.RunId),
             AutoDispatch = autoDispatch,
             ProjectId = !string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var pid)
                 ? pid
@@ -335,17 +379,9 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
     /// <inheritdoc />
     /// <remarks>
-    /// After issue #3028: this method is a no-op for store writes. It only performs workspace
-    /// cleanup as a side effect when a terminal status is given and the runId is a valid GUID
-    /// (workspace paths are based on RunId GUIDs, not WorkItemIds). The PipelineRun / WorkItem
+    /// After issue #3028: this method is a no-op for store writes. The PipelineRun / WorkItem
     /// is the authoritative record for run status.
     /// </remarks>
-    // TODO [WARNING]: This method was converted from async Task to non-async Task returning
-    // Task.CompletedTask. The call to _workspaceManager.CleanupWorkspaceIfSucceeded is currently
-    // void and synchronous (ConsolidationWorkspaceManager.cs:47), so this is safe. If that method
-    // is ever made async (returns Task), the current body would fire-and-forget the Task and
-    // silently discard any exceptions from workspace cleanup. Verify the signature of
-    // CleanupWorkspaceIfSucceeded before changing it, and update this method to await it.
     public Task UpdateRunAsync(
         RunId runId,
         ConsolidationRunStatus status,
@@ -359,15 +395,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             return Task.CompletedTask;
         }
 
-        // Issue #3028: store writes removed. Only perform workspace cleanup side-effect
-        // when the runId is a valid GUID (workspace paths use RunId, not WorkItemId).
-        // The hub may call this with a WorkItemId (not a GUID) — skip workspace cleanup
-        // in that case to avoid ArgumentException from ConsolidationWorkspaceManager.
-        if (Guid.TryParse(runId.Value, out _))
-        {
-            _workspaceManager.CleanupWorkspaceIfSucceeded(runId, status);
-        }
-
+        // TODO [WARNING]: `runId.Value` is written to the log without sanitization. The prior code
+        // used `LogSanitizer.SanitizeForLog(runId.Value)` on this path. `runId.Value` originates
+        // from the hub completion path where the agent supplies the JobId; a malicious or
+        // malfunctioning agent could inject log-format tokens or newlines. Sinks that emit
+        // plain-text (console, file) render the raw string. Wrap with
+        // `LogSanitizer.SanitizeForLog(runId.Value)` to match the rest of the file.
         _logger.Debug("UpdateRunAsync: no-op for store (issue #3028) — runId={RunId} status={Status}", runId.Value, status);
         return Task.CompletedTask;
     }
@@ -380,6 +413,9 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     public Task TransitionToRunningAsync(RunId runId, CancellationToken ct)
     {
         // Issue #3028: no store writes. This method is a no-op.
+        // TODO [WARNING]: Same log-sanitization regression as UpdateRunAsync above. `runId.Value`
+        // comes from the agent-supplied JobId. Wrap with `LogSanitizer.SanitizeForLog(runId.Value)`
+        // to prevent log injection in plain-text sinks.
         _logger.Debug("TransitionToRunningAsync: no-op for store (issue #3028) — runId={RunId}", runId.Value);
         return Task.CompletedTask;
     }
@@ -414,17 +450,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// no-op to avoid breaking call sites in E2E infrastructure until they are updated.
     /// </remarks>
     internal void Reset() { /* no-op: _runningRuns removed in issue #3027 */ }
-
-    // TODO [WARNING]: PersistRunAsync and DeletePersistedRunAsync below have no callers in
-    // ConsolidationService after issue #3028 removed all TriggerAsync store writes. These are dead
-    // code and a latent regression risk: a future edit could re-invoke PersistRunAsync and silently
-    // reintroduce ConsolidationRuns store writes that the #3028 design decision explicitly eliminated.
-    // Consider removing these methods in a follow-up cleanup PR once it is confirmed no external
-    // callers remain (check ConsolidationRunEndpoints and test infrastructure).
-    private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
-    {
-        await _runStore.SaveRunAsync(run, ct);
-    }
 
     /// <inheritdoc />
     public async Task DeleteRunAsync(RunId runId, CancellationToken ct)
