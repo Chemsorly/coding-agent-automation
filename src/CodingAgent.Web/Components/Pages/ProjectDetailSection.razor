@@ -1,4 +1,5 @@
 @using CodingAgent.Api.Client
+@using CodingAgent.Pipeline
 @using CodingAgent.Pipeline.Models
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
@@ -608,6 +609,60 @@
     {
         try
         {
+            // Validate all int overrides that are rendered in this tab before saving.
+            // Fields not rendered in the UI (AnalysisCommitThreshold, CiCancelledMoveMaxRetries,
+            // FeedbackTimeoutSeconds, MinIssueSlots, MaxConsolidationDispatchRetries) are omitted
+            // intentionally — they have no backing state in this component.
+            var validationErrors = new List<string>();
+
+            // AgentTimeout is stored in minutes; validate against the seconds-based canary minimum separately.
+            // TODO: AgentTimeout is validated twice — once by the explicit canary-minimum check below and again by the
+            // "Agent Timeout (minutes)" entry in the intOverrides loop (min=1). At the current TimeoutCanaryMinAgeSeconds=60
+            // (1 minute) the two ranges don't overlap, so no duplicate error fires. If TimeoutCanaryMinAgeSeconds is ever
+            // raised above 60, values in the range (1 .. TimeoutCanaryMinAgeSeconds/60) would produce two error messages
+            // for the same field. Fix by removing "Agent Timeout (minutes)" from the intOverrides loop and relying solely
+            // on this dedicated check, or vice versa. (Review findings: ProjectDetailSection.razor:620, DotNetSpecialist:619)
+            if (_agentTimeoutMinutes.HasValue &&
+                _agentTimeoutMinutes.Value * 60 < PipelineConstants.TimeoutCanaryMinAgeSeconds)
+            {
+                validationErrors.Add(
+                    $"Agent Timeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds / 60} minutes " +
+                    "(reconciliation canary minimum).");
+            }
+
+            // Generic range checks for the 14 rendered int fields.
+            // Each tuple: (display label, backing field getter, min, max).
+            var intOverrides = new (string Label, Func<int?> Getter, int Min, int Max)[]
+            {
+                ("Max Retries", () => _maxRetries, 0, 10),
+                ("Max Analysis Retries", () => _maxAnalysisRetries, 0, 10),
+                ("Agent Timeout (minutes)", () => _agentTimeoutMinutes, 1, 120),
+                ("Max Infrastructure Retries", () => _maxInfrastructureRetries, 0, 10),
+                ("Stall Warning Interval (minutes)", () => _stallWarningIntervalMinutes, 1, 60),
+                ("External CI Timeout (minutes)", () => _externalCiTimeoutMinutes, 1, 120),
+                ("External CI Poll Interval (seconds)", () => _externalCiPollIntervalSeconds, 5, 300),
+                ("CI Not Started Timeout (minutes)", () => _ciNotStartedTimeoutMinutes, 1, 30),
+                ("CI Not Started Max Retries", () => _ciNotStartedMaxRetries, 0, 20),
+                ("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, 1, 20),
+                ("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, 1, 30),
+                ("Max Concurrent Decompositions", () => _maxConcurrentDecompositions, 1, 10),
+                ("Max Open Issues for Context", () => _maxOpenIssuesForContext, 1, 200),
+                ("Max Refactoring Proposals", () => _maxRefactoringProposals, 1, 10),
+            };
+
+            foreach (var (label, getter, min, max) in intOverrides)
+            {
+                var value = getter();
+                if (value.HasValue && (value.Value < min || value.Value > max))
+                    validationErrors.Add($"'{label}' must be between {min} and {max} (got {value.Value}).");
+            }
+
+            if (validationErrors.Count > 0)
+            {
+                await OnShowStatus.InvokeAsync((string.Join(" ", validationErrors), true));
+                return;
+            }
+
             if (!ValidateSecrets())
                 return;
 

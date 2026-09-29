@@ -465,23 +465,26 @@ public class PipelineConfigurationTests
         };
 
         // MaxRetries (Order=1) is valid; MaxDecompositionSubIssues (Order=18) is out of range 1-20.
-        // On validation error, the entire partially-mutated clone is discarded and the original
-        // config is returned unchanged.
+        // After the fix: only the invalid property reverts to global; valid ones are applied.
         var project = TestPipelineConfig.WithProject() with
         {
             MaxRetries = 7,
             MaxDecompositionSubIssues = 25, // Out of range — triggers ArgumentOutOfRangeException
         };
 
-        // Should NOT throw — the catch clause handles TargetInvocationException
+        // Should NOT throw — the per-property catch handles the ArgumentOutOfRangeException
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
-        // Original config returned unchanged — no overrides applied (including valid ones)
-        result.MaxRetries.Should().Be(3);
-        result.MaxDecompositionSubIssues.Should().Be(10);
+        // Valid override (MaxRetries=7) is applied — the fix changes this from 3 to 7
+        result.MaxRetries.Should().Be(7,
+            "MaxRetries=7 is a valid override and must be applied even when another property is invalid");
+        // Invalid override (MaxDecompositionSubIssues=25) reverts to global default (10)
+        result.MaxDecompositionSubIssues.Should().Be(10,
+            "MaxDecompositionSubIssues=25 is out of range and must revert to the global default");
 
-        // Verify referential identity — same object as input, not a clone
-        result.Should().BeSameAs(config);
+        // Result is a clone, NOT the same reference (the old buggy behavior returned the original)
+        result.Should().NotBeSameAs(config,
+            "a clone with partial overrides is returned; the original config is unmodified");
     }
 
     // ── ApplyProjectOverrides — Previously untested properties ─────────────────
