@@ -148,9 +148,6 @@ public record JobDistributionRequest
     /// <summary>Template ID for template-scoped consolidation runs (null for global).</summary>
     public string? ConsolidationTemplateId { get; init; }
 
-    /// <summary>Workspace path for the consolidation run.</summary>
-    public string? ConsolidationWorkspacePath { get; init; }
-
     /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and
     /// <c>agent:next</c> labels. Propagated through the queue/drain/K8s path to ensure

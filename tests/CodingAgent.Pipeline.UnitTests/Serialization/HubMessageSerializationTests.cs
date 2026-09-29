@@ -764,7 +764,6 @@ public class HubMessageSerializationTests
             },
             LastSuccessfulRunUtc = lastSuccess,
             FeedbackDataJson = "[{\"Outcome\":\"Success\",\"Category\":\"missing context\"}]",
-            WorkspacePath = "/tmp/consolidation/workspace-abc",
             TraceContext = new Dictionary<string, string>
             {
                 ["traceparent"] = "00-abcdef1234567890abcdef1234567890-1234567890abcdef-01",
@@ -781,7 +780,6 @@ public class HubMessageSerializationTests
         deserialized.TemplateName.Should().Be("dotnet-10-backend");
         deserialized.LastSuccessfulRunUtc.Should().Be(lastSuccess);
         deserialized.FeedbackDataJson.Should().Be("[{\"Outcome\":\"Success\",\"Category\":\"missing context\"}]");
-        deserialized.WorkspacePath.Should().Be("/tmp/consolidation/workspace-abc");
 
         // ProviderConfigs
         deserialized.ProviderConfigs.Should().HaveCount(2);

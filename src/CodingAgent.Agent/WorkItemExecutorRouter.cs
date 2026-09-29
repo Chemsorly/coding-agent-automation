@@ -64,7 +64,6 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             JobId = assignment.JobId,
             Type = assignment.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
             TemplateId = assignment.ConsolidationTemplateId,
-            WorkspacePath = assignment.ConsolidationWorkspacePath,
             ProviderConfigs = assignment.ProviderConfigs,
             PipelineConfiguration = assignment.PipelineConfiguration,
             AutoDispatch = assignment.AutoDispatch

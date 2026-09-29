@@ -227,7 +227,6 @@ public static class WorkItemDispatchEndpoints
             // Consolidation identity
             ConsolidationRunType = request.ConsolidationRunType,
             ConsolidationTemplateId = request.ConsolidationTemplateId,
-            ConsolidationWorkspacePath = request.ConsolidationWorkspacePath,
             AutoDispatch = request.AutoDispatch,
 
             // Issue title kept for GetPendingWorkItems display (not mutable config)

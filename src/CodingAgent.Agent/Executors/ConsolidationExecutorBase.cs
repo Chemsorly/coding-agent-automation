@@ -13,7 +13,6 @@ namespace CodingAgent.Agent.Executors;
 public abstract class ConsolidationExecutorBase
 {
     protected Serilog.ILogger Logger { get; }
-    protected abstract string WorkspaceSuffix { get; }
     protected abstract string ExecutorName { get; }
 
     protected ConsolidationExecutorBase(Serilog.ILogger logger)
@@ -37,12 +36,13 @@ public abstract class ConsolidationExecutorBase
         return null;
     }
 
-    protected string ResolveWorkspacePath(ConsolidationJobMessage job)
-    {
-        return job.WorkspacePath is not null
-            ? Path.Combine(job.WorkspacePath, WorkspaceSuffix)
-            : Path.Combine(Path.GetTempPath(), "consolidation", job.JobId, WorkspaceSuffix);
-    }
+    /// <summary>
+    /// The run's workspace, <c>{WorkspaceBaseDirectory}/{JobId}</c>, as a pipeline run works in
+    /// <c>{WorkspaceBaseDirectory}/{RunId}</c>. Call it after <see cref="ValidateJobId"/>, which
+    /// ensures the job id is a GUID.
+    /// </summary>
+    protected static string ResolveWorkspacePath(ConsolidationJobMessage job) =>
+        Path.Combine(job.PipelineConfiguration.WorkspaceBaseDirectory, job.JobId);
 
     /// <summary>
     /// Executes an agent request and checks the result for success. If the agent exits

@@ -17,8 +17,12 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
     private readonly Mock<IAgentProvider> _mockAgent;
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly HarnessSuggestionExecutor _executor;
-    private readonly string _workspacePath;
+    private readonly string _workspaceBaseDirectory;
+    private readonly string _jobId = Guid.NewGuid().ToString();
     private readonly List<string> _outputLines;
+
+    /// <summary>The run's workspace: the executor works in {WorkspaceBaseDirectory}/{JobId}.</summary>
+    private string RunWorkspace => Path.Combine(_workspaceBaseDirectory, _jobId);
 
     private static readonly string ValidSuggestionsJson = """
         {
@@ -50,31 +54,31 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
         _mockAgent = new Mock<IAgentProvider>();
         _mockLogger = new Mock<Serilog.ILogger>();
         _executor = new HarnessSuggestionExecutor(_mockLogger.Object);
-        _workspacePath = Path.Combine(Path.GetTempPath(), $"harness-review-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_workspacePath);
+        _workspaceBaseDirectory = Path.Combine(Path.GetTempPath(), $"harness-review-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_workspaceBaseDirectory);
         _outputLines = new List<string>();
     }
 
     public void Dispose()
     {
-        if (Directory.Exists(_workspacePath))
-            Directory.Delete(_workspacePath, recursive: true);
+        if (Directory.Exists(_workspaceBaseDirectory))
+            Directory.Delete(_workspaceBaseDirectory, recursive: true);
     }
 
     private Action<string> CaptureOutput => line => _outputLines.Add(line);
 
     private ConsolidationJobMessage CreateJob(bool reviewEnabled = true) => new()
     {
-        JobId = Guid.NewGuid().ToString(),
+        JobId = _jobId,
         Type = ConsolidationRunType.HarnessSuggestions,
         ProviderConfigs = [],
         PipelineConfiguration = new PipelineConfiguration
         {
+            WorkspaceBaseDirectory = _workspaceBaseDirectory,
             HarnessSuggestionsReviewEnabled = reviewEnabled,
             AgentTimeout = TimeSpan.FromMinutes(5)
         },
-        FeedbackDataJson = ValidFeedbackJson,
-        WorkspacePath = _workspacePath
+        FeedbackDataJson = ValidFeedbackJson
     };
 
     private AgentResult SuccessResult(string[]? outputLines = null, TokenUsage? usage = null) => new()
@@ -110,10 +114,10 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                     // Second call: write-to-file step (UseResume=true)
                     req.UseResume.Should().BeTrue();
                     // Simulate the agent writing the output file
-                    var outputDir = Path.Combine(_workspacePath, "harness", ".agent");
+                    var outputDir = Path.Combine(RunWorkspace, ".agent");
                     Directory.CreateDirectory(outputDir);
                     File.WriteAllText(
-                        Path.Combine(_workspacePath, "harness", AgentWorkspacePaths.HarnessSuggestionsOutputFilePath),
+                        Path.Combine(RunWorkspace, AgentWorkspacePaths.HarnessSuggestionsOutputFilePath),
                         ValidSuggestionsJson);
                     return SuccessResult();
                 }
@@ -123,7 +127,7 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                     req.UseResume.Should().BeFalse();
                     // Write review findings with only suggestions (no CRITICAL/WARNING)
                     var reviewPath = Path.Combine(
-                        _workspacePath, "harness",
+                        RunWorkspace,
                         AgentWorkspacePaths.HarnessSuggestionsReviewFilePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(reviewPath)!);
                     File.WriteAllText(reviewPath, "[SUGGESTION] Consider adding more detail to rationale");
@@ -229,10 +233,10 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                 if (callCount == 2)
                 {
                     // Write-to-file step: writes valid JSON initially
-                    var outputDir = Path.Combine(_workspacePath, "harness", ".agent");
+                    var outputDir = Path.Combine(RunWorkspace, ".agent");
                     Directory.CreateDirectory(outputDir);
                     File.WriteAllText(
-                        Path.Combine(_workspacePath, "harness", AgentWorkspacePaths.HarnessSuggestionsOutputFilePath),
+                        Path.Combine(RunWorkspace, AgentWorkspacePaths.HarnessSuggestionsOutputFilePath),
                         ValidSuggestionsJson);
                     return SuccessResult();
                 }
@@ -240,7 +244,7 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                 {
                     // Discriminator review: writes CRITICAL finding
                     var reviewPath = Path.Combine(
-                        _workspacePath, "harness",
+                        RunWorkspace,
                         AgentWorkspacePaths.HarnessSuggestionsReviewFilePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(reviewPath)!);
                     File.WriteAllText(reviewPath, "[CRITICAL] Suggestions not grounded in feedback data");
@@ -250,7 +254,7 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                 {
                     // Refinement: overwrites the output file with malformed JSON
                     var outputPath = Path.Combine(
-                        _workspacePath, "harness",
+                        RunWorkspace,
                         AgentWorkspacePaths.HarnessSuggestionsOutputFilePath);
                     File.WriteAllText(outputPath, "{ this is not valid json at all }}}");
                     return SuccessResult();
@@ -350,10 +354,10 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                 if (callCount == 2)
                 {
                     // Write-to-file step
-                    var outputDir = Path.Combine(_workspacePath, "harness", ".agent");
+                    var outputDir = Path.Combine(RunWorkspace, ".agent");
                     Directory.CreateDirectory(outputDir);
                     File.WriteAllText(
-                        Path.Combine(_workspacePath, "harness", AgentWorkspacePaths.HarnessSuggestionsOutputFilePath),
+                        Path.Combine(RunWorkspace, AgentWorkspacePaths.HarnessSuggestionsOutputFilePath),
                         ValidSuggestionsJson);
                     return SuccessResult();
                 }
@@ -361,7 +365,7 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                 {
                     // Discriminator review — returns with review token usage
                     var reviewPath = Path.Combine(
-                        _workspacePath, "harness",
+                        RunWorkspace,
                         AgentWorkspacePaths.HarnessSuggestionsReviewFilePath);
                     Directory.CreateDirectory(Path.GetDirectoryName(reviewPath)!);
                     File.WriteAllText(reviewPath, "[CRITICAL] Major issue found");
@@ -377,7 +381,7 @@ public class HarnessSuggestionExecutorReviewTests : IDisposable
                     // Refinement — returns with refinement token usage
                     // Also re-write valid suggestions to the output file
                     var outputPath = Path.Combine(
-                        _workspacePath, "harness",
+                        RunWorkspace,
                         AgentWorkspacePaths.HarnessSuggestionsOutputFilePath);
                     File.WriteAllText(outputPath, ValidSuggestionsJson);
                     return new AgentResult

@@ -727,7 +727,6 @@ public sealed class AssignmentEnricherTests
         string agentSelector = "dotnet",
         ConsolidationRunType runType = ConsolidationRunType.BrainConsolidation,
         string? templateId = "tmpl-1",
-        string? workspacePath = "/ws",
         bool autoDispatch = false) => new()
         {
             IssueIdentifier = new IssueIdentifier("owner/repo#42"),
@@ -739,7 +738,6 @@ public sealed class AssignmentEnricherTests
             TimeoutSeconds = 3600,
             ConsolidationRunType = runType,
             ConsolidationTemplateId = templateId,
-            ConsolidationWorkspacePath = workspacePath,
             AutoDispatch = autoDispatch,
             PayloadSchemaVersion = 1,
         };
@@ -1082,7 +1080,6 @@ public sealed class AssignmentEnricherTests
         var identity = MakeConsolidationIdentity(
             runType: ConsolidationRunType.RefactoringDetection,
             templateId: "tmpl-preserve",
-            workspacePath: "/preserve/ws",
             autoDispatch: true);
         var project = MakeProject();
         var (_, _, enricher) = MakeConsolidationEnricher();
@@ -1098,8 +1095,6 @@ public sealed class AssignmentEnricherTests
             "ConsolidationRunType must be preserved from the identity payload");
         result.ConsolidationTemplateId.Should().Be("tmpl-preserve",
             "ConsolidationTemplateId must be preserved from the identity payload");
-        result.ConsolidationWorkspacePath.Should().Be("/preserve/ws",
-            "ConsolidationWorkspacePath must be preserved from the identity payload");
         result.AutoDispatch.Should().BeTrue(
             "AutoDispatch must be preserved from the identity payload");
     }

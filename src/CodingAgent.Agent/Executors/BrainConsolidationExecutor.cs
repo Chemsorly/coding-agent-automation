@@ -17,7 +17,6 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 {
     private readonly IBrainUpdateService _brainUpdateService;
 
-    protected override string WorkspaceSuffix => "brain";
     protected override string ExecutorName => "Brain consolidation";
 
     public BrainConsolidationExecutor(Serilog.ILogger logger, IBrainUpdateService brainUpdateService) : base(logger)
@@ -28,7 +27,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Executes the brain consolidation workflow:
-    /// 1. Clone brain repo into temp workspace (refused when the brain is read-only for the template)
+    /// 1. Clone brain repo into the run's workspace (refused when the brain is read-only for the template)
     /// 2. Build 4-phase consolidation prompt
     /// 3. Execute agent with prompt in the cloned workspace
     /// 4. Produce diff summary and run adversarial review (if enabled)

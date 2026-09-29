@@ -4,9 +4,8 @@ namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
 /// Resolves the agent selector labels for a consolidation dispatch request.
-/// Extracted from <c>ConsolidationDispatcher.ResolveSelector</c> so that selector logic
-/// (which depends on <see cref="IAgentProfileStore"/> and <see cref="IPipelineConfigStore"/>)
-/// stays in <c>CodingAgent.Web</c> while <c>ConsolidationService</c> (in <c>CodingAgent.Pipeline</c>)
+/// Keeps the selector logic (which depends on <see cref="IAgentProfileStore"/> and <see cref="IPipelineConfigStore"/>)
+/// in <c>CodingAgent.Web</c> while <c>ConsolidationService</c> (in <c>CodingAgent.Pipeline</c>)
 /// can call it without taking on infrastructure-layer dependencies.
 /// </summary>
 public interface IConsolidationSelectorResolver

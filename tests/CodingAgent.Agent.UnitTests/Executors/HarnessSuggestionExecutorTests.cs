@@ -24,7 +24,7 @@ public class HarnessSuggestionExecutorTests
         TemplateId = null,
         TemplateName = null,
         ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration(),
+        PipelineConfiguration = new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
         FeedbackDataJson = feedbackDataJson
     };
 

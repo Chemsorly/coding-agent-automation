@@ -15,7 +15,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly PipelineConfiguration _config;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
-    private readonly IConsolidationWorkspaceManager _workspaceManager;
     private readonly IConsolidationFeedbackCache _feedbackCache;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
@@ -77,7 +76,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _config = deps.Config;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
-        _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
         _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
@@ -270,13 +268,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             TimeoutSeconds = (int)config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = templateIdValue,
-            // The agent creates and uses this directory, so it lies under the base directory of the
-            // configuration the agent runs with (the live one, not this host's startup copy). Use
-            // run.RunId (not a fresh Guid) so the path is the run's: CleanupWorkspaceIfSucceeded
-            // derives it from the RunId too. That cleanup only reaches the directory on a host that
-            // shares the agent's filesystem; web and API pods never do.
-            // (Fix for CRITICAL finding in review-findings-correctness.md / review-findings-dotnetspecialist.md)
-            ConsolidationWorkspacePath = ConsolidationWorkspaceManager.GetWorkspacePath(config.WorkspaceBaseDirectory, run.RunId),
             AutoDispatch = autoDispatch,
             ProjectId = !string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var pid)
                 ? pid
@@ -432,7 +423,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             await PersistRunAsync(run, ct);
 
-            _workspaceManager.CleanupWorkspaceIfSucceeded(runId, status);
             _logger.Information("Consolidation run {RunId} updated: {Status} — {Summary}", runId.Value, status, LogSanitizer.SanitizeForLog(summary ?? "(no summary)"));
             OnChange?.Invoke();
         }

@@ -11,12 +11,11 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Agent.Executors;
 
 /// <summary>
-/// Executes harness suggestion analysis: writes feedback data to a temp workspace,
+/// Executes harness suggestion analysis: writes feedback data to the run's workspace,
 /// runs the analysis agent prompt, and parses the resulting suggestions.
 /// </summary>
 public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 {
-    protected override string WorkspaceSuffix => "harness";
     protected override string ExecutorName => "Harness suggestion";
 
     public HarnessSuggestionExecutor(Serilog.ILogger logger) : base(logger)
@@ -25,12 +24,12 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Executes the harness suggestion workflow:
-    /// 1. Create temp workspace directory
+    /// 1. Create the run's workspace directory
     /// 2. If job.FeedbackDataJson is null or empty: return success with "No new feedback to analyze"
     /// 3. Write feedback data JSON to workspace file for agent context
     /// 4. Calculate feedbackCount and successRate from the data
     /// 5. Build prompt via ConsolidationPromptBuilder.BuildHarnessSuggestionPrompt
-    /// 6. Execute agent in temp workspace
+    /// 6. Execute agent in the workspace
     /// 7. Write output to file (UseResume=true), then review via AdversarialReviewHelper
     /// 8. Parse suggestions from file (or fall back to response text)
     /// 9. Return result with HarnessSuggestions populated
@@ -63,7 +62,7 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
 
         return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
         {
-            // 1. Create temp workspace
+            // 1. Create the workspace
             Directory.CreateDirectory(workspacePath);
 
             // 3. Write feedback data to workspace

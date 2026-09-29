@@ -36,7 +36,7 @@ public class BrainConsolidationExecutorTests
         TemplateId = "template-1",
         TemplateName = "Test Template",
         ProviderConfigs = [],
-        PipelineConfiguration = new PipelineConfiguration { BrainReadOnly = brainReadOnly },
+        PipelineConfiguration = new PipelineConfiguration { BrainReadOnly = brainReadOnly, WorkspaceBaseDirectory = Path.GetTempPath() },
         LastSuccessfulRunUtc = DateTime.UtcNow.AddDays(-7)
     };
 

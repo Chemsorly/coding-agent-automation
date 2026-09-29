@@ -18,14 +18,14 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly Mock<IRepositoryProvider> _mockBrainProvider = new();
     private readonly Mock<IAgentProvider> _mockAgentProvider = new();
-    private readonly string _workspacePath;
+    private readonly string _workspaceBaseDirectory;
     private readonly List<string> _outputLines = new();
     private readonly List<string> _callOrder = new();
 
     public BrainConsolidationExecutorReviewTests()
     {
-        _workspacePath = Path.Combine(Path.GetTempPath(), $"brain-review-test-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(_workspacePath);
+        _workspaceBaseDirectory = Path.Combine(Path.GetTempPath(), $"brain-review-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_workspaceBaseDirectory);
 
         // Default setup: brainProvider.CloneAsync creates the workspace directory structure
         _mockBrainProvider.Setup(x => x.BaseBranch).Returns("main");
@@ -49,8 +49,8 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workspacePath))
-            Directory.Delete(_workspacePath, recursive: true);
+        if (Directory.Exists(_workspaceBaseDirectory))
+            Directory.Delete(_workspaceBaseDirectory, recursive: true);
     }
 
     private BrainConsolidationExecutor CreateExecutor()
@@ -73,10 +73,10 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         ProviderConfigs = [],
         PipelineConfiguration = TestPipelineConfig.Default() with
         {
-            BrainConsolidationReviewEnabled = reviewEnabled
+            BrainConsolidationReviewEnabled = reviewEnabled,
+            WorkspaceBaseDirectory = _workspaceBaseDirectory
         },
-        LastSuccessfulRunUtc = DateTime.UtcNow.AddDays(-7),
-        WorkspacePath = _workspacePath
+        LastSuccessfulRunUtc = DateTime.UtcNow.AddDays(-7)
     };
 
     private Action<string> CaptureOutput => line => _outputLines.Add(line);

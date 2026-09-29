@@ -1015,7 +1015,7 @@ public class ConsolidationPageComponentTests : BunitContext
     // should be restored in a follow-up: add BrainConsolidation_PassesCorrectTemplateIdValue_ToTriggerAsync
     // and BrainConsolidation_WithEmptyTemplateId_PassesNullToTriggerAsync.
 
-    // ═══ Dispatch: IConsolidationDispatcher called after TriggerAsync succeeds ═══
+    // ═══ Trigger: the page reports the run TriggerAsync created ═══
 
     /// <summary>
     /// <summary>

@@ -62,7 +62,7 @@ public sealed class ConsolidationServiceBrainScopeTests
     private ConsolidationService CreateSut()
     {
         // The bootstrap configuration deliberately differs from the live one: it must not be read.
-        var bootstrap = new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), AgentTimeout = TimeSpan.FromMinutes(30) };
+        var bootstrap = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(30) };
         return new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
             bootstrap,
@@ -71,7 +71,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             _runStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(new LoggerConfiguration().CreateLogger(), bootstrap),
             WorkDistributor: _distributor.Object,
             SelectorResolver: _selectorResolver.Object,
             PipelineConfigStore: _configStore.Object));
@@ -187,20 +186,6 @@ public sealed class ConsolidationServiceBrainScopeTests
 
         _requests.Should().ContainSingle().Which.TimeoutSeconds.Should().Be(3600,
             "harness suggestions have no template, so no project override applies");
-    }
-
-    [Fact]
-    public async Task TriggerAsync_WorkspaceLiesUnderTheLiveWorkspaceBaseDirectory()
-    {
-        var liveBase = Path.Combine(Path.GetTempPath(), "live-workspaces");
-        _liveConfig = _liveConfig with { WorkspaceBaseDirectory = liveBase };
-        var sut = CreateSut();
-
-        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, new TemplateId(TemplateA.Id), CancellationToken.None);
-
-        _requests.Should().ContainSingle().Which.ConsolidationWorkspacePath
-            .Should().Be(Path.Combine(liveBase, "consolidation", run!.RunId),
-                "the agent works in this directory, so it follows the settings the agent runs with, not the web's startup copy");
     }
 
     [Fact]

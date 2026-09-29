@@ -124,7 +124,6 @@ public sealed class ConsolidationServiceTests : IDisposable
         new FileSystemConsolidationRunStore(_runsDir),
         new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
-        WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config),
         WorkDistributor: _mockWorkDistributor.Object));
 
     #region TriggerAsync — creates run and persists
@@ -169,8 +168,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             _mockRunHistory.Object,
             new FileSystemConsolidationRunStore(_runsDir),
             new InMemoryHarnessSuggestionStore(),
-            _mockProviderConfigStore.Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(_logger, configWithoutLabels)));
+            _mockProviderConfigStore.Object));
 
         // Without a WorkDistributor injected, TriggerAsync throws InvalidOperationException.
         // This verifies the guard is in place (no silent no-op).

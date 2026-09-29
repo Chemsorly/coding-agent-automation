@@ -417,10 +417,10 @@ public static class ApiServiceCollectionExtensions
     /// <summary>
     /// Registers lifecycle, consolidation, agent communication, and run management services.
     ///
-    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with 7 arguments
-    /// (no <c>IConsolidationWorkspaceManager</c>, <c>IConsolidationFeedbackCache</c>, or
-    /// <c>IProjectWorkspaceManager</c>). The Web host's <c>AddConsolidationServices</c> uses a
-    /// 9-argument overload. These are intentionally different — do NOT unify them.
+    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 7 required
+    /// arguments only (no <c>IConsolidationFeedbackCache</c>, <c>IWorkDistributor</c>, selector resolver
+    /// or settings store). The Web host's <c>AddConsolidationServices</c> passes those too. These are
+    /// intentionally different — do NOT unify them.
     /// </summary>
     private static void AddLifecycleAndConsolidation(IServiceCollection services)
     {
@@ -434,7 +434,7 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
 
         // ── IConsolidationService ────────────────────────────────────────────
-        // IMPORTANT: intentionally 7-argument form — not the 9-argument Web overload.
+        // IMPORTANT: intentionally the 7-argument form — not the Web host's full form.
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,

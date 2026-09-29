@@ -81,7 +81,7 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers consolidation services: queue, dispatcher, workspace manager, feedback cache, service, and badge service.
+    /// Registers consolidation services: job preparation, feedback cache, selector resolver, service, and badge service.
     /// </summary>
     public static IServiceCollection AddConsolidationServices(
         this IServiceCollection services,
@@ -92,9 +92,6 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ITokenVendingService>(),
             Log.Logger));
-
-        services.AddSingleton<IConsolidationWorkspaceManager>(sp =>
-            new ConsolidationWorkspaceManager(Log.Logger, pipelineConfig));
 
         services.AddSingleton<IConsolidationFeedbackCache>(sp =>
             new ConsolidationFeedbackCache(
@@ -122,7 +119,6 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>(),
-                sp.GetRequiredService<IConsolidationWorkspaceManager>(),
                 sp.GetRequiredService<IConsolidationFeedbackCache>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
                 SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),

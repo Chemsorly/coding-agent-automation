@@ -54,9 +54,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(),
-                new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }),
             WorkDistributor: mockWorkDistributor.Object));
 
         _sut.OnChange += () => _onChangeLog.Add(DateTime.UtcNow.ToString("O"));

@@ -71,8 +71,6 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _store,
                 _harnessStore,
                 new Mock<IProviderConfigStore>().Object,
-                WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config),
                 WorkDistributor: mockWorkDistributor.Object));
     }
 
@@ -278,9 +276,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _mockRunHistory.Object,
                 _store,
                 _harnessStore,
-                new Mock<IProviderConfigStore>().Object,
-                WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config)));
+                new Mock<IProviderConfigStore>().Object));
 
         var history = await sut2.GetRunHistoryAsync(CancellationToken.None);
         history.Should().ContainSingle();
@@ -311,9 +307,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 _mockRunHistory.Object,
                 _store,
                 _harnessStore,
-                new Mock<IProviderConfigStore>().Object,
-                WorkspaceManager: new ConsolidationWorkspaceManager(
-                    new LoggerConfiguration().CreateLogger(), _config)));
+                new Mock<IProviderConfigStore>().Object));
         await sut2.CleanupOrphanedRunsAsync([], CancellationToken.None);
 
         // Assert

@@ -50,9 +50,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
             _mockRunStore.Object,
             _mockHarnessStore.Object,
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(),
-                new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }),
             WorkDistributor: mockWorkDistributor.Object));
     }
 

@@ -86,8 +86,6 @@ public sealed class ConsolidationServiceDedupTests
             _mockRunStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(), cfg),
             WorkDistributor: mockDistributor.Object,
             SelectorResolver: _mockSelectorResolver.Object));
     }

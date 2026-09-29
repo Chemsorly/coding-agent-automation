@@ -56,7 +56,7 @@ public sealed class ConsolidationTemplateResolver
         {
             // TODO [WARNING]: project.Id is a required string but there is no guard against an empty-string value
             // (e.g. a malformed config file with "id": ""). An empty Id passes all in-scope checks (Enabled=true,
-            // TemplateIds.Contains) but Guid.TryParse in ConsolidationDispatcher will silently produce null,
+            // TemplateIds.Contains) but Guid.TryParse in ConsolidationService.TriggerAsync will silently produce null,
             // reproducing the original null-ProjectId bug with no diagnostic. Consider validating that project.Id
             // is a non-empty, valid GUID here (or at the store/model level) and skipping/logging invalid projects.
             if (project.TemplateIds.Contains(templateId.Value) && templateLookup.TryGetValue(templateId.Value, out var template))

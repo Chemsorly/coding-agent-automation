@@ -127,7 +127,6 @@ public class ConsolidationServicePropertyTests : IDisposable
             new FileSystemConsolidationRunStore(runsDir),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config),
             WorkDistributor: mockDist2.Object));
 
         // First trigger succeeds
