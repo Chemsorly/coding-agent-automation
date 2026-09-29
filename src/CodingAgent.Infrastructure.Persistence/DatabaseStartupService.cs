@@ -55,6 +55,14 @@ public sealed class DatabaseStartupService
         await WaitForDatabaseConnectionAsync(ct);
         await HandleMigrationsAsync(ct);
         await ImportJsonConfigIfNeededAsync(ct);
+        // TODO [WARNING]: InitializeAsync does not call SeedDefaultProjectIfNeededAsync. It seeds
+        // reviewer configs and repairs orphans but not the Default project row. ClaimOrphanedTemplatesAsync
+        // will log a warning and skip orphan repair if the Default project is absent. The API startup path
+        // (ApiStartupExtensions.RunApiMigrationsAsync) uses RunStartupSeedingAsync instead of InitializeAsync
+        // and is not affected. Any future caller of InitializeAsync that relies on orphan repair (e.g. a
+        // worker host) will silently skip it unless the Default project already exists. Add a call to
+        // SeedDefaultProjectIfNeededAsync here (before SeedDefaultReviewerConfigsIfNeededAsync) if
+        // InitializeAsync is ever used in a path that needs the full seed-and-repair sequence.
         await SeedDefaultReviewerConfigsIfNeededAsync(ct);
         await ClaimOrphanedTemplatesAsync(ct);
     }
@@ -169,6 +177,62 @@ public sealed class DatabaseStartupService
     }
 
     /// <summary>
+    /// Runs the full post-migration seed-and-repair sequence:
+    /// <list type="number">
+    ///   <item>Ensures the Default project row exists (<see cref="SeedDefaultProjectIfNeededAsync"/>).</item>
+    ///   <item>Seeds the default reviewer configurations when the table is empty (<see cref="SeedDefaultReviewerConfigsIfNeededAsync"/>).</item>
+    ///   <item>Reparents orphaned templates to the Default project (<see cref="ClaimOrphanedTemplatesAsync"/>).</item>
+    /// </list>
+    /// Idempotent — safe to run on every startup. Step 1 must precede step 3 because
+    /// <see cref="ClaimOrphanedTemplatesAsync"/> skips repair when the Default project is absent.
+    /// </summary>
+    public async Task RunStartupSeedingAsync(CancellationToken ct)
+    {
+        // TODO [WARNING]: The three child methods each acquire and release MigrationLockKey independently.
+        // The overall seed-and-repair sequence is therefore NOT atomic across replicas: a second replica
+        // can interleave between any two steps. In practice each step is idempotent and the per-method lock
+        // serializes the SaveChangesAsync that was the original race concern, so no crash results today.
+        // However, between the lock release of SeedDefaultProjectIfNeededAsync and the lock acquisition of
+        // ClaimOrphanedTemplatesAsync, two replicas could both pass the AnyAsync existence check in step 1
+        // and attempt to insert the same Default project PK — on real Postgres this surfaces as a
+        // DbUpdateException (PK violation) aborting one replica's startup. The correct fix is either a
+        // single lock acquisition wrapping all three steps here, or an INSERT … ON CONFLICT DO NOTHING
+        // approach in SeedDefaultProjectIfNeededAsync. MigrationLockKey is non-reentrant (Postgres:
+        // pg_try_advisory_lock on a new connection per acquire; InProcess: SemaphoreSlim(1,1)), so any
+        // change that nests an outer AcquireAsync around these calls will deadlock.
+        await SeedDefaultProjectIfNeededAsync(ct);
+        await SeedDefaultReviewerConfigsIfNeededAsync(ct);
+        await ClaimOrphanedTemplatesAsync(ct);
+    }
+
+    /// <summary>
+    /// Inserts the Default project row (<see cref="WellKnownIds.DefaultProjectId"/>) if it does not
+    /// already exist. Idempotent — no-op on every startup after the first.
+    /// Acquires the schema-migration advisory lock to prevent duplicate inserts in multi-replica deployments.
+    /// </summary>
+    internal async Task SeedDefaultProjectIfNeededAsync(CancellationToken ct)
+    {
+        await using var lockHandle = await _lockProvider.AcquireAsync(MigrationLockKey, ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+        var exists = await db.Projects.AnyAsync(p => p.Id == defaultGuid, ct);
+        if (exists)
+            return;
+
+        db.Projects.Add(new ProjectEntity
+        {
+            Id = defaultGuid,
+            Name = "Default",
+            Enabled = true
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        _logger.Information("Default project row was absent — created Default project (ID {Id})", defaultGuid);
+    }
+
+    /// <summary>
     /// Seeds <see cref="PipelineConfigurationDefaults.DefaultReviewerConfigurations"/> into the
     /// <c>ReviewerConfigs</c> table if it is empty. Idempotent — skips if any reviewer config exists.
     /// Acquires the schema-migration advisory lock to prevent duplicate seeding in multi-replica deployments.
@@ -215,16 +279,13 @@ public sealed class DatabaseStartupService
     /// Finds templates whose project no longer exists and moves them to the Default project, so every
     /// template belongs to a project. A template's own project is the only membership record.
     /// Idempotent — safe to run at every startup.
+    /// Acquires the schema-migration advisory lock to prevent concurrent replicas from both loading
+    /// the same orphaned templates and racing on SaveChangesAsync (which would throw
+    /// DbUpdateConcurrencyException on the RowVersion concurrency token and abort one replica's startup).
     /// </summary>
     internal async Task ClaimOrphanedTemplatesAsync(CancellationToken ct)
     {
-        // TODO [WARNING]: This method performs SaveChangesAsync on template rows without holding the
-        // distributed lock (unlike SeedDefaultReviewerConfigsIfNeededAsync which uses MigrationLockKey).
-        // PipelineJobTemplateEntity.RowVersion is a concurrency token, and InitializeAsync runs on every
-        // replica at startup. Two replicas can concurrently load the same orphan, both attempt
-        // SaveChangesAsync, and the second will throw DbUpdateConcurrencyException which propagates out of
-        // InitializeAsync and aborts that replica's startup. Consider wrapping the repair in
-        // _lockProvider.AcquireAsync(MigrationLockKey, ct), or catch/retry DbUpdateConcurrencyException here.
+        await using var lockHandle = await _lockProvider.AcquireAsync(MigrationLockKey, ct);
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var allTemplates = await db.PipelineJobTemplates.ToListAsync(ct);

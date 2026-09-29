@@ -38,7 +38,7 @@ flowchart LR
 
 ## Project Storage
 
-Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — JSON files are only used for first-boot migration (`DatabaseStartupService.ImportJsonConfigIfNeededAsync` reads from `/app/config/pipeline/` on an empty database). In normal operation there is no file-based runtime storage.
+Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — on first startup against an empty database, the API seed step creates the Default project and seeds the default reviewer configurations. In normal operation there is no file-based runtime storage.
 
 The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
