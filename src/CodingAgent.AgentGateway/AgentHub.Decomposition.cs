@@ -136,6 +136,94 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
+    /// Lists open issues via a specific issue provider (for cross-repo deduplication in project epic reruns).
+    /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesForProviderAsync</c> when
+    /// <c>DecompositionStep</c> reads already-created sub-issues from template trackers.
+    /// Applies the same scope check as <see cref="RequestCreateIssueForProvider"/>: the run's own
+    /// tracker is always permitted; a different tracker requires a project epic in scope.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<PagedResult<IssueSummary>> RequestListOpenIssuesForProvider(
+        JobId jobId, string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+
+        var run = _facade.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId.Value}");
+
+        // TODO: CancellationToken.None is passed to LoadProviderConfigsAsync and ListOpenIssuesAsync below,
+        // consistent with the existing RequestCreateIssueForProvider pattern (see line ~47 TODO).
+        // A SignalR disconnect during the scope-check or list phase will not be observed until awaits complete.
+        // See review finding: AgentHub.Decomposition — CancellationToken.None in RequestListOpenIssuesForProvider.
+        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
+        if (issueConfig is null)
+            throw new HubException($"Issue provider config '{SanitizeForLog(issueProviderConfigId)}' not found for cross-repo listing in job {jobId.Value}");
+
+        if (issueProviderConfigId != run.IssueProviderConfigId
+            && !await IsInProjectEpicScopeAsync(run, issueProviderConfigId))
+        {
+            throw new HubException($"Provider '{SanitizeForLog(issueProviderConfigId)}' is not in the scope of job {jobId.Value}: only a project epic may list issues in the trackers of its project's templates");
+        }
+
+        await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
+        try
+        {
+            return await issueProvider.ListOpenIssuesAsync(page, pageSize, labels, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "RequestListOpenIssuesForProvider failed for job {JobId}, provider {ProviderId}",
+                jobId.Value, issueProviderConfigId);
+            throw new HubException($"Failed to list open issues for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Lists closed issues via a specific issue provider (for cross-repo deduplication in project epic reruns).
+    /// Called by the agent's <c>OrchestratorProxy.ListClosedIssuesForProviderAsync</c>.
+    /// Applies the same scope check as <see cref="RequestCreateIssueForProvider"/>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<PagedResult<IssueSummary>> RequestListClosedIssuesForProvider(
+        JobId jobId, string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+
+        var run = _facade.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId.Value}");
+
+        // TODO: CancellationToken.None is passed to LoadProviderConfigsAsync and ListClosedIssuesAsync below,
+        // consistent with the existing RequestCreateIssueForProvider pattern (see line ~47 TODO).
+        // A SignalR disconnect during the scope-check or list phase will not be observed until awaits complete.
+        // See review finding: AgentHub.Decomposition — CancellationToken.None in RequestListClosedIssuesForProvider.
+        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
+        if (issueConfig is null)
+            throw new HubException($"Issue provider config '{SanitizeForLog(issueProviderConfigId)}' not found for cross-repo listing in job {jobId.Value}");
+
+        if (issueProviderConfigId != run.IssueProviderConfigId
+            && !await IsInProjectEpicScopeAsync(run, issueProviderConfigId))
+        {
+            throw new HubException($"Provider '{SanitizeForLog(issueProviderConfigId)}' is not in the scope of job {jobId.Value}: only a project epic may list issues in the trackers of its project's templates");
+        }
+
+        await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
+        try
+        {
+            return await issueProvider.ListClosedIssuesAsync(page, pageSize, labels, since, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "RequestListClosedIssuesForProvider failed for job {JobId}, provider {ProviderId}",
+                jobId.Value, issueProviderConfigId);
+            throw new HubException($"Failed to list closed issues for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
     /// Gets full issue details by identifier via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
     /// Logs a warning when the requested identifier differs from the run's own issue (audit trail for 1G-006).
