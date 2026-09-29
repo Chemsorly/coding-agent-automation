@@ -63,7 +63,8 @@
                     @{ var idx = 0; }
                     @foreach (var issue in FilteredItems)
                     {
-                        var isProcessing = IsBeingProcessed(issue.Identifier);
+                        var processingStatus = GetProcessingStatus(issue.Identifier);
+                        var isProcessing = processingStatus.HasValue;
                         var isApproved = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase);
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
@@ -80,9 +81,13 @@
                                 {
                                     <span class="badge-default badge-epic"><Icon Name="search" Size="12" /> Analysis</span>
                                 }
-                                @if (isProcessing)
+                                @if (processingStatus == WorkItemStatus.Running || processingStatus == WorkItemStatus.Dispatched)
                                 {
-                                    @* "Queued", not "DISPATCHED" — see IssueDispatchDrawer. *@
+                                    <span class="badge-default" style="background: var(--accent-fill); color: white;">Running</span>
+                                }
+                                else if (processingStatus == WorkItemStatus.Pending)
+                                {
+                                    @* "Queued" = work item is Pending; not yet dispatched to a pod. *@
                                     <span class="badge-default" style="background: var(--accent-fill); color: white;">Queued</span>
                                 }
                             </div>

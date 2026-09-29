@@ -1,4 +1,5 @@
 using Moq;
+using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
@@ -17,6 +18,7 @@ public class IssueDrawerServiceTests
     private readonly Mock<IDependencyChecker> _mockDependencyChecker;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
+    private readonly Mock<IPipelineApiWorkItemClient> _mockApiClient;
     private readonly IssueDrawerService _service;
 
     public IssueDrawerServiceTests()
@@ -25,12 +27,20 @@ public class IssueDrawerServiceTests
         _mockDependencyChecker = new Mock<IDependencyChecker>();
         _mockWorkDistributor = new Mock<IWorkDistributor>();
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
+        _mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+
+        // Default stubs so RefreshActiveIssuesAsync doesn't throw in tests that don't care about it.
+        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<(string, string)>());
+        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
 
         _service = new IssueDrawerService(
             _mockProviderFactory.Object,
             _mockDependencyChecker.Object,
             _mockWorkDistributor.Object,
-            _mockDispatchOrchestration.Object);
+            _mockDispatchOrchestration.Object,
+            _mockApiClient.Object);
     }
 
     private static ProviderConfig MakeProvider(string id, ProviderKind kind = ProviderKind.Issue) =>
@@ -54,11 +64,18 @@ public class IssueDrawerServiceTests
     public void CanBeConstructed_WithoutIPipelineLoopService_IProjectStore_IConfigurationStore()
     {
         // This test verifies the acceptance criterion: independently injectable without unrelated deps
+        var mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<(string, string)>());
+        mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+
         var svc = new IssueDrawerService(
             new Mock<IProviderFactory>().Object,
             new Mock<IDependencyChecker>().Object,
             new Mock<IWorkDistributor>().Object,
-            new Mock<IDispatchOrchestrationService>().Object);
+            new Mock<IDispatchOrchestrationService>().Object,
+            mockApiClient.Object);
         Assert.NotNull(svc);
         svc.Dispose();
     }
@@ -280,13 +297,9 @@ public class IssueDrawerServiceTests
     [Fact]
     public async Task DispatchFromIssueDrawerAsync_ClosesDrawer_OnSuccess()
     {
-        // TODO: [WARNING] OpenIssueDrawerAsync internally calls RefreshActiveIssuesAsync →
-        // _workDistributor.GetActiveIssueIdentifiersAsync. This mock is not set up here, so Moq returns
-        // the default Task<HashSet<...>> (null). If GetActiveIssueIdentifiersAsync returns null,
-        // ActiveIssues is assigned null, and a subsequent IsIssueActive call would throw
-        // NullReferenceException. The test passes today only because no IsIssueActive call follows.
-        // Fix: add _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(...)).ReturnsAsync(new HashSet<...>())
-        // to this test (and any other test that calls OpenIssueDrawerAsync).
+        // OpenIssueDrawerAsync internally calls RefreshActiveIssuesAsync →
+        // _apiClient.GetActiveIdentifiersAsync and GetPendingAsync. These are already stubbed
+        // in the constructor to return empty results, so no additional setup is needed here.
         SetupDependencyCheckerReady();
 
         var template = MakeTemplate();
@@ -307,17 +320,25 @@ public class IssueDrawerServiceTests
         Assert.False(_service.DrawerState.IsOpen);
     }
 
-    // ── RefreshActiveIssuesAsync / IsIssueActive ──
+    // ── RefreshActiveIssuesAsync / IsIssueActive / GetIssueWorkItemStatus ──
 
     [Fact]
     public async Task RefreshActiveIssuesAsync_PopulatesActiveIssuesSet()
     {
-        var expected = new HashSet<(IssueIdentifier, ProviderConfigId)> { ("42", "ip-1") };
-        _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expected);
+        // Set up: issue "42" is in active-identifiers and also in pending → Pending (Queued)
+        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ("42", "ip-1") });
+        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakePendingItem("42", "ip-1") });
 
         await _service.RefreshActiveIssuesAsync();
 
+        // TODO: [WARNING] This assertion only checks IsIssueActive (bool) and does not verify the
+        //   stored WorkItemStatus value. A regression that inverts Pending/Running classification
+        //   would not be caught here. The GetIssueWorkItemStatus_WhenIssueIsPending_ReturnsPending
+        //   test below covers the status value separately; consider merging or adding an explicit
+        //   Assert.Equal(WorkItemStatus.Pending, _service.GetIssueWorkItemStatus("42", "ip-1"))
+        //   to this test so it validates both presence and status in one place.
         Assert.True(_service.IsIssueActive("42", "ip-1"));
         Assert.False(_service.IsIssueActive("99", "ip-1"));
     }
@@ -334,6 +355,66 @@ public class IssueDrawerServiceTests
 
         Assert.True(result);
         _mockWorkDistributor.Verify(w => w.IsIssueDistributedAsync("42", "ip-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── GetIssueWorkItemStatus tests (new) ──
+
+    /// <summary>Creates a minimal PendingWorkItemDto for use in RefreshActiveIssuesAsync tests.</summary>
+    private static PendingWorkItemDto MakePendingItem(string issueIdentifier, string providerConfigId) => new()
+    {
+        Id = Guid.NewGuid(),
+        IssueIdentifier = issueIdentifier,
+        IssueProviderConfigId = providerConfigId,
+        TaskType = WorkItemTaskType.Implementation,
+        CreatedAt = DateTimeOffset.UtcNow,
+        AgentSelector = "kiro",
+        RetryCount = 0,
+        TimeoutSeconds = 3600,
+    };
+
+    [Fact]
+    public async Task GetIssueWorkItemStatus_WhenIssueIsPending_ReturnsPending()
+    {
+        // Issue is in both active-identifiers AND pending → Pending status (Queued badge)
+        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ("42", "ip-1") });
+        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakePendingItem("42", "ip-1") });
+
+        await _service.RefreshActiveIssuesAsync();
+
+        var status = _service.GetIssueWorkItemStatus("42", "ip-1");
+        Assert.Equal(WorkItemStatus.Pending, status);
+    }
+
+    [Fact]
+    public async Task GetIssueWorkItemStatus_WhenIssueIsRunning_ReturnsRunning()
+    {
+        // Issue is in active-identifiers but NOT in pending → Running (Running/Dispatched badge)
+        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { ("42", "ip-1") });
+        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+
+        await _service.RefreshActiveIssuesAsync();
+
+        var status = _service.GetIssueWorkItemStatus("42", "ip-1");
+        Assert.Equal(WorkItemStatus.Running, status);
+    }
+
+    [Fact]
+    public async Task GetIssueWorkItemStatus_WhenIssueNotInQueue_ReturnsNull()
+    {
+        // Issue is in neither list → null (no badge)
+        _mockApiClient.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<(string, string)>());
+        _mockApiClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingWorkItemDto>());
+
+        await _service.RefreshActiveIssuesAsync();
+
+        var status = _service.GetIssueWorkItemStatus("99", "ip-1");
+        Assert.Null(status);
     }
 
     // ── CancellationToken lifecycle ──
