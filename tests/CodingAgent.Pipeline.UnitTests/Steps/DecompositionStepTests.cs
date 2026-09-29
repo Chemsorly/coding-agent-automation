@@ -1,5 +1,7 @@
 using AwesomeAssertions;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Services.Steps;
 using Moq;
 using Xunit;
@@ -490,4 +492,258 @@ public class DecompositionStepTests
         Author = "test-author",
         CreatedAt = DateTime.UtcNow
     };
+}
+
+/// <summary>
+/// Integration-style unit tests for <see cref="DecompositionStep.ExecuteAsync"/>.
+/// Covers the early-exit paths (no plan comment, no issue on context, agent failure, non-zero exit)
+/// and the happy path (agent success, files produced).
+/// </summary>
+public sealed class DecompositionStepExecuteAsyncTests : IDisposable
+{
+    private readonly string _workspacePath;
+    private readonly Mock<IAgentProvider> _agentProvider;
+    private readonly Mock<IPipelineCallbacks> _callbacks;
+    private readonly Mock<IAgentIssueOperations> _issueOps;
+    private readonly Serilog.ILogger _logger;
+
+    public DecompositionStepExecuteAsyncTests()
+    {
+        _workspacePath = Path.Combine(Path.GetTempPath(), $"decomp-exec-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(_workspacePath);
+        Directory.CreateDirectory(Path.Combine(_workspacePath, ".agent"));
+
+        _agentProvider = new Mock<IAgentProvider>();
+        _callbacks = new Mock<IPipelineCallbacks>();
+        _issueOps = new Mock<IAgentIssueOperations>();
+        _logger = new Serilog.LoggerConfiguration().CreateLogger();
+
+        // Default callback stubs
+        _callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()));
+        _callbacks.Setup(c => c.EmitOutputLine(It.IsAny<string>()));
+        _callbacks.Setup(c => c.NotifyChange());
+        _callbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>())).Returns(Task.CompletedTask);
+        _callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_workspacePath))
+            Directory.Delete(_workspacePath, recursive: true);
+    }
+
+    private PipelineStepContext BuildContext(
+        IReadOnlyList<IssueComment>? comments = null,
+        IssueDetail? issue = null,
+        bool includeIssue = true)
+    {
+        var run = new PipelineRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "42",
+            IssueTitle = "Test Epic",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            RunType = PipelineRunType.Decomposition,
+            WorkspacePath = _workspacePath
+        };
+
+        _issueOps
+            .Setup(o => o.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(comments ?? new List<IssueComment>());
+
+        // Default: own tracker returns no existing sub-issues (can be overridden per-test)
+        _issueOps
+            .Setup(o => o.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], HasMore = false, Page = 1, PageSize = 50 });
+
+        var ctx = new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+                AgentTimeout = TimeSpan.FromMinutes(1)
+            },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = _agentProvider.Object,
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = null,
+            ConfigStore = Mock.Of<IConfigurationStore>(),
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger
+        };
+
+        if (includeIssue)
+        {
+            ctx.Issue = issue ?? new IssueDetail
+            {
+                Identifier = "42",
+                Title = "Test Epic",
+                Description = "Epic description",
+                Labels = []
+            };
+        }
+
+        return ctx;
+    }
+
+    private static IssueComment MakePlanComment() => new()
+    {
+        Id = "plan-1",
+        Body = $"Here is the plan {CommentMarkers.DecompositionPlan}",
+        Author = "bot",
+        CreatedAt = DateTime.UtcNow
+    };
+
+    private void SetupAgentSuccess()
+    {
+        _agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+    }
+
+    // ── NoPlanComment → Stop ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_NoPlanComment_ReturnsStop()
+    {
+        var context = BuildContext(comments: new List<IssueComment>
+        {
+            new() { Id = "1", Body = "Regular comment, no marker", Author = "user", CreatedAt = DateTime.UtcNow }
+        });
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop, "missing plan comment must halt the step");
+        _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Once,
+            "FailRunAsync must record the run in history");
+    }
+
+    // ── IssueNotOnContext → Stop ──────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_IssueNotOnContext_ReturnsStop()
+    {
+        var context = BuildContext(
+            comments: new List<IssueComment> { MakePlanComment() },
+            includeIssue: false);
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop, "null context.Issue must halt the step");
+        _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Once);
+    }
+
+    // ── AgentThrows → Stop ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_AgentThrows_ReturnsStop()
+    {
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment() });
+
+        _agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ThrowsAsync(new InvalidOperationException("agent crashed"));
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop, "agent exception must halt the step");
+        _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Once);
+    }
+
+    // ── AgentNonZeroExit → Stop ───────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_AgentNonZeroExit_ReturnsStop()
+    {
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment() });
+
+        _agentProvider
+            .Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 1, OutputLines = [] });
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Stop, "non-zero exit code must halt the step");
+        _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Once);
+    }
+
+    // ── HappyPath (no sub-issues dir) → Continue ─────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_AgentSucceeds_NoSubIssuesDir_ReturnsContinue()
+    {
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment() });
+        SetupAgentSuccess();
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        _callbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Never,
+            "successful step must not call FailRunAsync");
+    }
+
+    // ── HappyPath (sub-issues dir exists) → Continue ─────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_AgentSucceeds_SubIssuesDirExists_ReturnsContinue()
+    {
+        var subIssuesDir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(subIssuesDir);
+        File.WriteAllText(Path.Combine(subIssuesDir, "issue1.json"), "{}");
+
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment() });
+        SetupAgentSuccess();
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        _callbacks.Verify(c => c.EmitOutputLine(It.Is<string>(s => s.Contains("1 sub-issue file"))), Times.Once,
+            "must emit output line reporting the file count");
+    }
+
+    // ── HappyPath with existing sub-issues (deduplication path) → Continue
+
+    [Fact]
+    public async Task ExecuteAsync_WithExistingSubIssues_AppendsDedupSection_ReturnsContinue()
+    {
+        var context = BuildContext(comments: new List<IssueComment> { MakePlanComment() });
+
+        // Override the default empty-result setup from BuildContext after context is built
+        _issueOps
+            .Setup(o => o.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = [new IssueSummary { Identifier = "10", Title = "Existing Sub-Issue", Labels = [] }],
+                HasMore = false, Page = 1, PageSize = 50
+            });
+
+        SetupAgentSuccess();
+
+        var step = new DecompositionStep();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        _callbacks.Verify(c => c.EmitOutputLine(It.Is<string>(s => s.Contains("existing agent-generated sub-issues"))), Times.Once,
+            "must emit deduplication output when existing sub-issues are found");
+
+        // Verify issue-context.md contains the deduplication section
+        var issueContextPath = Path.Combine(_workspacePath, AgentWorkspacePaths.IssueContextFilePath);
+        var content = await File.ReadAllTextAsync(issueContextPath);
+        content.Should().Contain("Existing Sub-Issue", "deduplication section must be appended to issue-context.md");
+    }
 }
