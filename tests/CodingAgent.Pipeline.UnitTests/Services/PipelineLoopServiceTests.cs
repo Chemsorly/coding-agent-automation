@@ -1721,7 +1721,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             EnabledTemplates: pollableTemplates,
             PollableTemplates: pollableTemplates,
             TemplateLookup: pollableTemplates.ToDictionary(t => t.Id).AsReadOnly(),
-            ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>());
+            ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+            ActiveDecompositionCount: 0);
     }
 
     [Fact]

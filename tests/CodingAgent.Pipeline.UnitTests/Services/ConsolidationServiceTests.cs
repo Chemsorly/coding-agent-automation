@@ -253,8 +253,8 @@ public sealed class ConsolidationServiceTests : IDisposable
     public async Task TriggerAsync_DuplicateRunning_ReturnsNull()
     {
         // Validates: Requirement 3.7 — after _runningRuns removal (issue #3027), dedup is
-        // API-layer. The second trigger calls DistributeAsync and receives WorkItemId=null
-        // (simulating KubernetesWorkDistributor mapping 409 → Success=true, WorkItemId=null).
+        // API-layer. The second trigger calls DistributeAsync and receives AlreadyExists=true
+        // (simulating KubernetesWorkDistributor mapping 409 → Success=true, WorkItemId=null, AlreadyExists=true).
         // TODO [WARNING]: SetupSequence is configured on the class-level _mockWorkDistributor alongside
         // any default Setup registered in the constructor. In Moq, calling SetupSequence on an already-
         // configured mock does not replace the default Setup — both coexist and the most-recently-added
@@ -264,7 +264,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         _mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-first", ErrorMessage: null, Queued: true))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true, AlreadyExists: true));
 
         var sut = CreateSut();
 
@@ -274,7 +274,7 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         var second = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        second.Should().BeNull("duplicate trigger must be rejected when WorkItemId=null (409 path)");
+        second.Should().BeNull("duplicate trigger must be rejected when AlreadyExists=true (409 path)");
     }
 
     [Fact]
