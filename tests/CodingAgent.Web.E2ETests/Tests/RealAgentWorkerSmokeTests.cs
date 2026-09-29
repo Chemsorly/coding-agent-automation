@@ -118,7 +118,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Identifier = issueId,
             Title = "Add input validation",
             Description = "## Requirements\nAdd null checks.\n\n## Acceptance Criteria\n- [ ] All methods validate inputs",
-            Labels = new[] { "agent:next" }
+            Labels = ["agent:next"]
         });
 
         // Template + profile so dispatch resolves correctly
@@ -135,7 +135,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         {
             Id = "real-agent-profile",
             DisplayName = "Real Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = ["e2e"],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -243,7 +243,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             Identifier = issueId,
             Title = "Epic: Implement feature X",
             Description = "## Goal\nBuild feature X end-to-end",
-            Labels = new[] { "agent:epic" }
+            Labels = ["agent:epic"]
         });
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -260,7 +260,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         {
             Id = "decomp-agent-profile",
             DisplayName = "Decomp Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = ["e2e"],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -301,7 +301,7 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
 
         // Reset label to agent:epic so a second dispatch is valid
         await Fixture.IssueProvider.RemoveLabelAsync(issueId, AgentLabels.EpicReview, CancellationToken.None);
-        await Fixture.IssueProvider.AddLabelsAsync(issueId, new[] { "agent:epic" }, CancellationToken.None);
+        await Fixture.IssueProvider.AddLabelsAsync(issueId, ["agent:epic"], CancellationToken.None);
 
         // Enqueue scripts for second run
         Fixture.AgentProvider
