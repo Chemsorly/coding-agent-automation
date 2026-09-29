@@ -310,6 +310,44 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
         // pipeline.run.brain_updates: 2 series (result=pushed / result=none)
         foreach (var result in new[] { "pushed", "none" })
             PipelineTelemetry.RunBrainUpdates.Add(0, new KeyValuePair<string, object?>("result", result));
+
+        // pipeline.run.tokens, pipeline.run.cost_usd, pipeline.run.agent_sessions, pipeline.run.agent_time:
+        // 5 run_types × 9 phases × 3 providers = 135 series per metric (< ~100-per-series limit accepted
+        // since we have 4 metrics × 135 = 540 total pre-init Add calls, all idempotent Add(0)).
+        // model is excluded from pre-initialization (unbounded cardinality per Req 7 additional comment).
+        // TODO: run_type="unknown" can be emitted at runtime when ResolveRunContextAsync cannot resolve
+        // the WorkItem (e.g. missing DB row, null dbFactory). That series is not pre-initialized here,
+        // so Prometheus increase()/rate() will miss the first increment after a deploy. Consider adding
+        // "unknown" to the runTypes array (adds 27 series/metric, keeping total well under 200/metric).
+        foreach (var runType in runTypes)
+        {
+            foreach (var phase in PipelineTelemetry.RunPhases.All)
+            {
+                foreach (var provider in PipelineTelemetry.RunProviders.All)
+                {
+                    PipelineTelemetry.RunTokens.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider));
+
+                    PipelineTelemetry.RunCostUsd.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider));
+
+                    PipelineTelemetry.RunAgentSessions.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider),
+                        new KeyValuePair<string, object?>("model", "unknown"));
+
+                    PipelineTelemetry.RunAgentTime.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("provider", provider));
+                }
+            }
+        }
     }
 }
 

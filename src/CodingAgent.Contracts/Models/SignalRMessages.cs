@@ -363,6 +363,14 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(26)]
     public string? BranchName { get; init; }
+
+    /// <summary>
+    /// Per-phase LLM usage breakdown. Keys are normalized phase names (e.g. "analysis", "codegen").
+    /// Null or empty when no phase data is available (e.g. old agent versions or failed runs).
+    /// Wire-compat: additive field — old agents omit it (null on the orchestrator side).
+    /// </summary>
+    [Key(27)]
+    public IReadOnlyDictionary<string, PhaseUsagePayload>? PhaseBreakdown { get; init; }
 }
 
 /// <summary>
@@ -540,4 +548,36 @@ public sealed record AgentModelInfo
 
     [Key(2)]
     public double RateMultiplier { get; init; } = 1.0;
+}
+
+/// <summary>
+/// Per-phase LLM usage snapshot included in <see cref="JobCompletionPayload.PhaseBreakdown"/>.
+/// Wire-serialized as part of the agent→orchestrator completion message.
+/// </summary>
+[MessagePackObject]
+public sealed record PhaseUsagePayload
+{
+    /// <summary>Total LLM tokens consumed in this phase.</summary>
+    [Key(0)]
+    public long Tokens { get; init; }
+
+    /// <summary>Total LLM cost in USD for this phase, or null if unavailable.</summary>
+    [Key(1)]
+    public decimal? Cost { get; init; }
+
+    /// <summary>Number of agent CLI invocations (sessions) in this phase.</summary>
+    [Key(2)]
+    public int SessionCount { get; init; }
+
+    /// <summary>Total agent execution time in seconds for this phase.</summary>
+    [Key(3)]
+    public double AgentTimeSeconds { get; init; }
+
+    /// <summary>Normalized provider name (e.g. "kiro", "opencode"), or null if unknown.</summary>
+    [Key(4)]
+    public string? Provider { get; init; }
+
+    /// <summary>Model name (e.g. "claude-sonnet-4-5"), or null if unknown.</summary>
+    [Key(5)]
+    public string? Model { get; init; }
 }
