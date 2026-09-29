@@ -234,4 +234,65 @@ public sealed class IAgentIssueOperationsDefaultMethodTests
 
         result.Should().Be(expected, "default ListClosedIssuesForProviderAsync must delegate to ListClosedIssuesAsync");
     }
+
+    // ── Default throw paths ───────────────────────────────────────────────
+    // A minimal stub that implements only the non-optional members, so that calling any of the
+    // throw-by-default methods goes to the interface default implementation.
+
+    private sealed class MinimalStub : IAgentIssueOperations
+    {
+        public Task<string?> PostCommentAsync(CodingAgent.Pipeline.Models.IssueIdentifier issueIdentifier, string body, CancellationToken ct)
+            => Task.FromResult<string?>(null);
+        public Task SwapLabelAsync(CodingAgent.Pipeline.Models.IssueIdentifier issueIdentifier, string newLabel, CancellationToken ct)
+            => Task.CompletedTask;
+    }
+
+    [Fact]
+    public async Task CreateIssueAsync_DefaultImpl_ThrowsNotSupportedException()
+    {
+        IAgentIssueOperations sut = new MinimalStub();
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            sut.CreateIssueAsync("T", "B", [], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task CreateIssueForProviderAsync_DefaultImpl_DelegatesToCreateIssueAsync_ThrowsNotSupportedException()
+    {
+        IAgentIssueOperations sut = new MinimalStub();
+        // CreateIssueForProviderAsync defaults to calling CreateIssueAsync, which throws
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            sut.CreateIssueForProviderAsync("p", "T", "B", [], CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_DefaultImpl_ThrowsNotSupportedException()
+    {
+        IAgentIssueOperations sut = new MinimalStub();
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            sut.ListOpenIssuesAsync(1, 50, null, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task GetIssueAsync_DefaultImpl_ThrowsNotSupportedException()
+    {
+        IAgentIssueOperations sut = new MinimalStub();
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            sut.GetIssueAsync(new CodingAgent.Pipeline.Models.IssueIdentifier("1"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ListCommentsAsync_DefaultImpl_ThrowsNotSupportedException()
+    {
+        IAgentIssueOperations sut = new MinimalStub();
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            sut.ListCommentsAsync(new CodingAgent.Pipeline.Models.IssueIdentifier("1"), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_DefaultImpl_ThrowsNotSupportedException()
+    {
+        IAgentIssueOperations sut = new MinimalStub();
+        await Assert.ThrowsAsync<NotSupportedException>(() =>
+            sut.ListClosedIssuesAsync(1, 50, null, since: null, CancellationToken.None));
+    }
 }
