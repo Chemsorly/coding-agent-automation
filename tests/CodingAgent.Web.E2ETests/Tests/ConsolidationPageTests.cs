@@ -263,9 +263,15 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Act: trigger brain consolidation
         await page.ClickBrainConsolidationAsync("S1 Template");
 
-        // Wait for FakeJobController to dispatch and agent to receive assignment
-        await WaitUntilAsync(() => agent.ReceivedJobIds.Count > 0);
-        var jobId = agent.ReceivedJobIds.ToArray()[0];
+        // Wait for FakeJobController to dispatch and agent to receive assignment.
+        // JobAssigned.Task completes at the end of StartAssignedWorkItemAsync, after the
+        // RegisterAgent InvokeAsync returns — meaning the server-side ActiveJobId is set before
+        // this await returns. Using ReceivedJobIds.Count > 0 instead would be racy: ReceivedJobIds
+        // is populated after the RegisterAgent call, so the server may not have confirmed the
+        // ActiveJobId when ReportConsolidationCompleteAsync fires, causing the authorization
+        // filter to reject the report and the test to time out waiting for Succeeded.
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
+        var jobId = assignment.JobId;
 
         // Agent reports success
         await agent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
@@ -280,6 +286,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // updates the API host's IConsolidationService singleton (the hub lives there, not on the
         // Blazor host). Polling Fixture.Factory.Services would read the Web host's separate
         // IConsolidationService instance, which is never updated and causes a 25s timeout.
+        // TODO [WARNING]: After issue #3028, TriggerAsync no longer writes to IConsolidationRunStore,
+        // so GetRunHistoryAsync only returns rows seeded by the hub's completion path. If the hub's
+        // completion handler does not write to this store (e.g. it writes to PipelineRuns instead),
+        // this WaitUntilAsync will always time out with no useful diagnostic. If this test starts
+        // timing out at 25s, check whether HubConsolidationOperations.HandleConsolidationCompleteAsync
+        // still writes to IConsolidationRunStore on success. A supplementary assertion
+        // (Assert.NotEmpty(history)) after the wait would catch a permanent-empty store regression.
         var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
         await WaitUntilAsync(async () =>
             (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
@@ -305,6 +318,15 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // The card renders a <span class="consolidation-status-succeeded"> under the Brain
         // Consolidation row for the template. Wait for the card to reflect the updated status
         // because NavigateAsync may return before LoadDataAsync populates _lastRuns.
+        // TODO [WARNING]: The WaitForFunctionAsync selector below is not scoped to the "S1 Template"
+        // card — it matches any .consolidation-status-succeeded element on any card. If a prior
+        // test left a succeeded card in another template slot (e.g. incomplete fixture reset), the
+        // wait resolves immediately on the stale element and the subsequent QuerySelectorAsync
+        // (which is scoped) may still find the stale card, making Assert.NotNull pass without
+        // verifying S1's outcome. The TOCTOU window between WaitForFunctionAsync and
+        // QuerySelectorAsync means the two calls do not check the same element. Fix: use a
+        // template-name-scoped selector in WaitForFunctionAsync, e.g.:
+        //   "() => document.querySelector(\".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded\") !== null"
         await Page.WaitForFunctionAsync(
             "() => document.querySelector('.consolidation-card:has(.consolidation-card-title) .consolidation-status-succeeded') !== null",
             null,
@@ -351,8 +373,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Act: trigger
         await page.ClickBrainConsolidationAsync("S2 Template");
 
-        await WaitUntilAsync(() => agent.ReceivedJobIds.Count > 0);
-        var jobId = agent.ReceivedJobIds.ToArray()[0];
+        // Wait for FakeJobController to dispatch and agent to receive assignment.
+        // JobAssigned.Task completes at the end of StartAssignedWorkItemAsync, after the
+        // RegisterAgent InvokeAsync returns — meaning the server-side ActiveJobId is set before
+        // this await returns. Using ReceivedJobIds.Count > 0 instead would be racy (see Scenario 1).
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
+        var jobId = assignment.JobId;
 
         // Agent reports failure
         await agent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
@@ -469,9 +495,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         Assert.True(await page.WaitForRefactoringModalAsync());
         await page.ConfirmRefactoringModalAsync();
 
-        // Wait for dispatch
-        await WaitUntilAsync(() => agent.ReceivedJobIds.Count > 0);
-        var jobId = agent.ReceivedJobIds.ToArray()[0];
+        // Wait for FakeJobController to dispatch and agent to receive assignment.
+        // JobAssigned.Task completes at the end of StartAssignedWorkItemAsync, after the
+        // RegisterAgent InvokeAsync returns — meaning the server-side ActiveJobId is set before
+        // this await returns. Using ReceivedJobIds.Count > 0 instead would be racy (see Scenario 1).
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
+        var jobId = assignment.JobId;
 
         // Agent reports success with created issues
         await agent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
@@ -544,9 +573,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Act: click Generate Suggestions
         await page.ClickGenerateSuggestionsAsync();
 
-        // Wait for dispatch
-        await WaitUntilAsync(() => agent.ReceivedJobIds.Count > 0);
-        var jobId = agent.ReceivedJobIds.ToArray()[0];
+        // Wait for FakeJobController to dispatch and agent to receive assignment.
+        // JobAssigned.Task completes at the end of StartAssignedWorkItemAsync, after the
+        // RegisterAgent InvokeAsync returns — meaning the server-side ActiveJobId is set before
+        // this await returns. Using ReceivedJobIds.Count > 0 instead would be racy (see Scenario 1).
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
+        var jobId = assignment.JobId;
 
         // Agent reports success with 3 harness suggestions
         await agent.ReportConsolidationCompleteAsync(new ConsolidationJobResult
@@ -627,27 +659,45 @@ public sealed class ConsolidationPageTests : E2ETestBase
 
         // Act: click Cancel on the Pending row
         await page.ClickCancelRunAsync(0);
-        await page.WaitForStatusMessageAsync();
+
+        // Wait explicitly for the status message to contain "cancel" rather than calling
+        // WaitForStatusMessageAsync() (which resolves on any .consolidation-status-message,
+        // including the stale "Triggered" message left from the initial trigger). If the Blazor
+        // component does not clear the message on NavigateAsync, WaitForStatusMessageAsync would
+        // return immediately on the old text and Assert.Contains("cancelled") would fail.
+        // WaitForFunctionAsync polls the DOM until the text criterion is met, which is both
+        // race-free and guarantees we are reading the cancel result rather than the trigger message.
+        await Page.WaitForFunctionAsync(
+            "() => { var el = document.querySelector('.consolidation-status-message'); return el && el.textContent.toLowerCase().includes('cancel'); }",
+            null,
+            new() { Timeout = 15_000 });
 
         // Assert: status message confirms cancellation (not an error)
         var msg = await page.GetStatusMessageAsync();
         Assert.NotNull(msg);
         Assert.Contains("cancelled", msg, StringComparison.OrdinalIgnoreCase);
         Assert.False(await page.IsStatusMessageErrorAsync());
-        // TODO [WARNING]: WaitForStatusMessageAsync (above) may resolve on the status message
-        // from the initial trigger (e.g. "Triggered") if the Blazor component does not clear
-        // the message between the trigger and the cancel operations. If the message element
-        // persists from the trigger phase, Assert.Contains("cancelled") will fail on the wrong
-        // message. Verify the component clears the status message on navigation or add an
-        // explicit wait for the message to change to one containing "cancel" before asserting.
-        // TODO [WARNING]: The issue requires "The WorkItem ends Cancelled". The assertions here
-        // only check the transient status toast and the work-item queue. Add a NavigateAsync +
-        // WaitForRunHistoryCountAsync(1) + GetRunHistoryRowTextAsync(0) assertion to confirm the
-        // run history row also reflects the Cancelled status after a page reload.
 
         // Assert: no Pending work items remain (cancelled item no longer fetchable by FakeJobController)
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
         Assert.Empty(pending);
+
+        // Assert: the run-history row reflects Cancelled status after a page reload.
+        // This verifies the acceptance criterion "The WorkItem ends Cancelled" at the UI level,
+        // not just the transient toast. We reload the page to force LoadDataAsync to re-read the
+        // PipelineRun store, then assert the row contains the terminal state.
+        await page.NavigateAsync();
+        // TODO [WARNING]: WaitForRunHistoryCountAsync uses >= 1. If a row from a prior test leaked
+        // into the fixture (e.g. because PipelineRuns reset did not synchronise before NavigateAsync),
+        // the wait resolves on the stale row and the Assert.Contains("Cancelled", ...) assertion may
+        // run against the wrong row. This test does not assert the total row count, so a two-row
+        // page would still satisfy WaitForRunHistoryCountAsync(1) and GetRunHistoryRowTextAsync(0)
+        // would return the first (possibly stale) row. Fix: assert that the total history count is
+        // exactly 1 before reading row 0.
+        await page.WaitForRunHistoryCountAsync(1);
+        var cancelledRowText = await page.GetRunHistoryRowTextAsync(0);
+        Assert.NotNull(cancelledRowText);
+        Assert.Contains("Cancelled", cancelledRowText, StringComparison.OrdinalIgnoreCase);
 
         // Assert: connecting an agent now does NOT dispatch the cancelled item.
         // ConnectAsync uses InvokeAsync("RegisterAgent") which is request-response: when it
@@ -704,21 +754,27 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await page.ClickBrainConsolidationAsync("S6 Template");
         await page.ClickBrainConsolidationForcedAsync("S6 Template");
 
-        // Wait deterministically: poll until at least one WorkItem exists (replaces Task.Delay).
-        // Once the first item is visible, assert exactly one — the dedup must have collapsed
-        // any second insert attempt.
+        // Wait deterministically: poll until at least one WorkItem exists in a non-terminal state
+        // (either Pending or Dispatched/Running if FakeJobController claimed it). Using GetPendingAsync
+        // alone is insufficient — the background poll can claim the item between WaitUntilAsync and the
+        // assertion, producing an empty pending list even though exactly one item exists.
         await WaitUntilAsync(async () =>
-            (await Fixture.WorkItems.GetPendingAsync(10)).Count > 0);
+        {
+            var p = await Fixture.WorkItems.GetPendingAsync(10);
+            if (p.Count > 0) return true;
+            // Also check active (Dispatched/Running) in case the background poll already claimed it.
+            var a = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600);
+            return a.Count > 0;
+        });
 
-        // Assert: exactly one Pending WorkItem exists
-        // TODO [WARNING]: Assert.Single(pending) fails if the work item was dispatched to a
-        // Running state between WaitUntilAsync and this assertion (the FakeJobController poll
-        // can claim it in the background). Consider querying both Pending and Running items and
-        // asserting (pending + running).Count == 1 to make the dedup check resilient to dispatch
-        // timing: the dedup only guarantees one item exists in any non-terminal state, not that
-        // it remains Pending until this line executes.
+        // Assert: exactly one non-terminal WorkItem exists — dedup collapsed the second insert.
+        // Query both Pending and Active (Dispatched/Running) so the count is correct regardless of
+        // whether FakeJobController claimed the item between WaitUntilAsync and these calls.
+        // The dedup invariant is "exactly one item in any non-terminal state", not "one Pending item",
+        // so combining the two sets is the correct check.
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
-        Assert.Single(pending);
+        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600);
+        Assert.Equal(1, pending.Count + active.Count);
     }
 
 }

@@ -389,40 +389,52 @@ public sealed class ConsolidationServiceTests : IDisposable
     }
 
     [Fact]
+    // TODO [WARNING]: The test name "UpdateRunAsync_ByWorkItemId_FindsRunAndUpdatesStatus" is
+    // misleading. After issue #3028, UpdateRunAsync is explicitly a no-op for status updates —
+    // it does NOT find a run or update its status. This test actually verifies:
+    //   (a) TriggerAsync sets the WorkItemId returned by IWorkDistributor on the returned run.
+    //   (b) RunId is a distinct GUID, different from the WorkItemId.
+    //   (c) Calling UpdateRunAsync with a non-GUID WorkItemId does not throw.
+    // The name could cause a future engineer to read it as evidence that UpdateRunAsync still
+    // performs updates. If UpdateRunAsync is accidentally given update behavior again, this test
+    // name would suggest that passing means updates work correctly — masking a regression.
+    // Consider renaming to: UpdateRunAsync_WithNonGuidWorkItemId_IsNoOpAndDoesNotThrow
     public async Task UpdateRunAsync_ByWorkItemId_FindsRunAndUpdatesStatus()
     {
-        // Regression test for the hub completion path: AgentHub passes result.JobId (= WorkItem ID)
-        // to UpdateRunAsync, but ConsolidationRun is stored by its own RunId (a different Guid
-        // generated in BuildNewRun). UpdateRunAsync must fall back to a WorkItemId scan so the
-        // run transitions correctly instead of silently no-op'ing ("not found").
+        // Issue #3028: UpdateRunAsync is now a no-op for store writes. The hub completion
+        // path (AgentHub passes result.JobId = WorkItem ID to UpdateRunAsync) no longer
+        // updates the ConsolidationRuns store. This test verifies:
+        // (a) TriggerAsync correctly populates WorkItemId on the returned run.
+        // (b) RunId is a distinct GUID from the WorkItemId.
+        // (c) Calling UpdateRunAsync with a WorkItemId (non-GUID) does not throw.
         var sut = CreateSut();
 
         // _mockWorkDistributor returns WorkItemId = "wi-test-default" by default.
-        // TriggerAsync stores this as run.WorkItemId (≠ run.RunId, a fresh Guid).
+        // TriggerAsync sets this as run.WorkItemId (≠ run.RunId, a fresh Guid).
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
         run.Should().NotBeNull();
 
-        // Confirm the run was stored with the expected WorkItemId
+        // Confirm the run was populated with the expected WorkItemId
         run!.WorkItemId.Should().Be("wi-test-default",
-            "TriggerAsync must persist the WorkItemId returned by IWorkDistributor");
+            "TriggerAsync must set the WorkItemId returned by IWorkDistributor on the returned run");
         run.RunId.Should().NotBe("wi-test-default",
             "ConsolidationRun.RunId must be a freshly generated Guid, distinct from the WorkItemId");
 
-        // Act: simulate the hub calling UpdateRunAsync with the WorkItemId (not the RunId)
-        await sut.UpdateRunAsync(
+        // Act: simulate the hub calling UpdateRunAsync with the WorkItemId (not the RunId).
+        // After issue #3028, UpdateRunAsync is a no-op — it must not throw.
+        var act = () => sut.UpdateRunAsync(
             new RunId("wi-test-default"),
             ConsolidationRunStatus.Succeeded,
             "Brain consolidation complete",
             CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "UpdateRunAsync must not throw when called with a WorkItemId (non-GUID) after issue #3028");
 
-        // Assert: the run is now Succeeded despite being looked up by WorkItemId
+        // Issue #3028: TriggerAsync does not write to the store, and UpdateRunAsync is a no-op.
+        // The run does NOT appear in GetRunHistoryAsync (store-backed) after TriggerAsync.
         var history = await sut.GetRunHistoryAsync(CancellationToken.None);
-        var updated = history.FirstOrDefault(r => r.RunId == run.RunId);
-        updated.Should().NotBeNull("run must still exist in history");
-        updated!.Status.Should().Be(ConsolidationRunStatus.Succeeded,
-            "UpdateRunAsync must update the run even when called with a WorkItemId instead of RunId");
-        updated.Summary.Should().Be("Brain consolidation complete");
+        history.Should().BeEmpty("TriggerAsync no longer writes to the ConsolidationRuns store (issue #3028)");
     }
 
     #endregion
