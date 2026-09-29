@@ -19,9 +19,4 @@ public sealed class DatabaseMaintenanceOptions
     /// </summary>
     public int PipelineRunRetentionDays { get; set; } = 30;
 
-    /// <summary>
-    /// Number of days after completion before ConsolidationRun records are deleted.
-    /// Default: 30 days.
-    /// </summary>
-    public int ConsolidationRunRetentionDays { get; set; } = 30;
 }

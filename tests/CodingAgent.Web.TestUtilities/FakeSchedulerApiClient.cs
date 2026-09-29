@@ -83,7 +83,7 @@ public sealed class FakeSchedulerApiClient : ISchedulerApiClient
 
     // These are not called by E2E loop-control tests — stubs only.
     public Task<RetentionSweepResultDto> TriggerRetentionSweepAsync(CancellationToken ct = default)
-        => Task.FromResult(new RetentionSweepResultDto(0, 0, 0, 0, 0));
+        => Task.FromResult(new RetentionSweepResultDto(0, 0, 0, 0));
 
     public Task<WorkItemCountsResponseDto> GetWorkItemCountsAsync(CancellationToken ct = default)
         => Task.FromResult(new WorkItemCountsResponseDto(Array.Empty<WorkItemCountDto>(), null));

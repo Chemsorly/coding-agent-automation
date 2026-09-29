@@ -3,7 +3,6 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -16,8 +15,6 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Additional unit tests for DatabaseMaintenanceService covering branches not exercised by DatabaseMaintenanceServiceTests:
-/// CleanupStaleConsolidationRuns cancellation-token path,
-/// CleanupStaleConsolidationRuns exception path from DeleteRunAsync,
 /// SweepPipelineRunRetention/SweepWorkItemRetention non-cancellation exception (catch block),
 /// SweepWorkItemRetention active path (retentionCount > 0 with InMemory throwing),
 /// CleanupStaleWorkItems/CleanupStalePipelineRuns cancellation path.
@@ -33,8 +30,7 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
         .AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["WorkDistribution:Reconciliation:StaleRetentionDays"] = "7",
-            ["WorkDistribution:Reconciliation:PipelineRunRetentionDays"] = "90",
-            ["WorkDistribution:Reconciliation:ConsolidationRunRetentionDays"] = "90"
+            ["WorkDistribution:Reconciliation:PipelineRunRetentionDays"] = "90"
         })
         .Build();
 
@@ -64,100 +60,6 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
 
     private DatabaseMaintenanceService CreateService() =>
         new(_dbFactory, _mockConsolidationService.Object, _configuration, _mockConfigStore.Object);
-
-    // ── CleanupStaleConsolidationRuns — cancellation path ────────────────────
-
-    [Fact]
-    public async Task CleanupStaleConsolidationRuns_CancellationRequested_DoesNotThrow()
-    {
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>
-            {
-                new() {
-                    RunId = "old-1",
-                    Type = ConsolidationRunType.BrainConsolidation,
-                    StartedAtUtc = DateTimeOffset.UtcNow.AddDays(-100),
-                    CompletedAtUtc = DateTimeOffset.UtcNow.AddDays(-95),
-                    Status = ConsolidationRunStatus.Succeeded
-                }
-            });
-
-        var service = CreateService();
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        // OperationCanceledException must be swallowed — method catches it
-        await service.Invoking(s => s.CleanupStaleConsolidationRunsAsync(cts.Token))
-            .Should().NotThrowAsync();
-    }
-
-    [Fact]
-    public async Task CleanupStaleConsolidationRuns_CancellationDuringIteration_StopsProcessing()
-    {
-        // Arrange: GetRunHistoryAsync returns two old runs. CancellationToken is pre-cancelled
-        // so the foreach loop should break on the first ct.IsCancellationRequested check.
-        var runs = new List<ConsolidationRun>
-        {
-            new() {
-                RunId = "run-a",
-                Type = ConsolidationRunType.BrainConsolidation,
-                StartedAtUtc = DateTimeOffset.UtcNow.AddDays(-100),
-                CompletedAtUtc = DateTimeOffset.UtcNow.AddDays(-95),
-                Status = ConsolidationRunStatus.Succeeded
-            },
-            new() {
-                RunId = "run-b",
-                Type = ConsolidationRunType.BrainConsolidation,
-                StartedAtUtc = DateTimeOffset.UtcNow.AddDays(-100),
-                CompletedAtUtc = DateTimeOffset.UtcNow.AddDays(-95),
-                Status = ConsolidationRunStatus.Succeeded
-            }
-        };
-
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(runs);
-
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();  // pre-cancel
-
-        var service = CreateService();
-
-        // When ct is cancelled before iteration, the break fires on first check — no deletes
-        await service.CleanupStaleConsolidationRunsAsync(cts.Token);
-
-        _mockConsolidationService.Verify(
-            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "No deletes should occur when token is pre-cancelled");
-    }
-
-    [Fact]
-    public async Task CleanupStaleConsolidationRuns_DeleteRunThrows_HandledGracefully()
-    {
-        // Arrange: DeleteRunAsync throws — the outer exception catch should swallow it
-        var run = new ConsolidationRun
-        {
-            RunId = "failing-delete",
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow.AddDays(-100),
-            CompletedAtUtc = DateTimeOffset.UtcNow.AddDays(-95),
-            Status = ConsolidationRunStatus.Succeeded
-        };
-
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun> { run });
-        _mockConsolidationService
-            .Setup(s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("Delete failed"));
-
-        var service = CreateService();
-
-        await service.Invoking(s => s.CleanupStaleConsolidationRunsAsync(CancellationToken.None))
-            .Should().NotThrowAsync("exceptions from DeleteRunAsync must be caught and logged");
-    }
 
     // ── CleanupStaleWorkItems — cancellation path ────────────────────────────
 
@@ -263,10 +165,10 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     {
         // Arrange: seed three ghost rows — Completed/Failed/Cancelled with null CompletedAt.
         // These are the "33 ghost runs" reported in issue #2316.
-        var idCompleted  = Guid.NewGuid();
-        var idFailed     = Guid.NewGuid();
-        var idCancelled  = Guid.NewGuid();
-        var seededIds    = new[] { idCompleted, idFailed, idCancelled };
+        var idCompleted = Guid.NewGuid();
+        var idFailed = Guid.NewGuid();
+        var idCancelled = Guid.NewGuid();
+        var seededIds = new[] { idCompleted, idFailed, idCancelled };
 
         await using var seedCtx = new TestPipelineDbContext(_dbOptions);
         seedCtx.PipelineRuns.AddRange(
