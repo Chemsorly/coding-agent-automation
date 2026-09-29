@@ -70,7 +70,10 @@ public class PipelineStepRunnerSpanTests : IDisposable
         _activities.Should().Contain(a => a.DisplayName == "Step Alpha");
         _activities.Should().Contain(a => a.DisplayName == "Step Beta");
         _activities.Should().Contain(a => a.DisplayName == "Step Gamma");
-        _activities.Count(a => a.DisplayName.StartsWith("Step ")).Should().Be(3);
+        // Filter by run_id to avoid counting Step spans from other tests running in parallel
+        // that share the same global ActivityListener.
+        _activities.Count(a => a.DisplayName.StartsWith("Step ")
+            && Equals(a.GetTagItem("pipeline.run_id"), "run-multi")).Should().Be(3);
     }
 
     [Fact]
