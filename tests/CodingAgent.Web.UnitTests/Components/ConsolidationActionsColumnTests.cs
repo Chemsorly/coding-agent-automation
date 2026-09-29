@@ -31,10 +31,6 @@ public class ConsolidationActionsColumnTests : BunitContext
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
         _mockService.Setup(s => s.GetHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync((HarnessSuggestions?)null);
-        _mockService.Setup(s => s.GetLastRunAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationRun?)null);
-
         Services.AddSingleton<IConsolidationService>(_mockService.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);

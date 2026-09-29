@@ -24,11 +24,18 @@ public sealed class ConsolidationWorkspaceManager : IConsolidationWorkspaceManag
     }
 
     /// <inheritdoc />
-    public string GetWorkspacePath(RunId runId)
+    public string GetWorkspacePath(RunId runId) => GetWorkspacePath(_config.WorkspaceBaseDirectory, runId);
+
+    /// <summary>
+    /// The workspace of consolidation run <paramref name="runId"/> under <paramref name="baseDirectory"/>.
+    /// The agent creates and uses it, so the trigger passes the base directory of the configuration the
+    /// agent runs with.
+    /// </summary>
+    public static string GetWorkspacePath(string baseDirectory, RunId runId)
     {
         if (!Guid.TryParse(runId.Value, out _))
             throw new ArgumentException($"RunId must be a valid GUID, got: '{runId.Value}'", nameof(runId));
-        return Path.Combine(_config.WorkspaceBaseDirectory, "consolidation", runId.Value);
+        return Path.Combine(baseDirectory, "consolidation", runId.Value);
     }
 
     /// <inheritdoc />

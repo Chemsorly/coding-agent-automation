@@ -455,48 +455,6 @@ public sealed class ConsolidationServiceTests : IDisposable
 
     #endregion
 
-    #region GetLastRunAsync — filters correctly
-
-    [Fact]
-    public async Task GetLastRunAsync_ReturnsOnlyMatchingTypeAndTemplate()
-    {
-        // Validates: Requirement 9.4
-        var sut = CreateSut();
-
-        // Create runs of different types and templates
-        var brain1 = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        var refactor1 = await sut.TriggerAsync(
-            ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
-        var brain2 = await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-2", CancellationToken.None);
-
-        var result = await sut.GetLastRunAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        result.Should().NotBeNull();
-        result!.RunId.Should().Be(brain1!.RunId);
-        result.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
-        result.TemplateId.Should().Be("tmpl-1");
-    }
-
-    [Fact]
-    public async Task GetLastRunAsync_NoMatch_ReturnsNull()
-    {
-        // Validates: Requirement 9.4
-        var sut = CreateSut();
-
-        await sut.TriggerAsync(
-            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-
-        var result = await sut.GetLastRunAsync(
-            ConsolidationRunType.RefactoringDetection, "tmpl-2", CancellationToken.None);
-
-        result.Should().BeNull();
-    }
-
-    #endregion
-
     #region Harness suggestions — read/write round-trip
 
     [Fact]

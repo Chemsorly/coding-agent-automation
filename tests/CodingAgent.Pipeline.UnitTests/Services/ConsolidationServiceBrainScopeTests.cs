@@ -190,6 +190,20 @@ public sealed class ConsolidationServiceBrainScopeTests
     }
 
     [Fact]
+    public async Task TriggerAsync_WorkspaceLiesUnderTheLiveWorkspaceBaseDirectory()
+    {
+        var liveBase = Path.Combine(Path.GetTempPath(), "live-workspaces");
+        _liveConfig = _liveConfig with { WorkspaceBaseDirectory = liveBase };
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, new TemplateId(TemplateA.Id), CancellationToken.None);
+
+        _requests.Should().ContainSingle().Which.ConsolidationWorkspacePath
+            .Should().Be(Path.Combine(liveBase, "consolidation", run!.RunId),
+                "the agent works in this directory, so it follows the settings the agent runs with, not the web's startup copy");
+    }
+
+    [Fact]
     public async Task TriggerAsync_SelectorLabelsAreResolvedWithTheLiveSettings()
     {
         _liveConfig = _liveConfig with { DefaultRequiredAgentLabels = "live-label" };

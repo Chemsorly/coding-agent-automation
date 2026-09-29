@@ -1,7 +1,6 @@
 #pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 // Feature: 021-consolidation-loops
 // Property 3: Template Filtering by Provider Configuration
-// Property 4: Last-Run Timestamp Isolation
 // Property 5: Concurrency Guard Rejects Duplicate Running
 using AwesomeAssertions;
 using FsCheck;
@@ -77,91 +76,6 @@ public class ConsolidationServicePropertyTests : IDisposable
             !string.IsNullOrWhiteSpace(t.RepoProviderId) &&
             !string.IsNullOrWhiteSpace(t.IssueProviderId)).ToList();
         result.Should().HaveCount(expected.Count);
-    }
-
-    /// <summary>
-    /// Property 4: Last-Run Timestamp Isolation
-    /// For any sequence of consolidation runs across multiple templates and types,
-    /// GetLastRunAsync(type, templateId) returns only the most recent run matching that exact pair.
-    /// **Validates: Requirements 2.4**
-    /// </summary>
-    [Property(MaxTest = 20)]
-    public void GetLastRunAsync_ReturnsOnlyMostRecentMatchingPair(PositiveInt runCount)
-    {
-        var runsDir = Path.Combine(_tempDir, $"runs-{Guid.NewGuid():N}");
-        var templates = new List<PipelineJobTemplate>
-        {
-            new() { Id = "tmpl-A", Name = "A", IssueProviderId = "ip", RepoProviderId = "rp" },
-            new() { Id = "tmpl-B", Name = "B", IssueProviderId = "ip", RepoProviderId = "rp" }
-        };
-        var config = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = _tempDir,
-            DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
-        };
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
-
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>
-            {
-                new()
-                {
-                    Id = WellKnownIds.DefaultProjectId,
-                    Name = "Default",
-                    TemplateIds = new List<string> { "tmpl-A", "tmpl-B" }
-                }
-            });
-        mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(templates);
-
-        var mockDist1 = new Mock<IWorkDistributor>();
-        mockDist1.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-1", ErrorMessage: null));
-
-        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
-            new FileSystemConsolidationRunStore(runsDir),
-            new InMemoryHarnessSuggestionStore(),
-            new Mock<IProviderConfigStore>().Object,
-            WorkspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config),
-            WorkDistributor: mockDist1.Object));
-
-        var count = Math.Min(runCount.Get, 5);
-        var types = new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection };
-        var templateIds = new[] { "tmpl-A", "tmpl-B" };
-
-        var runs = new List<ConsolidationRun>();
-        for (var i = 0; i < count; i++)
-        {
-            var type = types[i % types.Length];
-            var templateId = templateIds[i % templateIds.Length];
-            var run = sut.TriggerAsync(type, templateId, CancellationToken.None).GetAwaiter().GetResult();
-            if (run is not null)
-                runs.Add(run);
-        }
-
-        foreach (var type in types)
-        {
-            foreach (var templateId in templateIds)
-            {
-                var lastRun = sut.GetLastRunAsync(type, templateId, CancellationToken.None).GetAwaiter().GetResult();
-                var matchingRuns = runs.Where(r => r.Type == type && r.TemplateId == templateId).ToList();
-
-                if (matchingRuns.Count == 0)
-                {
-                    lastRun.Should().BeNull();
-                }
-                else
-                {
-                    lastRun.Should().NotBeNull();
-                    lastRun!.Type.Should().Be(type);
-                    lastRun.TemplateId.Should().Be(templateId);
-                    lastRun.StartedAtUtc.Should().Be(matchingRuns.Max(r => r.StartedAtUtc));
-                }
-            }
-        }
     }
 
     /// <summary>

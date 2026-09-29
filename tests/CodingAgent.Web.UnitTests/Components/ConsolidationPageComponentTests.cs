@@ -38,10 +38,6 @@ public class ConsolidationPageComponentTests : BunitContext
         _mockConsolidationService.Setup(s => s.GetHarnessSuggestionsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(harnessSuggestions);
 
-        _mockConsolidationService.Setup(s => s.GetLastRunAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationRun?)null);
-
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
         Services.AddSingleton(_mockConfigClient.Object);
         Services.AddSingleton(_badgeService);
@@ -239,6 +235,45 @@ public class ConsolidationPageComponentTests : BunitContext
             .Single(r => r.TextContent.Contains("Brain Consolidation:"));
         Assert.Contains("Succeeded", brainRowB.TextContent);
         Assert.DoesNotContain("Never run", brainRowB.TextContent);
+    }
+
+    [Fact]
+    public void LastRefactoringRun_IsTheTemplatesNewestRun_OtherTemplatesDoNotCount()
+    {
+        var templates = new List<PipelineJobTemplate>
+        {
+            CreateTemplate(id: "t1", name: "Repo A", brainProviderId: "brain-shared"),
+            CreateTemplate(id: "t2", name: "Repo B", brainProviderId: "brain-shared", repoProviderId: "repo-2", issueProviderId: "issue-2")
+        };
+        var now = DateTimeOffset.UtcNow;
+        var runs = new List<ConsolidationRun>
+        {
+            new()
+            {
+                RunId = "run-old", Type = ConsolidationRunType.RefactoringDetection, TemplateId = "t1", TemplateName = "Repo A",
+                StartedAtUtc = now.AddHours(-3), Status = ConsolidationRunStatus.Failed
+            },
+            new()
+            {
+                RunId = "run-new", Type = ConsolidationRunType.RefactoringDetection, TemplateId = "t1", TemplateName = "Repo A",
+                StartedAtUtc = now.AddHours(-1), Status = ConsolidationRunStatus.Succeeded
+            },
+            new()
+            {
+                RunId = "run-other", Type = ConsolidationRunType.RefactoringDetection, TemplateId = "t2", TemplateName = "Repo B",
+                StartedAtUtc = now, Status = ConsolidationRunStatus.Cancelled
+            }
+        };
+        RegisterServices(templates: templates, runHistory: runs);
+
+        var cut = Render<Consolidation>();
+
+        var refactoringRowA = Card(cut, "Repo A").QuerySelectorAll(".consolidation-card-row")
+            .Single(r => r.TextContent.Contains("Refactoring Scan:"));
+        Assert.Contains("Succeeded", refactoringRowA.TextContent);
+        Assert.DoesNotContain("Failed", refactoringRowA.TextContent);
+        // A refactoring scan works on its template's repository, so another template's scan does not count.
+        Assert.DoesNotContain("Cancelled", refactoringRowA.TextContent);
     }
 
     private static AngleSharp.Dom.IElement Card(IRenderedComponent<Consolidation> cut, string templateName) =>

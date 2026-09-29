@@ -270,12 +270,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             TimeoutSeconds = (int)config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
             ConsolidationTemplateId = templateIdValue,
-            // Use run.RunId (not a fresh Guid) so the workspace path is consistent with what
-            // CleanupWorkspaceIfSucceeded targets: UpdateRunAsync → CleanupWorkspaceIfSucceeded(runId)
-            // computes GetWorkspacePath(run.RunId). A mismatch causes the real workspace directory to
-            // never be deleted on completion, leaking one directory per successful run.
+            // The agent creates and uses this directory, so it lies under the base directory of the
+            // configuration the agent runs with (the live one, not this host's startup copy). Use
+            // run.RunId (not a fresh Guid) so the path is the run's: CleanupWorkspaceIfSucceeded
+            // derives it from the RunId too. That cleanup only reaches the directory on a host that
+            // shares the agent's filesystem; web and API pods never do.
             // (Fix for CRITICAL finding in review-findings-correctness.md / review-findings-dotnetspecialist.md)
-            ConsolidationWorkspacePath = _workspaceManager.GetWorkspacePath(run.RunId),
+            ConsolidationWorkspacePath = ConsolidationWorkspaceManager.GetWorkspacePath(config.WorkspaceBaseDirectory, run.RunId),
             AutoDispatch = autoDispatch,
             ProjectId = !string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var pid)
                 ? pid
@@ -393,18 +394,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // and cause the monitoring page to show stale Pending status after dispatch.
         var runs = await _runStore.LoadAllRunsAsync(ct);
         return runs.OrderByDescending(r => r.StartedAtUtc).ToList();
-    }
-
-    /// <inheritdoc />
-    public async Task<ConsolidationRun?> GetLastRunAsync(
-        ConsolidationRunType type, TemplateId? templateId, CancellationToken ct)
-    {
-        var templateIdValue = templateId?.Value;
-        var allRuns = await GetRunHistoryAsync(ct);
-        return allRuns
-            .Where(r => r.Type == type && r.TemplateId == templateIdValue)
-            .OrderByDescending(r => r.StartedAtUtc)
-            .FirstOrDefault();
     }
 
     /// <inheritdoc />
