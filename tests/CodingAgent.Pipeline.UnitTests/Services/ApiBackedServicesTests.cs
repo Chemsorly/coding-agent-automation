@@ -858,18 +858,6 @@ public sealed class ApiBackedServicesTests
         client.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public void HistoryService_CleanupExpiredWorkspaces_IsNoOp()
-    {
-        var client = new Mock<CodingAgent.Api.Client.IPipelineApiRunHistoryClient>();
-        var svc = CreateHistoryService(client.Object);
-
-        svc.CleanupExpiredWorkspaces(new PipelineConfiguration(), "run-1");
-
-        // No-op: API-backed history service never touches the local filesystem
-        client.VerifyNoOtherCalls();
-    }
-
     // ─────────────────────────────────────────────────────────────────────
     // ApiBackedWorkItemFallbackTransitionService
     // ─────────────────────────────────────────────────────────────────────

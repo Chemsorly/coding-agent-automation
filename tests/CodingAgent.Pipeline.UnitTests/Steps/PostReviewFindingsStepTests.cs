@@ -77,6 +77,34 @@ public class PostReviewFindingsStepTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_NoReviewerRan_PostsTheRecordedSkipReason()
+    {
+        const string reason = "The reviewer configurations that match this repository's labels define no review agents. Review skipped.";
+        var run = new PipelineRun
+        {
+            RunId = "test-run",
+            IssueIdentifier = "42",
+            IssueTitle = "Test PR",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            RunType = PipelineRunType.Review,
+            CodeReviewAgentsRun = Array.Empty<string>(),
+            CodeReviewSkipReason = reason,
+        };
+        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(42, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((long?)null);
+
+        await new PostReviewFindingsStep().ExecuteAsync(BuildContext(run), CancellationToken.None);
+
+        _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
+            42,
+            It.Is<string>(body => body.Contains(reason) && !body.Contains("No applicable reviewers found")),
+            PullRequestReviewType.Comment,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ExistingReview_UpdatesInsteadOfPostingNew()
     {
         var run = new PipelineRun

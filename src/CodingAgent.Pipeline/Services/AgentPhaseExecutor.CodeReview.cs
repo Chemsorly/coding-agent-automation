@@ -82,7 +82,9 @@ public partial class AgentPhaseExecutor
         ArgumentNullException.ThrowIfNull(context);
         var run = context.Run;
         var config = context.Config;
-        if (config.CodeReview.MaxIterations <= 0)
+        // CodeReview.MaxIterations = 0 turns off the review step of implementation runs only. A PR review run is
+        // turned on and off by its template's Review switch, and always reviews once.
+        if (run.RunType != PipelineRunType.Review && config.CodeReview.MaxIterations <= 0)
             return;
 
         // Determine which agents to run — skip review with observable signal if none resolved (Option B)
@@ -98,6 +100,8 @@ public partial class AgentPhaseExecutor
                 "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
                 run.RunId);
+            run.CodeReviewSkipReason =
+                "No enabled reviewer configuration matches this repository's labels. Review skipped.";
             return;
         }
 
@@ -107,6 +111,8 @@ public partial class AgentPhaseExecutor
                 "Pipeline {RunId} reviewer configurations matched but resolved to zero agents — review phase skipped. " +
                 "Ensure each enabled ReviewerConfiguration has at least one agent defined.",
                 run.RunId);
+            run.CodeReviewSkipReason =
+                "The reviewer configurations that match this repository's labels define no review agents. Review skipped.";
             return;
         }
 

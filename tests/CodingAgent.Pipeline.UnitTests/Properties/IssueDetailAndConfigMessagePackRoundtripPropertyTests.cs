@@ -106,10 +106,8 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
                 MaxAnalysisRetries = maxAnalysisRetries,
                 AgentTimeout = TimeSpan.FromMinutes(agentTimeoutMin),
                 WorkspaceBaseDirectory = workspace,
-                FailedWorkspaceRetentionDays = failedRetentionDays,
                 AnalysisReviewEnabled = analysisEnabled,
                 ClosedLoopAutoStart = closedLoopAutoStart,
-                HeartbeatSweepIntervalSeconds = heartbeatSweep
             };
 
         return Prop.ForAll(gen.ToArbitrary(), (PipelineConfiguration original) =>
@@ -120,10 +118,8 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
             d.MaxAnalysisRetries.Should().Be(original.MaxAnalysisRetries);
             d.AgentTimeout.Should().Be(original.AgentTimeout);
             d.WorkspaceBaseDirectory.Should().Be(original.WorkspaceBaseDirectory);
-            d.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
             d.AnalysisReviewEnabled.Should().Be(original.AnalysisReviewEnabled);
             d.ClosedLoopAutoStart.Should().Be(original.ClosedLoopAutoStart);
-            d.HeartbeatSweepIntervalSeconds.Should().Be(original.HeartbeatSweepIntervalSeconds);
         });
     }
 

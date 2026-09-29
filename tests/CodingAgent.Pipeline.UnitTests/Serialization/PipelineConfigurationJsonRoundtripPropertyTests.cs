@@ -29,7 +29,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         bool acceptanceCriteriaEnabled,
         bool baselineHealthCheckEnabled,
         bool brainReadOnly,
-        PositiveInt issuePageSize)
+        PositiveInt maxIssueImages)
     {
         var config = new PipelineConfiguration
         {
@@ -39,7 +39,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
             AcceptanceCriteriaEnabled = acceptanceCriteriaEnabled,
             BaselineHealthCheckEnabled = baselineHealthCheckEnabled,
             BrainReadOnly = brainReadOnly,
-            IssuePageSize = issuePageSize.Get
+            MaxIssueImages = maxIssueImages.Get
         };
 
         var json = JsonSerializer.Serialize(config, Options);
@@ -52,7 +52,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
             && deserialized.AcceptanceCriteriaEnabled == config.AcceptanceCriteriaEnabled
             && deserialized.BaselineHealthCheckEnabled == config.BaselineHealthCheckEnabled
             && deserialized.BrainReadOnly == config.BrainReadOnly
-            && deserialized.IssuePageSize == config.IssuePageSize;
+            && deserialized.MaxIssueImages == config.MaxIssueImages;
     }
 
     /// <summary>
@@ -105,7 +105,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
 
     /// <summary>
     /// Collection properties roundtrip: BlacklistedPaths (IReadOnlyList&lt;string&gt;)
-    /// and LastUsedProviderIds (IReadOnlyDictionary&lt;string,string&gt;) survive serialization.
+    /// survive serialization.
     /// </summary>
     [Fact]
     public void JsonRoundtrip_PreservesCollectionProperties()
@@ -113,12 +113,6 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         var config = new PipelineConfiguration
         {
             BlacklistedPaths = new[] { ".env", "secrets.json", "node_modules" },
-            LastUsedProviderIds = new Dictionary<string, string>
-            {
-                ["issue"] = "ip-1",
-                ["repository"] = "rp-1",
-                ["agent"] = "ap-1"
-            }
         };
 
         var json = JsonSerializer.Serialize(config, Options);
@@ -126,7 +120,6 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
 
         deserialized.Should().NotBeNull();
         deserialized!.BlacklistedPaths.Should().BeEquivalentTo(config.BlacklistedPaths);
-        deserialized.LastUsedProviderIds.Should().BeEquivalentTo(config.LastUsedProviderIds);
     }
 
     /// <summary>
@@ -175,7 +168,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         deserialized.ClosedLoopAutoStart.Should().Be(config.ClosedLoopAutoStart);
         deserialized.ClosedLoopPollInterval.Should().Be(config.ClosedLoopPollInterval);
         deserialized.ExternalCiTimeout.Should().Be(config.ExternalCiTimeout);
-        deserialized.IssuePageSize.Should().Be(config.IssuePageSize);
+        deserialized.MaxIssueImages.Should().Be(config.MaxIssueImages);
         deserialized.BrainReadOnly.Should().Be(config.BrainReadOnly);
         deserialized.RefactoringReviewEnabled.Should().Be(config.RefactoringReviewEnabled);
         deserialized.BrainConsolidationReviewEnabled.Should().Be(config.BrainConsolidationReviewEnabled);

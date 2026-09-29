@@ -992,11 +992,8 @@ public sealed class ConfigEndpointTests
             "AgentTimeout below 60s must be rejected at the API layer");
 
         var body = await response.Content.ReadAsStringAsync();
-        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
-        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
-        // will silently pass even though the error message no longer references the correct minimum.
-        body.Should().Contain("60",
-            "the error body must reference the 60-second minimum so the operator knows what to fix");
+        body.Should().Contain("AgentTimeout must be between 00:01:00",
+            "the error body must name the setting and its minimum so the operator knows what to fix");
     }
 
     /// <summary>
@@ -1041,11 +1038,8 @@ public sealed class ConfigEndpointTests
             "a project-level AgentTimeout below 60s must be rejected to prevent the same silent bypass");
 
         var body = await response.Content.ReadAsStringAsync();
-        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
-        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
-        // will silently pass even though the error message no longer references the correct minimum.
-        body.Should().Contain("60",
-            "the error body must reference the 60-second minimum");
+        body.Should().Contain("AgentTimeout must be between 00:01:00",
+            "the error body must name the override and its minimum");
     }
 
     /// <summary>
@@ -1086,5 +1080,91 @@ public sealed class ConfigEndpointTests
 
         response.StatusCode.Should().Be(HttpStatusCode.OK,
             "a project with no AgentTimeout override must be accepted — null means inherit the global timeout");
+    }
+
+    // ── Settings ranges (#3144) ───────────────────────────────────────────────────
+
+    [Fact]
+    public void AgentTimeoutMinimum_IsTheReconciliationCanaryMinimum()
+    {
+        var minimum = TimeSpan.Parse((string)PipelineSettingsValidator.RangeOf(nameof(PipelineConfiguration.AgentTimeout))!.Minimum,
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        minimum.Should().Be(TimeSpan.FromSeconds(PipelineConstants.TimeoutCanaryMinAgeSeconds),
+            "a timeout below the canary minimum could never be enforced, so the setting must not allow it");
+    }
+
+    [Fact]
+    public async Task SavePipelineConfig_OutOfRangeSetting_Returns400NamingIt()
+    {
+        var config = new PipelineConfiguration { MaxRetries = 11 };
+
+        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("MaxRetries must be between 0 and 10 (was 11).");
+    }
+
+    [Fact]
+    public async Task SaveProject_OutOfRangeOverride_Returns400NamingIt()
+    {
+        var project = new PipelineProject
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "Out Of Range Project",
+            MaxRetries = 4,
+            MaxDecompositionSubIssues = 25,
+            CodeReview = new CodeReviewOverrides
+            {
+                InlineComments = new CodingAgent.Pipeline.CodeReview.Models.InlineCommentOverrides { MaxInlineComments = 500 },
+            },
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("MaxDecompositionSubIssues must be between 1 and 20 (was 25).");
+        body.Should().Contain("CodeReview.InlineComments.MaxInlineComments must be between 1 and 50 (was 500).");
+        body.Should().NotContain("MaxRetries", "valid overrides are not reported");
+    }
+
+    [Fact]
+    public async Task SaveProject_InRangeOverrides_Returns200()
+    {
+        var project = new PipelineProject
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "In Range Project",
+            MaxDecompositionSubIssues = 20,
+            CodeReview = new CodeReviewOverrides { MaxIterations = 0 },
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Import_WithOutOfRangeProjectOverride_Returns400()
+    {
+        var projectSettings = JsonSerializer.Serialize(
+            new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "Imported", MaxDecompositionSubIssues = 25 },
+            PipelineJsonOptions.Default);
+        var bundle = new
+        {
+            pipelineConfig = JsonSerializer.Serialize(new PipelineConfiguration(), PipelineJsonOptions.Default),
+            projects = new[] { new { id = Guid.NewGuid(), name = "Imported", enabled = true, settings = projectSettings } },
+        };
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(bundle)));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Add(file, "file", "config.json");
+
+        var response = await _client.PostAsync("/api/config/import", content);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        result.GetProperty("message").GetString().Should().Contain("Project 'Imported': MaxDecompositionSubIssues must be between 1 and 20 (was 25).");
     }
 }

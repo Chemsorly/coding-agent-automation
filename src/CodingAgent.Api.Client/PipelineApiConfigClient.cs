@@ -31,6 +31,9 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
     public async Task SavePipelineConfigAsync(PipelineConfiguration config, CancellationToken ct = default)
     {
         var response = await _http.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default, ct);
+        // A 400 names the settings outside their range; the message is shown as is on the settings pages.
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            await EnsureAcceptedAsync(response, ct);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
@@ -166,7 +169,7 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
     public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct = default)
     {
         var response = await _http.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
+        await EnsureAcceptedAsync(response, ct);
     }
 
     public async Task DeleteProjectAsync(string id, CancellationToken ct = default)

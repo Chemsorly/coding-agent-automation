@@ -3,6 +3,7 @@
 // Validates: Requirements 3.2, 3.3, 3.7, 4.4
 using System.Reflection;
 using AwesomeAssertions;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.CodeReview.Models;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -95,7 +96,6 @@ public class ApplyProjectOverridesTests
         result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeSameAs(config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
-        result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
         result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
         result.MinIssueSlots.Should().Be(config.MinIssueSlots);
@@ -258,17 +258,6 @@ public class ApplyProjectOverridesTests
     }
 
     [Fact]
-    public void MaxConcurrentDecompositions_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default();
-        var project = TestPipelineConfig.WithProject() with { MaxConcurrentDecompositions = 4 };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MaxConcurrentDecompositions.Should().Be(4);
-    }
-
-    [Fact]
     public void MaxOpenIssuesForContext_NonNull_OverridesGlobal()
     {
         var config = TestPipelineConfig.Default();
@@ -313,17 +302,6 @@ public class ApplyProjectOverridesTests
     }
 
     [Fact]
-    public void HarnessSuggestionsReviewEnabled_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default(); // false by default
-        var project = TestPipelineConfig.WithProject() with { HarnessSuggestionsReviewEnabled = true };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.HarnessSuggestionsReviewEnabled.Should().BeTrue();
-    }
-
-    [Fact]
     public void BlacklistedPaths_NonNull_OverridesGlobal()
     {
         var config = TestPipelineConfig.Default(); // [".agent", ".github"]
@@ -346,29 +324,6 @@ public class ApplyProjectOverridesTests
         result.BrainReadOnly.Should().BeTrue();
     }
 
-    [Fact]
-    public void MinIssueSlots_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default() with { MinIssueSlots = 1 };
-        var project = TestPipelineConfig.WithProject() with { MinIssueSlots = 3 };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MinIssueSlots.Should().Be(3);
-    }
-
-    [Fact]
-    public void MinIssueSlots_NullProjectOverride_InheritsGlobalDefault()
-    {
-        var config = TestPipelineConfig.Default() with { MinIssueSlots = 2 };
-        // Project has MinIssueSlots = null — inherits global
-        var project = TestPipelineConfig.WithProject();
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MinIssueSlots.Should().Be(2);
-    }
-
     // ── CodeReview deep-merge semantics ──────────────────────────────────────────
 
     [Fact]
@@ -380,7 +335,6 @@ public class ApplyProjectOverridesTests
         {
             MaxIterations = 5,
             FixPrompt = "Custom fix prompt",
-            ReviewIsolation = ReviewIsolation.Isolated,
             InlineComments = new InlineCommentOverrides
             {
                 Enabled = false,
@@ -397,16 +351,6 @@ public class ApplyProjectOverridesTests
         // All specified override values are applied
         result.CodeReview.MaxIterations.Should().Be(5);
         result.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
-        // TODO: This assertion cannot distinguish "ReviewIsolation was actively applied from the
-        // override" from "default Isolated was left in place". Both the override value and the
-        // default are ReviewIsolation.Isolated since Shared was removed. The pre-change test used
-        // ReviewIsolation.Shared precisely to make this assertion meaningful. Now that only Isolated
-        // exists, the merge path for ReviewIsolation is not covered: ApplyOverrides could silently
-        // drop the ReviewIsolation field and this assertion would still pass. Consider removing the
-        // ReviewIsolation field from CodeReviewConfiguration/CodeReviewOverrides entirely (see the
-        // [SUGGESTION] in review findings) to remove the dead merge path rather than leaving an
-        // untestable code branch.
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         result.CodeReview.InlineComments.Enabled.Should().BeFalse();
         result.CodeReview.InlineComments.MaxInlineComments.Should().Be(10);
         result.CodeReview.InlineComments.MaxRetries.Should().Be(3);
@@ -417,14 +361,13 @@ public class ApplyProjectOverridesTests
     [Fact]
     public void CodeReview_PartialOverride_PreservesUnspecifiedGlobalValues()
     {
-        // Global has MaxIterations=2, FixPrompt=null, ReviewIsolation=Isolated, InlineComments defaults
+        // Global has MaxIterations=2, FixPrompt=null, InlineComments defaults
         var config = TestPipelineConfig.Default() with
         {
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 2,
                 FixPrompt = "Global fix prompt",
-                ReviewIsolation = ReviewIsolation.Isolated,
                 InlineComments = new InlineCommentSettings
                 {
                     Enabled = true,
@@ -447,7 +390,6 @@ public class ApplyProjectOverridesTests
         // Deep-merge: only MaxIterations is overridden, everything else preserved from global
         result.CodeReview.MaxIterations.Should().Be(1);
         result.CodeReview.FixPrompt.Should().Be("Global fix prompt");
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         result.CodeReview.InlineComments.Enabled.Should().BeTrue();
         result.CodeReview.InlineComments.MaxInlineComments.Should().Be(20);
         result.CodeReview.InlineComments.MaxRetries.Should().Be(2);
@@ -654,40 +596,10 @@ public class ApplyProjectOverridesTests
         result.ClosedLoopPollInterval.Should().Be(config.ClosedLoopPollInterval);
         result.ClosedLoopMaxRunsPerCycle.Should().Be(config.ClosedLoopMaxRunsPerCycle);
         result.ClosedLoopMaxConsecutivePollFailures.Should().Be(config.ClosedLoopMaxConsecutivePollFailures);
-        result.ClosedLoopMaxBackoffInterval.Should().Be(config.ClosedLoopMaxBackoffInterval);
         result.ClosedLoopMaxPagesToFetch.Should().Be(config.ClosedLoopMaxPagesToFetch);
-        result.IssuePageSize.Should().Be(config.IssuePageSize);
-        result.FailedWorkspaceRetentionDays.Should().Be(config.FailedWorkspaceRetentionDays);
     }
 
-    // ── MaxConsolidationDispatchRetries override ───────────────────────────────
-
-    [Fact]
-    public void MaxConsolidationDispatchRetries_ProjectOverride_AppliesCorrectly()
-    {
-        var config = TestPipelineConfig.Default();
-        // TODO: TestPipelineConfig.Default() sets MaxConsolidationDispatchRetries = 5. The override
-        // below uses 7, which differs. If Default() were ever changed to also use 7 this test would
-        // pass vacuously (override equals base). Consider adding:
-        //   config.MaxConsolidationDispatchRetries.Should().NotBe(7);
-        // before the ApplyProjectOverrides call to make the test non-vacuous.
-        var project = TestPipelineConfig.WithProject() with { MaxConsolidationDispatchRetries = 7 };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MaxConsolidationDispatchRetries.Should().Be(7);
-    }
-
-    [Fact]
-    public void MaxConsolidationDispatchRetries_NullOverride_InheritsFromGlobal()
-    {
-        var config = TestPipelineConfig.Default();
-        var project = TestPipelineConfig.WithProject(); // MaxConsolidationDispatchRetries is null
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MaxConsolidationDispatchRetries.Should().Be(config.MaxConsolidationDispatchRetries);
-    }
+    // ── CI and feedback overrides ───────────────────────────────
 
     [Fact]
     public void CiCancelledMoveMaxRetries_NonNull_OverridesGlobal()
@@ -882,5 +794,40 @@ public class ApplyProjectOverridesTests
         var act = () => PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         act.Should().Throw<NullReferenceException>();
+    }
+
+    // ── Removed overrides ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void StoredProject_WithRemovedOverrides_Loads()
+    {
+        // MaxConcurrentDecompositions, MinIssueSlots and HarnessSuggestionsReviewEnabled are enforced for the whole loop
+        // (or globally), and MaxConsolidationDispatchRetries had no reader; stored projects may still carry them.
+        const string json = """
+            {
+              "id": "p-1",
+              "name": "Legacy",
+              "maxRetries": 4,
+              "maxConcurrentDecompositions": 3,
+              "minIssueSlots": 2,
+              "harnessSuggestionsReviewEnabled": false,
+              "maxConsolidationDispatchRetries": 7,
+              "codeReview": { "maxIterations": 1, "reviewIsolation": "Shared" }
+            }
+            """;
+
+        var project = System.Text.Json.JsonSerializer.Deserialize<PipelineProject>(json, PipelineJsonOptions.Default);
+
+        project.Should().NotBeNull();
+        project!.MaxRetries.Should().Be(4);
+        project.CodeReview!.MaxIterations.Should().Be(1);
+    }
+
+    [Fact]
+    public void LoopWideSettings_AreNotProjectOverridable()
+    {
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MaxConcurrentDecompositions)).Should().BeNull();
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MinIssueSlots)).Should().BeNull();
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.HarnessSuggestionsReviewEnabled)).Should().BeNull();
     }
 }

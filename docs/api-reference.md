@@ -242,7 +242,7 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
 
 ```json
 {
-  "pipelineConfig": "{\"maxRetries\":3,\"agentTimeout\":\"00:30:00\",\"issuePageSize\":25}",
+  "pipelineConfig": "{\"maxRetries\":3,\"agentTimeout\":\"00:30:00\",\"minIssueSlots\":1}",
   "providerConfigs": [
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",

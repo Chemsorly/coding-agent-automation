@@ -735,13 +735,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
     // --- Config defaults ---
 
-    [Fact]
-    public void FailedWorkspaceRetentionDays_DefaultsToSeven()
-    {
-        var config = new PipelineConfiguration();
-        config.FailedWorkspaceRetentionDays.Should().Be(7);
-    }
-
     // --- Workspace cleanup ---
 
     [Fact]

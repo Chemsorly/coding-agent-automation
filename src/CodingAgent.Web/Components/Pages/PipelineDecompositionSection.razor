@@ -5,19 +5,19 @@
     <h2>Decomposition</h2>
     <p class="section-description">Controls the epic decomposition pipeline — how epics labeled <code>agent:epic</code> are broken into implementation-ready sub-issues.</p>
     <div class="provider-form">
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxDecompositionSubIssues)">
             <div class="label-with-hint">
                 <label>Max Sub-Issues Per Epic</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum number of sub-issues the decomposition agent may propose per epic. Valid range: 1–20. Default: 10">?</span>
             </div>
-            <input type="number" @bind="_maxDecompositionSubIssues" min="1" max="20" />
+            <input type="number" @bind="_maxDecompositionSubIssues" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxDecompositionSubIssues))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxDecompositionSubIssues))" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxDecompositionSubIssueFiles)">
             <div class="label-with-hint">
                 <label>Max Files Per Sub-Issue</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum files a single sub-issue may create or modify. Valid range: 1–30. Default: 12">?</span>
             </div>
-            <input type="number" @bind="_maxDecompositionSubIssueFiles" min="1" max="30" />
+            <input type="number" @bind="_maxDecompositionSubIssueFiles" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxDecompositionSubIssueFiles))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxDecompositionSubIssueFiles))" />
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
             <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
@@ -25,19 +25,19 @@
         </div>
         @if (_showAdvanced)
         {
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxConcurrentDecompositions)">
             <div class="label-with-hint">
                 <label>Max Concurrent Decompositions</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of decomposition runs (across both phases) that can execute simultaneously. Default: 2">?</span>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum number of decomposition runs (across both phases) that can execute simultaneously, across all projects. Default: 2">?</span>
             </div>
-            <input type="number" @bind="_maxConcurrentDecompositions" min="1" max="10" />
+            <input type="number" @bind="_maxConcurrentDecompositions" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxConcurrentDecompositions))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxConcurrentDecompositions))" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxOpenIssuesForContext)">
             <div class="label-with-hint">
                 <label>Max Open Issues for Context</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum open issues downloaded for deduplication context before the agent runs. Default: 50">?</span>
             </div>
-            <input type="number" @bind="_maxOpenIssuesForContext" min="1" max="200" />
+            <input type="number" @bind="_maxOpenIssuesForContext" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxOpenIssuesForContext))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxOpenIssuesForContext))" />
         </div>
         }
 

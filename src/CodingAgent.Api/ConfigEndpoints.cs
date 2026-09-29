@@ -104,16 +104,18 @@ public static class ConfigEndpoints
         return TypedResults.Ok(config);
     }
 
+    /// <summary>
+    /// PUT /api/config/pipeline. Rejects settings outside their range (400, one sentence per setting). AgentTimeout's
+    /// minimum is the reconciliation canary minimum, below which the timeout could never be enforced.
+    /// </summary>
     internal static async Task<IResult> SavePipelineConfig(
         [FromBody] PipelineConfiguration config,
         IPipelineConfigStore store,
         CancellationToken ct)
     {
-        if (config.AgentTimeout.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
-            return TypedResults.BadRequest(
-                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
-                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
-                "because the ReconciliationLoop canary guard fires first on every cycle.");
+        var errors = PipelineSettingsValidator.Validate(config);
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join(" ", errors));
 
         await store.SavePipelineConfigAsync(config, ct);
         return TypedResults.Ok();
@@ -311,17 +313,18 @@ public static class ConfigEndpoints
         return TypedResults.Ok(project);
     }
 
+    /// <summary>
+    /// PUT /api/config/projects. Rejects overrides outside the range of the setting they override (400, one sentence
+    /// per override), so a bad value never reaches the resolver.
+    /// </summary>
     internal static async Task<IResult> SaveProject(
         [FromBody] PipelineProject project,
         IProjectStore store,
         CancellationToken ct)
     {
-        if (project.AgentTimeout.HasValue &&
-            project.AgentTimeout.Value.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
-            return TypedResults.BadRequest(
-                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
-                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
-                "because the ReconciliationLoop canary guard fires first on every cycle.");
+        var errors = PipelineSettingsValidator.ValidateOverrides(project);
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join(" ", errors));
 
         await store.SaveProjectAsync(project, ct);
         return TypedResults.Ok();
@@ -625,6 +628,10 @@ public static class ConfigEndpoints
         if (bundle is null)
             return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
 
+        var settingsErrors = ValidateImportedSettings(bundle);
+        if (settingsErrors.Count > 0)
+            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid settings: {string.Join(" ", settingsErrors)}" });
+
         // Obtain the execution strategy from a short-lived context that is properly disposed.
         // CreateDbContext() checks out a pooled slot — callers must dispose it to return the slot.
         // The lambda re-creates the DbContext on each retry attempt so the change-tracker
@@ -755,6 +762,46 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
+    }
+
+    /// <summary>
+    /// The settings problems in an import bundle: global settings or project overrides outside their range, or settings
+    /// that cannot be read. An import replaces all configuration at once, so any problem rejects the whole bundle.
+    /// </summary>
+    private static List<string> ValidateImportedSettings(ConfigBundle bundle)
+    {
+        var errors = new List<string>();
+        if (bundle.PipelineConfig is not null)
+        {
+            try
+            {
+                var config = JsonSerializer.Deserialize<PipelineConfiguration>(bundle.PipelineConfig, PipelineJsonOptions.Default);
+                if (config is not null)
+                    errors.AddRange(PipelineSettingsValidator.Validate(config));
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"The pipeline settings cannot be read: {ex.Message}");
+            }
+        }
+
+        foreach (var project in bundle.Projects ?? [])
+        {
+            if (project.Settings is null)
+                continue;
+            try
+            {
+                var settings = JsonSerializer.Deserialize<PipelineProject>(project.Settings, PipelineJsonOptions.Default);
+                if (settings is not null)
+                    errors.AddRange(PipelineSettingsValidator.ValidateOverrides(settings).Select(error => $"Project '{project.Name}': {error}"));
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"Project '{project.Name}': its settings cannot be read: {ex.Message}");
+            }
+        }
+
+        return errors;
     }
 
     private static async Task<string?> LoadFirstEntityJson<T>(

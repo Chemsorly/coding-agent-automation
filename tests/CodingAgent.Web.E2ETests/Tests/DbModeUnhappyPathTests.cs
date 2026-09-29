@@ -69,13 +69,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentCrashMidRun_HeartbeatTimeout_RunFailed()
     {
         // Arrange: configure short timeouts for faster test execution
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(1),
-            HeartbeatSweepIntervalSeconds = 5
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(1);
 
         await SeedIssueAndProfileAsync("1000", "Crash test issue");
 
@@ -95,9 +89,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // Simulate crash: dispose agent (drops SignalR connection, stops heartbeats)
         await agent.DisposeAsync();
 
-        // Assert: HeartbeatMonitor detects stale heartbeat → disconnect → grace expiry → Failed
-        // HeartbeatSweepIntervalSeconds=5 (set in InMemoryConfigurationStore defaults),
-        // so detection takes at most ~12s (sweep + grace + sweep).
+        // Assert: the fake job controller counts the pod as dead after its 1s grace period and fails the run.
         var failedItem = await WaitForWorkItemStatusAsync(
             workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
         Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
@@ -216,13 +208,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentDisconnectsBeforeAccepting_RunEventuallyFailed()
     {
         // Arrange: configure short timeouts
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(1),
-            HeartbeatSweepIntervalSeconds = 5
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(1);
 
         await SeedIssueAndProfileAsync("1003", "Disconnect before accept");
 
@@ -316,13 +302,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentReconnects_OrphanRestoredAndCompletes()
     {
         // Arrange: configure grace period long enough for reconnection
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            HeartbeatTimeoutSeconds = 3,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(30), // Long enough to reconnect
-            HeartbeatSweepIntervalSeconds = 5
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(30); // Long enough to reconnect
 
         await SeedIssueAndProfileAsync("1006", "Orphan restoration issue");
 
@@ -378,13 +358,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentDoesNotReconnect_OrphanExpires_RunFailed()
     {
         // Arrange: configure VERY short grace period
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(2), // Very short — orphan expires quickly
-            HeartbeatSweepIntervalSeconds = 5
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(2); // Very short — orphan expires quickly
 
         await SeedIssueAndProfileAsync("1007", "Orphan expiry issue");
 

@@ -107,13 +107,13 @@
                         ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
-                case SettingsNodes.PipelineImplementation:
-                    <PipelineQualityGatesSection
+                case SettingsNodes.PipelineCi:
+                    <PipelineCiSection
                         ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
-                case SettingsNodes.PipelineReview:
-                    <PipelineReviewSection
+                case SettingsNodes.PipelineCodeReview:
+                    <PipelineCodeReviewSection
                         ConfigClient="ConfigClient"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
@@ -206,8 +206,8 @@
         section == SettingsNodes.PipelineGeneral ||
         section == SettingsNodes.PipelineLoop ||
         section == SettingsNodes.PipelinePrompts ||
-        section == SettingsNodes.PipelineImplementation ||
-        section == SettingsNodes.PipelineReview ||
+        section == SettingsNodes.PipelineCi ||
+        section == SettingsNodes.PipelineCodeReview ||
         section == SettingsNodes.PipelineDecomposition ||
         section == SettingsNodes.PipelineConsolidation ||
         section == SettingsNodes.PipelineAdvanced ||

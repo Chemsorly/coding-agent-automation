@@ -157,6 +157,7 @@
                                     {
                                     <td>
                                         <div style="display: flex; gap: 4px; align-items: center;">
+                                                <button class="btn-edit" @onclick="() => OnEditTemplate.InvokeAsync(template)">Edit</button>
                                                 <button class="btn-delete" @onclick="() => OnConfirmRemove.InvokeAsync(template)">Remove</button>
                                                 @if (Projects.Count > 1)
                                                 {

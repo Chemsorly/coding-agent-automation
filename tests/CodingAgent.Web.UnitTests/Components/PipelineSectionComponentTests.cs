@@ -139,8 +139,7 @@ public class PipelineSectionComponentTests : BunitContext
             {
                 ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
                 ClosedLoopMaxRunsPerCycle = 5,
-                ClosedLoopMaxConsecutivePollFailures = 10,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(1800)
+                ClosedLoopMaxConsecutivePollFailures = 10
             });
 
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
@@ -219,27 +218,22 @@ public class PipelineSectionComponentTests : BunitContext
     // ═══ PipelineGeneralSection — Relocated Settings ═══
 
     [Fact]
-    public void GeneralSection_RendersFailedWorkspaceRetention()
+    public void GeneralSection_DoesNotOfferRemovedOrInternalSettings()
     {
         var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
-        Assert.Contains("Failed Run Workspace Retention", cut.Markup);
+        cut.Find(".advanced-toggle").Click();
+
+        Assert.DoesNotContain("Failed Run Workspace Retention", cut.Markup);
+        Assert.DoesNotContain("Workspace Base Directory", cut.Markup);
+        Assert.DoesNotContain("Issue Page Size", cut.Markup);
     }
 
     [Fact]
-    public void GeneralSection_LoadsRetentionValue()
-    {
-        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { FailedWorkspaceRetentionDays = 14 });
-
-        var cut = Render<PipelineGeneralSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
-        var inputs = cut.FindAll("input[type='number']");
-        Assert.Contains(inputs, i => i.GetAttribute("value") == "14");
-    }
-
-    [Fact]
-    public async Task GeneralSection_Save_IncludesRetentionDays()
+    public async Task GeneralSection_Save_IncludesCommitThresholdAndFeedbackTimeout()
     {
         PipelineConfiguration? saved = null;
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AnalysisCommitThreshold = 45, FeedbackTimeoutSeconds = 120 });
         _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
             .Returns<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((transform, _) =>
             {
@@ -253,6 +247,30 @@ public class PipelineSectionComponentTests : BunitContext
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         Assert.NotNull(saved);
-        Assert.Equal(7, saved!.FailedWorkspaceRetentionDays); // default value
+        Assert.Equal(45, saved!.AnalysisCommitThreshold);
+        Assert.Equal(120, saved.FeedbackTimeoutSeconds);
+    }
+
+    [Fact]
+    public async Task LoopSection_Save_IncludesReservedIssueSlotsAndOrphanSweepInterval()
+    {
+        PipelineConfiguration? saved = null;
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { MinIssueSlots = 3, OrphanedLabelSweepIntervalMinutes = 45 });
+        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((transform, _) =>
+            {
+                saved = transform(new PipelineConfiguration());
+                return Task.CompletedTask;
+            });
+
+        var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
+
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Pipeline Loop"));
+        await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.NotNull(saved);
+        Assert.Equal(3, saved!.MinIssueSlots);
+        Assert.Equal(45, saved.OrphanedLabelSweepIntervalMinutes);
     }
 }

@@ -606,6 +606,27 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.Contains("3", modal.TextContent);
         Assert.Contains("90 days", modal.TextContent);
         Assert.Contains("Enabled", modal.TextContent);
+        Assert.DoesNotContain("(project)", modal.TextContent);
+    }
+
+    [Fact]
+    public void RefactoringModal_ShowsTheProjectsValues_AndMarksThem()
+    {
+        // #3148: the scan runs with the template's project overrides, so the modal must show them.
+        RegisterServices(
+            templates: new List<PipelineJobTemplate> { CreateTemplate(id: "t1", issueProviderId: "issue-1", repoProviderId: "repo-1") },
+            pipelineConfig: new PipelineConfiguration { MaxRefactoringProposals = 3, RefactoringReviewEnabled = true });
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = "p-1", Name = "Product", TemplateIds = ["t1"], Enabled = true, MaxRefactoringProposals = 7, RefactoringReviewEnabled = false },
+            });
+
+        var cut = Render<Consolidation>();
+        cut.FindAll(".btn-trigger").First(b => b.TextContent.Contains("Refactoring Scan")).Click();
+
+        var values = cut.FindAll(".refactoring-modal-param-value").Select(v => v.TextContent.Trim()).ToList();
+        Assert.Equal(["7 (project)", "90 days", "Disabled (project)"], values);
     }
 
     [Fact]

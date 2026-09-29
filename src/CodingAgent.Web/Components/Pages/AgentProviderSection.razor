@@ -15,7 +15,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
-                    <span class="provider-detail">@{var execPath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "");}@if (!string.IsNullOrEmpty(execPath)){<text>@execPath · </text>}@(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"))min · model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
+                    <span class="provider-detail">@{var execPath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "");}@if (!string.IsNullOrEmpty(execPath)){<text>@execPath · </text>}model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
@@ -66,10 +66,6 @@
                         <input type="text" @bind="_form.BaseUrl" placeholder="@AgentDefaults.OpenCodeBaseUrl" />
                     </div>
                 }
-                <div class="form-group">
-                    <label>Timeout (minutes)</label>
-                    <input type="number" @bind="_form.TimeoutMinutes" min="1" />
-                </div>
                 @if (_form.ProviderType == "KiroCli")
                 {
                     <div class="form-group">
@@ -147,9 +143,9 @@
                 }
                 @if (IsKubernetesMode && _form.ProviderType == "KiroCli")
                 {
-                    <div class="form-group">
+                    <div class="form-group" data-setting="@nameof(PipelineConfiguration.ModelFetchTimeoutSeconds)">
                         <label>Fetch Models Timeout (seconds)</label>
-                        <input type="number" @bind="_modelFetchTimeoutSeconds" min="30" max="600" />
+                        <input type="number" @bind="_modelFetchTimeoutSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" />
                         <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s.</span>
                     </div>
                 }
@@ -171,7 +167,6 @@
                     <p class="help-heading">Fields:</p>
                     <ul>
                         <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
-                        <li><strong>Timeout</strong> — max minutes per agent invocation before it's killed</li>
                         <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
                         <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
                     </ul>
@@ -184,7 +179,6 @@
                     <p class="help-heading">Fields:</p>
                     <ul>
                         <li><strong>Base URL</strong> — the OpenCode server URL (default: <code>http://127.0.0.1:4096</code>, container-internal)</li>
-                        <li><strong>Timeout</strong> — max minutes per agent invocation before it's aborted</li>
                         <li><strong>Model</strong> — in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>)</li>
                     </ul>
                     <p class="help-heading">Configuration:</p>
@@ -274,7 +268,6 @@
             DisplayName = p.DisplayName,
             ExecutablePath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, ""),
             BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
-            TimeoutMinutes = int.TryParse(p.Settings.GetValueOrDefault(ProviderSettingKeys.Timeout, "30"), out var t) ? t : 30,
             AgentName = p.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
             Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"),
             Effort = p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto")
@@ -301,7 +294,6 @@
 
         var settings = new Dictionary<string, string>
         {
-            [ProviderSettingKeys.Timeout] = _form.TimeoutMinutes.ToString(),
             [ProviderSettingKeys.Model] = model
         };
 
@@ -418,7 +410,6 @@
         public string DisplayName { get; set; } = "";
         public string ExecutablePath { get; set; } = AgentDefaults.KiroCliPath;
         public string BaseUrl { get; set; } = AgentDefaults.OpenCodeBaseUrl;
-        public int TimeoutMinutes { get; set; } = 30;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";
         public string Effort { get; set; } = "auto";

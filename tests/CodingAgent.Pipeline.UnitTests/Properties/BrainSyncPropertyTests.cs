@@ -98,12 +98,6 @@ public class BrainSyncPropertyTests
 
         var original = new PipelineConfiguration
         {
-            LastUsedProviderIds = new Dictionary<string, string>
-            {
-                ["issue"] = "id-1",
-                ["repository"] = "id-2",
-                ["brain"] = "id-3"
-            },
             BlacklistedPaths = new[] { ".agent", ".github", ".brain" },
             BrainReadOnly = true
         };
@@ -111,7 +105,6 @@ public class BrainSyncPropertyTests
         await mockStore.Object.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await mockStore.Object.LoadPipelineConfigAsync(CancellationToken.None);
 
-        loaded.LastUsedProviderIds.Should().BeEquivalentTo(original.LastUsedProviderIds);
         loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
         loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);
     }

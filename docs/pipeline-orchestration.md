@@ -269,7 +269,7 @@ The `OrphanedLabelRecoveryService` (in `CodingAgent.Scheduler`) is a background 
 
 - The orchestrator crashes mid-run and restarts
 - A run is cleaned up from memory but the label swap to a terminal state fails
-- An agent disconnects and the run expires after `agentDisconnectGracePeriod` but label cleanup didn't complete
+- An agent pod dies and the reconciler fails its run, but label cleanup didn't complete
 
 ### Behavior
 

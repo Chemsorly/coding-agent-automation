@@ -37,7 +37,6 @@ public sealed class FakeJobController : IAsyncDisposable
 {
     private readonly IPipelineApiWorkItemClient _workItems;
     private readonly AgentRegistryService _registry;
-    private readonly InMemoryConfigurationStore _configStore;
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
@@ -68,12 +67,10 @@ public sealed class FakeJobController : IAsyncDisposable
     public FakeJobController(
         IPipelineApiWorkItemClient workItems,
         AgentRegistryService registry,
-        InMemoryConfigurationStore configStore,
         IDbContextFactory<PipelineDbContext> dbFactory)
     {
         _workItems = workItems;
         _registry = registry;
-        _configStore = configStore;
         _dbFactory = dbFactory;
         _loop = Task.Run(() => PollAsync(_cts.Token));
     }
@@ -220,9 +217,9 @@ public sealed class FakeJobController : IAsyncDisposable
     /// test asserting the disconnect path times out.
     ///
     /// <para>
-    /// A disconnect is not immediately fatal. <c>AgentDisconnectGracePeriod</c> is what lets a pod
-    /// survive a dropped websocket and re-register with its job intact, so this waits it out before
-    /// declaring the pod dead — reading the same configured value the product does. Failing on the
+    /// A disconnect is not immediately fatal: a real pod survives a dropped websocket and re-registers
+    /// with its job intact, so this waits <see cref="DisconnectGracePeriod"/> before declaring the pod
+    /// dead, the way the Job outlives a dropped connection in Kubernetes. Failing on the
     /// first Disconnected sighting made the reconnection path untestable: the work item was already
     /// Failed by the time the agent came back, so there was no orphan left to restore.
     /// </para>
@@ -231,7 +228,7 @@ public sealed class FakeJobController : IAsyncDisposable
     {
         if (_inFlight.IsEmpty) return;
 
-        var gracePeriod = (await _configStore.LoadPipelineConfigAsync(ct)).AgentDisconnectGracePeriod;
+        var gracePeriod = DisconnectGracePeriod;
 
         foreach (var (workItemId, agentId) in _inFlight.ToArray())
         {
@@ -275,6 +272,14 @@ public sealed class FakeJobController : IAsyncDisposable
     /// </summary>
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _goneSince = new();
 
+    /// <summary>
+    /// How long an in-flight item's agent may be gone before its pod counts as dead. Tests that exercise
+    /// a pod dying set it short; <see cref="ForgetAllInFlight"/> restores the default between tests.
+    /// </summary>
+    public TimeSpan DisconnectGracePeriod { get; set; } = DefaultDisconnectGracePeriod;
+
+    private static readonly TimeSpan DefaultDisconnectGracePeriod = TimeSpan.FromMinutes(5);
+
     /// <summary>Stops tracking a work item, so a completed job is not reconciled as a dead pod.</summary>
     internal void ForgetInFlight(Guid workItemId)
     {
@@ -288,6 +293,7 @@ public sealed class FakeJobController : IAsyncDisposable
     {
         _inFlight.Clear();
         _goneSince.Clear();
+        DisconnectGracePeriod = DefaultDisconnectGracePeriod;
     }
 
     /// <summary>

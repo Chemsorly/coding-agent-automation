@@ -265,7 +265,7 @@
                 <div class="refactoring-modal-params">
                     <div class="refactoring-modal-param">
                         <span class="refactoring-modal-param-label">Max issues:</span>
-                        <span class="refactoring-modal-param-value">@_modalMaxProposals</span>
+                        <span class="refactoring-modal-param-value">@_modalMaxProposals@ProjectMark(_modalMaxProposalsFromProject)</span>
                     </div>
                     <div class="refactoring-modal-param">
                         <span class="refactoring-modal-param-label">Hotspot lookback:</span>
@@ -273,7 +273,7 @@
                     </div>
                     <div class="refactoring-modal-param">
                         <span class="refactoring-modal-param-label">Adversarial review:</span>
-                        <span class="refactoring-modal-param-value">@(_modalReviewEnabled ? "Enabled" : "Disabled")</span>
+                        <span class="refactoring-modal-param-value">@(_modalReviewEnabled ? "Enabled" : "Disabled")@ProjectMark(_modalReviewEnabledFromProject)</span>
                     </div>
                 </div>
             </div>
@@ -320,6 +320,9 @@
     private int _modalMaxProposals;
     private int _modalHotspotDays;
     private bool _modalReviewEnabled;
+    private bool _modalMaxProposalsFromProject;
+    private bool _modalReviewEnabledFromProject;
+    private IReadOnlyList<PipelineProject> _projects = [];
     private ElementReference _modalOverlayRef;
 
     protected override async Task OnInitializedAsync()
@@ -387,6 +390,7 @@
                 .Where(t => !string.IsNullOrEmpty(t.BrainProviderId))
                 .ToDictionary(t => t.Id, t => t.BrainProviderId!, StringComparer.Ordinal);
 
+            _projects = projects;
             await LoadReadOnlyBrainTemplatesAsync(projects);
         }
         catch (Exception ex)
@@ -465,6 +469,9 @@
         }
     }
 
+    /// <summary>Marks a refactoring scan parameter that comes from the template's project rather than the global settings.</summary>
+    private static string ProjectMark(bool fromProject) => fromProject ? " (project)" : "";
+
     /// <summary>
     /// Whether <paramref name="run"/> worked on what the template's consolidation of the same type works on:
     /// the same brain for brain consolidation, the same template otherwise.
@@ -484,13 +491,17 @@
 
     private async Task OpenRefactoringModal(string templateId, string templateName)
     {
-        // Load fresh config values when opening the modal
+        // Show the values the scan will use: the global settings with the template's project overrides applied.
         try
         {
-            var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+            var project = _projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
+            var config = PipelineConfigurationResolver.ApplyProjectOverrides(
+                await ConfigClient.GetPipelineConfigAsync(CancellationToken.None), project);
             _modalMaxProposals = config.MaxRefactoringProposals;
             _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
             _modalReviewEnabled = config.RefactoringReviewEnabled;
+            _modalMaxProposalsFromProject = project?.MaxRefactoringProposals is not null;
+            _modalReviewEnabledFromProject = project?.RefactoringReviewEnabled is not null;
         }
         catch (Exception ex)
         {
@@ -498,6 +509,8 @@
             _modalMaxProposals = 3;
             _modalHotspotDays = 90;
             _modalReviewEnabled = true;
+            _modalMaxProposalsFromProject = false;
+            _modalReviewEnabledFromProject = false;
         }
 
         _modalTemplateId = templateId;

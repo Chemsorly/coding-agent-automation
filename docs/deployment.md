@@ -106,7 +106,6 @@ The chart deploys:
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `scheduler.dispatch.enabled` | **Must be `true` for the dispatch loop to run.** Defaults to `false`. The API-side dispatch loop was removed in issue #2547; `scheduler.dispatch.enabled=true` activates the `WorkItemDispatchLoop` in the Scheduler as the sole dispatcher. A deployment with this left at `false` will have no active dispatcher — `Pending` WorkItems accumulate indefinitely. Set explicitly on every install/upgrade: `--set scheduler.dispatch.enabled=true`. |
-| `web.consolidation.unifiedDispatch.enabled` / `scheduler.consolidation.unifiedDispatch.enabled` | Feature flag for the unified consolidation dispatch path (default: `false`). When `false`, consolidation runs use the legacy synchronous dispatch path. Set both `web.consolidation.unifiedDispatch.enabled=true` and `scheduler.consolidation.unifiedDispatch.enabled=true` together to enable. Only enable after issue #2563 (RunType tier ordering at dispatch) is deployed. |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
 ### Defining Agent Pod Templates

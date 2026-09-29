@@ -179,8 +179,6 @@ public class SettingsResolutionDeterminismPropertyTests
                 result.CodeReview.MaxIterations.Should().Be(project.CodeReview.MaxIterations.Value);
             if (project.CodeReview.FixPrompt is not null)
                 result.CodeReview.FixPrompt.Should().Be(project.CodeReview.FixPrompt);
-            if (project.CodeReview.ReviewIsolation.HasValue)
-                result.CodeReview.ReviewIsolation.Should().Be(project.CodeReview.ReviewIsolation.Value);
         }
         if (project.BaselineHealthCheckEnabled.HasValue)
             result.BaselineHealthCheckEnabled.Should().Be(project.BaselineHealthCheckEnabled.Value);
@@ -194,8 +192,6 @@ public class SettingsResolutionDeterminismPropertyTests
             result.StallWarningInterval.Should().Be(project.StallWarningInterval.Value);
         if (project.MaxDecompositionSubIssues.HasValue)
             result.MaxDecompositionSubIssues.Should().Be(project.MaxDecompositionSubIssues.Value);
-        if (project.MaxConcurrentDecompositions.HasValue)
-            result.MaxConcurrentDecompositions.Should().Be(project.MaxConcurrentDecompositions.Value);
         if (project.MaxOpenIssuesForContext.HasValue)
             result.MaxOpenIssuesForContext.Should().Be(project.MaxOpenIssuesForContext.Value);
         if (project.MaxRefactoringProposals.HasValue)
@@ -204,8 +200,6 @@ public class SettingsResolutionDeterminismPropertyTests
             result.RefactoringReviewEnabled.Should().Be(project.RefactoringReviewEnabled.Value);
         if (project.BrainConsolidationReviewEnabled.HasValue)
             result.BrainConsolidationReviewEnabled.Should().Be(project.BrainConsolidationReviewEnabled.Value);
-        if (project.HarnessSuggestionsReviewEnabled.HasValue)
-            result.HarnessSuggestionsReviewEnabled.Should().Be(project.HarnessSuggestionsReviewEnabled.Value);
         if (project.BlacklistedPaths is not null)
             result.BlacklistedPaths.Should().BeEquivalentTo(project.BlacklistedPaths);
         if (project.BrainReadOnly.HasValue)
@@ -265,12 +259,10 @@ public class SettingsResolutionArbitraries
         // Add occasional non-null InlineCommentOverrides to improve coverage.
         from maxIterations in Gen.Elements<int?>(null, 1, 2, 3, 5)
         from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Apply corrections")
-        from isolation in Gen.Elements<ReviewIsolation?>(null, ReviewIsolation.Isolated)
         select new CodeReviewOverrides
         {
             MaxIterations = maxIterations,
-            FixPrompt = fixPrompt,
-            ReviewIsolation = isolation
+            FixPrompt = fixPrompt
         };
 
     private static Gen<CodeReviewConfiguration> GenCodeReview() =>
@@ -364,12 +356,10 @@ public class SettingsResolutionArbitraries
         from maxInfraRetries in Gen.Elements<int?>(null, 1, 3)
         from stallWarningInterval in Gen.Elements<TimeSpan?>(null, TimeSpan.FromMinutes(5))
         from maxDecompSubIssues in Gen.Elements<int?>(null, 5, 10, 15)
-        from maxConcurrentDecomps in Gen.Elements<int?>(null, 1, 2, 4)
         from maxOpenIssues in Gen.Elements<int?>(null, 25, 50)
         from maxRefactoringProposals in Gen.Elements<int?>(null, 2, 5)
         from refactoringReviewEnabled in Gen.Elements<bool?>(null, true, false)
         from brainConsolidationReviewEnabled in Gen.Elements<bool?>(null, true, false)
-        from harnessSuggestionsReviewEnabled in Gen.Elements<bool?>(null, true, false)
         from blacklistedPaths in Gen.Frequency(
             (2, Gen.Constant<IReadOnlyList<string>?>(null)),
             (1, GenBlacklistedPaths().Select<IReadOnlyList<string>, IReadOnlyList<string>?>(p => p)))
@@ -395,12 +385,10 @@ public class SettingsResolutionArbitraries
             MaxInfrastructureRetries = maxInfraRetries,
             StallWarningInterval = stallWarningInterval,
             MaxDecompositionSubIssues = maxDecompSubIssues,
-            MaxConcurrentDecompositions = maxConcurrentDecomps,
             MaxOpenIssuesForContext = maxOpenIssues,
             MaxRefactoringProposals = maxRefactoringProposals,
             RefactoringReviewEnabled = refactoringReviewEnabled,
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
-            HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
             BrainReadOnly = brainReadOnly,
             CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,

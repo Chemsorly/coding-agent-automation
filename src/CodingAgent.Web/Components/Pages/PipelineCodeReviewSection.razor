@@ -3,17 +3,45 @@
 @using CodingAgent.Pipeline.Models
 
 <section class="settings-section">
-    <h2>Review</h2>
-    <p class="section-description">Settings for the PR review pipeline — how review findings are posted to pull requests as inline comments.</p>
+    <h2>Code Review</h2>
+    <p class="section-description">How code is reviewed: the review step of implementation runs, PR reviews, and the acceptance criteria check both use. Which reviewers run is set per repository label in Label Routing → Reviewer Configs; whether a repository's pull requests are reviewed is the template's Review switch on the Pipelines page.</p>
     <div class="provider-form">
-        <div class="form-group form-checkbox">
-            <label>
-                <input type="checkbox" @bind="_inlineCommentsEnabled" />
-                Enable Inline Review Comments
-            </label>
-        </div>
         <div class="config-sub-fields">
-            <div class="form-group">
+            <h3>Implementation Runs</h3>
+            <div class="form-group form-checkbox" data-setting="CodeReview.MaxIterations">
+                <label>
+                    <input type="checkbox" @bind="_implementationReviewEnabled" />
+                    Review Implementation Runs
+                </label>
+                <span class="form-hint">Reviewers check the agent's changes before the pull request is opened. PR reviews are not affected.</span>
+            </div>
+            @if (_implementationReviewEnabled)
+            {
+                <div class="form-group">
+                    <div class="label-with-hint">
+                        <label>Max Review Iterations</label>
+                        <span class="form-hint-icon" aria-hidden="true" title="Maximum review/fix cycles. Each iteration runs all reviewers, then applies fixes if [CRITICAL] findings exist. Default: 2">?</span>
+                    </div>
+                    <input type="number" @bind="_maxIterations" min="1" max="@SettingLimits.Max("CodeReview.MaxIterations")" />
+                </div>
+            }
+            <div class="form-group" data-setting="CodeReview.FixPrompt">
+                <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
+                <textarea @bind="_fixPrompt" rows="3" disabled="@(!_implementationReviewEnabled)"></textarea>
+                <button type="button" class="btn-revert" disabled="@(!_implementationReviewEnabled || _fixPrompt == PipelineConfigurationDefaults.DefaultFixPrompt)" @onclick="() => _fixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt">Reset to default</button>
+            </div>
+        </div>
+
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3>PR Reviews</h3>
+            <div class="form-group form-checkbox" data-setting="CodeReview.InlineComments.Enabled">
+                <label>
+                    <input type="checkbox" @bind="_inlineCommentsEnabled" />
+                    Enable Inline Review Comments
+                </label>
+                <span class="form-hint">Findings are posted as comments on the changed lines, in addition to the review summary.</span>
+            </div>
+            <div class="form-group" data-setting="CodeReview.InlineComments.SeverityThreshold">
                 <div class="label-with-hint">
                     <label>Minimum Severity for Inline Posting</label>
                     <span class="form-hint-icon" aria-hidden="true" title="Only findings at or above this severity are posted as inline PR comments. Default: Warning">?</span>
@@ -24,12 +52,12 @@
                     <option value="@FindingSeverity.Suggestion">Suggestion</option>
                 </select>
             </div>
-            <div class="form-group">
+            <div class="form-group" data-setting="CodeReview.InlineComments.MaxInlineComments">
                 <div class="label-with-hint">
                     <label>Maximum Inline Comments per Review</label>
                     <span class="form-hint-icon" aria-hidden="true" title="Cap on inline comments posted per review cycle. Prevents flooding PRs with noise. Default: 15">?</span>
                 </div>
-                <input type="number" @bind="_inlineMaxComments" min="1" max="50" disabled="@(!_inlineCommentsEnabled)" />
+                <input type="number" @bind="_inlineMaxComments" min="@SettingLimits.Min("CodeReview.InlineComments.MaxInlineComments")" max="@SettingLimits.Max("CodeReview.InlineComments.MaxInlineComments")" disabled="@(!_inlineCommentsEnabled)" />
             </div>
             <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
                 <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
@@ -37,23 +65,42 @@
             </div>
             @if (_showAdvanced)
             {
-            <div class="form-group form-checkbox">
+            <div class="form-group form-checkbox" data-setting="CodeReview.InlineComments.OrderBySeverity">
                 <label>
                     <input type="checkbox" @bind="_inlineOrderBySeverity" disabled="@(!_inlineCommentsEnabled)" />
                     Prioritize by Severity
                 </label>
             </div>
-            <div class="form-group">
+            <div class="form-group" data-setting="CodeReview.InlineComments.MaxRetries">
                 <div class="label-with-hint">
                     <label>Format Correction Retries</label>
                     <span class="form-hint-icon" aria-hidden="true" title="Number of times to re-ask the AI agent if it doesn't include file/line references in its output. Each retry adds an additional API call. Default: 1">?</span>
                 </div>
-                <input type="number" @bind="_inlineMaxRetries" min="0" max="5" disabled="@(!_inlineCommentsEnabled)" />
+                <input type="number" @bind="_inlineMaxRetries" min="@SettingLimits.Min("CodeReview.InlineComments.MaxRetries")" max="@SettingLimits.Max("CodeReview.InlineComments.MaxRetries")" disabled="@(!_inlineCommentsEnabled)" />
             </div>
             }
         </div>
+
+        <div class="config-sub-fields" style="margin-top: 1rem;">
+            <h3>Acceptance Criteria</h3>
+            <div class="form-hint">
+                <Icon Name="info" /> Runs next to the reviewers and reports, criterion by criterion, whether the change meets the issue's acceptance criteria.
+            </div>
+            <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.AcceptanceCriteriaEnabled)">
+                <label>
+                    <input type="checkbox" @bind="_acceptanceCriteriaEnabled" />
+                    Enable Acceptance Criteria Check
+                </label>
+            </div>
+            <div class="form-group" data-setting="@nameof(PipelineConfiguration.AcceptanceCriteriaPrompt)">
+                <label>Acceptance Criteria Prompt</label>
+                <textarea @bind="_acceptanceCriteriaPrompt" rows="6" disabled="@(!_acceptanceCriteriaEnabled)"></textarea>
+                <button type="button" class="btn-revert" disabled="@(!_acceptanceCriteriaEnabled || _acceptanceCriteriaPrompt == DefaultPrompts.AcceptanceCriteriaCompliance)" @onclick="() => _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance">Reset to default</button>
+            </div>
+        </div>
+
         <div class="pipeline-form-actions">
-            <button class="btn-save" @onclick="SaveAsync">Save Review Settings</button>
+            <button class="btn-save" @onclick="SaveAsync">Save Code Review Settings</button>
         </div>
     </div>
 </section>
@@ -62,22 +109,32 @@
     [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
+    private bool _implementationReviewEnabled = true;
+    private int _maxIterations = 2;
+    private string? _fixPrompt;
     private bool _inlineCommentsEnabled = true;
     private FindingSeverity _inlineSeverityThreshold = FindingSeverity.Warning;
     private int _inlineMaxComments = 15;
     private bool _inlineOrderBySeverity = true;
     private int _inlineMaxRetries = 1;
+    private bool _acceptanceCriteriaEnabled = true;
+    private string _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance;
     private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
     {
         var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+        _implementationReviewEnabled = config.CodeReview.MaxIterations > 0;
+        _maxIterations = config.CodeReview.MaxIterations > 0 ? config.CodeReview.MaxIterations : 2;
+        _fixPrompt = config.CodeReview.FixPrompt;
         var inlineSettings = config.CodeReview.InlineComments;
         _inlineCommentsEnabled = inlineSettings.Enabled;
         _inlineSeverityThreshold = inlineSettings.SeverityThreshold;
         _inlineMaxComments = inlineSettings.MaxInlineComments;
         _inlineOrderBySeverity = inlineSettings.OrderBySeverity;
         _inlineMaxRetries = inlineSettings.MaxRetries;
+        _acceptanceCriteriaEnabled = config.AcceptanceCriteriaEnabled;
+        _acceptanceCriteriaPrompt = config.AcceptanceCriteriaPrompt;
     }
 
     private async Task SaveAsync()
@@ -89,6 +146,8 @@
                 {
                     CodeReview = current.CodeReview with
                     {
+                        MaxIterations = _implementationReviewEnabled ? _maxIterations : 0,
+                        FixPrompt = _fixPrompt,
                         InlineComments = new InlineCommentSettings
                         {
                             Enabled = _inlineCommentsEnabled,
@@ -97,10 +156,12 @@
                             OrderBySeverity = _inlineOrderBySeverity,
                             MaxRetries = _inlineMaxRetries,
                         },
-                    }
+                    },
+                    AcceptanceCriteriaEnabled = _acceptanceCriteriaEnabled,
+                    AcceptanceCriteriaPrompt = _acceptanceCriteriaPrompt
                 },
                 CancellationToken.None);
-            await OnShowStatus.InvokeAsync(("Review settings saved.", false));
+            await OnShowStatus.InvokeAsync(("Code review settings saved.", false));
         }
         catch (Exception ex)
         {

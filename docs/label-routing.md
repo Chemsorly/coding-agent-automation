@@ -42,13 +42,13 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 
 ## Agent Profiles
 
-Agent Profiles map label sets to agent provider configs (model, timeout, CLI path). Configured in Settings → Agent Profiles.
+Agent Profiles map label sets to agent provider configs (model, effort, CLI path). Configured in Settings → Agent Profiles.
 
 | Profile | Match Labels | Effect |
 |---------|-------------|--------|
-| Kiro .NET 10 Agent | `kiro, dotnet, dotnet10` | Uses Opus model, 30min timeout |
-| Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model, 20min timeout |
-| Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model, 30min timeout |
+| Kiro .NET 10 Agent | `kiro, dotnet, dotnet10` | Uses Opus model |
+| Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model |
+| Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model |
 
 Resolution: most specific match wins (highest label count). A profile with empty MatchLabels acts as a default/catch-all.
 
@@ -74,7 +74,11 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 |----------------|-------------|--------|
 | Default Reviewers | *(empty — global fallback)* | Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer |
 
-Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches (or all are disabled), the review phase is **skipped**. A warning is logged (`Pipeline {RunId} no reviewer configurations matched — review phase skipped`) and a `pipeline.review.skipped` telemetry counter is incremented. No review agents execute and the run completes as `agent:done` without a review comment. To ensure review always runs, keep the default reviewer configuration (`MatchLabels = []`) enabled in Settings → Reviewers.
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches (or all are disabled), or the matching configs define no review agents, the review phase is **skipped**. A warning is logged (`Pipeline {RunId} no reviewer configurations matched — review phase skipped`) and a `pipeline.review.skipped` telemetry counter is incremented. An implementation run then opens its PR without a review; a PR review run posts a comment on the pull request that says why no review ran. To ensure review always runs, keep the default reviewer configuration (`MatchLabels = []`) enabled in Settings → Reviewers.
+
+The other code review settings (iterations, fix prompt, inline comments, acceptance criteria) are on Settings → Global Defaults → Code Review; see [Configuration — Code Review](configuration.md#code-review).
+
+Labels are set per repository, and the same labels also pick the agent profile, which must contain every one of them. A project therefore cannot choose its own reviewers or quality gates, and adding a label to a repository only to select a reviewer also changes which agent profile, and so which agent image, the repository needs.
 
 <!-- TODO [WARNING]: Verify that `pipeline.review.skipped` matches the externally observable OTel counter name
      if the telemetry backend or metric export configuration is ever changed. The counter is defined in

@@ -3,7 +3,7 @@ namespace CodingAgent.Pipeline.Models;
 /// <summary>
 /// A named grouping entity that owns pipeline job templates and carries
 /// per-project behavioral settings that override global defaults.
-/// Persisted as individual JSON files at {ConfigDir}/pipeline/projects/{Id}.json.
+/// Persisted in the <c>Projects</c> table.
 /// </summary>
 public sealed record PipelineProject
 {
@@ -42,6 +42,8 @@ public sealed record PipelineProject
         && string.Equals(EpicIssueProviderId, issueProviderId, StringComparison.Ordinal);
 
     // ── Behavioral overrides (null = inherit from global) ──────────────
+    // Each one overrides the [ProjectOverridable] PipelineConfiguration property of the same name and is held to that
+    // property's [Range]: saving a project rejects a value outside it, and the resolver skips a stored one.
 
     public int? MaxRetries { get; init; }
     public int? MaxAnalysisRetries { get; init; }
@@ -62,12 +64,10 @@ public sealed record PipelineProject
     public TimeSpan? StallWarningInterval { get; init; }
     public int? MaxDecompositionSubIssues { get; init; }
     public int? MaxDecompositionSubIssueFiles { get; init; }
-    public int? MaxConcurrentDecompositions { get; init; }
     public int? MaxOpenIssuesForContext { get; init; }
     public int? MaxRefactoringProposals { get; init; }
     public bool? RefactoringReviewEnabled { get; init; }
     public bool? BrainConsolidationReviewEnabled { get; init; }
-    public bool? HarnessSuggestionsReviewEnabled { get; init; }
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
     public bool? BrainReadOnly { get; init; }
 
@@ -75,17 +75,7 @@ public sealed record PipelineProject
     /// Override for <see cref="PipelineConfiguration.AnalysisCommitThreshold"/>.
     /// Null = inherit from global configuration.
     /// </summary>
-    // TODO: This property has no inline range validation. Invalid values (e.g., 5000) are silently
-    // rejected during ApplyProjectOverrides via reflection, causing ALL project overrides to fall back
-    // to global defaults with no actionable feedback to the user. Consider adding range validation here
-    // or surfacing a warning when an override is rejected.
     public int? AnalysisCommitThreshold { get; init; }
-
-    /// <summary>
-    /// Override for <see cref="PipelineConfiguration.MaxConsolidationDispatchRetries"/>.
-    /// Null = inherit from global configuration.
-    /// </summary>
-    public int? MaxConsolidationDispatchRetries { get; init; }
 
     /// <summary>
     /// Override for <see cref="PipelineConfiguration.CiCancelledMoveMaxRetries"/>.
@@ -98,12 +88,6 @@ public sealed record PipelineProject
     /// Null = inherit from global configuration.
     /// </summary>
     public int? FeedbackTimeoutSeconds { get; init; }
-
-    /// <summary>
-    /// Override for <see cref="PipelineConfiguration.MinIssueSlots"/>.
-    /// Null = inherit from global configuration.
-    /// </summary>
-    public int? MinIssueSlots { get; init; }
 
     /// <summary>
     /// Optional markdown steering content written to the agent workspace before each run.

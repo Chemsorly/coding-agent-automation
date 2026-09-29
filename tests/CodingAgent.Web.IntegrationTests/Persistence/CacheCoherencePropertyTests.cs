@@ -66,7 +66,7 @@ public class CacheCoherencePropertyTests : IDisposable
         // Verify key properties survive round-trip through JSON serialization
         return loaded.MaxRetries == config.MaxRetries
             && loaded.AgentTimeout == config.AgentTimeout
-            && loaded.IssuePageSize == config.IssuePageSize
+            && loaded.MaxIssueImages == config.MaxIssueImages
             && loaded.AnalysisReviewEnabled == config.AnalysisReviewEnabled
             && loaded.AcceptanceCriteriaEnabled == config.AcceptanceCriteriaEnabled
             && loaded.BaselineHealthCheckEnabled == config.BaselineHealthCheckEnabled;
@@ -139,7 +139,7 @@ public class PipelineConfigArbitraries
                   {
                       MaxRetries = maxRetries,
                       AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
-                      IssuePageSize = pageSize,
+                      MaxIssueImages = pageSize,
                       AnalysisReviewEnabled = analysisReview,
                       AcceptanceCriteriaEnabled = acceptanceCriteria,
                       BaselineHealthCheckEnabled = baselineHealth

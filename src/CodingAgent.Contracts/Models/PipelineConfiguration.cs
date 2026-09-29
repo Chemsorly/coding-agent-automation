@@ -1,9 +1,23 @@
 using MessagePack;
+// Aliased: the DataAnnotations namespace also has a KeyAttribute, which would clash with MessagePack's [Key].
+using RangeAttribute = System.ComponentModel.DataAnnotations.RangeAttribute;
 using static CodingAgent.Pipeline.Models.PipelineConfigurationDefaults;
 
 namespace CodingAgent.Pipeline.Models;
 
-
+/// <summary>
+/// The global pipeline settings. Every property is read by code, and every one that is not internal has a field
+/// on a settings page and a row in docs/configuration.md; tests enforce both.
+/// <para>
+/// Limits are <see cref="RangeAttribute"/>s on the properties, checked by <see cref="PipelineSettingsValidator"/> when
+/// settings are saved or imported. Setters never throw, so a stored value outside its range still loads.
+/// </para>
+/// <para>
+/// Internal properties (no settings field): <see cref="ClosedLoopAutoStart"/> is loop state,
+/// <see cref="PipelineInjectedPaths"/> is filled in at runtime, <see cref="TransientRetryDelay"/> lets tests skip the wait,
+/// and <see cref="WorkspaceBaseDirectory"/> is part of the agent image layout.
+/// </para>
+/// </summary>
 [MessagePackObject]
 public sealed record PipelineConfiguration
 {
@@ -11,50 +25,34 @@ public sealed record PipelineConfiguration
 
     [Key(41)]
     [ProjectOverridable(Order = 1)]
+    [Range(0, 10)]
     public int MaxRetries { get; init; } = 3;
 
     /// <summary>
     /// Maximum number of retry attempts for the analysis phase.
-    /// Default 1 = 2 total attempts (initial + 1 retry).
+    /// Default 2 = 3 total attempts (initial + 2 retries).
     /// Set to 0 to disable retry (fail on first failure).
     /// </summary>
     [Key(35)]
     [ProjectOverridable(Order = 2)]
+    [Range(0, 10)]
     public int MaxAnalysisRetries { get; init; } = 2;
 
+    /// <summary>
+    /// Limit for each agent call, in every run type, and the job deadline: Kubernetes stops the job after
+    /// this value plus 60 seconds.
+    /// </summary>
     [Key(4)]
     [ProjectOverridable(Order = 3)]
+    [Range(typeof(TimeSpan), "00:01:00", "1.00:00:00")]
     public TimeSpan AgentTimeout
     {
         get => _agentTimeout;
         init
         {
-            // Clamp a stored zero to the default rather than throwing.
-            // PipelineConfiguration is deserialized from persisted JSON by System.Text.Json (via
-            // PostgresConfigurationStore.LoadPipelineConfigAsync/UpdatePipelineConfigAsync), which
-            // invokes init setters during deserialization. Any DB row that previously stored
-            // "AgentTimeout":"00:00:00" — a value that was legal before this validation was added —
-            // or a null value (TimeSpanJsonConverter.Read returns TimeSpan.Zero for null) would crash
-            // config loading for the entire application if we throw here. Normalize zero to the default
-            // so stale rows are self-healing without requiring a DB migration.
-            // Negative values remain invalid (programmatic misuse) and still throw.
-            if (value == TimeSpan.Zero)
-            {
-                _agentTimeout = PipelineConstants.DefaultAgentTimeout;
-                return;
-            }
-            // TODO [WARNING]: ThrowIfLessThan(value, TimeSpan.Zero) produces a runtime message of
-            // "must be greater than or equal to 00:00:00", which is technically correct but misleading:
-            // the actual allowed range is strictly positive (> 0), because zero is already intercepted
-            // by the early-return clamp above. The only code path that reaches this guard is a negative
-            // value (programmatic misuse). Consider replacing with a manual throw new
-            // ArgumentOutOfRangeException(nameof(AgentTimeout), value, "AgentTimeout must be positive.")
-            // to produce a message that matches the actual contract.
-            // (Correctness review [WARNING] @ PipelineConfiguration.cs:50)
-#pragma warning disable S3236 // 'value' is the implicit init parameter; callers need the property name in the exception.
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, TimeSpan.Zero, nameof(AgentTimeout));
-#pragma warning restore S3236
-            _agentTimeout = value;
+            // A stored zero (legal before validation existed, or a null that TimeSpanJsonConverter reads as zero)
+            // becomes the default, so old rows keep working without a migration.
+            _agentTimeout = value == TimeSpan.Zero ? PipelineConstants.DefaultAgentTimeout : value;
         }
     }
     private readonly TimeSpan _agentTimeout = PipelineConstants.DefaultAgentTimeout;
@@ -65,6 +63,7 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(51)]
     [ProjectOverridable(Order = 17)]
+    [Range(typeof(TimeSpan), "00:00:30", "01:00:00")]
     public TimeSpan StallWarningInterval { get; init; } = PipelineConstants.DefaultStallWarningInterval;
 
     /// <summary>
@@ -72,28 +71,30 @@ public sealed record PipelineConfiguration
     /// Default is 30 seconds. Tests can set a shorter interval for faster execution.
     /// </summary>
     [Key(50)]
+    [Range(typeof(TimeSpan), "00:00:05", "00:02:00")]
     public TimeSpan StallPollInterval { get; init; } = PipelineConstants.DefaultStallPollInterval;
 
     // ── Workspace settings ──────────────────────────────────────────────
 
+    /// <summary>
+    /// Internal: the directory agents create run workspaces in, <c>{WorkspaceBaseDirectory}/{runId}</c>. The agent images
+    /// provide <c>/app/workspaces</c>, which the default resolves to, so this is not an operator setting.
+    /// </summary>
     [Key(52)]
     public string WorkspaceBaseDirectory { get; init; } = "./workspaces";
 
-    /// <summary>
-    /// Number of days to retain workspace folders for failed or cancelled runs.
-    /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
-    /// </summary>
-    [Key(27)]
-    public int FailedWorkspaceRetentionDays { get; init; } = 7;
+    // Key(27) retired — FailedWorkspaceRetentionDays removed (workspaces live in agent pods and go with them). Do NOT reuse this Key index
 
     // ── External CI settings ────────────────────────────────────────────
 
     [Key(26)]
     [ProjectOverridable(Order = 12)]
+    [Range(typeof(TimeSpan), "00:01:00", "1.00:00:00")]
     public TimeSpan ExternalCiTimeout { get; init; } = PipelineConstants.DefaultExternalCiTimeout;
 
     [Key(25)]
     [ProjectOverridable(Order = 13)]
+    [Range(typeof(TimeSpan), "00:00:05", "00:05:00")]
     public TimeSpan ExternalCiPollInterval { get; init; } = PipelineConstants.DefaultExternalCiPollInterval;
 
     /// <summary>
@@ -102,6 +103,7 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(53)]
     [ProjectOverridable(Order = 14)]
+    [Range(typeof(TimeSpan), "00:01:00", "00:30:00")]
     public TimeSpan CiNotStartedTimeout { get; init; } = PipelineConstants.DefaultCiNotStartedTimeout;
 
     /// <summary>
@@ -109,30 +111,18 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(54)]
     [ProjectOverridable(Order = 15)]
-    public int CiNotStartedMaxRetries
-    {
-        get => _ciNotStartedMaxRetries;
-        init => _ciNotStartedMaxRetries = value is >= 0 and <= 20
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(CiNotStartedMaxRetries), value, "Value must be between 0 and 20.");
-    }
-    private readonly int _ciNotStartedMaxRetries = PipelineConstants.DefaultCiNotStartedMaxRetries;
+    [Range(0, 20)]
+    public int CiNotStartedMaxRetries { get; init; } = PipelineConstants.DefaultCiNotStartedMaxRetries;
 
     [Key(38)]
     [ProjectOverridable(Order = 16)]
-    public int MaxInfrastructureRetries
-    {
-        get => _maxInfrastructureRetries;
-        init => _maxInfrastructureRetries = value is >= 0 and <= 10
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(MaxInfrastructureRetries), value, "Value must be between 0 and 10.");
-    }
-    private readonly int _maxInfrastructureRetries = 5;
+    [Range(0, 10)]
+    public int MaxInfrastructureRetries { get; init; } = 5;
 
     // ── Closed-loop settings ────────────────────────────────────────────
 
     /// <summary>
-    /// When true, the pipeline loop starts automatically on application startup.
+    /// Internal: whether the pipeline loop runs, and so starts on application startup.
     /// Set to true when user starts the loop, false when user stops it.
     /// </summary>
     [Key(15)]
@@ -143,6 +133,7 @@ public sealed record PipelineConfiguration
     /// Default: 60 seconds.
     /// </summary>
     [Key(21)]
+    [Range(typeof(TimeSpan), "00:00:10", "00:10:00")]
     public TimeSpan ClosedLoopPollInterval { get; init; } = PipelineConstants.DefaultClosedLoopPollInterval;
 
     /// <summary>
@@ -150,6 +141,7 @@ public sealed record PipelineConfiguration
     /// 0 means unlimited (process entire backlog). Counter resets each poll cycle.
     /// </summary>
     [Key(20)]
+    [Range(0, 1000)]
     public int ClosedLoopMaxRunsPerCycle { get; init; } = 0;
 
     /// <summary>
@@ -157,49 +149,26 @@ public sealed record PipelineConfiguration
     /// Default: 5.
     /// </summary>
     [Key(18)]
-    public int ClosedLoopMaxConsecutivePollFailures
-    {
-        get => _closedLoopMaxConsecutivePollFailures;
-        init => _closedLoopMaxConsecutivePollFailures = value >= 1
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopMaxConsecutivePollFailures), value, "Value must be at least 1.");
-    }
-    private readonly int _closedLoopMaxConsecutivePollFailures = 5;
+    [Range(1, 50)]
+    public int ClosedLoopMaxConsecutivePollFailures { get; init; } = 5;
 
-    /// <summary>
-    /// Maximum backoff interval between poll retries after consecutive failures.
-    /// Backoff uses exponential formula capped at this value. Default: 15 minutes.
-    /// </summary>
-    [Key(17)]
-    public TimeSpan ClosedLoopMaxBackoffInterval { get; init; } = PipelineConstants.DefaultClosedLoopMaxBackoffInterval;
+    // Key(17) retired — ClosedLoopMaxBackoffInterval removed (the loop pauses through its circuit breaker, it has no backoff). Do NOT reuse this Key index
 
     /// <summary>
     /// Maximum number of pages to fetch when polling for agent:next issues.
     /// Each page contains up to 100 issues. Default: 10 (1000 issues max).
     /// </summary>
     [Key(19)]
-    public int ClosedLoopMaxPagesToFetch
-    {
-        get => _closedLoopMaxPagesToFetch;
-        init => _closedLoopMaxPagesToFetch = value >= 1
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopMaxPagesToFetch), value, "Value must be at least 1.");
-    }
-    private readonly int _closedLoopMaxPagesToFetch = 10;
+    [Range(1, 100)]
+    public int ClosedLoopMaxPagesToFetch { get; init; } = 10;
 
     /// <summary>
     /// Cooldown duration before the circuit breaker auto-resumes polling.
     /// After this period the loop resets failure counters and retries. Default: 5 minutes.
     /// </summary>
     [Key(16)]
-    public TimeSpan ClosedLoopCircuitBreakerCooldown
-    {
-        get => _closedLoopCircuitBreakerCooldown;
-        init => _closedLoopCircuitBreakerCooldown = value >= TimeSpan.FromSeconds(1)
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(ClosedLoopCircuitBreakerCooldown), value, "Value must be at least 1 second.");
-    }
-    private readonly TimeSpan _closedLoopCircuitBreakerCooldown = PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown;
+    [Range(typeof(TimeSpan), "00:00:30", "01:00:00")]
+    public TimeSpan ClosedLoopCircuitBreakerCooldown { get; init; } = PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown;
 
     // ── Agent orchestration settings ────────────────────────────────────
 
@@ -217,6 +186,7 @@ public sealed record PipelineConfiguration
     /// Default: 3.
     /// </summary>
     [Key(12)]
+    [Range(0, 10)]
     public int BrainPushMaxRetries { get; init; } = 3;
 
     /// <summary>
@@ -224,80 +194,28 @@ public sealed record PipelineConfiguration
     /// (clone/pull) and context injection proceed normally, but all write operations
     /// are skipped — write instructions are omitted from the prompt, validation is
     /// skipped, and the SyncingBrainRepoPostRun step (commit and push) is skipped
-    /// entirely. Defaults to false.
+    /// entirely. Brain consolidation does not run either. Defaults to false.
     /// </summary>
     [Key(13)]
     [ProjectOverridable(Order = 27)]
     public bool BrainReadOnly { get; init; }
 
-    /// <summary>
-    /// How long to wait after an agent disconnects before marking its active run as Failed.
-    /// Default: 5 minutes.
-    /// </summary>
-    [Key(3)]
-    public TimeSpan AgentDisconnectGracePeriod { get; init; } = PipelineConstants.DefaultAgentDisconnectGracePeriod;
-
-    /// <summary>
-    /// How long a busy agent can go without pipeline step progress before being marked as stuck.
-    /// Default: 60 minutes.
-    /// </summary>
-    [Key(2)]
-    public TimeSpan AgentBusyProgressTimeout { get; init; } = PipelineConstants.DefaultAgentBusyProgressTimeout;
-
-    /// <summary>
-    /// Maximum number of output lines to retain per active pipeline run (ring buffer capacity).
-    /// Default: 10,000.
-    /// </summary>
-    [Key(42)]
-    public int OutputBufferCapacity { get; init; } = PipelineConstants.DefaultOutputBufferCapacity;
-
-    /// <summary>
-    /// Maximum number of output lines in PipelineRun.OutputLines bounded queue.
-    /// Default: 5,000.
-    /// </summary>
-    [Key(43)]
-    public int OutputLinesCapacity { get; init; } = PipelineConstants.DefaultOutputLinesCapacity;
-
-    /// <summary>
-    /// Maximum number of chat entries in PipelineRun.ChatHistory bounded queue.
-    /// Default: 200.
-    /// </summary>
-    [Key(14)]
-    public int ChatHistoryCapacity { get; init; } = PipelineConstants.DefaultChatHistoryCapacity;
-
-    /// <summary>
-    /// Maximum number of quality gate reports in PipelineRun.QualityGateHistory bounded queue.
-    /// Default: 50.
-    /// </summary>
-    [Key(46)]
-    public int QualityGateHistoryCapacity { get; init; } = PipelineConstants.DefaultQualityGateHistoryCapacity;
-
-    /// <summary>
-    /// Maximum number of retry error messages in PipelineRun.RetryErrors bounded queue.
-    /// Default: 100.
-    /// </summary>
-    [Key(49)]
-    public int RetryErrorsCapacity { get; init; } = PipelineConstants.DefaultRetryErrorsCapacity;
-
-    /// <summary>
-    /// Interval in seconds between heartbeat monitor sweeps. Requires restart to take effect.
-    /// Default: 60.
-    /// </summary>
-    [Key(29)]
-    public int HeartbeatSweepIntervalSeconds { get; init; } = PipelineConstants.DefaultHeartbeatSweepIntervalSeconds;
-
-    /// <summary>
-    /// Seconds without a heartbeat before an agent is considered stale.
-    /// Default: 90.
-    /// </summary>
-    [Key(30)]
-    public int HeartbeatTimeoutSeconds { get; init; } = PipelineConstants.DefaultHeartbeatTimeoutSeconds;
+    // Key(3) retired — AgentDisconnectGracePeriod removed (nothing read it). Do NOT reuse this Key index
+    // Key(2) retired — AgentBusyProgressTimeout removed (nothing read it). Do NOT reuse this Key index
+    // Key(42) retired — OutputBufferCapacity removed (the buffer size is PipelineConstants.DefaultOutputBufferCapacity). Do NOT reuse this Key index
+    // Key(43) retired — OutputLinesCapacity removed (PipelineRun uses PipelineConstants.DefaultOutputLinesCapacity). Do NOT reuse this Key index
+    // Key(14) retired — ChatHistoryCapacity removed (PipelineRun uses PipelineConstants.DefaultChatHistoryCapacity). Do NOT reuse this Key index
+    // Key(46) retired — QualityGateHistoryCapacity removed (PipelineRun uses PipelineConstants.DefaultQualityGateHistoryCapacity). Do NOT reuse this Key index
+    // Key(49) retired — RetryErrorsCapacity removed (PipelineRun uses PipelineConstants.DefaultRetryErrorsCapacity). Do NOT reuse this Key index
+    // Key(29) retired — HeartbeatSweepIntervalSeconds removed (its heartbeat monitor was deleted). Do NOT reuse this Key index
+    // Key(30) retired — HeartbeatTimeoutSeconds removed (its heartbeat monitor was deleted). Do NOT reuse this Key index
 
     /// <summary>
     /// Interval in minutes between orphaned label recovery sweeps.
     /// Default: 30.
     /// </summary>
     [Key(55)]
+    [Range(5, 1440)]
     public int OrphanedLabelSweepIntervalMinutes { get; init; } = PipelineConstants.DefaultOrphanedLabelSweepIntervalMinutes;
 
     // ── Commit settings ─────────────────────────────────────────────────
@@ -307,7 +225,7 @@ public sealed record PipelineConfiguration
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory };
 
     /// <summary>
-    /// Agent-provider-specific paths that are ALWAYS unstaged before commit, regardless of
+    /// Internal: agent-provider-specific paths that are ALWAYS unstaged before commit, regardless of
     /// <see cref="BlacklistedPaths"/> configuration. Populated from
     /// <see cref="IAgentProvider.PipelineInjectedPaths"/> at pipeline startup.
     /// </summary>
@@ -316,8 +234,7 @@ public sealed record PipelineConfiguration
 
     // ── Analysis & Review settings ──────────────────────────────────────
 
-    [Key(33)]
-    public int IssuePageSize { get; init; } = 25;
+    // Key(33) retired — IssuePageSize removed (nothing read it). Do NOT reuse this Key index
 
     [Key(22)]
     [ProjectOverridable(Order = 10, DeepMerge = true)]
@@ -391,10 +308,9 @@ public sealed record PipelineConfiguration
 
     /// <summary>
     /// When true, harness suggestions are reviewed by an isolated discriminator agent
-    /// before being persisted. Default: true.
+    /// before being persisted. Default: true. Harness suggestions are global, so projects cannot override this.
     /// </summary>
     [Key(28)]
-    [ProjectOverridable(Order = 25)]
     public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -409,33 +325,13 @@ public sealed record PipelineConfiguration
     /// Number of commits on the default branch since the last analysis that triggers
     /// an automatic analysis refresh. Set to 0 to disable commit-count staleness detection.
     /// Valid range: 0–1000 (at PageSize=100, 1000 commits = max 10 API calls).
-    /// Configurable at global level and overridable per project via <see cref="PipelineConfigurationResolver.ApplyProjectOverrides"/>.
     /// </summary>
     [Key(56)]
     [ProjectOverridable(Order = 28)]
-    public int AnalysisCommitThreshold
-    {
-        get => field;
-        init
-        {
-            // S3236 suppressed: nameof(AnalysisCommitThreshold) is intentional — 'value' in init
-            // accessors is the implicit parameter name; callers need the property name in the exception.
-#pragma warning disable S3236
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 0, nameof(AnalysisCommitThreshold));
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 1000, nameof(AnalysisCommitThreshold));
-#pragma warning restore S3236
-            field = value;
-        }
-    } = PipelineConstants.DefaultAnalysisCommitThreshold;
+    [Range(0, 1000)]
+    public int AnalysisCommitThreshold { get; init; } = PipelineConstants.DefaultAnalysisCommitThreshold;
 
-    /// <summary>
-    /// Records the last-used provider ID for each provider selection per pipeline.
-    /// Keys: "issue", "repository", "agent", "brain", "pipeline".
-    /// Values: provider config IDs.
-    /// Pre-populates dropdowns on subsequent pipeline runs.
-    /// </summary>
-    [Key(34)]
-    public IReadOnlyDictionary<string, string> LastUsedProviderIds { get; init; } = new Dictionary<string, string>();
+    // Key(34) retired — LastUsedProviderIds removed (nothing read it). Do NOT reuse this Key index
 
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
@@ -449,6 +345,7 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(40)]
     [ProjectOverridable(Order = 22)]
+    [Range(1, 10)]
     public int MaxRefactoringProposals { get; init; } = 3;
 
     /// <summary>
@@ -456,6 +353,7 @@ public sealed record PipelineConfiguration
     /// Only commits within this window are counted. Default: 90 days.
     /// </summary>
     [Key(31)]
+    [Range(typeof(TimeSpan), "7.00:00:00", "365.00:00:00")]
     public TimeSpan HotspotAnalysisLookback { get; init; } = TimeSpan.FromDays(90);
 
     /// <summary>
@@ -463,22 +361,15 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(37)]
     [ProjectOverridable(Order = 18)]
-    public int MaxDecompositionSubIssues
-    {
-        get => field;
-        init
-        {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 20);
-            field = value;
-        }
-    } = 10;
+    [Range(1, 20)]
+    public int MaxDecompositionSubIssues { get; init; } = 10;
 
     /// <summary>
-    /// Maximum simultaneous decomposition runs. Default: 2.
+    /// Maximum simultaneous decomposition runs across all projects. Default: 2.
+    /// The scheduler enforces it for the whole loop, so projects cannot override it.
     /// </summary>
     [Key(36)]
-    [ProjectOverridable(Order = 19)]
+    [Range(1, 10)]
     public int MaxConcurrentDecompositions { get; init; } = 2;
 
     // Key(23) retired — DecompositionTimeout removed; decomposition calls use AgentTimeout. Do NOT reuse this Key index
@@ -488,6 +379,7 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(39)]
     [ProjectOverridable(Order = 21)]
+    [Range(1, 200)]
     public int MaxOpenIssuesForContext { get; init; } = 50;
 
     /// <summary>
@@ -496,6 +388,7 @@ public sealed record PipelineConfiguration
     /// Default: 90 days.
     /// </summary>
     [Key(47)]
+    [Range(typeof(TimeSpan), "7.00:00:00", "365.00:00:00")]
     public TimeSpan RefactoringOutcomeLookback { get; init; } = TimeSpan.FromDays(90);
 
     // ── Issue image extraction settings ─────────────────────────────────
@@ -504,24 +397,28 @@ public sealed record PipelineConfiguration
     /// Maximum number of images to extract per issue/PR. Default: 10.
     /// </summary>
     [Key(63)]
+    [Range(0, 50)]
     public int MaxIssueImages { get; init; } = 10;
 
     /// <summary>
-    /// Maximum size in bytes for a single downloaded image. Default: 5 MB.
+    /// Maximum size in bytes for a single downloaded image. Default: 5 MB. Range: 1–50 MB.
     /// </summary>
     [Key(64)]
+    [Range(1_048_576d, 52_428_800d)]
     public long MaxImageSizeBytes { get; init; } = 5_242_880;
 
     /// <summary>
-    /// Maximum total bytes for all downloaded images combined. Default: 20 MB.
+    /// Maximum total bytes for all downloaded images combined. Default: 20 MB. Range: 1–200 MB.
     /// </summary>
     [Key(65)]
+    [Range(1_048_576d, 209_715_200d)]
     public long MaxTotalImageSizeBytes { get; init; } = 20_971_520;
 
     /// <summary>
     /// Total time budget in seconds for downloading all images. Default: 60.
     /// </summary>
     [Key(66)]
+    [Range(5, 600)]
     public int TotalImageDownloadTimeoutSeconds { get; init; } = 60;
 
     /// <summary>
@@ -536,11 +433,7 @@ public sealed record PipelineConfiguration
     [Key(68)]
     public bool EnableNativeImageParts { get; init; } = true;
 
-    /// <summary>
-    /// Timeout in seconds for downloading a single image. Default: 30.
-    /// </summary>
-    [Key(69)]
-    public int ImageDownloadTimeoutSeconds { get; init; } = 30;
+    // Key(69) retired — ImageDownloadTimeoutSeconds removed (only the total download budget applies). Do NOT reuse this Key index
 
     // ── Decomposition file limit settings ───────────────────────────────
 
@@ -549,16 +442,8 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(70)]
     [ProjectOverridable(Order = 29)]
-    public int MaxDecompositionSubIssueFiles
-    {
-        get => field;
-        init
-        {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30);
-            field = value;
-        }
-    } = 12;
+    [Range(1, 30)]
+    public int MaxDecompositionSubIssueFiles { get; init; } = 12;
 
     // ── Kubernetes model-fetch settings ─────────────────────────────────
 
@@ -568,16 +453,8 @@ public sealed record PipelineConfiguration
     /// Default: 120s. Range: 30–600.
     /// </summary>
     [Key(71)]
-    public int ModelFetchTimeoutSeconds
-    {
-        get => field;
-        init
-        {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 30);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600);
-            field = value;
-        }
-    } = 120;
+    [Range(30, 600)]
+    public int ModelFetchTimeoutSeconds { get; init; } = 120;
 
     // ── Housekeeping settings ─────────────────────────────────────────────
 
@@ -587,6 +464,7 @@ public sealed record PipelineConfiguration
     /// Default: 1 (fully serial). Minimum: 1.
     /// </summary>
     [Key(72)]
+    [Range(1, 20)]
     public int HousekeepingConcurrencyLimit { get; init; } = 1;
 
     /// <summary>
@@ -595,6 +473,7 @@ public sealed record PipelineConfiguration
     /// Default: 60 minutes. Set to 0 to run every poll tick (not recommended for busy repos).
     /// </summary>
     [Key(73)]
+    [Range(0, 10080)]
     public int HousekeepingBranchCleanupIntervalMinutes { get; init; } = 60;
 
     /// <summary>
@@ -602,98 +481,39 @@ public sealed record PipelineConfiguration
     /// Prevents a single PR from monopolising the update slot when CI takes longer than one
     /// poll cycle. Default: 25 (comfortably exceeds a typical ~20-min CI run).
     /// </summary>
-    // TODO: Key(82) is placed here between Key(73) and Key(74) in source order but is numerically
-    // the highest key in this record (Keys 74–81 appear later in the file). MessagePack resolves
-    // by key number not source order so serialisation is correct, but the out-of-sequence placement
-    // is a maintenance hazard — future contributors may miss it when auditing the key sequence.
-    // Consider relocating this property after Key(81) at the bottom of the record to restore
-    // sequential source order.
     [Key(82)]
+    [Range(1, 1440)]
     public int HousekeepingTriggerCooldownMinutes { get; init; } = 25;
 
     // Key(84) retired — HousekeepingMaxSlotAgeMinutes removed
 
-    // ── Consolidation dispatch settings ──────────────────────────────────────
-
-    /// <summary>
-    /// Maximum number of times the drain service will attempt to dispatch a consolidation job
-    /// to an agent before giving up and transitioning the run to <c>Failed</c>.
-    /// Non-consolidation jobs are not subject to this limit.
-    /// Default: 5.
-    /// </summary>
-    [Key(74)]
-    [ProjectOverridable(Order = 30)]
-    public int MaxConsolidationDispatchRetries { get; init; } = 5;
+    // Key(74) retired — MaxConsolidationDispatchRetries removed (its drain service was removed in #2323). Do NOT reuse this Key index
 
     // ── DB retention settings ─────────────────────────────────────────────
 
     /// <summary>
     /// Per-project row count cap for <c>PipelineRuns</c>. Only completed runs
     /// (<c>CompletedAt IS NOT NULL</c>, <c>ProjectId IS NOT NULL</c>) are eligible for deletion.
-    /// The oldest rows beyond N per project are pruned on each sweep.
-    /// <para>
-    /// Set to <c>-1</c> (default) to disable. Must be <c>-1</c> or a strictly positive integer.
-    /// A value of <c>0</c> or any other negative value is rejected at config load time.
-    /// </para>
+    /// The oldest rows beyond N per project are pruned on each sweep. 0 or -1 (the default) keeps every row.
     /// </summary>
     [Key(75)]
-    public int PipelineRunRetentionCount
-    {
-        get => field;
-        init
-        {
-            if (value != -1 && value <= 0)
-                throw new ArgumentOutOfRangeException(nameof(PipelineRunRetentionCount),
-                    value, "PipelineRunRetentionCount must be -1 (disabled) or a positive integer.");
-            field = value;
-        }
-    } = -1;
+    [Range(-1, 1_000_000)]
+    public int PipelineRunRetentionCount { get; init; } = -1;
 
     /// <summary>
     /// Per-project row count cap for terminal <c>WorkItems</c>
     /// (<c>Status IN (3=Succeeded, 4=Failed, 5=Cancelled)</c>, <c>CompletedAt IS NOT NULL</c>,
     /// <c>ProjectId IS NOT NULL</c>). Non-terminal rows and rows with <c>CompletedAt IS NULL</c>
-    /// are never deleted.
-    /// <para>
-    /// Set to <c>-1</c> (default) to disable. Must be <c>-1</c> or a strictly positive integer.
-    /// A value of <c>0</c> or any other negative value is rejected at config load time.
-    /// </para>
+    /// are never deleted. 0 or -1 (the default) keeps every row.
     /// </summary>
     [Key(76)]
-    public int WorkItemRetentionCount
-    {
-        get => field;
-        init
-        {
-            if (value != -1 && value <= 0)
-                throw new ArgumentOutOfRangeException(nameof(WorkItemRetentionCount),
-                    value, "WorkItemRetentionCount must be -1 (disabled) or a positive integer.");
-            field = value;
-        }
-    } = -1;
+    [Range(-1, 1_000_000)]
+    public int WorkItemRetentionCount { get; init; } = -1;
+
+    // Key(77) retired — DbRetentionSweepInterval removed (the Scheduler triggers the sweep hourly). Do NOT reuse this Key index
 
     /// <summary>
-    /// Interval between DB retention sweep cycles.
-    /// Takes effect on restart (<c>PeriodicTimer</c> period is fixed at construction).
-    /// Replaces the <c>WorkDistribution:Reconciliation:MaintenanceIntervalHours</c> config key
-    /// as the timer period for <c>DatabaseMaintenanceService</c>.
-    /// Default: 24 hours. Minimum: 1 minute.
-    /// </summary>
-    [Key(77)]
-    public TimeSpan DbRetentionSweepInterval
-    {
-        get => field;
-        init
-        {
-            if (value < TimeSpan.FromMinutes(1))
-                throw new ArgumentOutOfRangeException(nameof(DbRetentionSweepInterval),
-                    value, "DbRetentionSweepInterval must be at least 1 minute.");
-            field = value;
-        }
-    } = TimeSpan.FromHours(24);
-
-    /// <summary>
-    /// Delay between retry loop iterations when a transient provider error
+    /// Internal: delay between retry loop iterations when a transient provider error
     /// (ProviderRateLimit or ProviderOverload) is encountered. Default: 30 seconds.
     /// Tests can set this to <see cref="TimeSpan.Zero"/> to avoid blocking.
     /// </summary>
@@ -727,17 +547,8 @@ public sealed record PipelineConfiguration
     // CI wait time is bounded by one ExternalCiTimeout window.
     [Key(80)]
     [ProjectOverridable(Order = 31)]
-    public int CiCancelledMoveMaxRetries
-    {
-        get => _ciCancelledMoveMaxRetries;
-        init
-        {
-            ArgumentOutOfRangeException.ThrowIfLessThan(value, 0);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 10);
-            _ciCancelledMoveMaxRetries = value;
-        }
-    }
-    private readonly int _ciCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries;
+    [Range(0, 10)]
+    public int CiCancelledMoveMaxRetries { get; init; } = PipelineConstants.DefaultCiCancelledMoveMaxRetries;
 
     /// <summary>
     /// Timeout in seconds for the agent call during feedback collection (both success-path
@@ -747,6 +558,7 @@ public sealed record PipelineConfiguration
     /// </summary>
     [Key(81)]
     [ProjectOverridable(Order = 32)]
+    [Range(10, 600)]
     public int FeedbackTimeoutSeconds { get; init; } = FeedbackConstraints.FailureFeedbackTimeoutSeconds;
 
     /// <summary>
@@ -755,17 +567,11 @@ public sealed record PipelineConfiguration
     /// this many slots are held back for Issues if any are present and
     /// <see cref="DispatchRoundRobinRequest.MaxRunsPerCycle"/> ≥ 2 (or is 0 for unlimited).
     /// Default: 1. Set to 0 to disable floor allocation (strict priority, original behavior).
+    /// The scheduler enforces it for the whole loop, so projects cannot override it.
     /// </summary>
     [Key(83)]
-    [ProjectOverridable(Order = 33)]
-    public int MinIssueSlots
-    {
-        get => _minIssueSlots;
-        init => _minIssueSlots = value >= 0
-            ? value
-            : throw new ArgumentOutOfRangeException(nameof(MinIssueSlots), value, "Value must be >= 0.");
-    }
-    private readonly int _minIssueSlots = 1;
+    [Range(0, 100)]
+    public int MinIssueSlots { get; init; } = 1;
 
     // ── Feedback comment outbox ────────────────────────────────────────────
     /// <summary>
@@ -774,6 +580,7 @@ public sealed record PipelineConfiguration
     /// Default 5. See FeedbackCommentRelayService.
     /// </summary>
     [Key(85)]
+    [Range(1, 100)]
     public int FeedbackCommentOutboxMaxAttempts { get; init; } = PipelineConstants.DefaultFeedbackCommentOutboxMaxAttempts;
 
 }

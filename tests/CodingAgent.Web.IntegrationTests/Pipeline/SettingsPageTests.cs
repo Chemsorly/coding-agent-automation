@@ -161,7 +161,6 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
-                [ProviderSettingKeys.Timeout] = "45",
                 [ProviderSettingKeys.AgentName] = "default"
             }
         };
@@ -172,7 +171,6 @@ public class SettingsPageTests
         savedConfig!.Kind.Should().Be(ProviderKind.Agent);
         savedConfig.ProviderType.Should().Be("KiroCli");
         savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath).WhoseValue.Should().Be("/root/.local/bin/kiro-cli");
-        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.Timeout).WhoseValue.Should().Be("45");
         savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.AgentName).WhoseValue.Should().Be("default");
     }
 
@@ -193,7 +191,6 @@ public class SettingsPageTests
             Settings = new Dictionary<string, string>
             {
                 [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
-                [ProviderSettingKeys.Timeout] = "30",
                 [ProviderSettingKeys.AgentName] = "default",
                 [ProviderSettingKeys.Model] = "claude-sonnet-4.6"
             }
@@ -653,11 +650,9 @@ public class SettingsPageTests
         // Set non-default values for all non-UI properties
         await store.SavePipelineConfigAsync(new PipelineConfiguration
         {
-            IssuePageSize = 50,
             WorkspaceBaseDirectory = "/custom/workspaces",
             StallWarningInterval = TimeSpan.FromMinutes(5),
             StallPollInterval = TimeSpan.FromSeconds(10),
-            LastUsedProviderIds = new Dictionary<string, string> { ["issue"] = "test-id" },
             ClosedLoopMaxPagesToFetch = 20
         }, CancellationToken.None);
 
@@ -668,11 +663,9 @@ public class SettingsPageTests
 
         // Verify all non-UI fields survive
         var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
-        loaded.IssuePageSize.Should().Be(50);
         loaded.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
         loaded.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
         loaded.StallPollInterval.Should().Be(TimeSpan.FromSeconds(10));
-        loaded.LastUsedProviderIds.Should().ContainKey("issue");
         loaded.ClosedLoopMaxPagesToFetch.Should().Be(20);
         // Also verify the saved field
         loaded.MaxRetries.Should().Be(5);

@@ -18,11 +18,22 @@ public static class PipelineConfigurationResolver
     /// Called BEFORE ApplyTemplateOverrides in the dispatch pipeline.
     /// Each non-null property on the project replaces the corresponding global value.
     /// Nested objects (e.g., CodeReview) use deep-merge semantics via ApplyOverrides.
+    /// An override outside the range of its setting is skipped with a warning, so that setting keeps the
+    /// global value and every other override still applies.
     /// </summary>
     public static PipelineConfiguration ApplyProjectOverrides(
         PipelineConfiguration config, PipelineProject? project)
     {
         if (project is null) return config;
+
+        var skipped = new List<string>();
+        project = PipelineSettingsValidator.WithoutInvalidOverrides(project, skipped);
+        foreach (var reason in skipped)
+        {
+            Log.Warning(
+                "Project '{ProjectName}' (ID: {ProjectId}): override skipped, the global value applies. {Reason}",
+                project.Name, project.Id, reason);
+        }
 
         // Clone once via the compiler-generated <Clone>$ method, then mutate via PropertyInfo.SetValue.
         // This is equivalent to the previous per-property `config = config with { Prop = value }` pattern.
@@ -57,16 +68,6 @@ public static class PipelineConfigurationResolver
                     mapping.ConfigProperty.SetValue(clone, unwrapped);
                 }
             }
-        }
-        catch (TargetInvocationException ex) when (ex.InnerException is ArgumentOutOfRangeException rangeEx)
-        {
-            // On validation failure, discard the partially-mutated clone and return the original
-            // config unchanged. This is consistent with the null-project early return (line above)
-            // and ensures the log message ("falling back to global defaults") is accurate.
-            Log.Warning(
-                "Project '{ProjectName}' (ID: {ProjectId}) has out-of-range override values — falling back to global defaults. {ErrorMessage}",
-                project.Name, project.Id, rangeEx.Message);
-            return config;
         }
         catch (TargetInvocationException ex)
         {

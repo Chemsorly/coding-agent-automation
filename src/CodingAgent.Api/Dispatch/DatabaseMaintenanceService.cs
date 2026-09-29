@@ -196,8 +196,8 @@ public class DatabaseMaintenanceService
             var config = await _configStore.LoadPipelineConfigAsync(ct);
             var retentionCount = config.PipelineRunRetentionCount;
 
-            if (retentionCount == -1)
-                return 0; // Disabled
+            if (retentionCount <= 0)
+                return 0; // 0 or -1 keeps every row
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -264,8 +264,8 @@ public class DatabaseMaintenanceService
             var config = await _configStore.LoadPipelineConfigAsync(ct);
             var retentionCount = config.WorkItemRetentionCount;
 
-            if (retentionCount == -1)
-                return 0; // Disabled
+            if (retentionCount <= 0)
+                return 0; // 0 or -1 keeps every row
 
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -547,7 +547,6 @@ public class DatabaseMaintenanceService
         public static readonly NullPipelineRunHistoryService Instance = new();
 
         public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
-        public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
         public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default) => Task.CompletedTask;
         public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default) => Task.CompletedTask;
         public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<PipelineRunSummary>>([]);

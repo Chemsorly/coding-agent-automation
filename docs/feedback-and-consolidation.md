@@ -110,7 +110,6 @@ Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mo
 
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. While a work item with that key is live, another trigger is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
-- **Dispatch retries:** Up to `maxConsolidationDispatchRetries` retry attempts (default: 5) before permanent failure. See [Configuration — Consolidation Dispatch](configuration.md#consolidation-dispatch).
 
 ### Consolidation Page
 

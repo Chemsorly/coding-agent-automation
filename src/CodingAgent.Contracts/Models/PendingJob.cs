@@ -53,14 +53,6 @@ public sealed record PendingJob
     public bool AutoDispatch { get; init; }
 
     /// <summary>
-    /// Number of times the drain service has attempted to dispatch this consolidation job to an agent.
-    /// Incremented on each dispatch failure. When this reaches <c>PipelineConfiguration.MaxConsolidationDispatchRetries</c>
-    /// (default 5), the job is discarded and the <c>ConsolidationRun</c> transitions to <c>Failed</c>.
-    /// Irrelevant for non-consolidation jobs (always 0).
-    /// </summary>
-    public int ConsolidationDispatchAttempt { get; init; }
-
-    /// <summary>
     /// Intra-queue dispatch priority. Higher values are dispatched first.
     /// Mirrors <see cref="PendingWorkItemDto.PriorityWeight"/>. Defaults to 0.
     /// Range: 0–1000.

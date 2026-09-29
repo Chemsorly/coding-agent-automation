@@ -217,6 +217,12 @@ public sealed partial class PipelineRun
     /// <summary>Names of review agents that were executed during this run.</summary>
     public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Why the review step ran no reviewers, when it ran none; a PR review posts this as its skip comment.
+    /// Null when reviewers ran, or when the step never started.
+    /// </summary>
+    public string? CodeReviewSkipReason { get; set; }
+
     /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if generation failed/skipped.</summary>
     public string? CodeReviewChangeSummary { get; set; }
 

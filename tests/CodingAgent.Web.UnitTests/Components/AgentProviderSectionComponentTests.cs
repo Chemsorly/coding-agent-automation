@@ -53,7 +53,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    [ProviderSettingKeys.Timeout] = "45",
                     [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
             }
@@ -64,7 +63,8 @@ public class AgentProviderSectionComponentTests : BunitContext
         Assert.Contains("My Kiro Agent", component.Markup);
         Assert.Contains("KiroCli", component.Markup);
         Assert.Contains("/usr/bin/kiro-cli", component.Markup);
-        Assert.Contains("45", component.Markup);
+        Assert.Contains("model: claude-sonnet-4", component.Markup);
+        Assert.DoesNotContain("min ·", component.Markup);
     }
 
     [Fact]
@@ -81,7 +81,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    [ProviderSettingKeys.Timeout] = "30",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
@@ -107,7 +106,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         Assert.Contains("Add Agent Provider", component.Markup);
         Assert.Contains("Display Name", component.Markup);
         Assert.Contains("Executable Path", component.Markup);
-        Assert.Contains("Timeout", component.Markup);
+        Assert.DoesNotContain("Timeout (minutes)", component.Markup);
         Assert.Contains("Agent Name", component.Markup);
         Assert.Contains("Model", component.Markup);
     }
@@ -158,7 +157,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/custom/path/kiro-cli",
-                    [ProviderSettingKeys.Timeout] = "60",
                     [ProviderSettingKeys.AgentName] = "custom-agent",
                     [ProviderSettingKeys.Model] = "claude-sonnet-4"
                 }
@@ -300,7 +298,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    [ProviderSettingKeys.Timeout] = "30",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }
@@ -335,7 +332,6 @@ public class AgentProviderSectionComponentTests : BunitContext
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    [ProviderSettingKeys.Timeout] = "30",
                     [ProviderSettingKeys.Model] = "auto"
                 }
             }

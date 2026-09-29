@@ -81,6 +81,51 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task CodeReview_MaxIterationsZero_PrReviewRun_StillRunsTheReviewers()
+    {
+        // MaxIterations = 0 turns off the review step of implementation runs only (#3146).
+        var reviewRun = new PipelineRun
+        {
+            RunId = "test-run-pr-review",
+            IssueIdentifier = "42",
+            IssueTitle = "Test PR",
+            IssueProviderConfigId = "rp-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = _workspacePath,
+            RunType = PipelineRunType.Review,
+        };
+        SetupAgentWritingFindings("Agent1", "[WARNING] Style issue");
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 0 } };
+        var context = BuildContext(config) with { Run = reviewRun };
+
+        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Agent1"));
+
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce);
+        reviewRun.CodeReviewIterationsTotal.Should().Be(1);
+        reviewRun.CodeReviewSkipReason.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CodeReview_NoResolvedReviewers_RecordsTheSkipReason()
+    {
+        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None, resolvedReviewerConfigs: null);
+
+        _run.CodeReviewSkipReason.Should().Be(
+            "No enabled reviewer configuration matches this repository's labels. Review skipped.");
+    }
+
+    [Fact]
+    public async Task CodeReview_ReviewersWithoutAgents_RecordsTheSkipReason()
+    {
+        var configs = new[] { new ReviewerConfiguration { DisplayName = "Empty", Agents = Array.Empty<ReviewAgent>() } };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None, resolvedReviewerConfigs: configs);
+
+        _run.CodeReviewSkipReason.Should().Be(
+            "The reviewer configurations that match this repository's labels define no review agents. Review skipped.");
+    }
+
+    [Fact]
     // TODO [WARNING]: This test covers the null-configs path but only asserts that the agent is never
     // called — it does NOT assert the mandatory _logger.Warning signal introduced by issue #2228.
     // This makes it a weaker duplicate of WhenResolvedReviewerConfigsIsNull_LogsWarningAtWarnLevel below.

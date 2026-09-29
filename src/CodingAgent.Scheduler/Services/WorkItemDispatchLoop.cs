@@ -19,9 +19,8 @@ namespace CodingAgent.Scheduler.Services;
 /// <list type="number">
 ///   <item>Fetches Pending WorkItems via <c>GET /api/work-items/pending</c>
 ///     (sorted by RunType tier: Review &gt; Decomposition &gt; Implementation &gt; Consolidation,
-///     then <c>PriorityWeight DESC</c> within a tier, then <c>CreatedAt ASC</c>). When
-///     <c>Consolidation:UnifiedDispatch:Enabled</c> is false, consolidation items are excluded
-///     by the endpoint; when true, they are included and dispatched via this loop.
+///     then <c>PriorityWeight DESC</c> within a tier, then <c>CreatedAt ASC</c>). Consolidation items
+///     are dispatched through this loop like every other run type.
 ///     The <c>maxResults</c> window (default 50) is filled strictly in tier order — if 50+
 ///     items of a higher tier are pending, lower-tier items are invisible to this cycle.</item>
 ///   <item>Dispatches each item sequentially so the endpoint's per-call snapshot stays accurate.</item>

@@ -48,13 +48,6 @@ public class PipelineConfigurationImageSettingsTests
     }
 
     [Fact]
-    public void ImageDownloadTimeoutSeconds_DefaultsTo30()
-    {
-        var config = new PipelineConfiguration();
-        config.ImageDownloadTimeoutSeconds.Should().Be(30);
-    }
-
-    [Fact]
     public void ImageSettings_CanBeOverriddenViaInit()
     {
         var config = new PipelineConfiguration
@@ -64,8 +57,7 @@ public class PipelineConfigurationImageSettingsTests
             MaxTotalImageSizeBytes = 10_000_000,
             TotalImageDownloadTimeoutSeconds = 30,
             EnableIssueImageExtraction = false,
-            EnableNativeImageParts = false,
-            ImageDownloadTimeoutSeconds = 15
+            EnableNativeImageParts = false
         };
 
         config.MaxIssueImages.Should().Be(5);
@@ -74,6 +66,5 @@ public class PipelineConfigurationImageSettingsTests
         config.TotalImageDownloadTimeoutSeconds.Should().Be(30);
         config.EnableIssueImageExtraction.Should().BeFalse();
         config.EnableNativeImageParts.Should().BeFalse();
-        config.ImageDownloadTimeoutSeconds.Should().Be(15);
     }
 }

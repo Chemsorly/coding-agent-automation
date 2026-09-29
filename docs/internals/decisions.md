@@ -273,6 +273,8 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 **Status (2026-09-02):** Resolved. `ReviewIsolation.Shared` removed in #2233. Field retained at Key(4) with `Isolated`-only enum; stored configs containing `"Shared"` map to `Isolated` via `ReviewIsolationJsonConverter` (registered at the enum type level).
 
+**Status (2026-09-29):** The `ReviewIsolation` field is removed, because its only value was `Isolated` and nothing read it; `CodeReviewConfiguration` Keys 3 and 4 are retired. Review agents still always run isolated. Stored configs that contain the field load normally.
+
 ---
 
 ### HMAC key derivation for agent auth — intentional simplicity
@@ -867,6 +869,25 @@ The budget is a soft prompt constraint (not mechanically enforced). Agents may e
 
 <!-- Decisions about defaults, limits, thresholds, and tunables -->
 
+### Settings are read, offered and range-checked — one record, four scopes
+
+**Date:** 2026-09-29
+**Category:** configuration
+
+**Decision:** Four rules for `PipelineConfiguration`:
+1. Every setting is read by code; a setting nothing reads is removed, not wired up. Sixteen were removed, with their MessagePack keys retired.
+2. Every setting has a field on a settings page and a row in `docs/configuration.md`, except four internal fields that are not settings (`ClosedLoopAutoStart`, `PipelineInjectedPaths`, `TransientRetryDelay`, `WorkspaceBaseDirectory`). Tests enforce both.
+3. A value outside its range is refused when global settings, a project or an import is saved. A project override stored outside its range is skipped with a warning, so it affects only its own setting.
+4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit), the repository provider (labels, secrets, setup, steering, blacklist) and the label catalogs. The record is not split, and system settings are not moved to Helm.
+
+A setting's limits are standard `[Range]` attributes on the property, the one source for the API check, the resolver and the settings pages' input limits. Setters no longer throw, so a stored out-of-range value can no longer stop the configuration from loading.
+
+**Context:** A 2026-09-27 review found settings that did nothing (most of the Advanced page), working settings without a field, limits that differed between the global and project pages, and one bad project override discarding all of the project's overrides (#3144). Code review settings were spread over five places; they are now one Code Review page, next to Reviewer Configs (who reviews) and the template's Review switch (whether a repository's PRs are reviewed).
+
+**Alternatives considered:** A settings registry that generates both settings pages and the docs table (less page code, but a large UI rewrite that loses the hand-tuned layouts); moving system settings such as loop timing and retention to Helm (more restarts to change them, and no problem it would solve); project-level label routing (labels also select the agent profile, so it would need project context in every place labels are resolved).
+
+**Reassess when:** The guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
+
 ### Project overrides: deep-merge semantics implemented (#1044 resolved)
 
 **Date:** 2026-07-04 (updated 2026-07-25)
@@ -1087,7 +1108,7 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 **Reassess when:** Never for the single-source principle. If a "maximum agent lifetime cap" independent of `AgentTimeout` is needed (safety floor), add an explicit `MaxAgentTimeoutCap` with a clear name — do not re-introduce a shadow of the same field.
 
-**Status:** Currently broken (#2179 tracks the fix; depends on #2171 for `TimeoutSeconds` propagation).
+**Status (2026-09-29):** Implemented; #2171 and #2179 are closed. `AgentTimeout`, with the project's override, sets each work item's `TimeoutSeconds` and the Kubernetes job deadline.
 
 ---
 
@@ -1320,12 +1341,14 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 ---
 
-### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025
+### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025, superseded 2026-09-29
 
 **Date:** 2026-08-14 · **Closed:** 2026-08-22
 **Category:** configuration
 
 **Decision:** `MaxConsolidationDispatchRetries` is now a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value is 5. #2025 complete. No behavioral change.
+
+**Superseded (2026-09-29):** The setting and its project override are removed and Key(74) is retired: its drain service was removed in #2323, and nothing read the setting since.
 
 **Reassess when:** Never — once fixed, this decision is stable.
 
@@ -1467,6 +1490,10 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 **Alternatives considered:** Brain access as a provider-level setting (too coarse), per-run override (too granular, no UI for it).
 
 **Reassess when:** Template-level `BrainReadOnly` is implemented. Note: the current project-level override still serves the "all templates in this project are read-only" case.
+
+**Status (2026-09-29):** Template-level `BrainReadOnly` exists: a template can turn read-only on (never off) and can be edited in place on the Pipelines page. A read-only brain is also not consolidated. The global setting (Settings → Global Defaults → Advanced) and the project override remain.
+
+**Status (2026-09-29):** Template-level `BrainReadOnly` exists: a template can turn read-only on (never off), editable in place on the Pipelines page. A read-only brain is also not consolidated. The global setting (Settings → Global Defaults → Advanced) and the project override remain.
 
 ---
 
@@ -1742,6 +1769,8 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 **Date:** 2026-08-28
 **Category:** configuration
+
+**Superseded (2026-08-29):** `AgentJobTimeoutSeconds` was removed by #2179; see "AgentJobTimeoutSeconds: removed" above. Work-item and consolidation jobs take their deadline from `AgentTimeout`; chat pods use `workDistribution.dispatch.chatJobMaxDurationSeconds`.
 
 **Decision:** `AgentJobTimeoutSeconds` (renamed from `ChatSessionMaxDurationSeconds`, default 7200s) governs `activeDeadlineSeconds` for all K8s Job types: work-item agents, consolidation agents, and chat pods. The rename makes the semantics correct — the previous name was misleading because the field always applied to all jobs, not only chat. For chat pods, the circuit-based idle-kill mechanism (`ChatIdleTimeoutSeconds=90s`) terminates the pod when the browser window closes; `AgentJobTimeoutSeconds` is a last-resort backstop for orphaned resources (e.g., browser crash with no idle-kill firing, Redis unavailable for heartbeat cross-replica delivery).
 

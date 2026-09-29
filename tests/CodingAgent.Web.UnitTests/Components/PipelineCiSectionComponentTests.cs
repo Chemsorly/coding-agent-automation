@@ -8,13 +8,13 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Web.UnitTests.Components;
 
 /// <summary>
-/// bUnit component tests for PipelineQualityGatesSection.
+/// bUnit component tests for PipelineCiSection (Settings → Global Defaults → External CI).
 /// </summary>
-public class PipelineQualityGatesSectionComponentTests : BunitContext
+public class PipelineCiSectionComponentTests : BunitContext
 {
     private readonly Mock<IPipelineApiConfigClient> _mockStore;
 
-    public PipelineQualityGatesSectionComponentTests()
+    public PipelineCiSectionComponentTests()
     {
         _mockStore = new Mock<IPipelineApiConfigClient>();
         _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -24,96 +24,100 @@ public class PipelineQualityGatesSectionComponentTests : BunitContext
     }
 
     [Fact]
-    public void RendersHeader()
+    public void RendersHeaderAndCiFields()
     {
-        var cut = Render<PipelineQualityGatesSection>(p =>
+        var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
-        Assert.Contains("Implementation", cut.Markup);
+
+        Assert.Contains("External CI", cut.Markup);
+        Assert.Contains("CI Timeout (minutes)", cut.Markup);
+        Assert.Contains("CI Not Started Max Retries", cut.Markup);
     }
 
     [Fact]
-    public void RendersReviewFields_WhenAdvancedExpanded()
+    public void DoesNotRenderCodeReviewSettings()
     {
-        var cut = Render<PipelineQualityGatesSection>(p =>
+        var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
+        cut.Find(".advanced-toggle").Click();
 
-        // Expand advanced toggle to reveal review fields
-        var advancedToggle = cut.Find(".advanced-toggle");
-        advancedToggle.Click();
-
-        Assert.Contains("Max Review Iterations", cut.Markup);
-        Assert.Contains("Fix Prompt", cut.Markup);
+        Assert.DoesNotContain("Review Iterations", cut.Markup);
+        Assert.DoesNotContain("Fix Prompt", cut.Markup);
     }
 
     [Fact]
-    public void DoesNotRenderExternalCiCheckbox()
+    public void RendersBranchMoveRePolls_WhenAdvancedExpanded()
     {
-        var cut = Render<PipelineQualityGatesSection>(p =>
+        var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
-        Assert.DoesNotContain("External CI Quality Gate", cut.Markup);
+        cut.Find(".advanced-toggle").Click();
+
+        Assert.Contains("CI Re-Polls After Branch Moves", cut.Markup);
     }
 
     [Fact]
-    public void RendersCiSettingsWithInfoHint()
+    public void InputLimits_ComeFromTheSettingRanges()
     {
-        var cut = Render<PipelineQualityGatesSection>(p =>
+        var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
 
-        // CI settings are behind the advanced toggle
-        Assert.Contains("Advanced settings", cut.Markup);
+        var retries = cut.Find($"[data-setting='{nameof(PipelineConfiguration.CiNotStartedMaxRetries)}'] input");
+        Assert.Equal("0", retries.GetAttribute("min"));
+        Assert.Equal("20", retries.GetAttribute("max"));
     }
 
     [Fact]
-    public void RendersResetButtons_ForPrompts()
+    public async Task Save_PersistsCiSettings()
     {
-        var cut = Render<PipelineQualityGatesSection>(p =>
+        PipelineConfiguration? saved = null;
+        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .Returns<Func<PipelineConfiguration, PipelineConfiguration>, CancellationToken>((transform, _) =>
+            {
+                saved = transform(new PipelineConfiguration());
+                return Task.CompletedTask;
+            });
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { CiCancelledMoveMaxRetries = 6, ExternalCiTimeout = TimeSpan.FromMinutes(40) });
+
+        var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
-
-        // Expand advanced toggle to reveal code review section with reset buttons
-        var advancedToggle = cut.Find(".advanced-toggle");
-        advancedToggle.Click();
-
-        var resetButtons = cut.FindAll(".btn-revert");
-        Assert.True(resetButtons.Count >= 1);
-    }
-
-    [Fact]
-    public void RendersReviewerConfigHint()
-    {
-        var cut = Render<PipelineQualityGatesSection>(p =>
-            p.Add(s => s.ConfigClient, _mockStore.Object));
-
-        // Expand advanced toggle to reveal reviewer config hint
-        var advancedToggle = cut.Find(".advanced-toggle");
-        advancedToggle.Click();
-
-        Assert.Contains("Reviewer Configs", cut.Markup);
-    }
-
-    [Fact]
-    public async Task Save_CallsUpdatePipelineConfig()
-    {
-        var cut = Render<PipelineQualityGatesSection>(p =>
-            p.Add(s => s.ConfigClient, _mockStore.Object));
-
-        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Implementation"));
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save External CI"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
-        _mockStore.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.NotNull(saved);
+        Assert.Equal(6, saved!.CiCancelledMoveMaxRetries);
+        Assert.Equal(TimeSpan.FromMinutes(40), saved.ExternalCiTimeout);
     }
 
     [Fact]
     public async Task Save_InvokesOnShowStatus_WithSuccess()
     {
         (string Message, bool IsError) status = default;
-        var cut = Render<PipelineQualityGatesSection>(p =>
+        var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object)
              .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
 
-        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save Implementation"));
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save External CI"));
         await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         Assert.Contains("saved", status.Message);
         Assert.False(status.IsError);
+    }
+
+    [Fact]
+    public async Task Save_WhenTheApiRejectsAValue_ShowsTheReason()
+    {
+        (string Message, bool IsError) status = default;
+        _mockStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("CiNotStartedMaxRetries must be between 0 and 20 (was 25)."));
+        var cut = Render<PipelineCiSection>(p =>
+            p.Add(s => s.ConfigClient, _mockStore.Object)
+             .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, v => status = v)));
+
+        var saveBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Save External CI"));
+        await saveBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.True(status.IsError);
+        Assert.Contains("CiNotStartedMaxRetries must be between 0 and 20", status.Message);
     }
 }

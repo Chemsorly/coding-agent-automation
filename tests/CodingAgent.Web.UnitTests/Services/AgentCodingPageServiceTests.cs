@@ -231,6 +231,56 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
+    public async Task UpdateTemplateAsync_SavesTheEditedFieldsAndKeepsTheBindings()
+    {
+        var template = MakeTemplate() with { HousekeepingEnabled = false };
+        _service.Templates.Add(template);
+        PipelineJobTemplate? saved = null;
+        _mockConfigClient.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Callback<string, PipelineJobTemplate, CancellationToken>((_, t, _) => saved = t)
+            .Returns(Task.CompletedTask);
+        var form = TemplateTableSection.TemplateFormModel.ForEdit(template, WellKnownIds.DefaultProjectId);
+        form.Name = "Renamed";
+        form.BrainProviderId = "brain-1";
+        form.BrainReadOnly = true;
+        form.HousekeepingEnabled = true;
+        form.HousekeepingConcurrencyLimit = 3;
+
+        var (success, error, msg) = await _service.UpdateTemplateAsync(form);
+
+        Assert.True(success, error);
+        Assert.Contains("Renamed", msg);
+        Assert.NotNull(saved);
+        Assert.Equal(template.Id, saved!.Id);
+        Assert.Equal(template.IssueProviderId, saved.IssueProviderId);
+        Assert.Equal(template.RepoProviderId, saved.RepoProviderId);
+        Assert.Equal(template.Enabled, saved.Enabled);
+        Assert.Equal("Renamed", saved.Name);
+        Assert.Equal("brain-1", saved.BrainProviderId);
+        Assert.True(saved.BrainReadOnly);
+        Assert.Equal(3, saved.HousekeepingConcurrencyLimit);
+        Assert.Same(saved, _service.Templates.Single());
+    }
+
+    [Fact]
+    public async Task ValidateEditTemplate_RejectsTheNameOfAnotherTemplateInTheProject()
+    {
+        var first = MakeTemplate("t-1", "Api");
+        var other = MakeTemplate("t-2", "Web") with { IssueProviderId = "ip-2", RepoProviderId = "rp-2" };
+        SetupMinimalInitialize(
+            projects: new List<PipelineProject> { new() { Id = "proj", Name = "Product", TemplateIds = new List<string> { "t-1", "t-2" } } },
+            templates: new List<PipelineJobTemplate> { first, other });
+        await _service.InitializeAsync();
+        var form = TemplateTableSection.TemplateFormModel.ForEdit(other, "proj");
+        form.Name = "Api";
+
+        var (valid, formError) = _service.ValidateEditTemplate(form);
+
+        Assert.False(valid);
+        Assert.Contains("named", formError);
+    }
+
+    [Fact]
     public async Task RemoveTemplateAsync_RemovesAndReloadsProjects()
     {
         var template = MakeTemplate("t-1", "Removable");
