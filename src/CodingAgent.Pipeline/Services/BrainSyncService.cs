@@ -1,4 +1,3 @@
-using System.Diagnostics.Metrics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -15,38 +14,12 @@ public sealed class BrainSyncService : IBrainSyncService
     private readonly IBrainUpdateService _brainUpdateService;
     private readonly Serilog.ILogger _logger;
 
-    // Instruments — default to global static instruments, injectable for test isolation.
-    private readonly Counter<long> _brainSyncsCompleted;
-    private readonly Histogram<double> _brainSyncDuration;
-    private readonly Counter<long> _brainUpdatesCommitted;
-    private readonly Counter<long> _brainFilesWritten;
-    private readonly Counter<long> _brainUpdatesEmpty;
-
-    public BrainSyncService(IBrainUpdateService brainUpdateService, Serilog.ILogger logger,
-        IMeterFactory? meterFactory = null)
+    public BrainSyncService(IBrainUpdateService brainUpdateService, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(brainUpdateService);
         ArgumentNullException.ThrowIfNull(logger);
         _brainUpdateService = brainUpdateService;
         _logger = logger;
-
-        if (meterFactory is not null)
-        {
-            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
-            _brainSyncsCompleted    = meter.CreateCounter<long>("brain.syncs.completed");
-            _brainSyncDuration      = meter.CreateHistogram<double>("brain.sync.duration");
-            _brainUpdatesCommitted  = meter.CreateCounter<long>("brain.updates.committed");
-            _brainFilesWritten      = meter.CreateCounter<long>("brain.files.written");
-            _brainUpdatesEmpty      = meter.CreateCounter<long>("brain.updates.empty");
-        }
-        else
-        {
-            _brainSyncsCompleted   = PipelineTelemetry.BrainSyncsCompleted;
-            _brainSyncDuration     = PipelineTelemetry.BrainSyncDuration;
-            _brainUpdatesCommitted = PipelineTelemetry.BrainUpdatesCommitted;
-            _brainFilesWritten     = PipelineTelemetry.BrainFilesWritten;
-            _brainUpdatesEmpty     = PipelineTelemetry.BrainUpdatesEmpty;
-        }
     }
 
     /// <summary>
@@ -99,9 +72,6 @@ public sealed class BrainSyncService : IBrainSyncService
             "Pipeline {RunId} brain sync complete: {BrainFileCount} knowledge files in {Duration}ms",
             run.RunId, run.BrainKnowledgeFileCount, brainSw.ElapsedMilliseconds);
         onOutputLine?.Invoke($"🧠 Brain context loaded: {run.BrainKnowledgeFileCount} knowledge files");
-
-        _brainSyncsCompleted.Add(1);
-        _brainSyncDuration.Record(brainSw.Elapsed.TotalSeconds);
     }
 
     /// <summary>
@@ -150,20 +120,12 @@ public sealed class BrainSyncService : IBrainSyncService
                 "Pipeline {RunId} brain post-run sync: {Success}, {FileCount} files in {Duration}ms",
                 run.RunId, syncResult.Success, syncResult.FilesCommitted, brainSw.ElapsedMilliseconds);
             onOutputLine?.Invoke($"🧠 Brain updates pushed: {syncResult.FilesCommitted} files committed");
-
-            if (syncResult.Success)
-            {
-                _brainUpdatesCommitted.Add(1);
-                _brainFilesWritten.Add(syncResult.FilesCommitted);
-            }
         }
         else
         {
             run.BrainUpdatesPushed = false;
             _logger.Information("Pipeline {RunId} no brain changes detected, skipping commit", run.RunId);
             onOutputLine?.Invoke("🧠 No brain changes detected");
-
-            _brainUpdatesEmpty.Add(1);
         }
     }
 }

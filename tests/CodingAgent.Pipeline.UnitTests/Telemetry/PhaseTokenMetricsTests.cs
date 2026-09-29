@@ -7,8 +7,7 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Pipeline.UnitTests.Telemetry;
 
 /// <summary>
-/// Tests verifying that AccumulateTokenUsage emits a phase tag when provided,
-/// and that the analysis gate outcome counter emits correctly.
+/// Tests verifying that AccumulateTokenUsage emits a phase tag when provided.
 /// </summary>
 public class PhaseTokenMetricsTests : IDisposable
 {
@@ -97,24 +96,6 @@ public class PhaseTokenMetricsTests : IDisposable
             && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "no-phase-test")))
             .Which;
         counter.Tags.Should().NotContain(t => t.Key == "phase");
-    }
-
-    // ── Analysis gate outcome counter ──
-
-    [Theory]
-    [InlineData(AnalysisGateResult.Ready, "ready")]
-    [InlineData(AnalysisGateResult.NotReady, "not_ready")]
-    [InlineData(AnalysisGateResult.WontDo, "wont_do")]
-    public void RecordAnalysisGateOutcome_EmitsCounterWithOutcomeTag(
-        AnalysisGateResult outcome, string expectedTagValue)
-    {
-        var run = CreateRun($"gate-{expectedTagValue}");
-
-        PipelineTelemetry.RecordAnalysisGateOutcome(outcome, run.RunType, run.ProjectId, run.ProjectName);
-
-        _counters.Should().Contain(c => c.Name == "pipeline.analysis.gate_outcome"
-            && c.Tags.Contains(new KeyValuePair<string, object?>("outcome", expectedTagValue))
-            && c.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", $"gate-{expectedTagValue}")));
     }
 
     private static PipelineRun CreateRun(string projectId) => new()
