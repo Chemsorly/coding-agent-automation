@@ -27,4 +27,11 @@ public sealed record SubIssueCreationResult
     /// These are NOT counted as failed creations for the purpose of outcome label selection.
     /// </summary>
     public bool SkippedByCap { get; init; }
+
+    /// <summary>
+    /// The provider config ID that was actually used to create the issue.
+    /// Populated on success. Used by <c>DependencyResolver</c> to emit <c>#N</c> for same-tracker
+    /// dependencies and a full URL for cross-tracker dependencies.
+    /// </summary>
+    public string? ResolvedProviderId { get; init; }
 }
