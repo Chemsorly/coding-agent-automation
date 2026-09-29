@@ -67,7 +67,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             new LoggerConfiguration().CreateLogger(),
             bootstrap,
             _projectStore.Object,
-            new Mock<IPipelineRunHistoryService>().Object,
             _runStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,

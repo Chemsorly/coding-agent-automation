@@ -24,7 +24,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     // ── Shared mocks ──────────────────────────────────────────────────────────
     private readonly Mock<IConsolidationRunStore> _mockRunStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
-    private readonly Mock<IPipelineRunHistoryService> _mockRunHistory = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
     private readonly Mock<IConsolidationSelectorResolver> _mockSelectorResolver = new();
 
@@ -41,9 +40,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
 
     public ConsolidationServiceSynchronousTriggerTests()
     {
-        _mockRunHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineRunSummary>());
-
         _mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
             {
@@ -83,7 +79,6 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            _mockRunHistory.Object,
             _mockRunStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,

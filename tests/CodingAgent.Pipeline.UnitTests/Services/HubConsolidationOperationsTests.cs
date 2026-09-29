@@ -54,11 +54,6 @@ public sealed class HubConsolidationOperationsTests
             ActiveJobId = "job-1"
         };
 
-    private static void SetupUpdateRun(Mock<IConsolidationService> mock) =>
-        mock.Setup(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>())).Returns(Task.CompletedTask);
-
     private static ConsolidationJobResult MakeResult(bool success = true) =>
         new()
         {
@@ -136,37 +131,6 @@ public sealed class HubConsolidationOperationsTests
         await _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
 
         _notifier.Verify(n => n.NotifyChange(), Times.Once);
-    }
-
-    /// <summary>
-    /// Issue #3028: UpdateRunAsync must NOT be called from HandleConsolidationCompleteAsync.
-    /// ConsolidationRuns writes have been stopped; the PipelineRun row is now the authoritative
-    /// terminal-state record (written by RunLifecycleManager).
-    /// </summary>
-    [Fact]
-    public async Task HandleConsolidationCompleteAsync_DoesNotCallUpdateRunAsync()
-    {
-        // Use a strict mock so any unexpected call to UpdateRunAsync would throw
-        var strictConsolidation = new Mock<IConsolidationService>(MockBehavior.Strict);
-        // Only SaveHarnessSuggestionsAsync is permitted (if HarnessSuggestions are present)
-        strictConsolidation.Setup(c => c.SaveHarnessSuggestionsAsync(
-            It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        var sut = new HubConsolidationOperations(
-            _modelFetch,
-            strictConsolidation.Object,
-            _badge,
-            _notifier.Object,
-            _lifecycleManager.Object,
-            _logger.Object);
-
-        // Act: should complete without calling UpdateRunAsync
-        var act = () => sut.HandleConsolidationCompleteAsync(MakeResult(success: true), null);
-        await act.Should().NotThrowAsync("UpdateRunAsync must not be called — store writes stopped in #3028");
-
-        strictConsolidation.Verify(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
     }
 
     [Fact]
@@ -257,17 +221,5 @@ public sealed class HubConsolidationOperationsTests
         var result = await _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
 
         result.Should().Contain("agentFound=False");
-    }
-
-    [Fact]
-    public async Task HandleConsolidationCompleteAsync_UpdateRunThrows_DoesNotPropagate()
-    {
-        _consolidation.Setup(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .ThrowsAsync(new InvalidOperationException("DB error"));
-
-        var act = () => _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
-        await act.Should().NotThrowAsync();
     }
 }

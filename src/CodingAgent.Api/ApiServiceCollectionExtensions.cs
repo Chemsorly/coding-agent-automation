@@ -417,10 +417,9 @@ public static class ApiServiceCollectionExtensions
     /// <summary>
     /// Registers lifecycle, consolidation, agent communication, and run management services.
     ///
-    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 7 required
-    /// arguments only (no <c>IConsolidationFeedbackCache</c>, <c>IWorkDistributor</c>, selector resolver
-    /// or settings store). The Web host's <c>AddConsolidationServices</c> passes those too. These are
-    /// intentionally different — do NOT unify them.
+    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its minimal required
+    /// arguments only (no <c>IWorkDistributor</c>, selector resolver or settings store). The Web host's
+    /// <c>AddConsolidationServices</c> passes those too. These are intentionally different — do NOT unify them.
     /// </summary>
     private static void AddLifecycleAndConsolidation(IServiceCollection services)
     {
@@ -434,13 +433,13 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
 
         // ── IConsolidationService ────────────────────────────────────────────
-        // IMPORTANT: intentionally the 7-argument form — not the Web host's full form.
+        // IMPORTANT: intentionally the minimal form — not the Web host's full form.
+        // No IWorkDistributor, selector resolver, or settings store.
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>())));

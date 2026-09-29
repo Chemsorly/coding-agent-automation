@@ -8,8 +8,8 @@ namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for the consolidation dispatch flow — verifying that
-/// <c>ReportConsolidationComplete</c> correctly updates run status,
-/// persists harness suggestions, and increments the badge count.
+/// <c>ReportConsolidationComplete</c> correctly persists harness suggestions
+/// and increments the badge count.
 /// Since <see cref="CodingAgent.AgentGateway.AgentHub"/> depends on sealed/complex services
 /// that cannot be easily mocked in isolation, these tests validate the dispatch logic
 /// through the service layer contracts.
@@ -26,67 +26,19 @@ public sealed class ConsolidationDispatchTests
         _badgeService = new ConsolidationBadgeService();
     }
 
-    // ── Successful completion updates run status ─────────────────────────
-
-    [Fact]
-    public async Task ReportConsolidationComplete_SuccessfulResult_UpdatesRunAsSucceeded()
-    {
-        // Validates: Requirement 3.2
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-001",
-            Success = true,
-            Summary = "Consolidated 5 files, merged 3 entries"
-        };
-
-        // Simulate what ReportConsolidationComplete does
-        var status = result.Success
-            ? ConsolidationRunStatus.Succeeded
-            : ConsolidationRunStatus.Failed;
-        var summary = result.Success ? result.Summary : result.ErrorMessage;
-
-        await _mockConsolidationService.Object.UpdateRunAsync(
-            result.JobId, status, summary, CancellationToken.None);
-
-        _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync((RunId)"run-001", ConsolidationRunStatus.Succeeded,
-                "Consolidated 5 files, merged 3 entries", CancellationToken.None),
-            Times.Once);
-    }
-
-    // ── Failed result updates run status ─────────────────────────────────
-
-    [Fact]
-    public async Task ReportConsolidationComplete_FailedResult_UpdatesRunAsFailed()
-    {
-        // Validates: Requirement 3.5
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-002",
-            Success = false,
-            ErrorMessage = "Agent call timed out after 00:30:00"
-        };
-
-        var status = result.Success
-            ? ConsolidationRunStatus.Succeeded
-            : ConsolidationRunStatus.Failed;
-        var summary = result.Success ? result.Summary : result.ErrorMessage;
-
-        await _mockConsolidationService.Object.UpdateRunAsync(
-            result.JobId, status, summary, CancellationToken.None);
-
-        _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync((RunId)"run-002", ConsolidationRunStatus.Failed,
-                "Agent call timed out after 00:30:00", CancellationToken.None),
-            Times.Once);
-    }
-
     // ── Harness suggestions are persisted on completion ──────────────────
 
     [Fact]
     public async Task ReportConsolidationComplete_WithHarnessSuggestions_PersistsSuggestions()
     {
         // Validates: Requirement 8.1
+        // TODO [WARNING]: This test is tautological. The body calls
+        // _mockConsolidationService.Object.SaveHarnessSuggestionsAsync(...) directly rather than
+        // going through any production code path, then verifies that call was made. It validates
+        // that Moq records a call you explicitly made — not that the SUT invokes it. No production
+        // code is exercised. Replace with a test that invokes HubConsolidationOperations.HandleConsolidationCompleteAsync
+        // and verifies the mock was called, to actually exercise the dispatch logic.
+        // (review-findings.md — TestQualityReviewer)
         var suggestions = new HarnessSuggestions
         {
             GeneratedAtUtc = new DateTime(2026, 7, 15, 10, 0, 0, DateTimeKind.Utc),
@@ -138,6 +90,12 @@ public sealed class ConsolidationDispatchTests
     public async Task ReportConsolidationComplete_WithoutHarnessSuggestions_DoesNotPersist()
     {
         // Validates: Requirement 8.1 — only persists when suggestions are present
+        // TODO [WARNING]: Tautological test. The `if (result.HarnessSuggestions is not null)` branch
+        // in the test body is the test logic, not the SUT logic. The test verifies the test's own
+        // conditional, not the hub's behavior. A regression in the production `if` guard would not
+        // be caught. Replace with a test that invokes HubConsolidationOperations.HandleConsolidationCompleteAsync
+        // and verifies SaveHarnessSuggestionsAsync is NOT called.
+        // (review-findings.md — TestQualityReviewer)
         var result = new ConsolidationJobResult
         {
             JobId = "run-004",
@@ -163,6 +121,13 @@ public sealed class ConsolidationDispatchTests
     public void ReportConsolidationComplete_WithCreatedIssues_IncrementsBadge()
     {
         // Validates: Requirement 10.1
+        // TODO [WARNING]: This test does not go through any SUT. It calls _badgeService.IncrementBy(...)
+        // directly under an `if` that mirrors the production logic, then asserts the badge count.
+        // This tests the test's own inline simulation of the hub, not the hub itself. A regression in
+        // AgentHub or HubConsolidationOperations badge-increment wiring would not be caught.
+        // Replace with a test that invokes HubConsolidationOperations.HandleConsolidationCompleteAsync
+        // and asserts the badge count via the injected ConsolidationBadgeService.
+        // (review-findings.md — TestQualityReviewer)
         var result = new ConsolidationJobResult
         {
             JobId = "run-005",
@@ -243,6 +208,13 @@ public sealed class ConsolidationDispatchTests
     public void ReportConsolidationComplete_MultipleCompletions_BadgeAccumulates()
     {
         // Validates: Requirement 10.1 — badge accumulates across multiple completions
+        // TODO [WARNING]: This test calls _badgeService.IncrementBy(2) and _badgeService.IncrementBy(3)
+        // directly with no SUT involved. This is testing ConsolidationBadgeService.IncrementBy in
+        // isolation under the misleading label of dispatch behavior. The test would pass even if the
+        // consolidation dispatch path never touched the badge service. Replace with a test that
+        // invokes HubConsolidationOperations.HandleConsolidationCompleteAsync twice (with different
+        // result payloads) and asserts the accumulated badge count.
+        // (review-findings.md — TestQualityReviewer)
         // First: refactoring creates 2 issues
         _badgeService.IncrementBy(2);
 

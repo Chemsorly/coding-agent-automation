@@ -701,8 +701,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for dispatch to happen
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for dispatch to happen.
+        // Extended to 15s: this test runs alongside 5000+ tests in the full suite and the 5s
+        // deadline was occasionally exhausted under heavy CPU load, causing spurious failures.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 

@@ -98,8 +98,6 @@ public class ConsolidationServicePropertyTests : IDisposable
             WorkspaceBaseDirectory = _tempDir,
             DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -123,7 +121,7 @@ public class ConsolidationServicePropertyTests : IDisposable
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-3", ErrorMessage: null));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
+            Serilog.Log.Logger, config, mockProjectStore.Object,
             new FileSystemConsolidationRunStore(runsDir),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,

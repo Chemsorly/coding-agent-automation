@@ -6,60 +6,22 @@ using Serilog;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
-/// Manages consolidation loop execution: triggering runs, tracking history,
-/// persisting run records, and managing harness suggestions.
+/// Manages consolidation loop execution: triggering runs and persisting harness suggestions.
 /// </summary>
-public sealed class ConsolidationService : IConsolidationService, IConsolidationRunTracker
+public sealed class ConsolidationService : IConsolidationService
 {
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
-    private readonly IConsolidationFeedbackCache _feedbackCache;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
-    // TODO [WARNING]: _projectStore is assigned but never read after the constructor.
-    // _templateResolver already holds its own reference to deps.ProjectStore (see constructor line).
-    // This dead field adds confusion and suggests a refactor was incompletely applied. Consider
-    // removing it once it is confirmed no future code path requires direct access. (review-findings-dotnetspecialist.md)
-    private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
     private readonly IConsolidationSelectorResolver? _selectorResolver;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
 
     /// <inheritdoc />
     public event Action? OnChange;
-
-    /// <inheritdoc />
-    // TODO [WARNING]: Sync-over-async via .GetAwaiter().GetResult(). The underlying store
-    // (ApiBackedConsolidationRunStore) issues an HTTP call, making this a blocking network call on a
-    // thread-pool thread. No current production caller exists, but IConsolidationService is injected
-    // into Blazor components and any future synchronous call site on a Blazor Server circuit thread
-    // (where a SynchronizationContext is present) risks a classic deadlock. Prefer converting the
-    // interface to Task<bool> IsRunActiveAsync(RunId, CancellationToken), or document the restriction
-    // in the interface XML doc if the sync surface must be preserved.
-    // (review-findings-dotnetspecialist.md, review-findings-securityreviewer.md)
-    public bool IsRunActive(RunId runId)
-    {
-        // _runningRuns removed (issue #3027): query the store synchronously.
-        // This method has no production callers; synchronous wrapper is acceptable.
-        var run = _runStore.GetByIdAsync(runId, CancellationToken.None).GetAwaiter().GetResult();
-        return run is not null && !IsTerminalStatus(run.Status);
-    }
-
-    /// <inheritdoc />
-    // TODO [WARNING]: Same sync-over-async pattern as IsRunActive above. The IConsolidationService
-    // XML doc comment states this is "Used by ReconciliationService (JobController) to detect stuck
-    // consolidation runs" — if that description is made accurate and a background service calls this,
-    // the .GetAwaiter().GetResult() call will deadlock or starve the thread pool under load.
-    // (review-findings-dotnetspecialist.md, review-findings-securityreviewer.md)
-    public DateTimeOffset? GetActiveRunStartedAt(RunId runId)
-    {
-        // _runningRuns removed (issue #3027): query the store synchronously.
-        // This method has no production callers; synchronous wrapper is acceptable.
-        var run = _runStore.GetByIdAsync(runId, CancellationToken.None).GetAwaiter().GetResult();
-        return run is null || IsTerminalStatus(run.Status) ? null : run.StartedAtUtc;
-    }
 
     public ConsolidationService(
         ConsolidationServiceDependencies deps)
@@ -68,7 +30,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         ArgumentNullException.ThrowIfNull(deps.Logger);
         ArgumentNullException.ThrowIfNull(deps.Config);
         ArgumentNullException.ThrowIfNull(deps.ProjectStore);
-        ArgumentNullException.ThrowIfNull(deps.RunHistoryService);
         ArgumentNullException.ThrowIfNull(deps.RunStore);
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
 
@@ -76,10 +37,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         _config = deps.Config;
         _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
-        _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
-        _projectStore = deps.ProjectStore;
         _workDistributor = deps.WorkDistributor;
         _selectorResolver = deps.SelectorResolver;
         _pipelineConfigStore = deps.PipelineConfigStore;
@@ -218,17 +177,13 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // ── 4. Build the ConsolidationRun (no longer persisted) ──────────────
         // ConsolidationRuns writes stopped (issue #3028). The PipelineRun is the authoritative
         // record; it is created by PipelineRunFactory.CreateFromWorkItem at dispatch time.
-        // The ConsolidationRun object is still built here for its RunId (which keys the harness
-        // feedback data) and trace context, but it is NOT written to the store.
+        // The ConsolidationRun object is still built here for its RunId and trace context,
+        // but it is NOT written to the store.
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
         var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch);
         run.TraceParent = traceContext?.GetValueOrDefault("traceparent");
 
-        // ── 5. Prepare feedback data (harness suggestions path) ───────────────
-        if (type == ConsolidationRunType.HarnessSuggestions)
-            await _feedbackCache.PrepareFeedbackDataAsync(run, ct);
-
-        // ── 7. Build and submit the JobDistributionRequest ───────────────────
+        // ── 5. Build and submit the JobDistributionRequest ───────────────────
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
         // the brain for brain consolidation, the template (and so its repository) for a refactoring scan,
         // "global" for harness suggestions. Many templates can share one brain, and two consolidations of
@@ -273,7 +228,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _logger.Error(ex,
                 "ConsolidationService: unexpected error calling DistributeAsync for {Type}/{TemplateId}",
                 type, templateIdValue ?? "Global");
-            _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             return null;
         }
 
@@ -297,11 +251,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
                     "Re-trigger to retry.",
                     type, templateIdValue ?? "Global", result.ErrorMessage);
             }
-            _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             return null;
         }
 
-        // ── 8. Detect duplicate rejection from the API layer ─────────────────
+        // ── 6. Detect duplicate rejection from the API layer ─────────────────
         // KubernetesWorkDistributor maps a 409 Conflict from POST /api/work-items to
         // DistributionResult(Success: true, WorkItemId: null, Queued: true). This happens
         // when the partial unique index on (IssueIdentifier, IssueProviderConfigId) rejects
@@ -317,11 +270,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
                 "ConsolidationService: duplicate rejected for {Type}/{TemplateId} — " +
                 "a live WorkItem already exists (API returned 409).",
                 type, templateIdValue ?? "Global");
-            _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             return null;
         }
 
-        // ── 9. Record WorkItemId on the in-memory run object ─────────────────
+        // ── 7. Record WorkItemId on the in-memory run object ─────────────────
         // ConsolidationRun store writes have been stopped (issue #3028); the PipelineRun is the
         // authoritative record.
         run.WorkItemId = result.WorkItemId;
@@ -330,51 +282,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             run.RunId, type, templateName, result.WorkItemId);
         OnChange?.Invoke();
         return run;
-    }
-
-    /// <inheritdoc />
-    public async Task<IReadOnlyList<ConsolidationRun>> GetRunHistoryAsync(CancellationToken ct)
-    {
-        // Always read from store — the store is the authoritative source.
-        // In the multi-process architecture (Spec 041+), the API updates ConsolidationRun
-        // status directly in the DB. An in-memory cache here would lag behind those updates
-        // and cause the monitoring page to show stale Pending status after dispatch.
-        var runs = await _runStore.LoadAllRunsAsync(ct);
-        return runs.OrderByDescending(r => r.StartedAtUtc).ToList();
-    }
-
-    /// <inheritdoc />
-    public Task UpdateRunAsync(
-        RunId runId, ConsolidationRunStatus status, string? summary,
-        CancellationToken ct, long totalTokens = 0)
-    {
-        if (!Guid.TryParse(runId.Value, out _))
-        {
-            _logger.Warning("Invalid runId format: {RunId}", LogSanitizer.SanitizeForLog(runId.Value));
-            return Task.CompletedTask;
-        }
-
-        // ConsolidationRuns writes have been stopped (issue #3028). The PipelineRun row is the
-        // authoritative terminal-state record (written by RunLifecycleManager), and the run's
-        // workspace lives in the agent pod, so ConsolidationRunEndpoints.TransitionStatus leaves
-        // nothing to update here during the sub-issue #7–#9 transition period.
-        _logger.Information("Consolidation run {RunId} UpdateRunAsync: nothing to update (store writes removed, issue #3028)", runId.Value);
-        // OnChange is intentionally NOT fired here — ConsolidationService.OnChange is being replaced
-        // with IAgentHubConnection hub event subscription in Consolidation.razor (issue #3028).
-        return Task.CompletedTask;
-    }
-
-    /// <inheritdoc />
-    public async Task TransitionToRunningAsync(RunId runId, CancellationToken ct)
-    {
-        if (!Guid.TryParse(runId.Value, out _))
-            return;
-
-        // ConsolidationRuns writes stopped (issue #3028). PipelineRun is the authoritative record.
-        // Remaining callers are handled by the lifecycle manager (CompleteRunAsync / FailRunAsync).
-        _logger.Information("Consolidation run {RunId} TransitionToRunningAsync: store writes removed (issue #3028)", runId.Value);
-        // OnChange intentionally not fired (see UpdateRunAsync comment above).
-        await Task.CompletedTask;
     }
 
     /// <inheritdoc />
@@ -408,16 +315,6 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// </remarks>
     internal void Reset() { /* no-op: _runningRuns removed in issue #3027 */ }
 
-    // TODO [WARNING]: PersistRunAsync and RollbackRunAsync below are dead code — no callers remain
-    // in ConsolidationService after issue #3028 removed all TriggerAsync store writes. They are a
-    // latent regression risk: a future edit could re-invoke them and silently reintroduce
-    // ConsolidationRuns writes. Consider removing these methods in a follow-up cleanup PR.
-    // (review-findings correctness)
-    private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
-    {
-        await _runStore.SaveRunAsync(run, ct);
-    }
-
     /// <inheritdoc />
     public async Task DeleteRunAsync(RunId runId, CancellationToken ct)
     {
@@ -431,20 +328,14 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         }
     }
 
-    /// <summary>
-    /// Rolls back a run that failed to persist or whose dispatch was rejected.
-    /// Deletes the persisted record and clears any cached feedback data.
-    /// Safe to call even when the run was never persisted.
-    /// </summary>
-    // TODO [WARNING]: RollbackRunAsync is dead code — no callers remain after issue #3028.
-    // See PersistRunAsync above. Remove in a follow-up cleanup PR. (review-findings correctness)
-    private async Task RollbackRunAsync(string runId)
-    {
-        await DeletePersistedRunAsync(runId);
-        _feedbackCache.ClearFeedbackDataForRun(runId);
-    }
-
     /// <summary>Deletes a persisted run (used when persist fails and the run must be rolled back).</summary>
+    // TODO [WARNING]: DeletePersistedRunAsync passes CancellationToken.None to _runStore.DeleteRunAsync
+    // instead of accepting and forwarding a CancellationToken parameter. RollbackRunAsync (the last
+    // production caller that also used CancellationToken.None) was removed in this diff, leaving this
+    // as the only remaining path that hardcodes CancellationToken.None. If a future caller passes a
+    // cancellation token expecting it to propagate into the store, the token will be silently dropped,
+    // preventing cooperative cancellation of the underlying store I/O.
+    // (review-findings-dotnetspecialist.md)
     internal async Task DeletePersistedRunAsync(string runId)
     {
         ArgumentNullException.ThrowIfNull(runId);
@@ -459,6 +350,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     private static bool IsTerminalStatus(ConsolidationRunStatus status) =>
+        // TODO [WARNING]: IsTerminalStatus is now dead code. Its only callers (IsRunActive and
+        // GetActiveRunStartedAt) were deleted in issue #3030. The compiler will not flag this
+        // (private static methods are not warned as unused in C# by default), but it will mislead
+        // future readers into thinking a terminal-status check is still exercised by the service.
+        // Remove this method in a follow-up cleanup.
+        // (review-findings.md — Correctness + DotNetSpecialist)
         status is ConsolidationRunStatus.Succeeded
             or ConsolidationRunStatus.Failed
             or ConsolidationRunStatus.Cancelled;
