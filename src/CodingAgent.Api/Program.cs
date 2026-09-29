@@ -303,8 +303,13 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
             }
         }
 
-        // workdistribution.dispatch.attempts: 7 series (issue #2976)
-        WorkDistributionTelemetry.PreInitializeDispatchAttempts();
+        // pipeline.run.sub_issues: 2 series (result=created / result=failed)
+        foreach (var result in new[] { "created", "failed" })
+            PipelineTelemetry.RunSubIssues.Add(0, new KeyValuePair<string, object?>("result", result));
+
+        // pipeline.run.brain_updates: 2 series (result=pushed / result=none)
+        foreach (var result in new[] { "pushed", "none" })
+            PipelineTelemetry.RunBrainUpdates.Add(0, new KeyValuePair<string, object?>("result", result));
     }
 }
 

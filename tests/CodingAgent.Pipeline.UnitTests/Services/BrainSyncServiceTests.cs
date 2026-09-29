@@ -2,20 +2,13 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Web.TestUtilities;
-using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 using Moq;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for <see cref="BrainSyncService.SyncPostRunAsync"/>: exercises the real
-/// service body against mocked <see cref="IBrainUpdateService"/> and verifies that
-/// the correct telemetry counters are emitted on each path.
-///
-/// Uses <see cref="TestMeterFactory"/> + <see cref="MetricCollector{T}"/> for isolated
-/// metric observation — each test class gets its own <see cref="System.Diagnostics.Metrics.Meter"/>
-/// and does NOT need <c>[Collection("Metrics")]</c>.
+/// service body against mocked <see cref="IBrainUpdateService"/> and verifies service logic.
 /// </summary>
 public class BrainSyncServiceTests : IDisposable
 {
@@ -23,12 +16,6 @@ public class BrainSyncServiceTests : IDisposable
     private readonly Mock<IRepositoryProvider> _brainProvider;
     private readonly Mock<Serilog.ILogger> _logger;
     private readonly BrainSyncService _sut;
-    private readonly TestMeterFactory _meterFactory;
-
-    // Collectors — one per instrument under test
-    private readonly MetricCollector<long> _brainUpdatesEmpty;
-    private readonly MetricCollector<long> _brainUpdatesCommitted;
-    private readonly MetricCollector<long> _brainFilesWritten;
 
     public BrainSyncServiceTests()
     {
@@ -36,16 +23,10 @@ public class BrainSyncServiceTests : IDisposable
         _brainProvider = new Mock<IRepositoryProvider>();
         _logger = new Mock<Serilog.ILogger>();
 
-        _meterFactory = new TestMeterFactory();
-        _sut = new BrainSyncService(_brainUpdateService.Object, _logger.Object, _meterFactory);
-
-        // Bind collectors to the instruments created by the factory inside BrainSyncService
-        _brainUpdatesEmpty     = new MetricCollector<long>(_meterFactory, "CodingAgent.Pipeline", "brain.updates.empty");
-        _brainUpdatesCommitted = new MetricCollector<long>(_meterFactory, "CodingAgent.Pipeline", "brain.updates.committed");
-        _brainFilesWritten     = new MetricCollector<long>(_meterFactory, "CodingAgent.Pipeline", "brain.files.written");
+        _sut = new BrainSyncService(_brainUpdateService.Object, _logger.Object);
     }
 
-    public void Dispose() => _meterFactory.Dispose();
+    public void Dispose() { }
 
     private static PipelineRun CreateRun() => new()
     {
@@ -70,34 +51,6 @@ public class BrainSyncServiceTests : IDisposable
         await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
 
         run.BrainUpdatesPushed.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task SyncPostRunAsync_WhenNoChanges_IncrementsBrainUpdatesEmptyCounter()
-    {
-        var run = CreateRun();
-        _brainUpdateService
-            .Setup(s => s.DetectChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)Array.Empty<string>());
-
-        await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
-
-        _brainUpdatesEmpty.GetMeasurementSnapshot()
-            .Should().ContainSingle(m => m.Value == 1);
-    }
-
-    [Fact]
-    public async Task SyncPostRunAsync_WhenNoChanges_DoesNotIncrementCommittedOrFilesWrittenCounters()
-    {
-        var run = CreateRun();
-        _brainUpdateService
-            .Setup(s => s.DetectChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IReadOnlyList<string>)Array.Empty<string>());
-
-        await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
-
-        _brainUpdatesCommitted.GetMeasurementSnapshot().Should().BeEmpty();
-        _brainFilesWritten.GetMeasurementSnapshot().Should().BeEmpty();
     }
 
     [Fact]
@@ -139,41 +92,6 @@ public class BrainSyncServiceTests : IDisposable
         run.BrainFilesCommitted.Should().Be(2);
     }
 
-    [Fact]
-    public async Task SyncPostRunAsync_WhenChangesDetected_IncrementsBrainUpdatesCommittedCounter()
-    {
-        var run = CreateRun();
-        SetupSuccessfulPush(changedFiles: ["lessons.md"], filesCommitted: 1);
-
-        await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
-
-        _brainUpdatesCommitted.GetMeasurementSnapshot()
-            .Should().ContainSingle(m => m.Value == 1);
-    }
-
-    [Fact]
-    public async Task SyncPostRunAsync_WhenChangesDetected_IncrementsBrainFilesWrittenByFileCount()
-    {
-        var run = CreateRun();
-        SetupSuccessfulPush(changedFiles: ["a.md", "b.md"], filesCommitted: 2);
-
-        await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
-
-        _brainFilesWritten.GetMeasurementSnapshot()
-            .Should().ContainSingle(m => m.Value == 2);
-    }
-
-    [Fact]
-    public async Task SyncPostRunAsync_WhenChangesDetected_DoesNotIncrementBrainUpdatesEmptyCounter()
-    {
-        var run = CreateRun();
-        SetupSuccessfulPush(changedFiles: ["lessons.md"], filesCommitted: 1);
-
-        await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
-
-        _brainUpdatesEmpty.GetMeasurementSnapshot().Should().BeEmpty();
-    }
-
     // ── Non-empty changes path — failed push ───────────────────────────────
 
     [Fact]
@@ -185,18 +103,6 @@ public class BrainSyncServiceTests : IDisposable
         await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
 
         run.BrainUpdatesPushed.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task SyncPostRunAsync_WhenPushFails_DoesNotIncrementBrainUpdatesCommittedCounter()
-    {
-        var run = CreateRun();
-        SetupFailedPush(changedFiles: ["lessons.md"]);
-
-        await _sut.SyncPostRunAsync(run, _brainProvider.Object, CancellationToken.None);
-
-        _brainUpdatesCommitted.GetMeasurementSnapshot().Should().BeEmpty();
-        _brainUpdatesEmpty.GetMeasurementSnapshot().Should().BeEmpty();
     }
 
     // ── Fallback log entry when operation log not updated ──────────────────
@@ -256,15 +162,9 @@ public class BrainSyncServiceTests : IDisposable
 
     // ── SyncPreRunAsync ─────────────────────────────────────────────────────
 
-    // TODO [WARNING]: Missing guard test — add a test that passes a WorkspacePath whose .Value is null
-    // (i.e. default(WorkspacePath)) or empty to confirm ArgumentException.ThrowIfNullOrEmpty fires.
-    // This matches the null-argument test pattern used for SyncPostRunAsync in this class and validates
-    // the WorkspacePath.Value guard introduced in the same diff.
-
     [Fact]
     public async Task SyncPreRunAsync_WithWorkspacePath_ClonesOrPullsBrainIntoSubdirectory()
     {
-        // Arrange: create a real temp workspace directory (SyncPreRunAsync uses filesystem)
         var workspace = Path.Combine(Path.GetTempPath(), $"brain-pre-test-{Guid.NewGuid():N}");
         Directory.CreateDirectory(workspace);
         WorkspacePath workspacePath = workspace;
@@ -272,30 +172,21 @@ public class BrainSyncServiceTests : IDisposable
         var run = CreateRun();
         run.WorkspacePath = workspace;
 
-        // The brain directory doesn't exist yet, so CloneAsync should be called
         _brainProvider
             .Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         try
         {
-            // Act
             await _sut.SyncPreRunAsync(run, _brainProvider.Object, workspacePath, CancellationToken.None);
 
-            // Assert: CloneAsync was called with the .brain subdirectory of the workspace
             var expectedBrainPath = Path.Combine(workspace, ".brain");
             _brainProvider.Verify(
                 p => p.CloneAsync(It.Is<WorkspacePath>(w => w.Value == expectedBrainPath), It.IsAny<CancellationToken>()),
                 Times.Once,
                 "SyncPreRunAsync should derive the brain path as workspacePath/.brain");
 
-            // The run should be marked as brain context loaded
             run.BrainContextLoaded.Should().BeTrue();
-            // TODO [WARNING]: run.BrainKnowledgeFileCount is set in the same block but not asserted here.
-            // If the CloneAsync mock creates a real .brain/ directory with .md files, asserting
-            // BrainKnowledgeFileCount would verify the enumeration path. As-is, the count is always 0
-            // because the no-op mock doesn't create the directory; add a note so future refactors don't
-            // silently lose the count assignment.
         }
         finally
         {
@@ -307,7 +198,6 @@ public class BrainSyncServiceTests : IDisposable
     [Fact]
     public async Task SyncPreRunAsync_WhenBrainDirectoryExists_PullsInsteadOfClones()
     {
-        // Arrange: create a real temp workspace with an existing .brain directory
         var workspace = Path.Combine(Path.GetTempPath(), $"brain-pre-test-{Guid.NewGuid():N}");
         var brainPath = Path.Combine(workspace, ".brain");
         Directory.CreateDirectory(brainPath);
@@ -322,10 +212,8 @@ public class BrainSyncServiceTests : IDisposable
 
         try
         {
-            // Act
             await _sut.SyncPreRunAsync(run, _brainProvider.Object, workspacePath, CancellationToken.None);
 
-            // Assert: PullAsync was called (not CloneAsync) since .brain already exists
             var expectedBrainPath = Path.Combine(workspace, ".brain");
             _brainProvider.Verify(
                 p => p.PullAsync(It.Is<WorkspacePath>(w => w.Value == expectedBrainPath), It.IsAny<CancellationToken>()),
@@ -334,10 +222,12 @@ public class BrainSyncServiceTests : IDisposable
             _brainProvider.Verify(
                 p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()),
                 Times.Never);
-            // TODO [WARNING]: run.BrainContextLoaded is not asserted on the pull path. If the
-            // `run.BrainContextLoaded = true` assignment were removed from the pull branch, this test
-            // would still pass. Add: run.BrainContextLoaded.Should().BeTrue() to match the clone-path
-            // test and keep coverage symmetric across both branches.
+            // TODO: [WARNING] run.BrainContextLoaded is not asserted on the pull path. If the
+            // `run.BrainContextLoaded = true` assignment were removed from the pull branch in
+            // BrainSyncService, this test would still pass. Add:
+            //   run.BrainContextLoaded.Should().BeTrue()
+            // to match the clone-path test and keep coverage symmetric across both branches.
+            // See review findings [WARNING] TestQualityReviewer L222.
         }
         finally
         {

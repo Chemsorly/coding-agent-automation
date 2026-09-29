@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using System.Diagnostics.Metrics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -14,12 +13,6 @@ namespace CodingAgent.Pipeline.UnitTests.Steps;
 /// Tests timeout enforcement, retry behavior, cap enforcement, and partial failure handling.
 /// Feature: 027-epic-decomposition-pipeline, Requirements: 4.6, 4.12, 10.3, 10.4
 /// </summary>
-// Added to [Collection("Metrics")] because ExecuteAsync_SuccessfulCreation_IncrementsSubIssuesCreatedCounter
-// uses a MeterListener against the static PipelineTelemetry.SubIssuesCreated counter. Without
-// serialization, other test classes that also emit on the same static meter can bleed into this
-// class's MeterListener callback, causing snapshot-delta assertions to see inflated counts (delta=2
-// instead of 1). The "Metrics" collection serializes all metric-listener tests process-wide.
-[Collection("Metrics")]
 public class CreateSubIssuesStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
@@ -427,47 +420,5 @@ public class CreateSubIssuesStepTests : IDisposable
         run.SubIssueResults[1].Success.Should().BeFalse();
         run.SubIssueResults[2].Success.Should().BeTrue();
         run.DecompositionSubIssuesCreated.Should().Be(2);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_SuccessfulCreation_IncrementsSubIssuesCreatedCounter()
-    {
-        WriteSubIssueFile("01-feature.json", "Add feature", "Feature body");
-
-        _issueOps.Setup(x => x.CreateIssueAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new CreatedIssueResult { Identifier = "900", Url = "https://github.com/test/900" });
-
-        long createdCount = 0;
-        using var listener = new MeterListener();
-        listener.InstrumentPublished = (instrument, meterListener) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                meterListener.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, measurement, _, _) =>
-        {
-            if (instrument.Name == "pipeline.decomposition.sub_issues.created")
-                Interlocked.Add(ref createdCount, measurement);
-        });
-        listener.Start();
-
-        // Capture baseline after Start() so only events received while the listener is active
-        // are counted. Any measurements fired before Start() are not delivered to this listener.
-        var baseline = Interlocked.Read(ref createdCount);
-
-        var run = CreateRun();
-        var context = BuildContext(run);
-        var step = new CreateSubIssuesStep();
-
-        await step.ExecuteAsync(context, CancellationToken.None);
-
-        // Dispose the listener immediately after ExecuteAsync returns to stop receiving events
-        // from any concurrent tests that fire the same counter, preventing the delta from being
-        // inflated by parallel test activity.
-        listener.Dispose();
-
-        var delta = Interlocked.Read(ref createdCount) - baseline;
-        delta.Should().Be(1);
     }
 }
