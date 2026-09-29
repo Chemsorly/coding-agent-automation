@@ -1189,19 +1189,19 @@ public class DispatchSchedulerTests
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattened,
         Dictionary<string, List<EpicCandidate>> decompQueues,
         HashSet<(IssueIdentifier, ProviderConfigId)> activeIssueIdentifiers) => new()
-    {
-        PollableTemplates = pollable,
-        FlattenedTemplates = flattened,
-        Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-        MaxRunsPerCycle = 10,
-        ActiveIssueIdentifiers = activeIssueIdentifiers,
-        IssueQueues = new Dictionary<string, List<IssueSummary>>(),
-        PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
-        DecompositionQueues = decompQueues,
-        ReportStatus = _ => { },
-        ReportIssue = _ => { },
-        NotifyChange = () => { }
-    };
+        {
+            PollableTemplates = pollable,
+            FlattenedTemplates = flattened,
+            Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+            MaxRunsPerCycle = 10,
+            ActiveIssueIdentifiers = activeIssueIdentifiers,
+            IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+            PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+            DecompositionQueues = decompQueues,
+            ReportStatus = _ => { },
+            ReportIssue = _ => { },
+            NotifyChange = () => { }
+        };
 
     /// <summary>
     /// AllQueuesEmpty — TrySelectHighestPriorityQueue returns found=false, loop breaks immediately, ProcessedCount=0.
@@ -1520,19 +1520,19 @@ public class DispatchSchedulerTests
         IReadOnlyList<PipelineJobTemplate> pollable,
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattened,
         (IssueIdentifier, ProviderConfigId) active) => new()
-    {
-        PollableTemplates = pollable,
-        FlattenedTemplates = flattened,
-        Config = new PipelineConfiguration { MinIssueSlots = 0 },
-        MaxRunsPerCycle = 5,
-        ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)> { active },
-        IssueQueues = new Dictionary<string, List<IssueSummary>>(),
-        PrQueues = new Dictionary<string, List<PullRequestSummary>> { [pollable[0].Id] = [CreatePrSummary("5", 5)] },
-        DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
-        ReportStatus = _ => { },
-        ReportIssue = _ => { },
-        NotifyChange = () => { }
-    };
+        {
+            PollableTemplates = pollable,
+            FlattenedTemplates = flattened,
+            Config = new PipelineConfiguration { MinIssueSlots = 0 },
+            MaxRunsPerCycle = 5,
+            ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)> { active },
+            IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+            PrQueues = new Dictionary<string, List<PullRequestSummary>> { [pollable[0].Id] = [CreatePrSummary("5", 5)] },
+            DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+            ReportStatus = _ => { },
+            ReportIssue = _ => { },
+            NotifyChange = () => { }
+        };
 
     #endregion
 
@@ -1846,14 +1846,16 @@ public class DispatchSchedulerTests
         // Both templates share the same IssueProviderId so the dedup check works correctly.
         var t1 = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Template t1",
+            Id = "t1",
+            Name = "Template t1",
             IssueProviderId = "provider-t1",
             RepoProviderId = "repo-t1",
             ImplementationEnabled = true
         };
         var t2 = new PipelineJobTemplate
         {
-            Id = "t2", Name = "Template t2",
+            Id = "t2",
+            Name = "Template t2",
             IssueProviderId = "provider-t2",
             RepoProviderId = "repo-t2",
             ImplementationEnabled = true
@@ -1943,14 +1945,16 @@ public class DispatchSchedulerTests
         // Two templates, same IssueProviderId — simulates a project tracker appearing in both
         var t1 = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Template t1",
+            Id = "t1",
+            Name = "Template t1",
             IssueProviderId = "shared-provider",
             RepoProviderId = "repo-t1",
             ImplementationEnabled = true
         };
         var t2 = new PipelineJobTemplate
         {
-            Id = "t2", Name = "Template t2",
+            Id = "t2",
+            Name = "Template t2",
             IssueProviderId = "shared-provider",
             RepoProviderId = "repo-t2",
             ImplementationEnabled = true
@@ -2013,14 +2017,16 @@ public class DispatchSchedulerTests
     {
         var t1 = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Template t1",
+            Id = "t1",
+            Name = "Template t1",
             IssueProviderId = "provider-t1",
             RepoProviderId = "repo-t1",
             DecompositionEnabled = true
         };
         var t2 = new PipelineJobTemplate
         {
-            Id = "t2", Name = "Template t2",
+            Id = "t2",
+            Name = "Template t2",
             IssueProviderId = "provider-t2",
             RepoProviderId = "repo-t2",
             DecompositionEnabled = true
@@ -2070,14 +2076,16 @@ public class DispatchSchedulerTests
     {
         var t1 = new PipelineJobTemplate
         {
-            Id = "t1", Name = "Template t1",
+            Id = "t1",
+            Name = "Template t1",
             IssueProviderId = "provider-t1",
             RepoProviderId = "repo-t1",
             DecompositionEnabled = true
         };
         var t2 = new PipelineJobTemplate
         {
-            Id = "t2", Name = "Template t2",
+            Id = "t2",
+            Name = "Template t2",
             IssueProviderId = "provider-t2",
             RepoProviderId = "repo-t2",
             DecompositionEnabled = true
