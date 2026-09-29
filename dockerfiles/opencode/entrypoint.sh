@@ -137,8 +137,19 @@ while [ "$WAITED" -lt "$MAX_WAIT" ]; do
         exit 1
     fi
 
-    # Attempt health check with Basic auth (curl -u handles encoding internally)
+    # Attempt health check with Basic auth (curl -u handles encoding internally).
+    # --max-time 5: bounds the entire transfer so a hung first request (opencode
+    #   defers the health response until provider init completes) doesn't block
+    #   this loop forever — without it WAITED never increments and MAX_WAIT is
+    #   never checked.
+    # --connect-timeout 3: separate guard for the TCP connect phase (e.g. opencode
+    #   crashed between the liveness check above and the connect attempt).
+    # -H "Connection: close": tells opencode to close after responding so the
+    #   ephemeral port is fully freed before the next iteration.
     RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+        --max-time 5 \
+        --connect-timeout 3 \
+        -H "Connection: close" \
         -u "opencode:${OPENCODE_SERVER_PASSWORD}" \
         "$HEALTH_URL" 2>/dev/null) || true
 

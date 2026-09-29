@@ -51,17 +51,8 @@ public static class PipelineRunExtensions
         run.CacheReadTokens += result.Usage.CacheReadTokens;
         run.CacheWriteTokens += result.Usage.CacheWriteTokens;
 
-        var tags = phase is null
-            ? PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName)
-            : PipelineTelemetry.BuildTagsWithPhase(run.RunType, run.ProjectId, run.ProjectName, phase);
-
         if (result.Cost is not null)
-        {
             run.TotalCost = (run.TotalCost ?? 0m) + result.Cost.Value;
-            PipelineTelemetry.CostUsd.Add((double)result.Cost.Value, tags);
-        }
-
-        PipelineTelemetry.TokensUsed.Add(result.Usage.TotalTokens, tags);
 
         if (phase is not null)
         {
@@ -69,7 +60,11 @@ public static class PipelineRunExtensions
                 new PhaseUsage(result.Usage.TotalTokens, result.Cost),
                 (_, existing) => new PhaseUsage(
                     existing.Tokens + result.Usage.TotalTokens,
-                    existing.Cost is null && result.Cost is null ? null : (existing.Cost ?? 0m) + (result.Cost ?? 0m)));
+                    existing.Cost is null && result.Cost is null ? null : (existing.Cost ?? 0m) + (result.Cost ?? 0m),
+                    existing.SessionCount,
+                    existing.AgentTimeSeconds,
+                    existing.Provider,
+                    existing.Model));
         }
     }
 
@@ -87,17 +82,37 @@ public static class PipelineRunExtensions
         run.CacheReadTokens += usage.CacheReadTokens;
         run.CacheWriteTokens += usage.CacheWriteTokens;
 
-        var tags = phase is null
-            ? PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName)
-            : PipelineTelemetry.BuildTagsWithPhase(run.RunType, run.ProjectId, run.ProjectName, phase);
-
-        PipelineTelemetry.TokensUsed.Add(usage.TotalTokens, tags);
-
         if (phase is not null)
         {
             run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
                 new PhaseUsage(usage.TotalTokens, null),
-                (_, existing) => new PhaseUsage(existing.Tokens + usage.TotalTokens, existing.Cost));
+                (_, existing) => new PhaseUsage(existing.Tokens + usage.TotalTokens, existing.Cost,
+                    existing.SessionCount, existing.AgentTimeSeconds, existing.Provider, existing.Model));
         }
+    }
+
+    /// <summary>
+    /// Records an agent session (invocation) into the per-phase breakdown.
+    /// Updates the session count and elapsed time for the given phase.
+    /// </summary>
+    /// <param name="run">The pipeline run to update.</param>
+    /// <param name="phase">The phase key (e.g. "analysis", "codegen"). Null is a no-op.</param>
+    /// <param name="elapsedSeconds">Agent execution duration for this invocation.</param>
+    /// <param name="provider">Provider name tag ("kiro", "opencode", etc.).</param>
+    /// <param name="model">Model name, or null if unknown.</param>
+    public static void AccumulateAgentSession(this PipelineRun run, string? phase, double elapsedSeconds, string? provider = null, string? model = null)
+    {
+        if (phase is null) return;
+
+        run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
+            new PhaseUsage(0, null, 1, elapsedSeconds, provider, model),
+            (_, existing) => new PhaseUsage(
+                existing.Tokens,
+                existing.Cost,
+                existing.SessionCount + 1,
+                existing.AgentTimeSeconds + elapsedSeconds,
+                // Prefer first non-null provider/model seen (they should all be the same per phase in practice)
+                existing.Provider ?? provider,
+                existing.Model ?? model));
     }
 }

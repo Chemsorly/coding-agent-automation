@@ -257,6 +257,10 @@ public sealed partial class WorkItemStatusTransitionService
 
             RecordRunOutcomeMetrics(runTypeTag, outcome, failureReasonTag, projectName, duration);
 
+            // Record per-phase LLM usage metrics from the completion payload
+            if (payload?.PhaseBreakdown is { Count: > 0 })
+                RecordRunUsageMetrics(runTypeTag, payload.PhaseBreakdown);
+
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
                 failureReason);
@@ -265,6 +269,60 @@ public sealed partial class WorkItemStatusTransitionService
         {
             Serilog.Log.ForContext("SourceContext", nameof(WorkItemStatusTransitionService))
                 .Warning(ex, "Failed to emit terminal status telemetry for WorkItem {Id}", id);
+        }
+    }
+
+    /// <summary>
+    /// Records <c>pipeline.run.tokens</c>, <c>pipeline.run.cost_usd</c>,
+    /// <c>pipeline.run.agent_sessions</c>, and <c>pipeline.run.agent_time</c>
+    /// for each phase in the per-phase breakdown.
+    /// </summary>
+    private static void RecordRunUsageMetrics(
+        string runTypeTag,
+        IReadOnlyDictionary<string, PhaseUsagePayload> phaseBreakdown)
+    {
+        foreach (var (rawPhase, usage) in phaseBreakdown)
+        {
+            var phase = PipelineTelemetry.NormalizeRunPhase(rawPhase);
+            // TODO: usage.Provider is forwarded directly from the agent-submitted payload without
+            // normalization to the closed set (kiro, opencode, unknown). A rogue or compromised agent
+            // could supply an arbitrary string and inflate label cardinality on the OTLP backend.
+            // Add a NormalizeProvider() helper (similar to NormalizeRunPhase) that maps to the
+            // RunProviders closed set and falls back to RunProviders.Unknown for unrecognized values.
+            var provider = usage.Provider ?? PipelineTelemetry.RunProviders.Unknown;
+
+            if (usage.Tokens > 0)
+            {
+                PipelineTelemetry.RunTokens.Add(usage.Tokens,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", provider));
+            }
+
+            if (usage.Cost is { } cost && cost > 0)
+            {
+                PipelineTelemetry.RunCostUsd.Add((double)cost,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", provider));
+            }
+
+            if (usage.SessionCount > 0)
+            {
+                PipelineTelemetry.RunAgentSessions.Add(usage.SessionCount,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", provider),
+                    new KeyValuePair<string, object?>("model", usage.Model ?? UnknownTag));
+            }
+
+            if (usage.AgentTimeSeconds > 0)
+            {
+                PipelineTelemetry.RunAgentTime.Add(usage.AgentTimeSeconds,
+                    new KeyValuePair<string, object?>("run_type", runTypeTag),
+                    new KeyValuePair<string, object?>("phase", phase),
+                    new KeyValuePair<string, object?>("provider", provider));
+            }
         }
     }
 
