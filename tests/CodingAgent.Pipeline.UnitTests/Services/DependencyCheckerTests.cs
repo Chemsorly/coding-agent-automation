@@ -304,3 +304,184 @@ public sealed class DependencyCheckerTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 }
+
+// ── Cross-tracker URL routing (new overload, AC4) ────────────────────────
+public sealed class DependencyCheckerCrossTrackerTests
+{
+    private static ILogger Logger => Mock.Of<ILogger>();
+
+    private static Mock<IIssueProvider> ProviderReturning(string issueNumber, bool isClosed)
+    {
+        var mock = new Mock<IIssueProvider>();
+        mock.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mock.Setup(p => p.IsIssueClosedAsync(
+                It.Is<IssueIdentifier>(id => id.Value == issueNumber),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(isClosed);
+        return mock;
+    }
+
+    // Helper: build the cross-tracker call with minimal boilerplate
+    private static Task<DependencyCheckResult> CheckCrossTracker(
+        DependencyChecker checker,
+        string issueIdentifier,
+        string issueBody,
+        IIssueProvider defaultProvider,
+        string defaultProviderId,
+        Dictionary<string, IIssueProvider> allProviders,
+        Dictionary<string, string> providerUrlPrefixes,
+        CancellationToken ct = default)
+    {
+        return checker.CheckAsync(
+            issueIdentifier,
+            issueBody,
+            defaultProvider,
+            defaultProviderId,
+            allProviders,
+            providerUrlPrefixes,
+            new Dictionary<string, Dictionary<int, bool>>(),
+            ct);
+    }
+
+    // AC4: open cross-tracker URL dep → IsReady=false, URL in BlockedByUrls
+    [Fact]
+    public async Task CheckAsync_OpenUrlDependency_IsNotReady_BlockedByUrlsPopulated()
+    {
+        var checker = new DependencyChecker(Logger);
+        var crossProvider = ProviderReturning("40", isClosed: false);
+
+        var result = await CheckCrossTracker(
+            checker,
+            issueIdentifier: "99",
+            issueBody: "Depends on https://github.com/acme/api/issues/40",
+            defaultProvider: Mock.Of<IIssueProvider>(),
+            defaultProviderId: "p-web",
+            allProviders: new() { ["p-api"] = crossProvider.Object },
+            providerUrlPrefixes: new() { ["p-api"] = "https://github.com/acme/api" });
+
+        result.IsReady.Should().BeFalse(because: "cross-tracker issue #40 is still open");
+        result.BlockedBy.Should().BeEmpty(because: "this is a URL dep, not a numeric dep");
+        result.BlockedByUrls.Should().ContainSingle()
+            .Which.Should().Be("https://github.com/acme/api/issues/40");
+        result.TotalDependencies.Should().Be(1);
+    }
+
+    // AC4: closed cross-tracker URL dep → IsReady=true
+    [Fact]
+    public async Task CheckAsync_ClosedUrlDependency_IsReady()
+    {
+        var checker = new DependencyChecker(Logger);
+        var crossProvider = ProviderReturning("40", isClosed: true);
+
+        var result = await CheckCrossTracker(
+            checker,
+            issueIdentifier: "99",
+            issueBody: "Depends on https://github.com/acme/api/issues/40",
+            defaultProvider: Mock.Of<IIssueProvider>(),
+            defaultProviderId: "p-web",
+            allProviders: new() { ["p-api"] = crossProvider.Object },
+            providerUrlPrefixes: new() { ["p-api"] = "https://github.com/acme/api" });
+
+        result.IsReady.Should().BeTrue(because: "cross-tracker issue #40 is closed");
+        result.BlockedByUrls.Should().BeEmpty();
+    }
+
+    // AC4: URL matches no configured provider → unresolved, blocks dispatch
+    [Fact]
+    public async Task CheckAsync_UrlMatchesNoProvider_IsNotReady_UrlInBlockedByUrls()
+    {
+        var checker = new DependencyChecker(Logger);
+
+        var result = await CheckCrossTracker(
+            checker,
+            issueIdentifier: "99",
+            issueBody: "Depends on https://github.com/unknown/repo/issues/77",
+            defaultProvider: Mock.Of<IIssueProvider>(),
+            defaultProviderId: "p-web",
+            allProviders: new() { ["p-api"] = Mock.Of<IIssueProvider>() },
+            providerUrlPrefixes: new() { ["p-api"] = "https://github.com/acme/api" });
+
+        result.IsReady.Should().BeFalse(because: "unresolvable URL dep must block dispatch");
+        result.BlockedByUrls.Should().ContainSingle()
+            .Which.Should().Be("https://github.com/unknown/repo/issues/77");
+
+        // The warning is emitted via Serilog's generic structured-logging method; we verify
+        // the effect (IsReady=false, URL in BlockedByUrls) rather than the logger call directly
+        // because Serilog's ILogger uses generic overloads that Moq cannot easily match.
+    }
+
+    // AC4: mixed open numeric dep + closed URL dep → blocked by the numeric one only
+    [Fact]
+    public async Task CheckAsync_MixedOpenNumericAndClosedUrl_OnlyNumericBlocks()
+    {
+        var checker = new DependencyChecker(Logger);
+        var defaultProvider = new Mock<IIssueProvider>();
+        defaultProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        // Numeric dep #10 in same tracker is OPEN
+        defaultProvider
+            .Setup(p => p.IsIssueClosedAsync(
+                It.Is<IssueIdentifier>(id => id.Value == "10"),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        // URL dep in another tracker is CLOSED
+        var crossProvider = ProviderReturning("40", isClosed: true);
+
+        var result = await CheckCrossTracker(
+            checker,
+            issueIdentifier: "99",
+            issueBody: "Blocked by #10\nDepends on https://github.com/acme/api/issues/40",
+            defaultProvider: defaultProvider.Object,
+            defaultProviderId: "p-web",
+            allProviders: new() { ["p-api"] = crossProvider.Object },
+            providerUrlPrefixes: new() { ["p-api"] = "https://github.com/acme/api" });
+
+        result.IsReady.Should().BeFalse(because: "numeric dep #10 is open");
+        result.BlockedBy.Should().ContainSingle().Which.Should().Be(10);
+        result.BlockedByUrls.Should().BeEmpty(because: "the URL dep is closed");
+        result.TotalDependencies.Should().Be(2);
+    }
+
+    // GitLab URL: routed to the correct provider via /-/issues/ path
+    [Fact]
+    public async Task CheckAsync_GitLabUrl_RoutedToMatchingProvider()
+    {
+        var checker = new DependencyChecker(Logger);
+        var crossProvider = ProviderReturning("7", isClosed: false);
+
+        var result = await CheckCrossTracker(
+            checker,
+            issueIdentifier: "99",
+            issueBody: "Depends on https://gitlab.com/org/proj/-/issues/7",
+            defaultProvider: Mock.Of<IIssueProvider>(),
+            defaultProviderId: "p-default",
+            allProviders: new() { ["p-gl"] = crossProvider.Object },
+            providerUrlPrefixes: new() { ["p-gl"] = "https://gitlab.com/org/proj" });
+
+        result.IsReady.Should().BeFalse(because: "GitLab issue #7 is open");
+        result.BlockedByUrls.Should().ContainSingle()
+            .Which.Should().Be("https://gitlab.com/org/proj/-/issues/7");
+
+        crossProvider.Verify(p => p.IsIssueClosedAsync(
+            It.Is<IssueIdentifier>(id => id.Value == "7"),
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "provider for the matching prefix must be called exactly once");
+    }
+
+    // Guard clauses for the new overload
+    [Fact]
+    public async Task CheckAsync_NewOverload_NullDefaultProvider_Throws()
+    {
+        var checker = new DependencyChecker(Logger);
+
+        var act = () => checker.CheckAsync(
+            "1", "body", null!, "pid",
+            new Dictionary<string, IIssueProvider>(),
+            new Dictionary<string, string>(),
+            new Dictionary<string, Dictionary<int, bool>>(),
+            CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+}

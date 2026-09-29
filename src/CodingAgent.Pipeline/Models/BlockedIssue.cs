@@ -8,8 +8,10 @@ namespace CodingAgent.Pipeline.Models;
 /// <param name="Title">Issue title.</param>
 /// <param name="BlockedBy">Issue numbers that are still open and block this one.</param>
 /// <param name="Url">Web URL of the issue on the provider, or null if unknown.</param>
+/// <param name="BlockedByUrls">Full issue URLs in other trackers that are still open and block this one.</param>
 public sealed record BlockedIssue(
     string Identifier,
     string Title,
     IReadOnlyList<int> BlockedBy,
-    string? Url);
+    string? Url,
+    IReadOnlyList<string>? BlockedByUrls = null);

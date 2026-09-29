@@ -105,7 +105,7 @@
                                         <span class="badge-default" style="background: var(--bg-hover); color: var(--text-muted);">Parked</span>
                                         break;
                                     case IssueDisplayState.Blocked:
-                                        <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))">Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))</span>
+                                        <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}").Concat(readiness.BlockedByUrls ?? [])))">Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}").Concat(readiness.BlockedByUrls ?? [])))</span>
                                         break;
                                     case IssueDisplayState.Ready:
                                         <span class="badge-default drawer-badge-ready">Ready</span>
@@ -159,7 +159,7 @@
                     @if (selectedBlocked)
                     {
                         <p style="font-size: 0.78rem; color: var(--danger, #ef4444); margin: 0 0 8px;">
-                            Blocked by @(string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}")))
+                            Blocked by @(string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}").Concat(selectedReadiness.BlockedByUrls ?? [])))
                         </p>
                     }
                     @* Note: the Dispatch button is intentionally enabled for issues with lifecycle labels
@@ -168,7 +168,7 @@
                        conditions for label-only states without reading IssueDrawerService.DispatchIssueAsync. *@
                     <button class="btn-save" @onclick="DispatchSelected"
                             disabled="@(IsDispatching || selectedBlocked)"
-                            title="@(selectedBlocked ? $"Blocked by open dependencies: {string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}"))}" : "")"
+                            title="@(selectedBlocked ? $"Blocked by open dependencies: {string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}").Concat(selectedReadiness.BlockedByUrls ?? []))}" : "")"
                             data-testid="dispatch-issue-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Pipeline on #{SelectedItem.Identifier}")
                     </button>
