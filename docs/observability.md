@@ -294,13 +294,19 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 
 ## Traces
 
-<!-- TODO: [WARNING] The "Span Noise Filters" section (covering OtelNoiseFilter wiring for AspNetCore
-     request filtering, Kubernetes API server filtering, outbound span name enrichment, and
-     OtelNoiseSpanDropProcessor) was removed in issue #2967. None of the OtelNoiseFilter source code
-     was changed — the section was removed as unrelated cleanup. The section documented production code
-     that reduces ~70% of raw daily span volume. Operators configuring OTLP or debugging high span
-     volumes will no longer find this guidance. Restore the section (see git history of this file
-     before the #2967 merge) or move it to a separate observability-internals doc. -->
+### Span Noise Filters
+
+Three high-volume span categories are filtered out before export to avoid overwhelming the OTLP backend with low-signal data (~70% of raw daily span volume). The filters are wired in the **Scheduler** and **Job Controller** processes via `OtelNoiseFilter` (`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`):
+
+| Filter | Mechanism | What is dropped |
+|--------|-----------|-----------------|
+| Health-probe and polling endpoints | `AspNetCoreTraceInstrumentationOptions.Filter` | Exact paths `/healthz`, `/readyz`, `/loop/status` — sub-paths like `/healthz/detail` are kept |
+| Kubernetes API server lease calls | `HttpClientTraceInstrumentationOptions.FilterHttpRequestMessage` | Outbound requests to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc` |
+| Chatty SignalR / Blazor circuit spans | `OtelNoiseSpanDropProcessor` (added via `.AddProcessor(new OtelNoiseSpanDropProcessor())`) | Hub methods ending in `/Heartbeat`, `/ReportOutputLines`, `/OnRenderCompleted`; spans starting with `"Circuit "` (Blazor circuit lifecycle); event callbacks starting with `"Event "` and containing `" -> "` |
+
+The K8s API server filter alone eliminates ~387k leader-election lease spans per day. Additionally, outbound HTTP span names are enriched to `"{METHOD} {host}"` (e.g., `"GET api.github.com"`) by `EnrichWithHttpRequestMessage` to keep cardinality bounded while still making host-level tracing useful.
+
+These filters are applied at the tracer-provider level — dropped spans are marked `IsAllDataRequested = false` at start, so no attributes are collected and nothing is exported.
 
 All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).
 
@@ -472,29 +478,17 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 Agent pods emit telemetry with `service.name` derived from the agent image and labels.
 
-<!-- TODO: [WARNING] The coding-agent-worker row was removed from this table in issue #2967.
-     Agent pods (K8s Jobs) still emit ExecutePipeline spans via PipelineRunInstrumentation.
-     Operators querying Tempo for agent-pod spans by service.name or service.instance.id (set to the
-     K8s Job name) will find the documented guidance gone. Re-add the row:
-     | coding-agent-worker | Agent pods (K8s Jobs) | — | Set unconditionally by JobSpecBuilder; per-run identity in service.instance.id (= Job name) in OTEL_RESOURCE_ATTRIBUTES |
-     Also restore the "Run identity in service.instance.id" callout that was removed. -->
-
-<!-- TODO: [WARNING] The API service.name default was changed from coding-agent-api to coding-agent-web in this
-     table without a breaking-change notice for operators who followed the earlier migration (issue pre-#2969)
-     and updated their dashboards from coding-agent-web to coding-agent-api. Those operators will now get wrong
-     results if they kept the coding-agent-api filter. Add a breaking-change callout here analogous to the one
-     that was removed: "⚠️ Breaking change: the API's default service.name reverted from coding-agent-api to
-     coding-agent-web. If you updated Grafana dashboards/alerts to coding-agent-api based on the previous
-     notice, update them back to coding-agent-web (or use a regex that matches both)." -->
-
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
 | `coding-agent-web` | Web service (Blazor UI) | — | Hardcoded at compile time in `OpenTelemetryRegistration.cs`; not overridable via `OTEL_SERVICE_NAME` |
 | `coding-agent-web` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-web`). Override to `coding-agent-api` to separate API spans from Blazor spans in Tempo — then also update Grafana panel queries. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
+| `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder` via `OTEL_SERVICE_NAME` on each Job pod. Per-run identity exposed via `service.instance.id` = K8s Job name (e.g., `caa-agent-7f3a9b2e1c4`), set in `OTEL_RESOURCE_ATTRIBUTES` |
 
 > **Why API defaults to `coding-agent-web`:** The Grafana "Recent Pipeline Traces" panel queries `rootServiceName="coding-agent-web"`. With the API emitting under the same service name, `ExecutePipeline` spans (started by the API when a WorkItem is created) appear in that panel automatically. Override `otel.apiServiceName` to `coding-agent-api` if you want to distinguish API-origin spans from Blazor UI spans; then update the panel query to `rootServiceName=~"coding-agent-web|coding-agent-api"`. See issue #2255.
+
+> **⚠️ Breaking change notice (API service name):** The API's default `service.name` reverted from `coding-agent-api` back to `coding-agent-web`. If you previously updated Grafana dashboards or alerts to filter on `service.name="coding-agent-api"` based on an earlier migration notice, update those filters back to `coding-agent-web` (or use a regex: `service.name=~"coding-agent-web|coding-agent-api"`). Dashboards that never changed the filter are unaffected.
 
 ### Example: Grafana Cloud
 
