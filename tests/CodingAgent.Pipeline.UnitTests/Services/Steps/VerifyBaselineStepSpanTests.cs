@@ -17,10 +17,6 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 /// </summary>
 public class VerifyBaselineStepSpanTests : IDisposable
 {
-    // Unique per test-class instance so parallel test runs don't cross-contaminate
-    // the shared ActivitySource listener (process-global static state).
-    private readonly string _runId = Guid.NewGuid().ToString();
-
     private readonly ActivityListener _listener;
     private readonly List<Activity> _activities = [];
 
@@ -56,7 +52,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId),
+        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline",
             "VerifyBaselineStep must emit a VerifyBaseline span");
     }
 
@@ -69,8 +65,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetMySpan();
-        span.GetTagItem("pipeline.run_id").Should().Be(_runId);
+        // Filter by run_id to avoid picking up VerifyBaseline spans emitted by other tests running in parallel.
+        var span = _activities.First(a => a.DisplayName == "VerifyBaseline"
+            && Equals(a.GetTagItem("pipeline.run_id"), "test-run"));
+        span.GetTagItem("pipeline.run_id").Should().Be("test-run");
         span.GetTagItem("pipeline.issue").Should().NotBeNull();
     }
 
@@ -86,7 +84,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetMySpan();
+        var span = _activities.First(a => a.DisplayName == "VerifyBaseline");
         span.Status.Should().Be(ActivityStatusCode.Error,
             "a fatal agent health-check failure must set Error on the VerifyBaseline span");
         span.StatusDescription.Should().Contain("agent binary not found");
@@ -102,7 +100,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetMySpan();
+        var span = _activities.First(a => a.DisplayName == "VerifyBaseline");
         span.Status.Should().NotBe(ActivityStatusCode.Error,
             "a non-critical workspace baseline failure must NOT set Error on the span");
     }
@@ -117,7 +115,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetMySpan();
+        var span = _activities.First(a => a.DisplayName == "VerifyBaseline");
         var evt = span.Events.Should().ContainSingle(e => e.Name == "exception").Which;
         evt.Tags.Should().Contain(t => t.Key == "pipeline.non_critical" && true.Equals(t.Value));
     }
@@ -131,7 +129,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetMySpan();
+        var span = _activities.First(a => a.DisplayName == "VerifyBaseline");
         span.Status.Should().NotBe(ActivityStatusCode.Error,
             "a healthy baseline must not set Error on the span");
         span.Events.Should().BeEmpty();
@@ -139,24 +137,13 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Returns the VerifyBaseline activity emitted by this test's run, identified by the
-    /// unique <see cref="_runId"/>. Filters out activities leaked from parallel test classes
-    /// that also invoke VerifyBaselineStep (e.g. VerifyBaselineStepTests).
-    /// </summary>
-    // TODO: Replace _activities.First(...) with _activities.Should().ContainSingle(...).Which to produce
-    // a clear assertion failure message when the span is missing, rather than the uninformative
-    // "Sequence contains no matching element" exception thrown by First(). (WARNING: TestQualityReviewer)
-    private Activity GetMySpan() =>
-        _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId));
-
     private PipelineStepContext BuildContext(
         Mock<IAgentProvider>? agentProviderMock = null,
         IReadOnlyList<QualityGateConfiguration>? preResolvedQgcs = null)
     {
         var run = new PipelineRun
         {
-            RunId = _runId,
+            RunId = "test-run",
             IssueIdentifier = "42",
             IssueTitle = "Test",
             IssueProviderConfigId = "ip",
