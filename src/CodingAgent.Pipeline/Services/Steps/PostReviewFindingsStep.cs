@@ -93,7 +93,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
 
         // Step 2: Determine the body and review type
         var body = context.Run.CodeReviewAgentsRun.Count == 0
-            ? $"{CommentMarkers.PrReview}\n{NoReviewerMessage}"
+            ? $"{CommentMarkers.PrReview}\n{context.Run.CodeReviewSkipReason ?? NoReviewerMessage}"
             : ReviewFindingsFormatter.Format(context.Run);
 
         var reviewType = DetermineReviewType(context.Run);

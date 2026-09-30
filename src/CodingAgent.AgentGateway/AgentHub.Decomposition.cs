@@ -12,6 +12,9 @@ public sealed partial class AgentHub
     /// <summary>
     /// Creates a new issue via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueAsync</c>.
+    /// Agent-supplied labels are filtered through <see cref="AgentLabels.FilterForIssueCreation"/>:
+    /// only <c>agent:next</c>, <c>agent:generated</c>, and non-agent labels are forwarded.
+    /// All other <c>agent:*</c> labels (including <c>agent:epic-approved</c>) are dropped.
     /// </summary>
     [RequiresActiveJob]
     public Task<CreatedIssueResult> RequestCreateIssue(JobId jobId, string title, string body, IReadOnlyList<string> labels)
@@ -20,14 +23,18 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
+        var filteredLabels = FilterLabelsForIssueCreation(labels, jobId.Value);
         return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId.Value, "create issue",
-            (provider, ct) => provider.CreateIssueAsync(title, body, labels, ct));
+            (provider, ct) => provider.CreateIssueAsync(title, body, filteredLabels, ct));
     }
 
     /// <summary>
     /// Creates a new issue via a specific issue provider (for cross-repo decomposition routing).
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueForProviderAsync</c> when the
     /// decomposed issue's <c>targetRepository</c> resolves to a different template's issue provider.
+    /// Agent-supplied labels are filtered through <see cref="AgentLabels.FilterForIssueCreation"/>:
+    /// only <c>agent:next</c>, <c>agent:generated</c>, and non-agent labels are forwarded.
+    /// All other <c>agent:*</c> labels (including <c>agent:epic-approved</c>) are dropped.
     /// </summary>
     [RequiresActiveJob]
     public async Task<CreatedIssueResult> RequestCreateIssueForProvider(
@@ -40,12 +47,13 @@ public sealed partial class AgentHub
 
         var (_, issueConfig) = await LoadProviderForCrossRepoAsync(jobId, issueProviderConfigId, "routing");
 
+        var filteredLabels = FilterLabelsForIssueCreation(labels, jobId.Value);
         await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
         try
         {
             // TODO: Thread a SignalR connection-lifetime CancellationToken here instead of CancellationToken.None.
             // A SignalR disconnect will not be observed until this await completes. Tracked in LoadProviderForCrossRepoAsync.
-            return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
+            return await issueProvider.CreateIssueAsync(title, body, filteredLabels, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -107,6 +115,37 @@ public sealed partial class AgentHub
                 jobId.Value, issueProviderConfigId);
             throw new HubException($"Failed to list closed issues for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Filters agent-supplied labels for issue creation. Keeps <c>agent:next</c>,
+    /// <c>agent:generated</c>, and non-agent labels. Drops all other <c>agent:*</c> labels
+    /// (including <c>agent:epic-approved</c>, <c>agent:epic</c>, and status labels such as
+    /// <c>agent:done</c> and <c>agent:in-progress</c>) and logs a warning for each dropped label.
+    /// </summary>
+    private IReadOnlyList<string> FilterLabelsForIssueCreation(IReadOnlyList<string> labels, string jobId)
+    {
+        var filtered = AgentLabels.FilterForIssueCreation(labels);
+
+        // Log a warning for every label that was removed.
+        // TODO: The warning loop below duplicates the classification logic of FilterForIssueCreation
+        // (re-checking All.Contains / AllowedOnCreation.Contains independently). If FilterForIssueCreation
+        // changes its rules the logged warnings will silently drift from the set of actually-dropped labels.
+        // A simpler and more maintainable approach is to log labels.Except(filtered) which is guaranteed to
+        // stay in sync: foreach (var dropped in labels.Except(filtered)) _logger.Warning(...).
+        foreach (var label in labels)
+        {
+            if (!string.IsNullOrEmpty(label)
+                && AgentLabels.All.Contains(label)
+                && !AgentLabels.AllowedOnCreation.Contains(label))
+            {
+                _logger.Warning(
+                    "RequestCreateIssue: dropping disallowed agent label '{Label}' from issue creation (job {JobId})",
+                    label, jobId);
+            }
+        }
+
+        return filtered;
     }
 
     /// <summary>

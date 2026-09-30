@@ -217,6 +217,23 @@ public sealed partial class PipelineRun
     /// <summary>Names of review agents that were executed during this run.</summary>
     public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Human-readable reason why code review was skipped, or null if review ran (or was not applicable).
+    /// Set by <see cref="AgentPhaseExecutor.ExecuteCodeReviewAsync"/> before each early-return path.
+    /// Used by <see cref="Services.Steps.PostReviewFindingsStep"/> to post an accurate skip comment.
+    /// </summary>
+    // TODO [WARNING]: This property is set from multiple early-return paths in ExecuteCodeReviewAsync and
+    // never reset before those guards run. If ExecuteCodeReviewAsync is called more than once on the same
+    // PipelineRun instance (e.g. in retry loops), a skip reason written on an aborted first call could
+    // persist into a second call that actually runs reviewers, causing the skip comment to surface
+    // incorrectly. In the current single-call pipeline flow this is benign, but should be addressed if
+    // retry semantics ever reuse the same PipelineRun instance across calls to ExecuteCodeReviewAsync.
+    // TODO [WARNING]: The public setter allows any pipeline step (not just ExecuteCodeReviewAsync) to
+    // overwrite or clear this value. Consider replacing the public setter with a dedicated method
+    // (e.g. SetCodeReviewSkipReason) or documenting it as write-once to prevent unintended mutation
+    // by downstream steps that receive the PipelineRun by reference.
+    public string? CodeReviewSkipReason { get; set; }
+
     /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if generation failed/skipped.</summary>
     public string? CodeReviewChangeSummary { get; set; }
 
@@ -432,7 +449,7 @@ public sealed partial class PipelineRun
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
     /// <param name="finalStepOverride">If non-null, used as <see cref="PipelineRunSummary.FinalStep"/> instead of <see cref="CurrentStep"/>.</param>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
-    #pragma warning disable CS0618 // Obsolete members used intentionally for backward-compat serialization
+#pragma warning disable CS0618 // Obsolete members used intentionally for backward-compat serialization
     public PipelineRunSummary ToSummary(PipelineStep? finalStepOverride = null) => new()
     {
         RunId = RunId,
@@ -495,7 +512,7 @@ public sealed partial class PipelineRun
         // Backfilled PipelineRunSummary rows have WorkItemId set directly in the constructor.
         WorkItemId = Guid.TryParse(RunId, out var wiGuid) ? wiGuid : null
     };
-    #pragma warning restore CS0618
+#pragma warning restore CS0618
 
     /// <summary>Flattens a quality-gate report into slim per-gate (name, passed) outcomes for the summary.</summary>
     private static IReadOnlyList<GateOutcome> FlattenQualityGates(QualityGateReport report)

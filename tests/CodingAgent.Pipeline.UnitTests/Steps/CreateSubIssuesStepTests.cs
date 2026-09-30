@@ -320,6 +320,97 @@ public class CreateSubIssuesStepTests : IDisposable
         capturedLabels.Should().Contain(AgentLabels.Generated);
     }
 
+    // ── Issue #3159: label filtering ────────────────────────────────────
+
+    private void WriteSubIssueFileWithLabels(string filename, string title, string body, IEnumerable<string> labels)
+    {
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var labelArray = string.Join(", ", labels.Select(l => $"\"{l}\""));
+        var json = $$"""
+        {
+            "title": "{{title}}",
+            "body": "{{body}}",
+            "dependencies": [],
+            "labels": [{{labelArray}}]
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, filename), json);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalWithEpicApproved_DropsThatLabel()
+    {
+        // A sub-issue proposal that lists agent:epic-approved must create the issue without it.
+        WriteSubIssueFileWithLabels(
+            "01-epic.json", "Sub issue with gated label", "Body",
+            [AgentLabels.EpicApproved, "backend"]);
+
+        IReadOnlyList<string>? capturedLabels = null;
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "600", Url = "https://github.com/test/600" });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        run.SubIssueResults.Should().HaveCount(1);
+        run.SubIssueResults[0].Success.Should().BeTrue();
+
+        capturedLabels.Should().NotBeNull();
+        capturedLabels.Should().NotContain(AgentLabels.EpicApproved,
+            "agent:epic-approved must be stripped — it bypasses the decomposition gate");
+        // TODO: The two Contain assertions below verify step seeding behaviour (agent:next and
+        // agent:generated are always seeded unconditionally) rather than the filtering fix itself.
+        // They would pass even against the old (unfixed) code because the proposal only supplies
+        // [EpicApproved, "backend"]. The load-bearing assertion is NotContain(EpicApproved) above.
+        // Consider removing the redundant Contain assertions or replacing them with a HaveCount(2)
+        // check to make the test's intent clearer.
+        capturedLabels.Should().Contain(AgentLabels.Next);
+        capturedLabels.Should().Contain(AgentLabels.Generated);
+        capturedLabels.Should().Contain("backend");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalWithAgentStatusLabels_DropsThemAll()
+    {
+        // All agent status labels except agent:next and agent:generated must be stripped.
+        // TODO: This test covers agent:epic, agent:in-progress, agent:done, agent:error but does NOT
+        // assert that agent:cancelled, agent:wont-do, agent:needs-refinement, or agent:epic-approved
+        // are also dropped. If any of those labels were mistakenly removed from AgentLabels.All the
+        // regression would go undetected. Consider extending to the full AgentLabels.All member set,
+        // or converting to a [Theory, MemberData] test parameterised over all agent label strings.
+        WriteSubIssueFileWithLabels(
+            "01-status.json", "Sub issue with status labels", "Body",
+            [AgentLabels.Epic, AgentLabels.InProgress, AgentLabels.Done, AgentLabels.Error, "feature"]);
+
+        IReadOnlyList<string>? capturedLabels = null;
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "601", Url = "https://github.com/test/601" });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        capturedLabels.Should().NotBeNull();
+        capturedLabels.Should().NotContain(AgentLabels.Epic);
+        capturedLabels.Should().NotContain(AgentLabels.InProgress);
+        capturedLabels.Should().NotContain(AgentLabels.Done);
+        capturedLabels.Should().NotContain(AgentLabels.Error);
+        capturedLabels.Should().Contain(AgentLabels.Next);
+        capturedLabels.Should().Contain(AgentLabels.Generated);
+        capturedLabels.Should().Contain("feature");
+    }
+
     [Fact]
     public async Task ExecuteAsync_CancellationRequested_MarksRemainingAsFailed()
     {
