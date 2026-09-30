@@ -138,6 +138,12 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         // rather than Exactly(1) to avoid coupling this test to infrastructure call counts. Times.Never
         // would indicate the guard was incorrectly triggered.
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce());
+        // TODO [WARNING]: This test does not assert reviewRun.CodeReviewAgentsRun.Count > 0. A regression
+        // that calls the agent but fails to record it in CodeReviewAgentsRun would pass here while leaving
+        // PostReviewFindingsStep to incorrectly use the skip-comment path (CodeReviewAgentsRun.Count == 0).
+        // Add: reviewRun.CodeReviewAgentsRun.Should().NotBeEmpty("executed reviewer must be recorded")
+        // Note: the case-mismatch between SetupAgentWritingFindings("correctness") and CreateReviewers("Correctness")
+        // may need to be resolved first for findings to be picked up (see existing TODO above). (Correctness review)
     }
 
     [Fact]

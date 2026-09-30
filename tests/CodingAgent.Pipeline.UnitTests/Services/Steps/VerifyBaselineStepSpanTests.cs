@@ -18,6 +18,11 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 public class VerifyBaselineStepSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
+    // TODO [WARNING]: List<Activity> is not thread-safe. ActivityListener.ActivityStopped is invoked on
+    // whatever thread stops the Activity (potentially a thread-pool continuation), so concurrent Add calls
+    // race with test-thread reads in assertions. The previous ConcurrentBag<Activity> was correct for this
+    // pattern. If tests become flaky under parallel execution, replace with ConcurrentBag<Activity> or
+    // protect _activities with a lock. (DotNetSpecialist review)
     private readonly List<Activity> _activities = [];
 
     // Unique per test instance so parallel runs don't pick up each other's spans.
@@ -142,14 +147,15 @@ public class VerifyBaselineStepSpanTests : IDisposable
     /// Returns the single VerifyBaseline span produced by this test instance.
     /// Filtering by <see cref="_runId"/> prevents picking up spans from other tests
     /// running in parallel that also start a "VerifyBaseline" activity.
+    /// Uses ContainSingle so that a missing span produces a clear assertion-failure message
+    /// instead of an uninformative InvalidOperationException.
     /// </summary>
-    // TODO [WARNING]: _activities.First(...) throws an uninformative InvalidOperationException
-    // ("Sequence contains no matching element") when the span is absent. Replace with
-    // _activities.Should().ContainSingle(a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id"))).Which
-    // to produce a clear assertion-failure message that identifies the missing span by run ID.
     private Activity GetMySpan() =>
-        _activities.First(a => a.DisplayName == "VerifyBaseline"
-                               && _runId.Equals(a.GetTagItem("pipeline.run_id")));
+        _activities.Should()
+            .ContainSingle(
+                a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+                $"VerifyBaselineStep must emit a VerifyBaseline span with pipeline.run_id={_runId}")
+            .Which;
 
     private PipelineStepContext BuildContext(
         Mock<IAgentProvider>? agentProviderMock = null,

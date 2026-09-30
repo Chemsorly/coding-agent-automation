@@ -111,12 +111,7 @@ public class PostReviewFindingsStepTests : IDisposable
         postedBody.Should().NotBeNull();
         postedBody.Should().Contain("MaxIterations = 0", "the specific skip reason should appear in the posted comment");
         postedBody.Should().NotContain("No applicable reviewers found", "static fallback message should not be used when CodeReviewSkipReason is set");
-        // TODO [WARNING]: None of the three new skip-reason tests assert that CommentMarkers.PrReview is
-        // present in the posted body. The production code always prepends the marker, and its absence would
-        // break the "find and collapse existing review" flow for future runs. Add:
-        //   postedBody.Should().Contain(CommentMarkers.PrReview);
-        // to this test and to ExecuteAsync_SkipReasonForNoConfigs_PostsCorrectReason and
-        // ExecuteAsync_SkipReasonForZeroAgents_PostsCorrectReason below.
+        postedBody.Should().Contain(CommentMarkers.PrReview, "the marker must be present so future runs can find and collapse this review");
     }
 
     [Fact]
@@ -151,10 +146,7 @@ public class PostReviewFindingsStepTests : IDisposable
         await step.ExecuteAsync(context, CancellationToken.None);
 
         postedBody.Should().Contain("No reviewer configurations matched this repository's labels.");
-        // TODO [WARNING]: This test does not assert that CommentMarkers.PrReview is present in the posted
-        // body. The production code always prepends the marker; its absence would break the "find and
-        // collapse existing review" lookup on future runs. Add:
-        //   postedBody.Should().Contain(CommentMarkers.PrReview);
+        postedBody.Should().Contain(CommentMarkers.PrReview, "the marker must be present so future runs can find and collapse this review");
     }
 
     [Fact]
@@ -189,10 +181,7 @@ public class PostReviewFindingsStepTests : IDisposable
         await step.ExecuteAsync(context, CancellationToken.None);
 
         postedBody.Should().Contain("Reviewer configurations matched but resolved to zero agents.");
-        // TODO [WARNING]: This test does not assert that CommentMarkers.PrReview is present in the posted
-        // body. The production code always prepends the marker; its absence would break the "find and
-        // collapse existing review" lookup on future runs. Add:
-        //   postedBody.Should().Contain(CommentMarkers.PrReview);
+        postedBody.Should().Contain(CommentMarkers.PrReview, "the marker must be present so future runs can find and collapse this review");
     }
 
     [Fact]
