@@ -236,8 +236,14 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // No in-process loop registration, FakeSchedulerApiClient, or FakeLoopStatusService
             // is needed here.
 
-            // Reduce shutdown timeout for faster test teardown
-            services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
+            // Shutdown timeout: must exceed ChatTerminationGracePeriodSeconds (10s) so that
+            // Blazor circuits calling TerminateChatSessionAsync on dispose (triggered by
+            // E2ETestBase.DisposeAsync closing the browser context at collection cleanup)
+            // have time to complete before the host is forcefully shut down.  Without this,
+            // the in-flight HTTP call to the API races with IHttpClientFactory disposal,
+            // producing [Test Collection Cleanup Failure (E2E)] ObjectDisposedException.
+            // 20s gives 10s for the grace period + 10s buffer for the API's WatcherTask.
+            services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(20));
         });
     }
 

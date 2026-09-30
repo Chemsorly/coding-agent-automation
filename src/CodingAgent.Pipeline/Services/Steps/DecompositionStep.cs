@@ -71,7 +71,7 @@ public sealed class DecompositionStep : IPipelineStep
             run.RunId, comments.Count);
 
         // 3. Query existing agent-generated sub-issues for deduplication context
-        var existingTitles = await QueryExistingSubIssueTitlesAsync(context.IssueOps, logger, run.RunId, ct);
+        var existingTitles = await QueryExistingSubIssueTitlesAsync(context.IssueOps, context.ProjectContext, logger, run.RunId, ct);
         if (existingTitles.Count > 0)
         {
             // Append existing sub-issue titles to the issue context file for deduplication
@@ -196,23 +196,80 @@ public sealed class DecompositionStep : IPipelineStep
 
     /// <summary>
     /// Queries existing agent-generated sub-issues for deduplication context.
-    /// Returns a list of titles of existing sub-issues.
+    /// For repo epics (<paramref name="projectContext"/> is null), reads only from the run's own tracker.
+    /// For project epics, also reads from each enabled template tracker so that a rerun does not
+    /// recreate sub-issues that were already created in a previous partial run.
+    /// Returns a deduplicated list of titles (case-sensitive).
     /// </summary>
     private static async Task<IReadOnlyList<string>> QueryExistingSubIssueTitlesAsync(
-        IAgentIssueOperations issueOps, Serilog.ILogger logger, string runId, CancellationToken ct)
+        IAgentIssueOperations issueOps,
+        DecompositionProjectContext? projectContext,
+        Serilog.ILogger logger,
+        string runId,
+        CancellationToken ct)
     {
-        var titles = new List<string>();
+        var titles = new HashSet<string>(StringComparer.Ordinal);
+        var generatedLabels = new List<string> { AgentLabels.Generated };
 
+        // Always read from the run's own (epic) tracker via the unscoped path.
+        await CollectTitlesFromTrackerAsync(
+            (page, pageSize, labels, token) => issueOps.ListOpenIssuesAsync(page, pageSize, labels, token),
+            generatedLabels, titles, logger, runId, ct);
+
+        // For project epics, also read from each enabled template tracker.
+        if (projectContext is not null)
+        {
+            foreach (var repo in projectContext.Repositories)
+            {
+                if (!repo.DecompositionEnabled || string.IsNullOrEmpty(repo.IssueProviderId))
+                    continue;
+
+                // TODO: Skip repo.IssueProviderId when it equals the run's own IssueProviderConfigId to avoid
+                // a redundant network round-trip. The HashSet deduplicates titles so correctness is unaffected,
+                // but the extra call is unnecessary when the epic tracker and a template tracker are the same.
+                // See review finding: DecompositionStep — duplicate call for same-tracker template.
+                var providerId = repo.IssueProviderId;
+                await CollectTitlesFromTrackerAsync(
+                    (page, pageSize, labels, token) => issueOps.ListOpenIssuesForProviderAsync(providerId, page, pageSize, labels, token),
+                    generatedLabels, titles, logger, runId, ct);
+            }
+        }
+
+        return titles.ToList();
+    }
+
+    /// <summary>
+    /// Paginates through issues returned by <paramref name="listAsync"/> and adds their titles
+    /// to <paramref name="titles"/>. Swallows non-cancellation exceptions (matching the existing
+    /// fault-tolerance behaviour) so that a single failing tracker does not abort the whole query.
+    /// </summary>
+    // TODO: The fault-tolerance policy here also swallows failures on the own tracker (unscoped
+    // ListOpenIssuesAsync call). A transient own-tracker failure silently returns an empty set,
+    // indistinguishable from "no existing sub-issues", which could lead to duplicate creation on
+    // a rerun. Consider distinguishing own-tracker failures (re-throw or surface as pipeline error)
+    // from template-tracker failures (swallow). See review finding: CollectTitlesFromTrackerAsync — own-tracker failure masking.
+    // TODO: WriteOpenIssueContextStep is not updated to read from template trackers for project epics.
+    // The issue description (Suggested Fix §2) lists both OpenIssueContextWriter and DecompositionStep
+    // as consumers needing cross-repo merging; only DecompositionStep (agent:generated deduplication)
+    // is fixed here. The open/closed issue context written for the agent still excludes template tracker
+    // issues on reruns. See review finding: WriteOpenIssueContextStep — incomplete open/closed context for project epics.
+    private static async Task CollectTitlesFromTrackerAsync(
+        Func<int, int, IReadOnlyList<string>?, CancellationToken, Task<PagedResult<IssueSummary>>> listAsync,
+        IReadOnlyList<string> labels,
+        HashSet<string> titles,
+        Serilog.ILogger logger,
+        string runId,
+        CancellationToken ct)
+    {
         try
         {
-            var labels = new List<string> { AgentLabels.Generated };
             var page = 1;
             const int pageSize = 50;
             bool hasMore;
 
             do
             {
-                var result = await issueOps.ListOpenIssuesAsync(page, pageSize, labels, ct);
+                var result = await listAsync(page, pageSize, labels, ct);
                 foreach (var issue in result.Items)
                 {
                     titles.Add(issue.Title);
@@ -226,8 +283,6 @@ public sealed class DecompositionStep : IPipelineStep
         {
             logger.Warning(ex, "Pipeline {RunId} failed to query existing sub-issues for deduplication", runId);
         }
-
-        return titles;
     }
 
     /// <summary>

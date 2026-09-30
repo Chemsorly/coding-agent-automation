@@ -27,7 +27,7 @@ public class AgentLabelOperationsTests
             CancellationToken.None);
 
         removed.Should().NotContain(AgentLabels.InProgress);
-        removed.Should().HaveCount(AgentLabels.All.Count - 1);
+        removed.Should().HaveCount(AgentLabels.SwapTargets.Count - 1);
         added.Should().ContainSingle().Which.Should().Be(AgentLabels.InProgress);
 
         // Add happens before any removes (crash-safe ordering)
@@ -46,7 +46,7 @@ public class AgentLabelOperationsTests
             string.Empty,
             CancellationToken.None);
 
-        removed.Should().HaveCount(AgentLabels.All.Count);
+        removed.Should().HaveCount(AgentLabels.SwapTargets.Count);
         added.Should().BeEmpty();
     }
 
@@ -62,7 +62,7 @@ public class AgentLabelOperationsTests
             null!,
             CancellationToken.None);
 
-        removed.Should().HaveCount(AgentLabels.All.Count);
+        removed.Should().HaveCount(AgentLabels.SwapTargets.Count);
         added.Should().BeEmpty();
     }
 
@@ -90,6 +90,54 @@ public class AgentLabelOperationsTests
             CancellationToken.None);
 
         removed.Should().BeEquivalentTo(AgentLabels.All);
+    }
+
+    [Fact]
+    public async Task SwapAsync_GeneratedIssue_KeepsGeneratedLabel()
+    {
+        // AC (issue #3157): Swapping a generated issue to agent:in-progress must NOT remove
+        // agent:generated. The provenance label must survive all status swaps.
+        // TODO: [WARNING] currentLabels only contains agent:generated and agent:next, so the
+        // inner loop only attempts removal for agent:next. The assertion verifies that agent:next
+        // IS removed and agent:generated is NOT, but does not verify that all other SwapTargets
+        // would be removed when present. A regression that skipped all labels except agent:next
+        // would still pass. The broader invariant (all SwapTargets minus the new label are removed)
+        // is only weakly checked via count on the null-currentLabels path. The existing TODO at
+        // line ~347 in this file already notes this gap. See review findings (TestQualityReviewer,
+        // line 96).
+        var removed = new List<string>();
+        var added = new List<string>();
+
+        await AgentLabelOperations.SwapAsync(
+            (label, ct) => { removed.Add(label); return Task.CompletedTask; },
+            (label, ct) => { added.Add(label); return Task.CompletedTask; },
+            AgentLabels.InProgress,
+            CancellationToken.None,
+            currentLabels: new[] { AgentLabels.Generated, AgentLabels.Next });
+
+        removed.Should().NotContain(AgentLabels.Generated,
+            "agent:generated is a provenance label that must survive status swaps");
+        removed.Should().Contain(AgentLabels.Next,
+            "agent:next is a status label and must be removed during the swap");
+        added.Should().ContainSingle().Which.Should().Be(AgentLabels.InProgress);
+    }
+
+    [Fact]
+    public async Task SwapAsync_GeneratedIssue_KeepsGeneratedLabel_FallbackPath()
+    {
+        // When currentLabels is null (fallback sweep), agent:generated must still not be removed
+        // because it is excluded from AgentLabels.SwapTargets.
+        var removed = new List<string>();
+
+        await AgentLabelOperations.SwapAsync(
+            (label, ct) => { removed.Add(label); return Task.CompletedTask; },
+            (label, ct) => Task.CompletedTask,
+            AgentLabels.InProgress,
+            CancellationToken.None,
+            currentLabels: null);
+
+        removed.Should().NotContain(AgentLabels.Generated,
+            "agent:generated must not be removed even on the null-currentLabels fallback path");
     }
 
     [Fact]
@@ -170,7 +218,7 @@ public class AgentLabelOperationsTests
 
         // All distinct labels except newLabel (InProgress) should have been attempted
         var distinctAttempted = attempted.Distinct().ToList();
-        distinctAttempted.Should().HaveCount(AgentLabels.All.Count - 1);
+        distinctAttempted.Should().HaveCount(AgentLabels.SwapTargets.Count - 1);
         distinctAttempted.Should().NotContain(AgentLabels.InProgress);
         // Specifically, the labels after the failing one (Error) must also appear
         distinctAttempted.Should().Contain(AgentLabels.NeedsRefinement);
@@ -307,14 +355,15 @@ public class AgentLabelOperationsTests
             CancellationToken.None,
             currentLabels: null);
 
-        // Null = full sweep: all labels except the new one are removed.
+        // Null = full sweep: all swap-target labels except the new one are removed.
+        // agent:generated is NOT a swap target — it survives status swaps (see AgentLabels.SwapTargets).
         // TODO (WARNING): These assertions only check count and exclusion of the new label.
-        // A regression that removed AgentLabels.All.Count - 1 copies of a single label (or any
+        // A regression that removed AgentLabels.SwapTargets.Count - 1 copies of a single label (or any
         // other wrong set of the right size) would satisfy both assertions while leaving every
         // other label un-removed. Add:
-        //   removed.Should().BeEquivalentTo(AgentLabels.All.Except([AgentLabels.InProgress]));
+        //   removed.Should().BeEquivalentTo(AgentLabels.SwapTargets.Except([AgentLabels.InProgress]));
         // to close this gap. See review findings for issue #2971.
-        removed.Should().HaveCount(AgentLabels.All.Count - 1);
+        removed.Should().HaveCount(AgentLabels.SwapTargets.Count - 1);
         removed.Should().NotContain(AgentLabels.InProgress);
     }
 

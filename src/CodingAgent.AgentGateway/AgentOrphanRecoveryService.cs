@@ -663,10 +663,10 @@ public sealed class AgentOrphanRecoveryService(
 
     /// <summary>
     /// Attempts to reconstruct a minimal <see cref="PipelineRun"/> from the WorkItem DB record
-    /// when the Redis hash has expired. Returns null if the WorkItem cannot be found or lacks
-    /// the minimum required fields (IssueIdentifier, IssueProviderConfigId, RepoProviderConfigId).
-    /// The reconstructed run carries only fields recoverable from the DB — enough for
-    /// <see cref="ResolveIssueProviderForRunAsync"/> and [RequiresActiveJob] auth to pass.
+    /// when the Redis hash has expired. Returns null if the WorkItem cannot be found, lacks
+    /// the minimum required fields (IssueIdentifier, IssueProviderConfigId, RepoProviderConfigId),
+    /// or the DB is unavailable. The reconstructed run carries only fields recoverable from the DB —
+    /// enough for <see cref="ResolveIssueProviderForRunAsync"/> and [RequiresActiveJob] auth to pass.
     /// </summary>
     private async Task<PipelineRun?> TryReconstructRunFromDbAsync(string runId, string agentId)
     {
@@ -678,15 +678,41 @@ public sealed class AgentOrphanRecoveryService(
             return null;
         }
 
-        var jobId = new JobId(runId);
+        // GetWorkItemRunRecordAsync throws on DB failure (intentional — failed reads must not look
+        // like missing records during normal ownership checks). Here, reconstruction is best-effort:
+        // a DB outage should degrade to "skip reconstruction" rather than crashing re-registration.
+        // TODO: [WARNING] The broad catch swallows all exception types, including OperationCanceledException.
+        // During a DB outage, returning null means the caller treats the run as unrecoverable for this
+        // re-registration cycle. On the next agent reconnect, reconstruction is retried — but if the
+        // outage persists, the run stays orphaned for its duration. Consider re-throwing
+        // OperationCanceledException and logging DB-specific exception types distinctly to allow callers
+        // to distinguish transient failures from genuine missing records.
+        // TODO: [WARNING] CancellationToken.None is passed here. Ideally a connection-lifetime
+        // CancellationToken from the SignalR hub context should be threaded through so a disconnecting
+        // agent can abort the in-flight DB read rather than letting it run to completion.
+        WorkItemRunRecord? record;
+        try
+        {
+            record = await _facade.GetWorkItemRunRecordAsync(new JobId(runId), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // TODO: [WARNING] runId is logged verbatim here. Serilog's structured logging prevents
+            // format-string injection, but the raw value is persisted in the log store without
+            // sanitization (unlike the guard at the top of this method which calls
+            // LogSanitizer.SanitizeForLog). A crafted runId could confuse log-based alerting or
+            // SIEM rules that parse RunId as a structured identifier. Consider wrapping with
+            // LogSanitizer.SanitizeForLog(runId) for consistency.
+            _logger.Warning(ex,
+                "TryReconstructRunFromDbAsync: could not read WorkItem {RunId} from DB — skipping reconstruction",
+                runId);
+            return null;
+        }
 
-        var issueMetadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, CancellationToken.None);
-        if (issueMetadata is null)
+        if (record is null)
             return null;
 
-        var providerIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, CancellationToken.None);
-        var repoProviderConfigId = providerIds?.RepoProviderConfigId;
-        if (string.IsNullOrEmpty(repoProviderConfigId))
+        if (string.IsNullOrEmpty(record.RepoProviderConfigId))
         {
             _logger.Warning(
                 "TryReconstructRunFromDbAsync: WorkItem {RunId} has no RepoProviderConfigId in Payload — cannot reconstruct PipelineRun",
@@ -694,16 +720,39 @@ public sealed class AgentOrphanRecoveryService(
             return null;
         }
 
-        return PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        // RunType MUST be set on creationParams before calling any factory method.
+        // CreateDecomposition validates it and throws ArgumentOutOfRangeException if it is
+        // left at the default (PipelineRunType.Implementation).
+        var runType = record.TaskType.ToDefaultRunType();
+        var creationParams = new PipelineRunCreationParams
         {
             RunId = runId,
-            IssueIdentifier = issueMetadata.Value.IssueIdentifier,
+            IssueIdentifier = record.IssueIdentifier,
             IssueTitle = string.Empty,
-            IssueProviderConfigId = issueMetadata.Value.IssueProviderConfigId,
-            RepoProviderConfigId = repoProviderConfigId,
-            BrainProviderConfigId = providerIds!.Value.BrainProviderConfigId,
+            IssueProviderConfigId = record.IssueProviderConfigId,
+            RepoProviderConfigId = record.RepoProviderConfigId,
+            BrainProviderConfigId = record.BrainProviderConfigId,
             InitiatedBy = "recovery",
             AgentId = new AgentId(agentId),
-        });
+            RunType = runType,
+        };
+
+        var run = runType switch
+        {
+            PipelineRunType.Review => PipelineRun.CreateReview(creationParams),
+            PipelineRunType.DecompositionAnalysis => PipelineRun.CreateDecomposition(creationParams),
+            // TODO: [WARNING] This arm is currently unreachable: ToDefaultRunType() maps
+            // WorkItemTaskType.Decomposition → PipelineRunType.DecompositionAnalysis, never
+            // PipelineRunType.Decomposition. Consequently a Phase-2 decomposition run whose Redis
+            // hash expires mid-execution is always reconstructed as Phase 1 (DecompositionAnalysis).
+            // Whether that is correct behaviour is a product decision, but it is undocumented and
+            // the arm creates a misleading signal. Consider either removing the arm (and documenting
+            // the Phase-2 → Phase-1 fallback explicitly) or introducing a WorkItemTaskType for Phase 2
+            // that maps here.
+            PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(creationParams),
+            _ => PipelineRun.CreateImplementation(creationParams),
+        };
+        run.ProjectId = record.ProjectId?.ToString();
+        return run;
     }
 }

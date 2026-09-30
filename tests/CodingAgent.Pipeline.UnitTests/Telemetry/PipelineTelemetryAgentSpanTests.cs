@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Telemetry;
@@ -11,7 +12,7 @@ namespace CodingAgent.Pipeline.UnitTests;
 public class PipelineTelemetryAgentSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly List<Activity> _activities = [];
+    private readonly ConcurrentBag<Activity> _activities = [];
 
     public PipelineTelemetryAgentSpanTests()
     {

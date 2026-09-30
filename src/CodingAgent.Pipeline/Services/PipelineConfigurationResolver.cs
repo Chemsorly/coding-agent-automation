@@ -29,17 +29,15 @@ public static class PipelineConfigurationResolver
         // Init setters are callable via reflection because they are regular setters at the IL level —
         // the runtime does not enforce init-only semantics during reflection. This is a stable .NET
         // contract relied upon by System.Text.Json and MessagePack serializers.
-        PipelineConfiguration clone;
+        var clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
 
-        try
+        foreach (var mapping in s_overrideMappings)
         {
-            clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
+            var projectValue = mapping.ProjectGetter(project);
+            if (projectValue is null) continue;
 
-            foreach (var mapping in s_overrideMappings)
+            try
             {
-                var projectValue = mapping.ProjectGetter(project);
-                if (projectValue is null) continue;
-
                 if (mapping.DeepMerge)
                 {
                     // Deep-merge: read current config value, invoke ApplyOverrides, assign result
@@ -57,25 +55,25 @@ public static class PipelineConfigurationResolver
                     mapping.ConfigProperty.SetValue(clone, unwrapped);
                 }
             }
-        }
-        catch (TargetInvocationException ex) when (ex.InnerException is ArgumentOutOfRangeException rangeEx)
-        {
-            // On validation failure, discard the partially-mutated clone and return the original
-            // config unchanged. This is consistent with the null-project early return (line above)
-            // and ensures the log message ("falling back to global defaults") is accurate.
-            Log.Warning(
-                "Project '{ProjectName}' (ID: {ProjectId}) has out-of-range override values — falling back to global defaults. {ErrorMessage}",
-                project.Name, project.Id, rangeEx.Message);
-            return config;
-        }
-        catch (TargetInvocationException ex)
-        {
-            // Unwrap and re-throw with original exception type and stack trace preserved.
-            // All reflection calls (GetValue, SetValue, Invoke) wrap thrown exceptions in
-            // TargetInvocationException — this ensures callers observe the original exception type.
-            // TODO: Consider defensive null-check (ex.InnerException ?? ex) — InnerException is always non-null from MethodInfo.Invoke but the type is nullable
-            ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
-            throw; // Unreachable but satisfies compiler
+            catch (TargetInvocationException ex) when (ex.InnerException is ArgumentOutOfRangeException rangeEx)
+            {
+                // This individual property has an out-of-range value. Skip it so the clone
+                // retains the global default for this property, but continue applying the
+                // remaining overrides. Valid overrides already applied are preserved.
+                Log.Warning(
+                    "Project '{ProjectName}' (ID: {ProjectId}) has an out-of-range override for '{PropertyName}' — using global default. {ErrorMessage}",
+                    project.Name, project.Id, mapping.ConfigProperty.Name, rangeEx.Message);
+                // Continue to next mapping — do not return config early
+            }
+            catch (TargetInvocationException ex)
+            {
+                // Unwrap and re-throw with original exception type and stack trace preserved.
+                // All reflection calls (GetValue, SetValue, Invoke) wrap thrown exceptions in
+                // TargetInvocationException — this ensures callers observe the original exception type.
+                // TODO: Consider defensive null-check (ex.InnerException ?? ex) — InnerException is always non-null from MethodInfo.Invoke but the type is nullable
+                ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+                throw; // Unreachable but satisfies compiler
+            }
         }
 
         return clone;
