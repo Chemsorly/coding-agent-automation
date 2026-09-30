@@ -62,12 +62,10 @@ public sealed record PipelineProject
     public TimeSpan? StallWarningInterval { get; init; }
     public int? MaxDecompositionSubIssues { get; init; }
     public int? MaxDecompositionSubIssueFiles { get; init; }
-    public int? MaxConcurrentDecompositions { get; init; }
     public int? MaxOpenIssuesForContext { get; init; }
     public int? MaxRefactoringProposals { get; init; }
     public bool? RefactoringReviewEnabled { get; init; }
     public bool? BrainConsolidationReviewEnabled { get; init; }
-    public bool? HarnessSuggestionsReviewEnabled { get; init; }
     public IReadOnlyList<string>? BlacklistedPaths { get; init; }
     public bool? BrainReadOnly { get; init; }
 
@@ -88,12 +86,6 @@ public sealed record PipelineProject
     /// Null = inherit from global configuration.
     /// </summary>
     public int? FeedbackTimeoutSeconds { get; init; }
-
-    /// <summary>
-    /// Override for <see cref="PipelineConfiguration.MinIssueSlots"/>.
-    /// Null = inherit from global configuration.
-    /// </summary>
-    public int? MinIssueSlots { get; init; }
 
     /// <summary>
     /// Optional markdown steering content written to the agent workspace before each run.

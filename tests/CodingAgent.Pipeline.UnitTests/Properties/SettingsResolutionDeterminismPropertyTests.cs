@@ -48,12 +48,10 @@ public class SettingsResolutionDeterminismPropertyTests
         result1.MaxInfrastructureRetries.Should().Be(result2.MaxInfrastructureRetries);
         result1.StallWarningInterval.Should().Be(result2.StallWarningInterval);
         result1.MaxDecompositionSubIssues.Should().Be(result2.MaxDecompositionSubIssues);
-        result1.MaxConcurrentDecompositions.Should().Be(result2.MaxConcurrentDecompositions);
         result1.MaxOpenIssuesForContext.Should().Be(result2.MaxOpenIssuesForContext);
         result1.MaxRefactoringProposals.Should().Be(result2.MaxRefactoringProposals);
         result1.RefactoringReviewEnabled.Should().Be(result2.RefactoringReviewEnabled);
         result1.BrainConsolidationReviewEnabled.Should().Be(result2.BrainConsolidationReviewEnabled);
-        result1.HarnessSuggestionsReviewEnabled.Should().Be(result2.HarnessSuggestionsReviewEnabled);
         result1.BlacklistedPaths.Should().BeEquivalentTo(result2.BlacklistedPaths);
         result1.BrainReadOnly.Should().Be(result2.BrainReadOnly);
     }
@@ -85,12 +83,10 @@ public class SettingsResolutionDeterminismPropertyTests
         result.MaxInfrastructureRetries.Should().Be(input.Config.MaxInfrastructureRetries);
         result.StallWarningInterval.Should().Be(input.Config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(input.Config.MaxDecompositionSubIssues);
-        result.MaxConcurrentDecompositions.Should().Be(input.Config.MaxConcurrentDecompositions);
         result.MaxOpenIssuesForContext.Should().Be(input.Config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(input.Config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(input.Config.RefactoringReviewEnabled);
         result.BrainConsolidationReviewEnabled.Should().Be(input.Config.BrainConsolidationReviewEnabled);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(input.Config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeEquivalentTo(input.Config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(input.Config.BrainReadOnly);
     }
@@ -129,12 +125,10 @@ public class SettingsResolutionDeterminismPropertyTests
         result.MaxInfrastructureRetries.Should().Be(input.Config.MaxInfrastructureRetries);
         result.StallWarningInterval.Should().Be(input.Config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(input.Config.MaxDecompositionSubIssues);
-        result.MaxConcurrentDecompositions.Should().Be(input.Config.MaxConcurrentDecompositions);
         result.MaxOpenIssuesForContext.Should().Be(input.Config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(input.Config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(input.Config.RefactoringReviewEnabled);
         result.BrainConsolidationReviewEnabled.Should().Be(input.Config.BrainConsolidationReviewEnabled);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(input.Config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeEquivalentTo(input.Config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(input.Config.BrainReadOnly);
     }
@@ -194,8 +188,6 @@ public class SettingsResolutionDeterminismPropertyTests
             result.StallWarningInterval.Should().Be(project.StallWarningInterval.Value);
         if (project.MaxDecompositionSubIssues.HasValue)
             result.MaxDecompositionSubIssues.Should().Be(project.MaxDecompositionSubIssues.Value);
-        if (project.MaxConcurrentDecompositions.HasValue)
-            result.MaxConcurrentDecompositions.Should().Be(project.MaxConcurrentDecompositions.Value);
         if (project.MaxOpenIssuesForContext.HasValue)
             result.MaxOpenIssuesForContext.Should().Be(project.MaxOpenIssuesForContext.Value);
         if (project.MaxRefactoringProposals.HasValue)
@@ -204,8 +196,6 @@ public class SettingsResolutionDeterminismPropertyTests
             result.RefactoringReviewEnabled.Should().Be(project.RefactoringReviewEnabled.Value);
         if (project.BrainConsolidationReviewEnabled.HasValue)
             result.BrainConsolidationReviewEnabled.Should().Be(project.BrainConsolidationReviewEnabled.Value);
-        if (project.HarnessSuggestionsReviewEnabled.HasValue)
-            result.HarnessSuggestionsReviewEnabled.Should().Be(project.HarnessSuggestionsReviewEnabled.Value);
         if (project.BlacklistedPaths is not null)
             result.BlacklistedPaths.Should().BeEquivalentTo(project.BlacklistedPaths);
         if (project.BrainReadOnly.HasValue)
@@ -364,12 +354,15 @@ public class SettingsResolutionArbitraries
         from maxInfraRetries in Gen.Elements<int?>(null, 1, 3)
         from stallWarningInterval in Gen.Elements<TimeSpan?>(null, TimeSpan.FromMinutes(5))
         from maxDecompSubIssues in Gen.Elements<int?>(null, 5, 10, 15)
-        from maxConcurrentDecomps in Gen.Elements<int?>(null, 1, 2, 4)
+        // TODO: MinIssueSlots was never generated here (pre-existing gap) and was removed from
+        // PipelineProject in issue #3150. The property tests therefore have no coverage confirming
+        // that the global PipelineConfiguration.MinIssueSlots value still passes through
+        // ApplyProjectOverrides unchanged after [ProjectOverridable] was removed from that field.
+        // Add a targeted property test or unit test to close this gap.
         from maxOpenIssues in Gen.Elements<int?>(null, 25, 50)
         from maxRefactoringProposals in Gen.Elements<int?>(null, 2, 5)
         from refactoringReviewEnabled in Gen.Elements<bool?>(null, true, false)
         from brainConsolidationReviewEnabled in Gen.Elements<bool?>(null, true, false)
-        from harnessSuggestionsReviewEnabled in Gen.Elements<bool?>(null, true, false)
         from blacklistedPaths in Gen.Frequency(
             (2, Gen.Constant<IReadOnlyList<string>?>(null)),
             (1, GenBlacklistedPaths().Select<IReadOnlyList<string>, IReadOnlyList<string>?>(p => p)))
@@ -395,12 +388,10 @@ public class SettingsResolutionArbitraries
             MaxInfrastructureRetries = maxInfraRetries,
             StallWarningInterval = stallWarningInterval,
             MaxDecompositionSubIssues = maxDecompSubIssues,
-            MaxConcurrentDecompositions = maxConcurrentDecomps,
             MaxOpenIssuesForContext = maxOpenIssues,
             MaxRefactoringProposals = maxRefactoringProposals,
             RefactoringReviewEnabled = refactoringReviewEnabled,
             BrainConsolidationReviewEnabled = brainConsolidationReviewEnabled,
-            HarnessSuggestionsReviewEnabled = harnessSuggestionsReviewEnabled,
             BlacklistedPaths = blacklistedPaths,
             BrainReadOnly = brainReadOnly,
             CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,

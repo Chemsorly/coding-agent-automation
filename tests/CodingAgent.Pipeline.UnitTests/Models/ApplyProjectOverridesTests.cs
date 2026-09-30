@@ -187,17 +187,28 @@ public class ApplyProjectOverridesTests
         result.MaxInfrastructureRetries.Should().Be(config.MaxInfrastructureRetries);
         result.StallWarningInterval.Should().Be(config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(config.MaxDecompositionSubIssues);
-        result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
         result.MaxOpenIssuesForContext.Should().Be(config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(config.RefactoringReviewEnabled);
         result.BrainConsolidationReviewEnabled.Should().Be(config.BrainConsolidationReviewEnabled);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeSameAs(config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
         result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
+        // MinIssueSlots, MaxConcurrentDecompositions, and HarnessSuggestionsReviewEnabled were
+        // removed from PipelineProject (issue #3150) and their [ProjectOverridable] attributes were
+        // stripped from PipelineConfiguration. The reflection-based merge no longer touches these
+        // fields. Assert that the global values still pass through unchanged — i.e. the attribute
+        // removal did not accidentally reset them to their type defaults (0 / false).
+        // TODO: TestPipelineConfig.Default() uses the property-level defaults for these three
+        // fields (MinIssueSlots=1, MaxConcurrentDecompositions=2, HarnessSuggestionsReviewEnabled=true).
+        // The assertions below are valid because those defaults are non-zero/non-false, but they
+        // would be stronger with explicit non-default values (e.g. config with { MinIssueSlots = 5,
+        // MaxConcurrentDecompositions = 7, HarnessSuggestionsReviewEnabled = false }) to make it
+        // impossible to confuse "correctly passed through" with "reset to type default".
         result.MinIssueSlots.Should().Be(config.MinIssueSlots);
+        result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
+        result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────
@@ -357,17 +368,6 @@ public class ApplyProjectOverridesTests
     }
 
     [Fact]
-    public void MaxConcurrentDecompositions_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default();
-        var project = TestPipelineConfig.WithProject() with { MaxConcurrentDecompositions = 4 };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MaxConcurrentDecompositions.Should().Be(4);
-    }
-
-    [Fact]
     public void MaxOpenIssuesForContext_NonNull_OverridesGlobal()
     {
         var config = TestPipelineConfig.Default();
@@ -412,17 +412,6 @@ public class ApplyProjectOverridesTests
     }
 
     [Fact]
-    public void HarnessSuggestionsReviewEnabled_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default(); // false by default
-        var project = TestPipelineConfig.WithProject() with { HarnessSuggestionsReviewEnabled = true };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.HarnessSuggestionsReviewEnabled.Should().BeTrue();
-    }
-
-    [Fact]
     public void BlacklistedPaths_NonNull_OverridesGlobal()
     {
         var config = TestPipelineConfig.Default(); // [".agent", ".github"]
@@ -443,29 +432,6 @@ public class ApplyProjectOverridesTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.BrainReadOnly.Should().BeTrue();
-    }
-
-    [Fact]
-    public void MinIssueSlots_NonNull_OverridesGlobal()
-    {
-        var config = TestPipelineConfig.Default() with { MinIssueSlots = 1 };
-        var project = TestPipelineConfig.WithProject() with { MinIssueSlots = 3 };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MinIssueSlots.Should().Be(3);
-    }
-
-    [Fact]
-    public void MinIssueSlots_NullProjectOverride_InheritsGlobalDefault()
-    {
-        var config = TestPipelineConfig.Default() with { MinIssueSlots = 2 };
-        // Project has MinIssueSlots = null — inherits global
-        var project = TestPipelineConfig.WithProject();
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.MinIssueSlots.Should().Be(2);
     }
 
     // ── CodeReview deep-merge semantics ──────────────────────────────────────────

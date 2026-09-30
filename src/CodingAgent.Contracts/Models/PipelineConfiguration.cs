@@ -373,7 +373,6 @@ public sealed record PipelineConfiguration
     /// before being persisted. Default: true.
     /// </summary>
     [Key(28)]
-    [ProjectOverridable(Order = 25)]
     public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -450,7 +449,6 @@ public sealed record PipelineConfiguration
     /// Maximum simultaneous decomposition runs. Default: 2.
     /// </summary>
     [Key(36)]
-    [ProjectOverridable(Order = 19)]
     public int MaxConcurrentDecompositions { get; init; } = 2;
 
     // Key(23) retired — DecompositionTimeout removed; decomposition calls use AgentTimeout. Do NOT reuse this Key index
@@ -721,7 +719,6 @@ public sealed record PipelineConfiguration
     /// Default: 1. Set to 0 to disable floor allocation (strict priority, original behavior).
     /// </summary>
     [Key(83)]
-    [ProjectOverridable(Order = 33)]
     public int MinIssueSlots
     {
         get => _minIssueSlots;
