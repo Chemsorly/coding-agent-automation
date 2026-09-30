@@ -17,6 +17,9 @@ namespace CodingAgent.Pipeline.UnitTests.Telemetry;
 public class PipelineStepRunnerSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
+    // ConcurrentBag prevents "Collection was modified; enumeration operation may not execute"
+    // when the ActivityStopped callback fires from a thread-pool thread concurrently with
+    // the assertion-phase enumeration.
     private readonly ConcurrentBag<Activity> _activities = [];
 
     public PipelineStepRunnerSpanTests()
@@ -40,7 +43,8 @@ public class PipelineStepRunnerSpanTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
 
-        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step MyStep");
+        var snapshot = _activities.ToList();
+        var stepSpan = snapshot.FirstOrDefault(a => a.DisplayName == "Step MyStep");
         stepSpan.Should().NotBeNull("PipelineStepRunner must create a 'Step {StepName}' span");
     }
 
@@ -52,7 +56,8 @@ public class PipelineStepRunnerSpanTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
 
-        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step TaggedStep");
+        var snapshot = _activities.ToList();
+        var stepSpan = snapshot.FirstOrDefault(a => a.DisplayName == "Step TaggedStep");
         stepSpan.Should().NotBeNull();
         stepSpan!.GetTagItem("pipeline.step").Should().Be("TaggedStep");
         stepSpan.GetTagItem("pipeline.run_id").Should().Be("run-tags-test");
@@ -68,8 +73,7 @@ public class PipelineStepRunnerSpanTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step1, step2, step3], context, CancellationToken.None);
 
-        // Snapshot the list to avoid "collection was modified" races with the global
-        // ActivityListener's ActivityStopped callback firing on a background thread.
+        // Snapshot once to avoid "Collection was modified" races with the listener callback.
         var snapshot = _activities.ToList();
         snapshot.Should().Contain(a => a.DisplayName == "Step Alpha");
         snapshot.Should().Contain(a => a.DisplayName == "Step Beta");
@@ -88,7 +92,8 @@ public class PipelineStepRunnerSpanTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
 
-        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step Stopper");
+        var snapshot = _activities.ToList();
+        var stepSpan = snapshot.FirstOrDefault(a => a.DisplayName == "Step Stopper");
         stepSpan.Should().NotBeNull("a stopping step still gets a span");
         stepSpan!.Status.Should().NotBe(ActivityStatusCode.Error,
             "StepResult.Stop is not an error — the span must remain Unset");
@@ -105,7 +110,8 @@ public class PipelineStepRunnerSpanTests : IDisposable
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None));
 
-        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step ErrorStep");
+        var snapshot = _activities.ToList();
+        var stepSpan = snapshot.FirstOrDefault(a => a.DisplayName == "Step ErrorStep");
         stepSpan.Should().NotBeNull();
         stepSpan!.Status.Should().Be(ActivityStatusCode.Error,
             "a throwing step must set Error status on its own Step span");
@@ -126,7 +132,8 @@ public class PipelineStepRunnerSpanTests : IDisposable
         // CriticalFailingStep calls TryCriticalAsync which fails and returns StepResult.Stop.
         await PipelineStepRunner.ExecuteAsync([step], context, CancellationToken.None);
 
-        var stepSpan = _activities.FirstOrDefault(a => a.DisplayName == "Step CriticalStep");
+        var snapshot = _activities.ToList();
+        var stepSpan = snapshot.FirstOrDefault(a => a.DisplayName == "Step CriticalStep");
         stepSpan.Should().NotBeNull();
         stepSpan!.Status.Should().Be(ActivityStatusCode.Error,
             "TryCriticalAsync inside a step (with no inner span) must record Error on the runner's Step span");
@@ -144,8 +151,9 @@ public class PipelineStepRunnerSpanTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step1, step2], context, CancellationToken.None);
 
-        _activities.Should().Contain(a => a.DisplayName == "Step StopHere");
-        _activities.Should().NotContain(a => a.DisplayName == "Step ShouldNotRun");
+        var snapshot = _activities.ToList();
+        snapshot.Should().Contain(a => a.DisplayName == "Step StopHere");
+        snapshot.Should().NotContain(a => a.DisplayName == "Step ShouldNotRun");
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────

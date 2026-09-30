@@ -1457,11 +1457,16 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
         _mockFacade
-            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("org/repo#42", "issue-cfg-1"));
-        _mockFacade
-            .Setup(f => f.GetWorkItemProviderConfigIdsAsync(existingJobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("repo-cfg-1", "brain-cfg-1"));
+            .Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#42",
+                IssueProviderConfigId = "issue-cfg-1",
+                RepoProviderConfigId = "repo-cfg-1",
+                BrainProviderConfigId = "brain-cfg-1",
+                ProjectId = null,
+            });
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -1480,7 +1485,7 @@ public sealed class AgentOrphanRecoveryServiceTests
     [Fact]
     public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_SkipsReconstructionWhenWorkItemNotFound()
     {
-        // When GetRun returns null AND GetWorkItemIssueMetadataAsync also returns null,
+        // When GetRun returns null AND GetWorkItemRunRecordAsync also returns null,
         // AddRun must NOT be called — nothing recoverable from DB either.
         const string agentId = "agent-crash-nodb";
         const string existingJobId = "00000000-0000-0000-0000-000000000002";
@@ -1492,8 +1497,8 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
         _mockFacade
-            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((string, string)?)null);
+            .Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemRunRecord?)null);
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -1519,11 +1524,16 @@ public sealed class AgentOrphanRecoveryServiceTests
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
         _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
         _mockFacade
-            .Setup(f => f.GetWorkItemIssueMetadataAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(("org/repo#42", "issue-cfg-1"));
-        _mockFacade
-            .Setup(f => f.GetWorkItemProviderConfigIdsAsync(existingJobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((string? RepoProviderConfigId, string? BrainProviderConfigId)?)(null, null));
+            .Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#42",
+                IssueProviderConfigId = "issue-cfg-1",
+                RepoProviderConfigId = null,   // missing — triggers skip
+                BrainProviderConfigId = null,
+                ProjectId = null,
+            });
 
         var message = CreateMessage(agentId, activeJob: null);
 
@@ -1534,7 +1544,104 @@ public sealed class AgentOrphanRecoveryServiceTests
             "AddRun must not be called when RepoProviderConfigId cannot be recovered from DB Payload");
     }
 
+    [Fact]
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_ReconstructsDecompositionRunWithProjectId()
+    {
+        // AC#1: Rebuilding a decomposition WorkItem gives a run with the WorkItem's ProjectId
+        // and the decomposition run type (DecompositionAnalysis — the Phase-1 default from ToDefaultRunType).
+        const string agentId = "agent-crash-decomp";
+        const string existingJobId = "00000000-0000-0000-0000-000000000004";
+        var projectId = Guid.NewGuid();
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _mockFacade
+            .Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Decomposition,
+                IssueIdentifier = "org/repo#10",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                BrainProviderConfigId = "brain-1",
+                ProjectId = projectId,
+            });
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(
+            f => f.AddRun(It.Is<PipelineRun>(r =>
+                r.RunId == existingJobId &&
+                r.RunType == PipelineRunType.DecompositionAnalysis &&
+                r.ProjectId == projectId.ToString())),
+            Times.Once,
+            "Rebuilt decomposition run must carry RunType=DecompositionAnalysis and the WorkItem's ProjectId");
+    }
+
+    [Fact]
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_ReconstructsReviewRunWithPullRequestLabelTargetKind()
+    {
+        // AC#2: Rebuilding a review WorkItem gives LabelTargetKind.PullRequest.
+        // LabelTargetKind is derived from RunType: only Review → PullRequest; all others → Issue.
+        const string agentId = "agent-crash-review";
+        const string existingJobId = "00000000-0000-0000-0000-000000000005";
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _mockFacade
+            .Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Review,
+                IssueIdentifier = "org/repo#20",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                BrainProviderConfigId = null,
+                ProjectId = null,
+            });
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await _service.RecoverOrphanedStateAsync(message, agentId);
+
+        entry.OrphanRestoredAt.Should().NotBeNull();
+        _mockFacade.Verify(
+            f => f.AddRun(It.Is<PipelineRun>(r =>
+                r.RunId == existingJobId &&
+                r.RunType == PipelineRunType.Review &&
+                r.LabelTargetKind == LabelTargetKind.PullRequest)),
+            Times.Once,
+            "Rebuilt review run must carry RunType=Review and LabelTargetKind=PullRequest");
+    }
+
     // ── HandleCrashRecovery: hash gone → AddRun NOT called ────────────────────────
+
+    // TODO: [WARNING] AC#3 (RequestCreateIssueForProvider on a run without a project rejects any
+    // provider other than the run's own) is covered by the pre-existing test
+    // RequestCreateIssueForProvider_EmptyProjectId_RejectsOtherProvider in
+    // AgentHubDecompositionPartialTests.cs. That test already exercises the correct rejection path.
+    // However, no new test was added in this diff that specifically demonstrates the regression: a
+    // run rebuilt from DB without a ProjectId bypassing the scope check. Consider adding a test that
+    // reconstructs an Implementation WorkItem (ProjectId = null), then calls RequestCreateIssueForProvider
+    // with a foreign provider config and asserts it is rejected with a HubException.
+
+    // TODO: [WARNING] The decomposition reconstruction test only covers WorkItemTaskType.Decomposition →
+    // PipelineRunType.DecompositionAnalysis. The switch arm for PipelineRunType.Decomposition (Phase 2)
+    // is unreachable via ToDefaultRunType and has no test. If future enum additions introduce a
+    // Phase-2 task type, add a test for it here. Also consider asserting r.ProjectId == null in the
+    // review test to guard against a regression where null ProjectId is mapped to "" or another
+    // non-null sentinel.
 
     // ── DetectAndRestoreOrphans: SetLocalAgentSnapshotField called (issue #2616) ─
 
