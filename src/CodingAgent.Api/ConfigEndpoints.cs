@@ -384,15 +384,10 @@ public static class ConfigEndpoints
             v => _ = defaults with { CiCancelledMoveMaxRetries = v },
             nameof(PipelineProject.CiCancelledMoveMaxRetries), errors);
 
-        ProbeField(project.MinIssueSlots,
-            v => _ = defaults with { MinIssueSlots = v },
-            nameof(PipelineProject.MinIssueSlots), errors);
-
         // ── Explicit range checks for plain auto-properties (no init-setter guard) ──
         // Ranges match the UI's RenderIntOverride min/max arguments.
         CheckIntRange(project.MaxRetries, nameof(PipelineProject.MaxRetries), 0, 10, errors);
         CheckIntRange(project.MaxAnalysisRetries, nameof(PipelineProject.MaxAnalysisRetries), 0, 10, errors);
-        CheckIntRange(project.MaxConcurrentDecompositions, nameof(PipelineProject.MaxConcurrentDecompositions), 1, 10, errors);
         CheckIntRange(project.MaxOpenIssuesForContext, nameof(PipelineProject.MaxOpenIssuesForContext), 1, 200, errors);
         CheckIntRange(project.MaxRefactoringProposals, nameof(PipelineProject.MaxRefactoringProposals), 1, 10, errors);
         // FeedbackTimeoutSeconds: must be positive (> 0); no upper cap in the domain
