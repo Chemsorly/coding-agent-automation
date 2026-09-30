@@ -82,8 +82,21 @@ public partial class AgentPhaseExecutor
         ArgumentNullException.ThrowIfNull(context);
         var run = context.Run;
         var config = context.Config;
-        if (config.CodeReview.MaxIterations <= 0)
+        // TODO [WARNING]: The exemption below applies only to PipelineRunType.Review. Other run types
+        // (DecompositionAnalysis, Decomposition, Consolidation) will NOT be skipped when MaxIterations <= 0
+        // because they are not PipelineRunType.Review. If any of those types ever invoke ExecuteCodeReviewAsync
+        // with MaxIterations = 0 they will proceed into reviewer resolution. Clarify whether those run types
+        // should also bypass this guard (e.g. `run.RunType is PipelineRunType.Review or PipelineRunType.Decomposition`).
+        if (config.CodeReview.MaxIterations <= 0 && run.RunType != PipelineRunType.Review)
+        {
+            // TODO [WARNING]: CodeReviewSkipReason is never reset to null before this assignment. If
+            // ExecuteCodeReviewAsync is ever called more than once on the same PipelineRun (e.g. a retry loop),
+            // a skip reason written here on the first call could leak into a second call that actually runs
+            // reviewers (since the property is only set, never cleared). Consider resetting it to null at the
+            // top of this method if re-entrancy becomes possible.
+            run.CodeReviewSkipReason = "Code review is disabled (MaxIterations = 0). Enable it in Settings → Implementation → Advanced Settings.";
             return;
+        }
 
         // Determine which agents to run — skip review with observable signal if none resolved (Option B)
         IReadOnlyList<ReviewAgentConfig> agents;
@@ -94,6 +107,7 @@ public partial class AgentPhaseExecutor
         else
         {
             // Design: warn-and-skip (Option B) — see docs/internals/behavioral-contracts.yaml for the updated contract assertion
+            run.CodeReviewSkipReason = "No reviewer configurations matched this repository's labels.";
             _logger.Warning(
                 "Pipeline {RunId} no reviewer configurations matched — review phase skipped (no configs or all disabled). " +
                 "To restore review, add or re-enable a reviewer configuration in Settings → Reviewers.",
@@ -103,6 +117,7 @@ public partial class AgentPhaseExecutor
 
         if (agents.Count == 0)
         {
+            run.CodeReviewSkipReason = "Reviewer configurations matched but resolved to zero agents.";
             _logger.Warning(
                 "Pipeline {RunId} reviewer configurations matched but resolved to zero agents — review phase skipped. " +
                 "Ensure each enabled ReviewerConfiguration has at least one agent defined.",

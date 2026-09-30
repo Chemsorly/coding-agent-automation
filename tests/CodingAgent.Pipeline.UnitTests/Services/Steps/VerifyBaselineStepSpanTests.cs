@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -19,15 +18,15 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 public class VerifyBaselineStepSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly ConcurrentBag<Activity> _activities = [];
+    private readonly List<Activity> _activities = [];
+
+    // Unique per test instance so parallel runs don't pick up each other's spans.
+    private readonly string _runId = $"test-run-{Guid.NewGuid():N}";
 
     private readonly Mock<IQualityGateValidator> _validator = new();
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
     private readonly Mock<IConfigurationStore> _configStore = new();
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
-
-    // Per-test unique run ID so parallel tests don't pick up each other's spans.
-    private string _testRunId = string.Empty;
 
     public VerifyBaselineStepSpanTests()
     {
@@ -56,10 +55,8 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        // Use GetOwnSpan to filter by this test's unique _testRunId, preventing false positives
-        // from spans emitted by sibling tests running in parallel.
-        var span = GetOwnSpan("VerifyBaseline");
-        span.Should().NotBeNull("VerifyBaselineStep must emit a VerifyBaseline span");
+        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+            "VerifyBaselineStep must emit a VerifyBaseline span");
     }
 
     [Fact]
@@ -71,8 +68,8 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetOwnSpan("VerifyBaseline");
-        span.GetTagItem("pipeline.run_id").Should().Be(_testRunId);
+        var span = GetMySpan();
+        span.GetTagItem("pipeline.run_id").Should().Be(_runId);
         span.GetTagItem("pipeline.issue").Should().NotBeNull();
     }
 
@@ -88,7 +85,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetOwnSpan("VerifyBaseline");
+        var span = GetMySpan();
         span.Status.Should().Be(ActivityStatusCode.Error,
             "a fatal agent health-check failure must set Error on the VerifyBaseline span");
         span.StatusDescription.Should().Contain("agent binary not found");
@@ -104,7 +101,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetOwnSpan("VerifyBaseline");
+        var span = GetMySpan();
         span.Status.Should().NotBe(ActivityStatusCode.Error,
             "a non-critical workspace baseline failure must NOT set Error on the span");
     }
@@ -119,7 +116,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetOwnSpan("VerifyBaseline");
+        var span = GetMySpan();
         var evt = span.Events.Should().ContainSingle(e => e.Name == "exception").Which;
         evt.Tags.Should().Contain(t => t.Key == "pipeline.non_critical" && true.Equals(t.Value));
     }
@@ -133,7 +130,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = GetOwnSpan("VerifyBaseline");
+        var span = GetMySpan();
         span.Status.Should().NotBe(ActivityStatusCode.Error,
             "a healthy baseline must not set Error on the span");
         span.Events.Should().BeEmpty();
@@ -142,31 +139,21 @@ public class VerifyBaselineStepSpanTests : IDisposable
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns the first span with <paramref name="displayName"/> that was emitted by this
-    /// test instance (matched by <see cref="_testRunId"/>). Filters out spans from other tests
-    /// that run in parallel and share the same global ActivityListener.
+    /// Returns the single VerifyBaseline span produced by this test instance.
+    /// Filtering by <see cref="_runId"/> prevents picking up spans from other tests
+    /// running in parallel that also start a "VerifyBaseline" activity.
     /// </summary>
-    // TODO: Replace _activities.First(...) with _activities.FirstOrDefault(...) so that callers
-    // receive null when no matching span is found. The current First() throws
-    // InvalidOperationException ("Sequence contains no matching element") before the caller's
-    // .Should().NotBeNull(...) assertion ever runs, producing an uninformative failure message.
-    // Each call site should guard with: GetOwnSpan("X").Should().NotBeNull("reason") — which
-    // will emit a clear assertion failure instead of a raw exception. (WARNING: multiple reviewers)
-    private Activity GetOwnSpan(string displayName) =>
-        _activities.First(a => a.DisplayName == displayName
-                                && _testRunId.Equals(a.GetTagItem("pipeline.run_id")));
+    private Activity GetMySpan() =>
+        _activities.First(a => a.DisplayName == "VerifyBaseline"
+                               && _runId.Equals(a.GetTagItem("pipeline.run_id")));
 
     private PipelineStepContext BuildContext(
         Mock<IAgentProvider>? agentProviderMock = null,
         IReadOnlyList<QualityGateConfiguration>? preResolvedQgcs = null)
     {
-        // Assign a unique RunId per test so that span-filter assertions are not confused by
-        // spans emitted by other tests running concurrently (which use Guid-based RunIds).
-        _testRunId = $"test-run-{Guid.NewGuid():N}";
-
         var run = new PipelineRun
         {
-            RunId = _testRunId,
+            RunId = _runId,
             IssueIdentifier = "42",
             IssueTitle = "Test",
             IssueProviderConfigId = "ip",
