@@ -33,7 +33,6 @@ public sealed class ConsolidationServiceBrainScopeTests
     private readonly Mock<IPipelineConfigStore> _configStore = new();
     private readonly Mock<IWorkDistributor> _distributor = new();
     private readonly Mock<IConsolidationSelectorResolver> _selectorResolver = new();
-    private readonly Mock<IConsolidationRunStore> _runStore = new();
     private readonly List<JobDistributionRequest> _requests = [];
 
     private PipelineConfiguration _liveConfig = new() { AgentTimeout = TimeSpan.FromMinutes(60) };
@@ -55,8 +54,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .Callback<JobDistributionRequest, CancellationToken>((request, _) => _requests.Add(request))
             .ReturnsAsync(() => new DistributionResult(Success: true, WorkItemId: Guid.NewGuid().ToString(), ErrorMessage: null, Queued: true));
-        _runStore.Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _runStore.Setup(s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
     }
 
     private ConsolidationService CreateSut()
@@ -67,7 +64,6 @@ public sealed class ConsolidationServiceBrainScopeTests
             new LoggerConfiguration().CreateLogger(),
             bootstrap,
             _projectStore.Object,
-            _runStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: _distributor.Object,
@@ -113,7 +109,6 @@ public sealed class ConsolidationServiceBrainScopeTests
 
         run.Should().BeNull();
         _requests.Should().BeEmpty("no work item is created for a read-only brain");
-        _runStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

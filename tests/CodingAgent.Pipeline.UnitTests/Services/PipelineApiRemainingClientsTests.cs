@@ -238,13 +238,6 @@ public sealed class PipelineApiRemainingClientsTests
         handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("agent%2Fid%20with%20spaces");
     }
 
-    private static ConsolidationRun MakeConsolidationRun(string? runId = null) => new()
-    {
-        RunId = runId ?? Guid.NewGuid().ToString(),
-        Type = ConsolidationRunType.BrainConsolidation,
-        StartedAtUtc = DateTimeOffset.UtcNow
-    };
-
     private static HarnessSuggestions MakeHarnessSuggestions() => new()
     {
         BasedOnRunCount = 5,
@@ -252,88 +245,6 @@ public sealed class PipelineApiRemainingClientsTests
         SuccessRate = 0.8m,
         Suggestions = []
     };
-
-    // ─────────────────────────────────────────────────────────────────────
-    // PipelineApiConsolidationRunClient
-    // ─────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task ConsolidationRunClient_LoadAllRunsAsync_ReturnsList()
-    {
-        var (client, handler) = Create(h => new PipelineApiConsolidationRunClient(h));
-        handler.Respond = _ => JsonResponse(new List<ConsolidationRun>());
-
-        var result = await client.LoadAllRunsAsync();
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_LoadAllRunsAsync_WhenNull_ReturnsEmpty()
-    {
-        var (client, handler) = Create(h => new PipelineApiConsolidationRunClient(h));
-        handler.Respond = _ => NullJson();
-
-        var result = await client.LoadAllRunsAsync();
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_GetByIdAsync_InvalidGuid_ReturnsNull()
-    {
-        var (client, _) = Create(h => new PipelineApiConsolidationRunClient(h));
-        var result = await client.GetByIdAsync("not-a-guid");
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_GetByIdAsync_NotFound_ReturnsNull()
-    {
-        var (client, handler) = Create(h => new PipelineApiConsolidationRunClient(h));
-        handler.Respond = _ => Empty(HttpStatusCode.NotFound);
-
-        var result = await client.GetByIdAsync(Guid.NewGuid().ToString());
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_SaveRunAsync_InvalidGuid_Throws()
-    {
-        var (client, _) = Create(h => new PipelineApiConsolidationRunClient(h));
-        var run = new ConsolidationRun { RunId = "bad-id", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
-
-        var act = () => client.SaveRunAsync(run);
-        await act.Should().ThrowAsync<InvalidOperationException>();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_SaveRunAsync_ValidGuid_UsesPut()
-    {
-        var (client, handler) = Create(h => new PipelineApiConsolidationRunClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.SaveRunAsync(MakeConsolidationRun());
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Put);
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_DeleteRunAsync_InvalidGuid_Throws()
-    {
-        var (client, _) = Create(h => new PipelineApiConsolidationRunClient(h));
-        var act = () => client.DeleteRunAsync("not-a-guid");
-        await act.Should().ThrowAsync<InvalidOperationException>();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunClient_DeleteRunAsync_ValidGuid_UsesDelete()
-    {
-        var (client, handler) = Create(h => new PipelineApiConsolidationRunClient(h));
-        handler.Respond = _ => Empty();
-
-        await client.DeleteRunAsync(Guid.NewGuid().ToString());
-
-        handler.LastRequest!.Method.Should().Be(HttpMethod.Delete);
-    }
 
     // ─────────────────────────────────────────────────────────────────────
     // PipelineApiHarnessSuggestionClient

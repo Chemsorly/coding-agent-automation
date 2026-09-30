@@ -111,10 +111,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 Log.Logger));
 
-        // ── IConsolidationRunStore ──────────────────────────────────────────
-        services.AddSingleton<IConsolidationRunStore>(sp =>
-            new PostgresConsolidationRunStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-
         // ── ILoopStateStore ─────────────────────────────────────────────────
         services.AddSingleton<ILoopStateStore>(sp =>
             new PostgresLoopStateStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
@@ -443,7 +439,6 @@ public static class ApiServiceCollectionExtensions
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>())));
 

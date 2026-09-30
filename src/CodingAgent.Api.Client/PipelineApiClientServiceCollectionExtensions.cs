@@ -89,14 +89,6 @@ public static class PipelineApiClientServiceCollectionExtensions
             client.BaseAddress = new Uri(options.BaseUrl);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
-        // Consolidation run client — authenticated (operator tier; master key required)
-        services.AddHttpClient<IPipelineApiConsolidationRunClient, PipelineApiConsolidationRunClient>(client =>
-        {
-            client.BaseAddress = new Uri(options.BaseUrl);
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue(BearerScheme, options.AgentApiKey);
-        }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
-
         // Harness suggestion client — authenticated (operator tier; master key required)
         services.AddHttpClient<IPipelineApiHarnessSuggestionClient, PipelineApiHarnessSuggestionClient>(client =>
         {

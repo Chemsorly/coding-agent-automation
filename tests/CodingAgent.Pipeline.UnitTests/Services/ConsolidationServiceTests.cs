@@ -24,7 +24,6 @@ public sealed class ConsolidationServiceTests
     private readonly PipelineConfiguration _config;
     private readonly List<PipelineJobTemplate> _templates;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IConsolidationRunStore> _mockRunStore;
 
     public ConsolidationServiceTests()
     {
@@ -93,8 +92,6 @@ public sealed class ConsolidationServiceTests
         _mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-test-default", ErrorMessage: null));
-
-        _mockRunStore = new Mock<IConsolidationRunStore>();
     }
 
     // TODO [WARNING]: Each CreateSut() call allocates a fresh InMemoryHarnessSuggestionStore(), not a shared
@@ -106,7 +103,6 @@ public sealed class ConsolidationServiceTests
         _logger,
         _config,
         _mockProjectStore.Object,
-        _mockRunStore.Object,
         new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
         WorkDistributor: _mockWorkDistributor.Object));
@@ -150,7 +146,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             configWithoutLabels,
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object));
 
@@ -393,7 +388,6 @@ public sealed class ConsolidationServiceTests
                 _logger,
                 _config,
                 _mockProjectStore.Object,
-                _mockRunStore.Object,
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 WorkDistributor: _mockWorkDistributor.Object));

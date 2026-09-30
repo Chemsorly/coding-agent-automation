@@ -195,13 +195,6 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<IPipelineApiHarnessSuggestionClient>();
             services.AddSingleton(harnessMock.Object);
 
-            // ApiBackedConsolidationRunStore delegates to IPipelineApiConsolidationRunClient.
-            var consolidationRunClientMock = new Mock<IPipelineApiConsolidationRunClient>();
-            consolidationRunClientMock.Setup(s => s.LoadAllRunsAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Array.Empty<ConsolidationRun>());
-            services.RemoveAll<IPipelineApiConsolidationRunClient>();
-            services.AddSingleton(consolidationRunClientMock.Object);
-
             // Replace IConsolidationService with a mock to prevent real consolidation dispatch
             // during startup. CleanupOrphanedRunsAsync was removed from IConsolidationService in
             // issue #3030 (ConsolidationRehydrationExtensions deleted; Program.cs no longer calls it).

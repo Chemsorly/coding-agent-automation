@@ -109,7 +109,6 @@ public static partial class ServiceCollectionExtensions
                 Log.Logger,
                 pipelineConfig,
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),

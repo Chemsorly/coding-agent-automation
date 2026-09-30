@@ -172,7 +172,6 @@ app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization(ApiAuthPolicies.Agent
 app.MapWorkItemEndpoints();
 app.MapPipelineRunEndpoints();
 app.MapConfigEndpoints();
-app.MapConsolidationRunEndpoints();
 app.MapHarnessSuggestionEndpoints();
 app.MapFeedbackCommentOutboxEndpoints();
 app.MapAgentEndpoints();

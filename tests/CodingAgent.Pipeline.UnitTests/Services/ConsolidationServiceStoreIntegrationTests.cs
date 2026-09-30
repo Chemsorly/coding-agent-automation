@@ -1,4 +1,3 @@
-#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -52,7 +51,6 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
                 new LoggerConfiguration().CreateLogger(),
                 _config,
                 _mockProjectStore.Object,
-                new Mock<IConsolidationRunStore>().Object,
                 _harnessStore,
                 new Mock<IProviderConfigStore>().Object));
     }
