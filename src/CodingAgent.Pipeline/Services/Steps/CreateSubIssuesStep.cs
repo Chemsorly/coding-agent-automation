@@ -221,14 +221,29 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             sanitizedBody = $"{depSection}\n\n{sanitizedBody}";
         }
 
-        // 8. Apply labels: agent:next + agent:generated + custom labels from proposal
+        // 8. Apply labels: agent:next + agent:generated + allowed custom labels from proposal.
+        // Agent-supplied labels are filtered through AgentLabels.FilterForIssueCreation:
+        // non-agent labels and agent:next / agent:generated are kept; all other agent:* labels
+        // (e.g. agent:epic-approved, agent:done) are dropped to prevent bypassing hub validation.
         var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
         foreach (var label in proposal.Labels)
         {
             if (!string.IsNullOrWhiteSpace(label) &&
                 !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
             {
-                labels.Add(label);
+                // TODO: AgentLabels.All uses StringComparer.Ordinal (HashSet default), so a mixed-case
+                // agent label (e.g. "Agent:Epic-Approved") would not be found here and would bypass the
+                // filter, being forwarded to the provider as a non-agent label. The deduplication guard
+                // above already uses OrdinalIgnoreCase. Consider constructing All / AllowedOnCreation
+                // with OrdinalIgnoreCase and updating FilterForIssueCreation to match so that the gate
+                // is robust against non-canonical casing from agent-authored JSON files.
+                // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
+                if (!AgentLabels.All.Contains(label))
+                    labels.Add(label);
+                else
+                    context.Logger.Warning(
+                        "CreateSubIssues: dropping disallowed agent label '{Label}' from sub-issue '{Title}'",
+                        label, proposal.Title);
             }
         }
 
