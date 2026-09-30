@@ -159,6 +159,68 @@ public sealed class AgentCodingPage
         await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
     }
 
+    /// <summary>
+    /// Focuses the issue list element inside the currently-open drawer so that
+    /// <c>@onkeydown</c> events reach <c>DispatchDrawerBase.HandleKeyDown</c>.
+    /// Must be called after the drawer is open.
+    /// </summary>
+    public async Task FocusIssueListAsync()
+    {
+        var list = _page.Locator(".dispatch-drawer.open .agent-history-list");
+        await list.WaitForAsync(new() { Timeout = 5_000 });
+        await list.FocusAsync();
+    }
+
+    /// <summary>
+    /// Focuses the list element inside the currently-open PR drawer so that
+    /// <c>@onkeydown</c> events reach <c>DispatchDrawerBase.HandleKeyDown</c>.
+    /// </summary>
+    // TODO [WARNING]: FocusPrListAsync, FocusEpicListAsync, and FocusIssueListAsync are byte-for-byte identical.
+    // They should be consolidated into a single FocusDrawerListAsync() method to avoid silent divergence if the
+    // PR or epic drawer ever uses a different CSS class for its list element. See review findings:
+    // Correctness line 178, TestQualityReviewer line 164.
+    public async Task FocusPrListAsync()
+    {
+        var list = _page.Locator(".dispatch-drawer.open .agent-history-list");
+        await list.WaitForAsync(new() { Timeout = 5_000 });
+        await list.FocusAsync();
+    }
+
+    /// <summary>
+    /// Focuses the list element inside the currently-open epic drawer.
+    /// </summary>
+    // TODO [WARNING]: See FocusPrListAsync — same duplication issue applies here.
+    public async Task FocusEpicListAsync()
+    {
+        var list = _page.Locator(".dispatch-drawer.open .agent-history-list");
+        await list.WaitForAsync(new() { Timeout = 5_000 });
+        await list.FocusAsync();
+    }
+
+    /// <summary>
+    /// Returns true when the shortcut help overlay backdrop is visible in the DOM.
+    /// </summary>
+    public async Task<bool> IsShortcutOverlayVisibleAsync()
+    {
+        var count = await _page.Locator(".shortcut-overlay-backdrop").CountAsync();
+        return count > 0;
+    }
+
+    /// <summary>Clicks the "Browse Epics" button to open the epic drawer.</summary>
+    public async Task ClickBrowseEpicsAsync()
+    {
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const btn = document.querySelector('[data-testid=""browse-epics-btn""]');
+                return btn && !btn.disabled;
+            }",
+            null,
+            new() { Timeout = 10_000 });
+
+        await _page.ClickAsync("[data-testid='browse-epics-btn']");
+        await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
+    }
+
     /// <summary>Selects a PR from the drawer by its identifier.</summary>
     public async Task SelectPrAsync(string identifier)
     {
