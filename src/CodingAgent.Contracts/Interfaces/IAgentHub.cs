@@ -43,6 +43,8 @@ public interface IAgentHub
     Task<CreatedIssueResult> RequestCreateIssueForProvider(JobId jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels);
     Task<PagedResult<IssueSummary>> RequestListOpenIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels);
     Task<PagedResult<IssueSummary>> RequestListClosedIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since);
+    Task<PagedResult<IssueSummary>> RequestListOpenIssuesForProvider(JobId jobId, string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels);
+    Task<PagedResult<IssueSummary>> RequestListClosedIssuesForProvider(JobId jobId, string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since);
     Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier);
     Task<IReadOnlyList<IssueComment>> RequestListComments(JobId jobId, string identifier);
     Task RequestUpdateComment(JobId jobId, string issueId, string commentId, string body);
