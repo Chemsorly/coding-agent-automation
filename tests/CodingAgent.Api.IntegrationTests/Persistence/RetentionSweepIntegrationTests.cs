@@ -49,9 +49,6 @@ public class RetentionSweepIntegrationTests : IDisposable
         _dbFactory = new TestDbContextFactory(_dbOptions);
 
         _mockConsolidation = new Mock<IConsolidationService>();
-        _mockConsolidation
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ConsolidationRun>());
 
         _mockConfigStore = new Mock<IPipelineConfigStore>();
 

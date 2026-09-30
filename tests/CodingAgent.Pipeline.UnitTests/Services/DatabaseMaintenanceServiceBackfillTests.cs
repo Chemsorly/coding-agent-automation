@@ -435,9 +435,6 @@ public class DatabaseMaintenanceServiceBackfillTests : IDisposable
         _mockRunHistoryService
             .Setup(s => s.AddRunSummaryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockConsolidationService
-            .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<ConsolidationRun>());
 
         var svc = CreateService();
         var result = await svc.RunRetentionSweepAsync(CancellationToken.None);

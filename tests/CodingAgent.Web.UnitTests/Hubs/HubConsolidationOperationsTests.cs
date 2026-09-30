@@ -254,7 +254,7 @@ public sealed class HubConsolidationOperationsTests
     [Fact]
     public async Task HandleConsolidationComplete_DoesNotCallUpdateRunAsync()
     {
-        // Use a strict mock so any unexpected call to UpdateRunAsync would throw
+        // Use a strict mock so any unexpected call would throw
         var strictConsolidation = new Mock<IConsolidationService>(MockBehavior.Strict);
         strictConsolidation.Setup(c => c.SaveHarnessSuggestionsAsync(
             It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
@@ -269,19 +269,24 @@ public sealed class HubConsolidationOperationsTests
 
         var result = new ConsolidationJobResult { JobId = "crun-success", Success = true, Summary = "Brain updated" };
 
+        // The strict mock will throw if UpdateRunAsync is called (method removed in #3030)
         var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
-        await act.Should().NotThrowAsync("UpdateRunAsync must not be called — store writes stopped in #3028");
-
-        strictConsolidation.Verify(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
+        await act.Should().NotThrowAsync("UpdateRunAsync must not be called — removed in #3030");
     }
+
+    // TODO [WARNING]: HandleConsolidationComplete_Success_CallsUpdateRunWithSucceeded,
+    // HandleConsolidationComplete_Failure_CallsUpdateRunWithFailedAndErrorMessage, and
+    // HandleConsolidationComplete_UpdateRunThrows_DoesNotPropagate are now effectively duplicate
+    // no-throw smoke tests — all three only assert NotThrowAsync() with no distinction between
+    // success and failure paths. Consider collapsing into one smoke test or replacing with assertions
+    // on observable behavior (SaveHarnessSuggestionsAsync called on success, badge incremented,
+    // NotifyChange fired). (issue #3030)
 
     [Fact]
     public async Task HandleConsolidationComplete_Success_CallsUpdateRunWithSucceeded()
     {
-        // Issue #3028: UpdateRunAsync is no longer called from HandleConsolidationCompleteAsync.
-        // This test now verifies that the method does NOT call UpdateRunAsync on success.
+        // Issue #3028/#3030: UpdateRunAsync is no longer called from HandleConsolidationCompleteAsync.
+        // This test now verifies that the method completes without error.
         var result = new ConsolidationJobResult
         {
             JobId = "crun-success",
@@ -290,18 +295,15 @@ public sealed class HubConsolidationOperationsTests
         };
         var sut = CreateSut();
 
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        _mockConsolidation.Verify(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never,
-            "UpdateRunAsync must not be called — ConsolidationRuns store writes stopped in #3028");
+        // Should complete without error — UpdateRunAsync no longer exists on the interface
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
     public async Task HandleConsolidationComplete_Failure_CallsUpdateRunWithFailedAndErrorMessage()
     {
-        // Issue #3028: UpdateRunAsync is no longer called from HandleConsolidationCompleteAsync.
+        // Issue #3028/#3030: UpdateRunAsync is no longer called from HandleConsolidationCompleteAsync.
         var result = new ConsolidationJobResult
         {
             JobId = "crun-fail",
@@ -310,18 +312,15 @@ public sealed class HubConsolidationOperationsTests
         };
         var sut = CreateSut();
 
-        await sut.HandleConsolidationCompleteAsync(result, null);
-
-        _mockConsolidation.Verify(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never,
-            "UpdateRunAsync must not be called — ConsolidationRuns store writes stopped in #3028");
+        // Should complete without error — UpdateRunAsync no longer exists on the interface
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
     public async Task HandleConsolidationComplete_UpdateRunThrows_DoesNotPropagate()
     {
-        // Issue #3028: UpdateRunAsync is no longer called; this test verifies no throw regardless.
+        // Issue #3028/#3030: UpdateRunAsync is no longer called; this test verifies no throw regardless.
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true };
         var sut = CreateSut();
 

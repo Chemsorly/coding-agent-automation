@@ -172,8 +172,6 @@ app.MapApplicationEndpoints();
 // on first increment. Must run after builder.Build() so the MeterProvider is active.
 GitHubTelemetry.PreInitialize();
 
-await app.RunConsolidationStartupAsync();
-
 app.Run();
 
 // Make Program class accessible for WebApplicationFactory in tests
