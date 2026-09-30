@@ -853,10 +853,6 @@ public class ChatJobDispatcherTests
         var registry = CreateRegistry();
         string? createdJobName = null;
 
-        // ReadJobAsync always returns non-terminal — watcher never exits on its own
-        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
-
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
@@ -866,7 +862,29 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Very short grace period so the force-delete path triggers quickly in tests
+        // Inject a mock IChatSessionWatcher that blocks until its CancellationToken fires and
+        // never calls cleanupCallback. This models a truly stalled watcher: it never exits on its
+        // own, so TerminateChatSessionAsync must take the force-delete path once the grace period
+        // expires. Using the real ChatSessionWatcher here is non-deterministic in Release builds
+        // because ChatSessionWatcher's OperationCanceledException handler calls cleanupCallback,
+        // which wins the entry.Cleaned CAS before ForceDeleteAndCleanupAsync can, causing
+        // DeleteJobAsync to be skipped (the guard reads entry.Cleaned != 0 → return early).
+        var stalledWatcher = new Mock<IChatSessionWatcher>();
+        stalledWatcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(
+                    _ => Task.CompletedTask, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnCanceled, TaskScheduler.Default).Unwrap());
+
         var options = new DispatchServiceOptions
         {
             Namespace = TestNamespace,
@@ -880,10 +898,18 @@ public class ChatJobDispatcherTests
             ChatTerminationGracePeriodSeconds = 1   // 1 second grace → force-delete triggers fast
         };
 
-        var dispatcher = CreateDispatcher(
-            jobClient: jobClientMock.Object,
-            registry: registry,
-            options: options);
+        // Use the internal constructor to inject the stalled watcher mock so the test is
+        // deterministic: the mock never calls cleanupCallback, ensuring ForceDeleteAndCleanupAsync
+        // always wins the entry.Cleaned CAS and calls DeleteJobAsync.
+        var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            options,
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: stalledWatcher.Object);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         await dispatcher.TerminateChatSessionAsync(createdJobName!, CancellationToken.None);
