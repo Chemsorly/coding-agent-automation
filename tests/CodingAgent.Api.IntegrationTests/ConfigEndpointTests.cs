@@ -7,6 +7,7 @@ using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -811,9 +812,15 @@ public sealed class ConfigEndpointTests
     [Fact]
     public async Task SaveTemplate_UnknownProject_Returns404()
     {
-        var response = await PutTemplateAsync(Guid.NewGuid().ToString(), NewTemplate("Lost", $"repo-{Guid.NewGuid():N}"));
+        var template = NewTemplate("Lost", $"repo-{Guid.NewGuid():N}");
+        var response = await PutTemplateAsync(Guid.NewGuid().ToString(), template);
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Verify the specific template was not written to the database (acceptance criterion: "writes nothing")
+        await using var db = _factory.CreateDbContext();
+        var templateInDb = await db.PipelineJobTemplates.FindAsync(Guid.Parse(template.Id));
+        templateInDb.Should().BeNull("no template row should be written when the project does not exist");
     }
 
     [Fact]
