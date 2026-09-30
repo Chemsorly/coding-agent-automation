@@ -382,16 +382,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             implementationEnabled: true,
             decompositionEnabled: true);
         await SaveDefaultAgentProfileAsync();
-        // TODO [WARNING]: Unlike TypePriority_Budget2, no 60s poll interval is set here.
-        // The default 1s interval means a second cycle can begin ~1s after cycle 1 finishes.
-        // If the three dispatches take longer than ~1s to complete, a second cycle starts before
-        // StopLoop() fires. The seeded items have their labels swapped to agent:in-progress during
-        // dispatch (filtering them from re-polling), but the PR-as-issue "43" is seeded with
-        // Labels=Array.Empty and is never mutated — it can be re-polled by cycle 2. Any cycle-2
-        // re-dispatch (or 409 that still increments ClaimedWorkItemIds) causes Assert.Equal(3)
-        // to fail spuriously on a slow machine. Mitigation: set pollInterval: TimeSpan.FromSeconds(60)
-        // matching the Budget2 test, which closes the cycle-2 window without affecting correctness.
-        await SetPollIntervalAsync(maxRunsPerCycle: 3);
+        // Use a 60s poll interval (matching TypePriority_Budget2) to close the cycle-2 window.
+        // The PR-as-issue "43" is seeded with Labels=Array.Empty and is never mutated to
+        // agent:in-progress during dispatch, so it remains eligible for re-polling. Without the
+        // long interval, a second cycle can begin ~1s after cycle 1 finishes (default 1s interval),
+        // and a cycle-2 re-dispatch (or a 409 that still increments ClaimedWorkItemIds) causes
+        // Assert.Equal(3, claimedIds.Count) to fail spuriously under CI load.
+        await SetPollIntervalAsync(maxRunsPerCycle: 3, pollInterval: TimeSpan.FromSeconds(60));
 
         await using var agent1 = new FakeAgentClient("loop-prio3-1", "e2e");
         await using var agent2 = new FakeAgentClient("loop-prio3-2", "e2e");
@@ -421,6 +418,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var claimedIds = Fixture.JobController.ClaimedWorkItemIds.ToList();
 
             // With budget=3, all three work items should be claimed
+            // TODO [WARNING]: Same cycle-boundary race as TypePriority_Budget2: StopLoop() is
+            // non-blocking and the current cycle finishes before IsLoopActive transitions to false.
+            // Within cycle 1, a fourth in-flight orchestration pipeline (e.g. a re-dispatch of the
+            // PR-as-issue "43" that lacks agent:in-progress suppression) could push a fourth entry
+            // into ClaimedWorkItemIds after all three JobAssigned TCS fire but before IsLoopActive
+            // reaches false. The 60s poll interval prevents cycle 2 from starting, but does not
+            // prevent cycle 1's orchestration from completing extra work within the same cycle.
             Assert.Equal(3, claimedIds.Count);
 
             await using var db = Fixture.DbContextFactory.CreateDbContext();
@@ -710,6 +714,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // Issue "61" must never have appeared in ClaimedWorkItemIds: the disabled project's
             // template is skipped by FlattenTemplates, and budget=1 prevents a second dispatch
             // from the default template in the same cycle.
+            // TODO [WARNING]: Assert.Single proves budget=1 was honoured, but does NOT prove the
+            // disabled-project rule is enforced. If FlattenTemplates were broken and included the
+            // disabled project's template, both templates would see the same InMemoryIssueProvider
+            // and issue "62" (older CreatedAt) would still be the only dispatch with budget=1.
+            // Assert.Single would still pass even if the disabled-project skip was silently
+            // removed. A stronger test would use budget=2 (or a longer observation window across
+            // two cycles) and assert that issue "61" was never claimed by work-item lookup in the
+            // database, not merely by count.
             Assert.Single(Fixture.JobController.ClaimedWorkItemIds);
         }
         finally
@@ -729,6 +741,11 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     /// behaviour (alphabetical). If FlattenTemplates is corrected to use list order, this
     /// test will fail and must be updated — that is by design (a failing test reveals the
     /// rule change). See the TODO below for the outstanding docs/implementation mismatch.
+    ///
+    /// TODO [WARNING]: A bug for the docs/implementation mismatch (FlattenTemplates sorts
+    /// alphabetically instead of by list order) MUST be filed on the issue tracker and
+    /// linked to issue #3093 to satisfy acceptance criterion #2. This test pins the actual
+    /// (alphabetical) behaviour; the bug filing is the required process artefact.
     ///
     /// To disambiguate project ordering from FIFO ordering, Z-Project is seeded BEFORE
     /// A-Project (so insertion order and alphabetical order diverge), and both issues carry
@@ -797,6 +814,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // by project name". Until that is resolved, a change to FlattenTemplates that corrects
         // the ordering to match the docs will cause this test to fail — which is the intended
         // signal that the rule changed.
+        //
+        // REQUIRED (acceptance criterion #2 for issue #3093): this docs/implementation mismatch
+        // MUST be filed as a bug on the issue tracker and linked to issue #3093. Acceptance
+        // criterion #2 states: "Any rule the product does not follow is filed as a bug and linked
+        // here. Do not change the test to match the bug." Filing the bug satisfies AC2; until it
+        // is filed AC2 is NOT met. Do not change this test to assert list/insertion order until
+        // FlattenTemplates is corrected to match the docs.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "100",
