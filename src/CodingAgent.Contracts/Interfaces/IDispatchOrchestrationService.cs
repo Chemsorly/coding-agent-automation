@@ -55,7 +55,9 @@ public interface IDispatchOrchestrationService
 
     /// <summary>
     /// Reverts the side effects of a failed distribution attempt: swaps the issue label
-    /// back to <c>agent:next</c> and removes the dangling <see cref="Models.PipelineRun"/>
+    /// back to the queue label it had before dispatch (<c>agent:epic</c> for a DecompositionAnalysis,
+    /// <c>agent:epic-approved</c> for a Decomposition, <c>agent:next</c> for all other run types)
+    /// and removes the dangling <see cref="Models.PipelineRun"/>
     /// created during preparation. Call this when <see cref="IWorkDistributor.DistributeAsync"/>
     /// returns <c>Success = false</c> after a successful <c>PrepareAsync</c>.
     /// </summary>

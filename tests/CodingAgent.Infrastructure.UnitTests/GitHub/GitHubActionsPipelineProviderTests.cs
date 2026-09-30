@@ -132,7 +132,11 @@ public class GitHubActionsPipelineProviderTests
         SetupWorkflowRuns(new[] { run });
         SetupJobs(1, new[] { CreateJob("build", WorkflowJobStatus.InProgress, null) });
 
-        var result = await _provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromMilliseconds(100), CancellationToken.None);
+        // Timeout must be long enough for at least one poll to complete (returning Running) before
+        // expiry. 100ms was too tight on loaded CI runners where mock overhead causes the provider
+        // to time out before the first poll returns, yielding Pending (lastStatus == null path).
+        // 1 second is ample for a synchronous mock while keeping the test fast.
+        var result = await _provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromSeconds(1), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Running);
     }

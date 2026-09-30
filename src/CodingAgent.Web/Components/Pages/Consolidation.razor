@@ -266,6 +266,10 @@
                     <div class="refactoring-modal-param">
                         <span class="refactoring-modal-param-label">Max issues:</span>
                         <span class="refactoring-modal-param-value">@_modalMaxProposals</span>
+                        @if (_modalMaxProposalsIsOverride)
+                        {
+                            <span class="refactoring-modal-param-override">project override</span>
+                        }
                     </div>
                     <div class="refactoring-modal-param">
                         <span class="refactoring-modal-param-label">Hotspot lookback:</span>
@@ -274,6 +278,10 @@
                     <div class="refactoring-modal-param">
                         <span class="refactoring-modal-param-label">Adversarial review:</span>
                         <span class="refactoring-modal-param-value">@(_modalReviewEnabled ? "Enabled" : "Disabled")</span>
+                        @if (_modalReviewEnabledIsOverride)
+                        {
+                            <span class="refactoring-modal-param-override">project override</span>
+                        }
                     </div>
                 </div>
             </div>
@@ -318,8 +326,10 @@
     private string? _modalTemplateName;
     private bool _modalAutoDispatch;
     private int _modalMaxProposals;
+    private bool _modalMaxProposalsIsOverride;
     private int _modalHotspotDays;
     private bool _modalReviewEnabled;
+    private bool _modalReviewEnabledIsOverride;
     private ElementReference _modalOverlayRef;
 
     protected override async Task OnInitializedAsync()
@@ -484,20 +494,44 @@
 
     private async Task OpenRefactoringModal(string templateId, string templateName)
     {
-        // Load fresh config values when opening the modal
+        // Load fresh config values when opening the modal, applying any project overrides
+        // so the modal shows the same values the scan will actually use.
         try
         {
             var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
-            _modalMaxProposals = config.MaxRefactoringProposals;
+            var projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
+            var project = projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
+            var effective = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+            _modalMaxProposals = effective.MaxRefactoringProposals;
+            // TODO: [WARNING] The equality check (effective.MaxRefactoringProposals != config.MaxRefactoringProposals)
+            // correctly handles the PipelineConfigurationResolver fallback path (ArgumentOutOfRangeException returns
+            // original config reference), but this relies on reference equality of the returned config object.
+            // If ApplyProjectOverrides is ever changed to return a copy on fallback, the badge could incorrectly
+            // show "project override" when the value was not actually applied. (Correctness review, issue #3148)
+            _modalMaxProposalsIsOverride = project is not null
+                && project.MaxRefactoringProposals.HasValue
+                && effective.MaxRefactoringProposals != config.MaxRefactoringProposals;
+
+            // HotspotAnalysisLookback is not [ProjectOverridable] — always use global value
             _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
-            _modalReviewEnabled = config.RefactoringReviewEnabled;
+
+            _modalReviewEnabled = effective.RefactoringReviewEnabled;
+            // TODO: [WARNING] Same resolver-fallback concern as _modalMaxProposalsIsOverride above.
+            // If ApplyProjectOverrides is changed to return a copy on fallback, this equality check may
+            // produce a false-positive override indicator. (Correctness review, issue #3148)
+            _modalReviewEnabledIsOverride = project is not null
+                && project.RefactoringReviewEnabled.HasValue
+                && effective.RefactoringReviewEnabled != config.RefactoringReviewEnabled;
         }
         catch (Exception ex)
         {
             Log.Warning(ex, "Failed to load pipeline config for refactoring modal");
             _modalMaxProposals = 3;
+            _modalMaxProposalsIsOverride = false;
             _modalHotspotDays = 90;
             _modalReviewEnabled = true;
+            _modalReviewEnabledIsOverride = false;
         }
 
         _modalTemplateId = templateId;

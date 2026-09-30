@@ -41,6 +41,18 @@ public static class AgentLabels
     /// <summary>All agent label names.</summary>
     public static readonly IReadOnlyList<string> All = Definitions.Select(d => d.Name).ToList().AsReadOnly();
 
+    /// <summary>
+    /// Agent label names that are replaced during a status swap.
+    /// This is <see cref="All"/> minus <see cref="Generated"/>: <c>agent:generated</c> is a
+    /// provenance/kind label that is orthogonal to pipeline status and must survive label swaps
+    /// (e.g. swapping a generated issue to <c>agent:in-progress</c> must not strip
+    /// <c>agent:generated</c>). Only <see cref="AgentLabelOperations.SwapAsync"/> uses this set;
+    /// <see cref="AgentLabelOperations.RemoveAllAsync"/> continues to use <see cref="All"/> because
+    /// an explicit full-cleanup intentionally removes every agent label including provenance labels.
+    /// </summary>
+    public static readonly IReadOnlyList<string> SwapTargets =
+        All.Where(l => !string.Equals(l, Generated, StringComparison.Ordinal)).ToList().AsReadOnly();
+
     /// <summary>Labels representing terminal pipeline states — should not be overwritten by recovery services.</summary>
     public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
