@@ -24,7 +24,9 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(1500);
+        // Wait for Blazor interactive circuit to establish before interacting with buttons.
+        // Other page objects (AgentCodingPage, WorkPage, etc.) use 2000–3000 ms for the same reason.
+        await _page.WaitForTimeoutAsync(3000);
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
@@ -202,21 +204,26 @@ public sealed class RunDetailPage
 
     /// <summary>
     /// Returns true if the run is shown as a Review run.
+    /// Uses .First to avoid Playwright strict-mode violations: RunPage.razor renders a
+    /// run-type-review badge in the header AND PipelineSidebar renders a second one in the
+    /// sidebar, so an unscoped locator matches two elements and throws.
     /// </summary>
     public async Task<bool> IsReviewRunAsync()
-        => await _page.Locator(".run-type-review").IsVisibleAsync();
+        => await _page.Locator(".run-type-review").First.IsVisibleAsync();
 
     /// <summary>
     /// Returns true if the run is shown as a Decomposition run.
+    /// Uses .First for the same reason as IsReviewRunAsync (duplicate badge in sidebar).
     /// </summary>
     public async Task<bool> IsDecompRunAsync()
-        => await _page.Locator(".run-type-decomp").IsVisibleAsync();
+        => await _page.Locator(".run-type-decomp").First.IsVisibleAsync();
 
     /// <summary>
     /// Returns true if the run is shown as an Implementation run.
+    /// Uses .First for the same reason as IsReviewRunAsync (duplicate badge in sidebar).
     /// </summary>
     public async Task<bool> IsImplRunAsync()
-        => await _page.Locator(".run-type-impl").IsVisibleAsync();
+        => await _page.Locator(".run-type-impl").First.IsVisibleAsync();
 
     /// <summary>
     /// Returns true if the Run page shows an "Issue #&lt;issueIdentifier&gt;" chip linking to the issue.

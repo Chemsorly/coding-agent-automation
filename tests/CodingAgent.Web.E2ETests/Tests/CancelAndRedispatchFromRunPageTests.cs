@@ -180,14 +180,10 @@ public sealed class CancelAndRedispatchFromRunPageTests : E2ETestBase
 
         // Dismissing the confirm ("No") should leave everything unchanged
         await runDetail.CancelAsync(confirm: false);
-        // TODO [WARNING]: After dismissing, wait for the confirm section to reach Hidden state
-        // before calling CancelAsync(confirm: true). If Blazor only CSS-toggles the section
-        // (element stays in DOM) or a re-render lag leaves it briefly visible, the second
-        // CancelAsync will find the selector immediately and click a stale/detached element.
-        // Replace WaitForTimeoutAsync(500) with:
-        //   await Page.WaitForSelectorAsync("[data-testid='cancel-pipeline-confirm-section']",
-        //       new() { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
-        await Page.WaitForTimeoutAsync(500); // allow Blazor to process the dismiss
+        // Wait for the cancel button to become visible again — this confirms that Blazor has
+        // processed the dismiss (@onclick="() => _showCancelConfirm = false") and re-rendered
+        // the button branch. The previous fixed 500 ms sleep was insufficient under CI load.
+        await runDetail.CancelButton.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 5_000 });
 
         Assert.True(await runDetail.IsCancelButtonVisibleAsync(),
             "Cancel Pipeline button should still be visible after dismissing the confirm");
@@ -395,12 +391,9 @@ public sealed class CancelAndRedispatchFromRunPageTests : E2ETestBase
         });
 
         await runDetail.NavigateAsync(reviewRunId.ToString());
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // TODO [WARNING]: Replace this fixed-time wait with a condition-based wait (e.g.
-        // WaitForSelectorAsync for the run-type badge with State=Visible, or for
-        // `[data-testid='redispatch-card']` with State=Hidden). A 1.5 s sleep is insufficient
-        // under load and always wastes time on fast CI. Same pattern applies to 4c, 4d, and 4e.
-        await Page.WaitForTimeoutAsync(1_500);
+        // NavigateAsync already waits for h1 + Blazor circuit; wait for the run-type badge to
+        // confirm the page has rendered the run content before asserting.
+        await Page.Locator(".run-type-review").First.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
 
         // TODO [WARNING]: IsReviewRunAsync, IsDecompRunAsync, and IsImplRunAsync check internal CSS
         // class names (.run-type-review, .run-type-decomp, .run-type-impl). If these class names
@@ -427,8 +420,7 @@ public sealed class CancelAndRedispatchFromRunPageTests : E2ETestBase
         });
 
         await runDetail.NavigateAsync(decompRunId.ToString());
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForTimeoutAsync(1_500);
+        await Page.Locator(".run-type-decomp").First.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
 
         Assert.True(await runDetail.IsDecompRunAsync(),
             "Page should show a Decomp run badge");
@@ -449,8 +441,7 @@ public sealed class CancelAndRedispatchFromRunPageTests : E2ETestBase
         });
 
         await runDetail.NavigateAsync(implNoProviderRunId.ToString());
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForTimeoutAsync(1_500);
+        await Page.Locator(".run-type-impl").First.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
 
         Assert.True(await runDetail.IsImplRunAsync(),
             "Page should show an Impl run badge");
@@ -473,8 +464,8 @@ public sealed class CancelAndRedispatchFromRunPageTests : E2ETestBase
         AddIssue("rp-vis-withprov", "Impl run with provider IDs");
 
         await runDetail.NavigateAsync(implWithProviderRunId.ToString());
-        await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForTimeoutAsync(1_500);
+        // For the positive control, wait for the redispatch card itself to confirm full render.
+        await runDetail.WaitForRedispatchCardVisibleAsync(timeoutMs: 15_000);
 
         Assert.True(await runDetail.IsImplRunAsync(),
             "Page should show an Impl run badge");
