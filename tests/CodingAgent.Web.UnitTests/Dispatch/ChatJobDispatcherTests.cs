@@ -1110,6 +1110,10 @@ public class ChatJobDispatcherTests
                     .Returns(new List<AgentEntry> { agentEntry });
                 registryMock.Setup(r => r.GetByAgentId(createdJobName!))
                     .Returns(agentEntry);
+                // GetByAgentIdAsync is called by TrySendCancelChatAsync; must be stubbed so it returns
+                // the agent entry rather than null, allowing the code to proceed to Deregister.
+                registryMock.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(agentEntry);
                 // TODO: The Deregister stub is registered here inside CreateJobAsync callback, meaning it
                 // is only wired up after job creation completes. If ForceDeleteAndCleanupAsync calls
                 // Deregister before this callback fires (race condition), the call hits an unstubbed mock
