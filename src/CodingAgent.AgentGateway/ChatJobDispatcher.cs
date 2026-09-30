@@ -3,7 +3,6 @@ using System.Diagnostics;
 using System.Threading;
 using CodingAgent.Pipeline;
 using CodingAgent.AgentGateway;
-using CodingAgent.Infrastructure.Common;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
@@ -62,12 +61,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // Keyed by jobName (== agentId for chat pods — see invariant note on TerminateChatSessionAsync).
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
-    // TODO [WARNING]: The _stopped flag is never reset by DisposeAsync, so once StopAsync has run
-    // (either explicitly or via the internal StopAsync call inside DisposeAsync), it cannot be
-    // re-armed. This is intentional: IHostedService semantics do not require restart after stop.
-    // Callers that invoke StopAsync first and then DisposeAsync will have the internal StopAsync
-    // inside DisposeAsync short-circuit harmlessly; _shutdownCts.Dispose() still runs as expected.
-    private int _stopped; // 0 = not stopped; 1 = stop in progress or complete. Used with Interlocked.
 
     /// <summary>
     /// Groups the co-travelling identity and selector fields that flow from
@@ -81,8 +74,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         AgentId AgentId,
         string JobName,
         string NormalizedSelector,
-        string? ClaimedPvc,
-        string? PoolName);
+        string? ClaimedPvc);
 
     /// <summary>
     /// Tracks per-session watcher state. Must be <c>internal</c> so <see cref="IChatSessionWatcher"/>
@@ -95,7 +87,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         public readonly string JobName;
         public readonly string NormalizedSelector;
         public readonly string? ClaimedPvc;
-        public readonly string? PoolName;
         public readonly DateTimeOffset StartedAt;
         public readonly CancellationTokenSource WatcherCts; // disposed in CleanupSession
         public int Cleaned; // 0 = not yet cleaned; 1 = cleanup done. Used with Interlocked.
@@ -110,13 +101,18 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         // Guard: 0 = CancelChat not yet sent; 1 = already sent.
         public int CancelSent;
 
+        // Guard: 0 = K8s force-delete not yet issued; 1 = already issued.
+        // Separate from Cleaned so that CleanupSession winning the Cleaned CAS (on normal
+        // shutdown/completion paths) does not prevent ForceDeleteAndCleanupAsync from issuing
+        // the K8s delete for a stalled pod.
+        public int ForceDeleted;
+
         public WatcherEntry(WatcherIdentity identity, DateTimeOffset startedAt, CancellationTokenSource watcherCts)
         {
             AgentId = identity.AgentId;
             JobName = identity.JobName;
             NormalizedSelector = identity.NormalizedSelector;
             ClaimedPvc = identity.ClaimedPvc;
-            PoolName = identity.PoolName;
             StartedAt = startedAt;
             WatcherCts = watcherCts;
             LastClientHeartbeatTicks = startedAt.UtcTicks;
@@ -202,14 +198,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var dispatchStart = DateTimeOffset.UtcNow;
 
         var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, activeChatJobs);
-        // TODO [WARNING]: poolName derives from template.ProviderType whenever claimedPvc is non-null.
-        // Today ClaimPvcForKiroAgent only returns non-null for Kiro providers, so poolName is always
-        // "kiro" or null. If a future provider introduces its own PVC pool (i.e. ClaimPvcForKiroAgent
-        // or an equivalent returns non-null for non-Kiro types), this derivation will still produce
-        // the correct pool tag — but the coupling between "claimedPvc != null ⟹ use providerType as
-        // pool name" is an implicit assumption. Add an explicit comment or assertion when a second
-        // PVC-capable provider is introduced to keep the intent clear.
-        var poolName = claimedPvc is not null ? template.ProviderType : null;
 
         await BuildAndSubmitChatJobAsync(normalized, selectorLabelValue, model, effort, jobName, dispatchId, claimedPvc, template, cancellationToken);
 
@@ -224,7 +212,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("provider_type", template.ProviderType);
 
         return await PollForAgentConnectionAsync(
-            dispatchId, jobName, claimedPvc, poolName, normalized, selectorLabelValue,
+            dispatchId, jobName, claimedPvc, normalized, selectorLabelValue,
             dispatchStart, activity, cancellationToken);
     }
 
@@ -357,7 +345,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     }
 
     private async Task<string> PollForAgentConnectionAsync( // NOSONAR S107 — private polling helper; params are independent timing/routing inputs
-        Guid dispatchId, string jobName, string? claimedPvc, string? poolName, string normalized,
+        Guid dispatchId, string jobName, string? claimedPvc, string normalized,
         string selectorLabelValue, DateTimeOffset dispatchStart,
         System.Diagnostics.Activity? activity, CancellationToken cancellationToken)
     {
@@ -385,7 +373,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                             connected.AgentId, jobName);
                     }
 
-                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc, poolName));
+                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc));
 
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
@@ -467,7 +455,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, identity.NormalizedSelector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
         if (identity.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", identity.PoolName ?? "unknown"));
+            ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", "kiro"));
 
         _logger.Information("ChatJobDispatcher: watcher registered jobName={JobName}", identity.JobName);
     }
@@ -530,7 +518,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", entry.PoolName ?? "unknown"));
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
 
         var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
         ChatTelemetry.SessionDuration.Record(
@@ -561,8 +549,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        if (Interlocked.CompareExchange(ref _stopped, 1, 0) != 0)
-            return; // idempotent — already stopped or stopping
+        // TODO [WARNING]: StopAsync is no longer idempotent after removal of the _stopCompleted guard.
+        // See pre-existing issue documented in earlier TODOs. Do not fix in this refactor.
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
@@ -672,24 +660,17 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
 
-        // Deregister the agent from the registry unconditionally — this must happen regardless of
-        // whether CleanupSession has already run on the watcher thread (which sets entry.Cleaned).
-        // Deregister is idempotent and safe to call even if the agent has already disconnected.
-        _registry.Deregister(agentId);
-
-        // Guard: CleanupSession uses entry.Cleaned for idempotency, but DeleteJobAsync is called
-        // before CleanupSession here and has no guard of its own. If a concurrent path (e.g. the
-        // watcher's OCE path in ChatSessionWatcher) already ran CleanupSession and set entry.Cleaned,
-        // skip the K8s delete and telemetry to prevent double-delete and double-decrement.
-        if (Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) != 0)
+        // Guard: prevent double DeleteJobAsync if two concurrent paths both reach here
+        // (e.g. idle-kill and an explicit TerminateChatSessionAsync racing).
+        // ForceDeleted is separate from Cleaned so that CleanupSession winning the Cleaned CAS
+        // on a normal shutdown/completion path does not skip the K8s delete for a stalled pod.
+        if (Interlocked.CompareExchange(ref entry.ForceDeleted, 1, 0) != 0)
         {
             _logger.Debug(
-                "ChatJobDispatcher: ForceDeleteAndCleanupAsync skipped cleanup for {JobName} — already cleaned by concurrent path",
+                "ChatJobDispatcher: ForceDeleteAndCleanupAsync skipped for {JobName} — force-delete already issued by concurrent path",
                 entry.JobName);
             return;
         }
-
-        _activeWatchers.TryRemove(agentId.Value, out _);
 
         try
         {
@@ -702,27 +683,22 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 entry.JobName, ex.Message);
         }
 
+        // Record force-delete telemetry (incremented once per force-delete, not per cleanup path).
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-        // Do not call CleanupSession here: we already took the Cleaned CAS above, so CleanupSession
-        // would be a no-op for _activeWatchers/Cleaned (already handled above) but we still need
-        // it to run telemetry and WatcherCts disposal.
-        var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
-        ChatTelemetry.SessionsActive.Add(-1, selectorTag);
-        if (entry.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", entry.PoolName ?? "unknown"));
-        var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
-        ChatTelemetry.SessionDuration.Record(duration, selectorTag, new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
-        try { entry.WatcherCts.Dispose(); }
-        catch { /* already disposed */ }
+        ChatTelemetry.PodForceTerminations.Add(1,
+            new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded));
+
+        // Delegate session cleanup (registry deregister, metrics, CTS disposal) to CleanupSession,
+        // which is idempotent via its own Cleaned CAS. This ensures Deregister and session-active
+        // metrics are decremented exactly once regardless of which path wins the Cleaned CAS.
+        CleanupSession(agentId, entry, selectorEncoded, "force_deleted");
+
         if (_heartbeatTracker is not null)
             // TODO [WARNING]: fire-and-forget — if DeleteRedisHeartbeatAsync faults (e.g. transient
             // Redis connection error), the exception is silently swallowed (same pre-existing pattern
             // as CleanupSession). A faulted task may leave a stale Redis heartbeat key after the job
             // is deleted. Consider awaiting or logging the failure.
             _ = _heartbeatTracker.DeleteRedisHeartbeatAsync(agentId);
-
-        ChatTelemetry.PodForceTerminations.Add(1,
-            new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded));
     }
 
     // ─── IAsyncDisposable ─────────────────────────────────────────────────────
