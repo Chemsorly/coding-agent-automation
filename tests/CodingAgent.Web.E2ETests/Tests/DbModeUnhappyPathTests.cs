@@ -339,6 +339,13 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // has not yet been removed when we assert below. 500ms is enough for the SignalR hub
         // to transition the agent to Disconnected; the reconciler won't remove the entry until
         // the full 2s grace has elapsed (~t=2.25s at the earliest given the 250ms poll interval).
+        // TODO: This timing window is fragile (assertion delay 500ms vs grace period 2s, poll
+        // interval 250ms). The invariant that must hold is: assertion delay < grace period -
+        // poll interval (500ms < 2000ms - 250ms = 1750ms, satisfied here). Any increase to the
+        // poll interval or reduction to the grace period in FakeJobController could cause this
+        // assertion to fail under a slow CI runner. Previously safe because the grace period was
+        // configurable and tests set it to 30s; with a fixed 2s grace this margin is now narrow.
+        // (Review finding: TestQualityReviewer WARNING)
         await Task.Delay(TimeSpan.FromMilliseconds(500));
 
         // Verify agent is marked Disconnected (not yet removed — still within 2s grace period)

@@ -292,12 +292,11 @@
             return;
         }
 
-        // TODO: Any existing ProviderConfig stored in the database that has a legacy "timeout" key
-        // in its Settings dictionary will have that key silently dropped when the operator opens and
-        // saves this form, because EditProvider no longer reads it and SaveProvider no longer writes it.
-        // Confirm that no production code reads provider Settings["timeout"] at dispatch time before
-        // relying on this. If it does, either migrate the value to PipelineConfiguration.AgentTimeout
-        // on load, or emit a one-time migration at startup. (Review finding: DotNetSpecialist WARNING)
+        // NOTE: The legacy "timeout" key (ProviderSettingKeys.Timeout) in an agent provider's Settings
+        // dictionary is intentionally dropped when the operator opens and saves this form. The Timeout
+        // field was removed from the agent provider form in #3149 because no code reads it at dispatch
+        // time (per-call timeouts come from PipelineConfiguration.AgentTimeout). Existing DB rows that
+        // still have Settings["timeout"] are self-healing: the key is dropped on next save.
         var settings = new Dictionary<string, string>
         {
             [ProviderSettingKeys.Model] = model
