@@ -246,7 +246,7 @@ public sealed class ApiStartupSeedingTests : IDisposable
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 // Non-empty host so DatabaseConnectionResolver.Resolve returns non-null.
-                ["Database:Host"]            = "localhost",
+                ["Database:Host"] = "localhost",
                 ["Database:SkipStartupInit"] = "false"
             })
             .Build();
