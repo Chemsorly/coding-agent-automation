@@ -54,11 +54,6 @@ public sealed class HubConsolidationOperationsTests
             ActiveJobId = "job-1"
         };
 
-    private static void SetupUpdateRun(Mock<IConsolidationService> mock) =>
-        mock.Setup(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>())).Returns(Task.CompletedTask);
-
     private static ConsolidationJobResult MakeResult(bool success = true) =>
         new()
         {
@@ -160,13 +155,13 @@ public sealed class HubConsolidationOperationsTests
             _lifecycleManager.Object,
             _logger.Object);
 
-        // Act: should complete without calling UpdateRunAsync
+        // Act: should complete without calling UpdateRunAsync (store writes stopped in #3028)
+        // TODO [WARNING]: The strict-mock comment "any unexpected call to UpdateRunAsync would throw"
+        // is misleading: UpdateRunAsync no longer exists on IConsolidationService after issue #3030,
+        // so the protection here is compile-time, not the strict mock at runtime. Consider updating
+        // the test comment or collapsing this into a simpler smoke test. (issue #3030)
         var act = () => sut.HandleConsolidationCompleteAsync(MakeResult(success: true), null);
         await act.Should().NotThrowAsync("UpdateRunAsync must not be called — store writes stopped in #3028");
-
-        strictConsolidation.Verify(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()), Times.Never);
     }
 
     [Fact]
@@ -257,17 +252,5 @@ public sealed class HubConsolidationOperationsTests
         var result = await _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
 
         result.Should().Contain("agentFound=False");
-    }
-
-    [Fact]
-    public async Task HandleConsolidationCompleteAsync_UpdateRunThrows_DoesNotPropagate()
-    {
-        _consolidation.Setup(c => c.UpdateRunAsync(
-            It.IsAny<RunId>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(),
-            It.IsAny<CancellationToken>(), It.IsAny<long>()))
-            .ThrowsAsync(new InvalidOperationException("DB error"));
-
-        var act = () => _sut.HandleConsolidationCompleteAsync(MakeResult(), null);
-        await act.Should().NotThrowAsync();
     }
 }

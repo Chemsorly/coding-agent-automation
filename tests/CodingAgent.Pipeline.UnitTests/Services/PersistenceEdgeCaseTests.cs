@@ -92,9 +92,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             {
                 new() { Id = "t1", Name = "T", IssueProviderId = "i", RepoProviderId = "r", Enabled = true }
             });
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
-
         var mockWorkDistributor = new Mock<IWorkDistributor>();
         mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -105,7 +102,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            mockHistory.Object,
             store,
             harnessStore,
             new Mock<IProviderConfigStore>().Object,
@@ -116,28 +112,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
 
         first.Should().NotBeNull();
         second.Should().BeNull("rejected by DB-layer dedup (WorkItemId=null = 409 duplicate)");
-    }
-
-    // ── GetLastSuccessfulHarnessRunTimestampAsync ────────────────────────
-
-    /// <summary>
-    /// With no runs in the store, returns DateTimeOffset.MinValue (not crash).
-    /// </summary>
-    [Fact]
-    public async Task GetLastSuccessfulHarnessRunTimestamp_EmptyStore_ReturnsMinValue()
-    {
-        var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
-
-        var feedbackCache = new ConsolidationFeedbackCache(
-            new LoggerConfiguration().CreateLogger(),
-            store,
-            mockHistory.Object);
-
-        var result = await feedbackCache.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
-
-        result.Should().Be(DateTimeOffset.MinValue);
     }
 
     // ── PipelineRunSummary backward-compat deserialization ──────────────

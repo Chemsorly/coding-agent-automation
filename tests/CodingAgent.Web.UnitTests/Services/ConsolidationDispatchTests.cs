@@ -8,12 +8,12 @@ namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for the consolidation dispatch flow — verifying that
-/// <c>ReportConsolidationComplete</c> correctly updates run status,
-/// persists harness suggestions, and increments the badge count.
+/// <c>ReportConsolidationComplete</c> correctly persists harness suggestions
+/// and increments the badge count.
 /// Since <see cref="CodingAgent.AgentGateway.AgentHub"/> depends on sealed/complex services
 /// that cannot be easily mocked in isolation, these tests validate the dispatch logic
 /// through the service layer contracts.
-/// Validates: Requirements 3.1, 3.2, 3.5, 8.1, 10.1
+/// Validates: Requirements 3.1, 8.1, 10.1
 /// </summary>
 public sealed class ConsolidationDispatchTests
 {
@@ -26,62 +26,15 @@ public sealed class ConsolidationDispatchTests
         _badgeService = new ConsolidationBadgeService();
     }
 
-    // ── Successful completion updates run status ─────────────────────────
-
-    [Fact]
-    public async Task ReportConsolidationComplete_SuccessfulResult_UpdatesRunAsSucceeded()
-    {
-        // Validates: Requirement 3.2
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-001",
-            Success = true,
-            Summary = "Consolidated 5 files, merged 3 entries"
-        };
-
-        // Simulate what ReportConsolidationComplete does
-        var status = result.Success
-            ? ConsolidationRunStatus.Succeeded
-            : ConsolidationRunStatus.Failed;
-        var summary = result.Success ? result.Summary : result.ErrorMessage;
-
-        await _mockConsolidationService.Object.UpdateRunAsync(
-            result.JobId, status, summary, CancellationToken.None);
-
-        _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync((RunId)"run-001", ConsolidationRunStatus.Succeeded,
-                "Consolidated 5 files, merged 3 entries", CancellationToken.None),
-            Times.Once);
-    }
-
-    // ── Failed result updates run status ─────────────────────────────────
-
-    [Fact]
-    public async Task ReportConsolidationComplete_FailedResult_UpdatesRunAsFailed()
-    {
-        // Validates: Requirement 3.5
-        var result = new ConsolidationJobResult
-        {
-            JobId = "run-002",
-            Success = false,
-            ErrorMessage = "Agent call timed out after 00:30:00"
-        };
-
-        var status = result.Success
-            ? ConsolidationRunStatus.Succeeded
-            : ConsolidationRunStatus.Failed;
-        var summary = result.Success ? result.Summary : result.ErrorMessage;
-
-        await _mockConsolidationService.Object.UpdateRunAsync(
-            result.JobId, status, summary, CancellationToken.None);
-
-        _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync((RunId)"run-002", ConsolidationRunStatus.Failed,
-                "Agent call timed out after 00:30:00", CancellationToken.None),
-            Times.Once);
-    }
-
     // ── Harness suggestions are persisted on completion ──────────────────
+
+    // TODO [WARNING]: The tests in this class are tautological — they simulate the hub's dispatch logic
+    // inline (e.g. the if-block calling SaveHarnessSuggestionsAsync, IncrementBy, etc.) rather than
+    // invoking the actual SUT (HubConsolidationOperations). Moq.Verify then confirms the test's own
+    // inline code ran, not production behavior. If the production code were changed, these tests would
+    // still pass. They should be rewritten to call HubConsolidationOperations.HandleConsolidationCompleteAsync
+    // directly and assert on observable side-effects (suggestions saved, badge incremented, OnChange fired).
+    // See review-findings-testqualityreviewer.md for details. (issue #3030)
 
     [Fact]
     public async Task ReportConsolidationComplete_WithHarnessSuggestions_PersistsSuggestions()
@@ -253,6 +206,12 @@ public sealed class ConsolidationDispatchTests
     }
 
     // ── Dispatch to correct agent ───────────────────────────────────────
+
+    // TODO [WARNING]: ConsolidationJobMessage_ContainsCorrectJobId_ForDispatch and
+    // ConsolidationJobResult_ReportsBackWithMatchingJobId are tautological data-construction tests —
+    // they set a property then assert the same value. They verify nothing about dispatch behavior
+    // and would not fail if dispatch logic were broken. Consider replacing with tests that exercise
+    // actual dispatch/reporting behavior via HubConsolidationOperations. (issue #3030)
 
     [Fact]
     public void ConsolidationJobMessage_ContainsCorrectJobId_ForDispatch()

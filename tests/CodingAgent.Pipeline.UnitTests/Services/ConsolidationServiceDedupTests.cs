@@ -82,7 +82,6 @@ public sealed class ConsolidationServiceDedupTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            _mockRunHistory.Object,
             _mockRunStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
