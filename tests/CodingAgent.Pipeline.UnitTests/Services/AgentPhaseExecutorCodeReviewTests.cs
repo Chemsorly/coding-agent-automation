@@ -134,6 +134,10 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         // Consider tightening to Times.Exactly(1) once the single-iteration contract is confirmed.
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce);
         // Review run should not set a skip reason
+        // TODO [WARNING]: This assertion is placed after Times.AtLeastOnce rather than being independent of
+        // it. A regression where the guard accidentally sets CodeReviewSkipReason before invoking the agent
+        // would still pass this test because Times.AtLeastOnce would already hold. Assert CodeReviewSkipReason
+        // unconditionally before the agent-call verify to catch that regression independently.
         reviewRun.CodeReviewSkipReason.Should().BeNull("Review runs bypass the MaxIterations=0 guard");
     }
 

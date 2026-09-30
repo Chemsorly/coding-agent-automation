@@ -228,6 +228,10 @@ public sealed partial class PipelineRun
     // persist into a second call that actually runs reviewers, causing the skip comment to surface
     // incorrectly. In the current single-call pipeline flow this is benign, but should be addressed if
     // retry semantics ever reuse the same PipelineRun instance across calls to ExecuteCodeReviewAsync.
+    // TODO [WARNING]: The public setter allows any pipeline step (not just ExecuteCodeReviewAsync) to
+    // overwrite or clear this value. Consider replacing the public setter with a dedicated method
+    // (e.g. SetCodeReviewSkipReason) or documenting it as write-once to prevent unintended mutation
+    // by downstream steps that receive the PipelineRun by reference.
     public string? CodeReviewSkipReason { get; set; }
 
     /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if generation failed/skipped.</summary>

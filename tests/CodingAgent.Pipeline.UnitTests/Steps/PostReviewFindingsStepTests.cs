@@ -151,6 +151,10 @@ public class PostReviewFindingsStepTests : IDisposable
         await step.ExecuteAsync(context, CancellationToken.None);
 
         postedBody.Should().Contain("No reviewer configurations matched this repository's labels.");
+        // TODO [WARNING]: This test does not assert that CommentMarkers.PrReview is present in the posted
+        // body. The production code always prepends the marker; its absence would break the "find and
+        // collapse existing review" lookup on future runs. Add:
+        //   postedBody.Should().Contain(CommentMarkers.PrReview);
     }
 
     [Fact]
@@ -185,6 +189,10 @@ public class PostReviewFindingsStepTests : IDisposable
         await step.ExecuteAsync(context, CancellationToken.None);
 
         postedBody.Should().Contain("Reviewer configurations matched but resolved to zero agents.");
+        // TODO [WARNING]: This test does not assert that CommentMarkers.PrReview is present in the posted
+        // body. The production code always prepends the marker; its absence would break the "find and
+        // collapse existing review" lookup on future runs. Add:
+        //   postedBody.Should().Contain(CommentMarkers.PrReview);
     }
 
     [Fact]
