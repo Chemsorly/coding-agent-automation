@@ -420,9 +420,23 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
             // (circuit not torn down fast enough vs SignalR delivery lost) is not surfaced in the error message.
             await fakeAgent.CancelChatReceived.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-            // ── Assert: the K8s job is in the deleted set ─────────────────────
+            // ── Simulate real agent exit: pod completes after receiving CancelChat ──────────
+            // In production the agent process exits when it receives CancelChat, causing the K8s
+            // job to reach a terminal (Complete) state. The background watcher detects this and
+            // calls CleanupSession. Without simulating terminal state here the watcher never sees
+            // a completed job, the grace period (ChatTerminationGracePeriodSeconds = 10s) fires
+            // instead, and whether force-delete or clean exit wins is a timing race that causes
+            // the test to flake on CI. Matching the pattern used by K8sChatIntegrationTests.
+            await Fixture.K8sClient.SimulateChatJobTerminalAsync(jobName, success: true);
+
+            // ── Assert: the K8s job reached terminal state ─────────────────────
+            // The dispatcher's clean exit path (watcher detects terminal job) calls CleanupSession
+            // but does not explicitly call DeleteJobAsync — the pod exited naturally. Assert on the
+            // job condition instead of DeletedJobs, which would only be populated by the force-delete
+            // path. This matches K8sChatIntegrationTests.K8sChat_EndChat_PvcReleasedJobTerminal.
             await WaitUntilAsync(
-                () => Fixture.K8sClient.DeletedJobs.Contains(jobName),
+                () => Fixture.K8sClient.ChatJobs.TryGetValue(jobName, out var j) &&
+                      j.Status?.Conditions?.Any(c => c.Type == "Complete" && c.Status == "True") == true,
                 timeout: TimeSpan.FromSeconds(15));
         }
     }
