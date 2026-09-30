@@ -697,6 +697,12 @@ public sealed class AgentOrphanRecoveryService(
         }
         catch (Exception ex)
         {
+            // TODO: [WARNING] runId is logged verbatim here. Serilog's structured logging prevents
+            // format-string injection, but the raw value is persisted in the log store without
+            // sanitization (unlike the guard at the top of this method which calls
+            // LogSanitizer.SanitizeForLog). A crafted runId could confuse log-based alerting or
+            // SIEM rules that parse RunId as a structured identifier. Consider wrapping with
+            // LogSanitizer.SanitizeForLog(runId) for consistency.
             _logger.Warning(ex,
                 "TryReconstructRunFromDbAsync: could not read WorkItem {RunId} from DB — skipping reconstruction",
                 runId);
