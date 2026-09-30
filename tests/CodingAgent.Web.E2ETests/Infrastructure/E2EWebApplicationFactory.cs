@@ -297,7 +297,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         {
             db.WorkItems.RemoveRange(db.WorkItems);
             db.PipelineRuns.RemoveRange(db.PipelineRuns);
-            db.ConsolidationRuns.RemoveRange(db.ConsolidationRuns);
             db.SaveChanges();
         }
 

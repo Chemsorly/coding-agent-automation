@@ -8,15 +8,16 @@ namespace CodingAgent.Pipeline.Interfaces;
 public interface IConsolidationService
 {
     /// <summary>
-    /// Triggers a consolidation run of the specified type. Returns the created run,
-    /// or <c>null</c> if rejected (e.g., duplicate already running, no idle agent available).
+    /// Triggers a consolidation run of the specified type. Returns a result record describing
+    /// the created run, or <c>null</c> if rejected (e.g., duplicate already running, no idle
+    /// agent available).
     /// </summary>
     /// <param name="type">The type of consolidation loop to execute.</param>
     /// <param name="templateId">The Pipeline Job Template ID (null for harness suggestions which are global).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
-    /// <returns>The created <see cref="ConsolidationRun"/>, or <c>null</c> if the trigger was rejected.</returns>
-    Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
+    /// <returns>A <see cref="ConsolidationTriggerResult"/> describing the dispatched run, or <c>null</c> if the trigger was rejected.</returns>
+    Task<ConsolidationTriggerResult?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
 
     /// <summary>
     /// Returns the current harness suggestions from the persisted file

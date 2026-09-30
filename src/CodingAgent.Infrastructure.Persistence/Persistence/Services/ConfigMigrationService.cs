@@ -114,10 +114,7 @@ public sealed class ConfigMigrationService
                 // 6. Projects + templates
                 await MigrateProjectsAsync(db, counts, cancellationToken);
 
-                // 7. Consolidation runs
-                await MigrateConsolidationRunsAsync(db, counts, cancellationToken);
-
-                // 8. Pipeline runs
+                // 7. Pipeline runs
                 await MigratePipelineRunsAsync(db, counts, cancellationToken);
 
                 await db.SaveChangesAsync(cancellationToken);
@@ -128,12 +125,11 @@ public sealed class ConfigMigrationService
                     "PipelineConfig: {PipelineConfig}, ProviderConfigs: {Providers}, " +
                     "AgentProfiles: {Profiles}, QualityGates: {QualityGates}, " +
                     "Reviewers: {Reviewers}, Projects: {Projects}, " +
-                    "Templates: {Templates}, ConsolidationRuns: {ConsolidationRuns}, " +
-                    "PipelineRuns: {PipelineRuns}",
+                    "Templates: {Templates}, PipelineRuns: {PipelineRuns}",
                     counts.PipelineConfig, counts.ProviderConfigs,
                     counts.AgentProfiles, counts.QualityGates,
                     counts.Reviewers, counts.Projects,
-                    counts.Templates, counts.ConsolidationRuns,
+                    counts.Templates,
                     counts.PipelineRuns);
 
                 return true;
@@ -348,30 +344,6 @@ public sealed class ConfigMigrationService
         }
     }
 
-    private async Task MigrateConsolidationRunsAsync(PipelineDbContext db, MigrationCounts counts, CancellationToken ct)
-    {
-        var dir = Path.Combine(_configBasePath, "consolidation-runs");
-        if (!Directory.Exists(dir))
-            return;
-
-        foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
-        {
-            var json = await File.ReadAllTextAsync(file, ct);
-            var run = DeserializeOrThrow<ConsolidationRun>(json, file);
-
-            if (!Guid.TryParse(run.RunId, out var guid))
-                guid = Guid.NewGuid();
-
-            db.ConsolidationRuns.Add(new ConsolidationRunEntity
-            {
-                Id = guid,
-                Data = SerializeToJson(run)
-            });
-
-            counts.ConsolidationRuns++;
-        }
-    }
-
     private async Task MigratePipelineRunsAsync(PipelineDbContext db, MigrationCounts counts, CancellationToken ct)
     {
         var dir = Path.Combine(_configBasePath, "runs");
@@ -453,7 +425,6 @@ public sealed class ConfigMigrationService
         public int Reviewers;
         public int Projects;
         public int Templates;
-        public int ConsolidationRuns;
         public int PipelineRuns;
     }
 }

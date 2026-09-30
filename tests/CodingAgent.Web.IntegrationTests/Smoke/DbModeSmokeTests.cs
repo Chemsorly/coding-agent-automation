@@ -58,10 +58,11 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     // resolve to ApiConfigurationStore (Spec 045); IPipelineConfigStore → ApiPipelineConfigStore;
     // IProviderConfigStore → ApiProviderConfigStore; IProjectStore → ApiProjectStore.
     // IActiveRunQueryService and ILoopStateStore removed in Spec 045 Req 1.2.
-    // TODO: [WARNING] IConsolidationRunStore was removed in issue #3031 and its [InlineData] row was deleted.
-    // No compensating negative assertion verifies the type is absent from the container.
-    // A stale re-registration would pass this theory silently. Consider adding a separate
-    // [Fact] or [InlineData] entry on a "ServiceIsNotRegistered" theory for IConsolidationRunStore.
+    // IConsolidationRunStore removed in issue #3031.
+    // TODO [WARNING]: A negative assertion confirming IConsolidationRunStore is NOT registered is missing.
+    // A future accidental re-registration would go undetected. Add a [Fact] asserting
+    // _factory.Services.GetService<IConsolidationRunStore>() returns null, consistent with the
+    // pattern used in DbModeStoreWiringTests for other removed types.
     public void DbMode_KeyService_Resolves(Type serviceType)
     {
         var service = _factory.Services.GetService(serviceType);

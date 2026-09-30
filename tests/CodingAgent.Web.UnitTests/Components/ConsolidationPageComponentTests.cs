@@ -553,7 +553,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((ConsolidationRun?)null);
+            .ReturnsAsync((ConsolidationTriggerResult?)null);
 
         var cut = Render<Consolidation>();
 
@@ -657,13 +657,15 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = "run-1",
-                Type = ConsolidationRunType.RefactoringDetection,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Running
-            });
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                RunId: "run-1",
+                Type: ConsolidationRunType.RefactoringDetection,
+                TemplateId: null,
+                TemplateName: null,
+                ProjectId: null,
+                ProjectName: null,
+                StartedAtUtc: DateTimeOffset.UtcNow,
+                WorkItemId: null));
 
         var cut = Render<Consolidation>();
 
@@ -689,13 +691,15 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = "run-1",
-                Type = ConsolidationRunType.RefactoringDetection,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Running
-            });
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                RunId: "run-1",
+                Type: ConsolidationRunType.RefactoringDetection,
+                TemplateId: null,
+                TemplateName: null,
+                ProjectId: null,
+                ProjectName: null,
+                StartedAtUtc: DateTimeOffset.UtcNow,
+                WorkItemId: null));
 
         var cut = Render<Consolidation>();
 
@@ -748,13 +752,15 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = "run-1",
-                Type = ConsolidationRunType.BrainConsolidation,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Running
-            });
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                RunId: "run-1",
+                Type: ConsolidationRunType.BrainConsolidation,
+                TemplateId: null,
+                TemplateName: null,
+                ProjectId: null,
+                ProjectName: null,
+                StartedAtUtc: DateTimeOffset.UtcNow,
+                WorkItemId: null));
 
         var cut = Render<Consolidation>();
 
@@ -778,13 +784,15 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = "run-1",
-                Type = ConsolidationRunType.HarnessSuggestions,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Running
-            });
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                RunId: "run-1",
+                Type: ConsolidationRunType.HarnessSuggestions,
+                TemplateId: null,
+                TemplateName: null,
+                ProjectId: null,
+                ProjectName: null,
+                StartedAtUtc: DateTimeOffset.UtcNow,
+                WorkItemId: null));
 
         var cut = Render<Consolidation>();
 
@@ -890,13 +898,15 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = "run-1",
-                Type = ConsolidationRunType.RefactoringDetection,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Running
-            });
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                RunId: "run-1",
+                Type: ConsolidationRunType.RefactoringDetection,
+                TemplateId: null,
+                TemplateName: null,
+                ProjectId: null,
+                ProjectName: null,
+                StartedAtUtc: DateTimeOffset.UtcNow,
+                WorkItemId: null));
 
         var cut = Render<Consolidation>();
 
@@ -942,13 +952,15 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        var pendingRun = new ConsolidationRun
-        {
-            RunId = "run-dispatch-test",
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
+        var pendingRun = new ConsolidationTriggerResult(
+            RunId: "run-dispatch-test",
+            Type: ConsolidationRunType.BrainConsolidation,
+            TemplateId: null,
+            TemplateName: null,
+            ProjectId: null,
+            ProjectName: null,
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            WorkItemId: null);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false))
@@ -976,7 +988,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .ReturnsAsync((ConsolidationRun?)null);
+            .ReturnsAsync((ConsolidationTriggerResult?)null);
 
         var cut = Render<Consolidation>();
 
@@ -996,13 +1008,15 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        var pendingRun = new ConsolidationRun
-        {
-            RunId = "run-refactor-dispatch",
-            Type = ConsolidationRunType.RefactoringDetection,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
+        var pendingRun = new ConsolidationTriggerResult(
+            RunId: "run-refactor-dispatch",
+            Type: ConsolidationRunType.RefactoringDetection,
+            TemplateId: null,
+            TemplateName: null,
+            ProjectId: null,
+            ProjectName: null,
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            WorkItemId: null);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 ConsolidationRunType.RefactoringDetection, "t1", It.IsAny<CancellationToken>(), It.IsAny<bool>()))
@@ -1028,13 +1042,15 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
-        var pendingRun = new ConsolidationRun
-        {
-            RunId = "run-harness-dispatch",
-            Type = ConsolidationRunType.HarnessSuggestions,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Pending
-        };
+        var pendingRun = new ConsolidationTriggerResult(
+            RunId: "run-harness-dispatch",
+            Type: ConsolidationRunType.HarnessSuggestions,
+            TemplateId: null,
+            TemplateName: null,
+            ProjectId: null,
+            ProjectName: null,
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            WorkItemId: null);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 ConsolidationRunType.HarnessSuggestions, null, It.IsAny<CancellationToken>(), false))
@@ -1060,13 +1076,15 @@ public class ConsolidationPageComponentTests : BunitContext
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
                 ConsolidationRunType.BrainConsolidation, "t1", It.IsAny<CancellationToken>(), false))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = "run-status-msg",
-                Type = ConsolidationRunType.BrainConsolidation,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Pending
-            });
+            .ReturnsAsync(new ConsolidationTriggerResult(
+                RunId: "run-status-msg",
+                Type: ConsolidationRunType.BrainConsolidation,
+                TemplateId: null,
+                TemplateName: null,
+                ProjectId: null,
+                ProjectName: null,
+                StartedAtUtc: DateTimeOffset.UtcNow,
+                WorkItemId: null));
 
         var cut = Render<Consolidation>();
 

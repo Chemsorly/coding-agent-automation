@@ -649,6 +649,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
 
+        // Deregister unconditionally before the CAS guard: the watcher's CleanupSession path can win
+        // the Cleaned CAS first (when WatcherCts cancellation fires and the watcher catches OCE before
+        // ForceDeleteAndCleanupAsync resumes), causing an early return below that would bypass
+        // Deregister entirely. Deregister is a TryRemove — calling it when the agent is already gone
+        // is safe (returns false). The registry must always be cleaned up when force-delete is triggered.
+        _registry.Deregister(agentId);
+
         // Guard: CleanupSession uses entry.Cleaned for idempotency, but DeleteJobAsync is called
         // before CleanupSession here and has no guard of its own. If a concurrent path (e.g. the
         // watcher's idle-kill callback) already ran ForceDeleteAndCleanupAsync and set entry.Cleaned,
@@ -673,8 +680,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 "ChatJobDispatcher: force delete failed for {JobName}: {ErrorMessage}",
                 entry.JobName, ex.Message);
         }
-
-        _registry.Deregister(agentId);
 
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
         // Do not call CleanupSession here: we already took the Cleaned CAS above, so CleanupSession
