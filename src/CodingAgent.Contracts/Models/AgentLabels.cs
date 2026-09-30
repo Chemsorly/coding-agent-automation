@@ -134,6 +134,39 @@ public static class AgentLabels
     };
 
     /// <summary>
+    /// Agent labels that are allowed on newly-created issues.
+    /// All other <c>agent:*</c> labels are dropped when an agent requests issue creation.
+    /// </summary>
+    public static readonly IReadOnlySet<string> AllowedOnCreation = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Next,
+        Generated
+    };
+
+    /// <summary>
+    /// Filters a caller-supplied label list for use in issue creation.
+    /// Keeps non-agent labels (anything not in <see cref="All"/>) and labels in
+    /// <see cref="AllowedOnCreation"/> (<c>agent:next</c> and <c>agent:generated</c>).
+    /// All other <c>agent:*</c> labels are silently dropped; callers that need to log
+    /// dropped labels should inspect the return value against the input.
+    /// </summary>
+    public static IReadOnlyList<string> FilterForIssueCreation(IEnumerable<string> labels)
+    {
+        ArgumentNullException.ThrowIfNull(labels);
+        // TODO: All and AllowedOnCreation are built with StringComparer.Ordinal, so a mixed-case
+        // agent label (e.g. "Agent:Next") is not found in All and passes through as though it were
+        // a non-agent label — violating the filter contract. The whitespace guard here also uses
+        // IsNullOrEmpty while CreateSubIssuesStep uses IsNullOrWhiteSpace, which is inconsistent.
+        // Consider rebuilding All / AllowedOnCreation with OrdinalIgnoreCase and switching this
+        // guard to IsNullOrWhiteSpace for consistency with callers.
+        return labels
+            .Where(l => !string.IsNullOrEmpty(l) &&
+                        (!All.Contains(l) || AllowedOnCreation.Contains(l)))
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <summary>
     /// Precedence ordering for resolving dual-label issues (excludes <see cref="Generated"/>,
     /// which is orthogonal and may legitimately coexist with any status label).
     /// When multiple agent:* labels are found on a single issue, the label with the lowest
