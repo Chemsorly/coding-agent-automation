@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -18,7 +19,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 public class VerifyBaselineStepSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly List<Activity> _activities = [];
+    private readonly ConcurrentBag<Activity> _activities = [];
 
     private readonly Mock<IQualityGateValidator> _validator = new();
     private readonly Mock<IPipelineCallbacks> _callbacks = new();

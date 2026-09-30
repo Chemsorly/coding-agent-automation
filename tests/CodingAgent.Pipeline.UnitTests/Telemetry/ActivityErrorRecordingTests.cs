@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -12,7 +13,7 @@ namespace CodingAgent.Pipeline.UnitTests.Telemetry;
 public class ActivityErrorRecordingTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly List<Activity> _activities = [];
+    private readonly ConcurrentBag<Activity> _activities = [];
 
     public ActivityErrorRecordingTests()
     {
