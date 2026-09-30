@@ -49,13 +49,13 @@ public sealed class AgentHubCreateIssueLabelFilteringTests
     private static PipelineRun CreateRun(
         string jobId = "job-1",
         string issueProviderConfigId = "ip-1") => new()
-    {
-        RunId = jobId,
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test",
-        IssueProviderConfigId = issueProviderConfigId,
-        RepoProviderConfigId = "rp-1"
-    };
+        {
+            RunId = jobId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = issueProviderConfigId,
+            RepoProviderConfigId = "rp-1"
+        };
 
     private (ProviderConfig Config, Mock<IIssueProvider> Provider) SetupProvider(
         string configId = "ip-1")
