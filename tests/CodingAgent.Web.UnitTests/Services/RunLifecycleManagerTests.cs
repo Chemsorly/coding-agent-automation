@@ -305,6 +305,46 @@ public sealed class RunLifecycleManagerTests
     }
 
     [Fact]
+    public async Task CompleteRunAsync_SetsCompletedAtOffset_SoHistoryRowShowsSucceeded()
+    {
+        // Regression test: CompleteRunAsync previously did not call run.MarkCompleted(), leaving
+        // CompletedAtOffset null. PipelineRunSummary.ToSummary() copies CompletedAtOffset into the
+        // summary, and Consolidation.razor's GetStatusDisplay returns "Running" when CompletedAtOffset
+        // is null — so the E2E history row showed "Running" instead of "Succeeded" after a successful
+        // consolidation run. This test locks in the fix: AddRunToHistoryAsync must receive a run with
+        // a non-null CompletedAtOffset so the history row displays the terminal status correctly.
+        // Relates to E2E failures: ConsolidationPage_BrainConsolidation_Succeeds and
+        // ConsolidationPage_RefactoringModal_Confirm_CreatesIssues (CI run 2026-09-30).
+        var run = new PipelineRun
+        {
+            RunId = "run-completedAt-fix",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Consolidation,
+            CurrentStep = PipelineStep.Completed
+        };
+        _runService.AddRun(run);
+
+        PipelineRun? capturedRun = null;
+        _mockHistoryService
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineRun, CancellationToken>((r, _) => capturedRun = r)
+            .Returns(Task.CompletedTask);
+
+        var before = DateTimeOffset.UtcNow;
+        await _sut.CompleteRunAsync("run-completedAt-fix", WorkItemStatus.Succeeded, CancellationToken.None);
+        var after = DateTimeOffset.UtcNow;
+
+        capturedRun.Should().NotBeNull("AddRunToHistoryAsync must be called");
+        capturedRun!.CompletedAtOffset.Should().NotBeNull(
+            "CompleteRunAsync must call run.MarkCompleted() so the history row does not show 'Running'");
+        capturedRun.CompletedAtOffset!.Value.Should().BeOnOrAfter(before)
+            .And.BeOnOrBefore(after);
+    }
+
+    [Fact]
     public async Task CompleteRunAsync_RunDoesNotExist_ReturnsNull()
     {
         var result = await _sut.CompleteRunAsync("ghost", WorkItemStatus.Succeeded, CancellationToken.None);

@@ -159,6 +159,14 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             run.CurrentStep = mapped;
         }
 
+        // Mark completion timestamp. FailRunCoreAsync and CancelRunAsync both call run.MarkCompleted()
+        // before their respective RunTerminalCleanupAsync. CompleteRunAsync must do the same so that
+        // PipelineRunSummary.CompletedAtOffset is non-null in history — GetStatusDisplay returns
+        // "Running" when CompletedAtOffset is null, which caused the E2E consolidation success/fail
+        // scenarios to show "Running" instead of "Succeeded"/"Failed" in the history table.
+        if (run.CompletedAtOffset is null)
+            run.MarkCompleted();
+
         // 1. Transition WorkItem in DB
         await TransitionWorkItemAsync(runId, terminalStatus, ct, errorMessage, failureReason);
 

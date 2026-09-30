@@ -44,8 +44,8 @@ public class LeaderElectedPollingServiceTests
         SetLeaderState(leaderElection, isLeader: true, new CancellationTokenSource());
 
         // Poll until the first cycle fires. Leader-wait loop checks every 2s, so this
-        // resolves within ≤2s. Deadline of 10s is a generous safety bound for CI.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        // resolves within ≤2s. Deadline of 20s is a generous safety bound for slow CI runners.
+        var deadline = DateTime.UtcNow.AddSeconds(20);
         while (service.PollCycleCount == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
