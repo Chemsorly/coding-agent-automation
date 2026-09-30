@@ -1039,6 +1039,11 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded!.Id.Should().Be(projectId.ToString());
         loaded.Name.Should().Be("LegacyProject");
         loaded.Enabled.Should().BeTrue();
+        // TODO: The assertions above only verify three base fields. A regression that silently
+        // zero-initialises surviving fields would go undetected. Consider adding a surviving
+        // field with a non-default value in the legacy JSON (e.g. "maxRetries": 5) and asserting
+        // it round-trips, to guard against broader deserialization regressions in addition to
+        // the primary "loads without error" acceptance criterion.
     }
 
     // ── Membership: the template's own project is the only record ─────────

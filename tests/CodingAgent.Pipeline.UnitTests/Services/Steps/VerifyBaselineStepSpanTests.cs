@@ -56,6 +56,11 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
+        // TODO: This assertion does not filter by _testRunId, unlike every other test in this
+        // class. Under parallel test execution it can pass on a span emitted by a sibling test,
+        // meaning this test's own VerifyBaselineStep invocation could fail to emit a span and
+        // the assertion would still pass. Replace with GetOwnSpan("VerifyBaseline") for proper
+        // isolation (see review finding from correctness/dotnet-specialist/test-quality reviewers).
         _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline",
             "VerifyBaselineStep must emit a VerifyBaseline span");
     }
