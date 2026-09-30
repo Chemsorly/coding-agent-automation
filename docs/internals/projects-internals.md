@@ -4,7 +4,7 @@ Internal reference for project system implementation specifics.
 
 ## Migration Behavior
 
-On first startup (or upgrade from pre-projects version):
+On first startup (or upgrade from a pre-projects version), the API startup seed step creates the Default project row if absent and calls `ClaimOrphanedTemplatesAsync` to reparent any orphaned templates:
 
 ```mermaid
 flowchart TD
