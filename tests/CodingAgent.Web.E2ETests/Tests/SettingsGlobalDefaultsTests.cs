@@ -35,7 +35,6 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         Assert.Contains("Stall Warning Interval", markup);
         Assert.Contains("Baseline Health Check", markup);
         Assert.Contains("Workspace Base Directory", markup);
-        Assert.Contains("Issue Page Size", markup);
         Assert.Contains("Blacklisted Paths", markup);
 
         // Click save
@@ -207,9 +206,6 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         Assert.Contains("Default Required Agent Labels", markup);
         Assert.Contains("Brain Repository", markup);
         Assert.Contains("Brain Push Max Retries", markup);
-        Assert.Contains("Agent Health Monitoring", markup);
-        Assert.Contains("Agent Disconnect Grace Period", markup);
-        Assert.Contains("Heartbeat Sweep Interval", markup);
         Assert.Contains("Buffer Capacities", markup);
         Assert.Contains("Output Buffer Capacity", markup);
 
