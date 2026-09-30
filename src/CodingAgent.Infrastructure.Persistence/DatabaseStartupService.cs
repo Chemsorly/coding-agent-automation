@@ -124,10 +124,7 @@ public sealed class DatabaseStartupService
         await using (var dbCheck = await _dbFactory.CreateDbContextAsync(ct))
         {
             if (!dbCheck.Database.IsRelational())
-            {
-                _logger.Information("Database provider is non-relational — skipping migration check");
                 return;
-            }
         }
 
         var migrateOnStartup = _configuration.GetValue("Database:MigrateOnStartup", true);
