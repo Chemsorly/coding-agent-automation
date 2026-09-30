@@ -355,6 +355,34 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     }
 
     /// <summary>
+    /// Lists open issues via a specific issue provider (for cross-repo deduplication in project epic reruns).
+    /// Routes through the orchestrator which applies the project epic scope check.
+    /// </summary>
+    public async Task<PagedResult<IssueSummary>> ListOpenIssuesForProviderAsync(
+        string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<PagedResult<IssueSummary>>(
+                HubMethodNames.RequestListOpenIssuesForProvider, _jobId, issueProviderConfigId, page, pageSize, labels, token), ct);
+    }
+
+    /// <summary>
+    /// Lists closed issues via a specific issue provider (for cross-repo deduplication in project epic reruns).
+    /// Routes through the orchestrator which applies the project epic scope check.
+    /// </summary>
+    public async Task<PagedResult<IssueSummary>> ListClosedIssuesForProviderAsync(
+        string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<PagedResult<IssueSummary>>(
+                HubMethodNames.RequestListClosedIssuesForProvider, _jobId, issueProviderConfigId, page, pageSize, labels, since, token), ct);
+    }
+
+    /// <summary>
     /// Gets full issue details by identifier via the orchestrator.
     /// </summary>
     public async Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)

@@ -77,4 +77,30 @@ public interface IAgentIssueOperations
     // that don't implement this method.
     Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
         => throw new NotSupportedException("ListClosedIssuesAsync is not implemented by this provider.");
+
+    /// <summary>
+    /// Lists open issues via a specific issue provider (identified by config ID) for cross-repo routing.
+    /// Used by <c>DecompositionStep</c> on reruns to read already-created sub-issues from template trackers.
+    /// Falls back to <see cref="ListOpenIssuesAsync"/> (own tracker) when not overridden, which is safe
+    /// for repo epics and non-decomposition contexts where <c>projectContext</c> is always null.
+    /// </summary>
+    // TODO: The default implementation silently ignores issueProviderConfigId and delegates to
+    // ListOpenIssuesAsync (own tracker). Any IAgentIssueOperations implementor that does not
+    // override this method will silently query the wrong tracker rather than failing fast.
+    // Consider a throw new NotSupportedException(...) default consistent with ListClosedIssuesAsync
+    // to surface misconfiguration early. Safe to change because DecompositionStep only calls
+    // this via OrchestratorProxy, which always overrides it. See review finding: IAgentIssueOperations — silent fallback default.
+    Task<PagedResult<IssueSummary>> ListOpenIssuesForProviderAsync(
+        string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
+        => ListOpenIssuesAsync(page, pageSize, labels, ct);
+
+    /// <summary>
+    /// Lists closed issues via a specific issue provider (identified by config ID) for cross-repo routing.
+    /// Falls back to <see cref="ListClosedIssuesAsync"/> (own tracker) when not overridden.
+    /// </summary>
+    // TODO: Same silent-fallback concern as ListOpenIssuesForProviderAsync above — issueProviderConfigId
+    // is silently ignored by the default. See review finding: IAgentIssueOperations — silent fallback default.
+    Task<PagedResult<IssueSummary>> ListClosedIssuesForProviderAsync(
+        string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
+        => ListClosedIssuesAsync(page, pageSize, labels, since, ct);
 }
