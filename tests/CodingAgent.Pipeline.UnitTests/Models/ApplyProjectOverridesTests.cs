@@ -195,13 +195,14 @@ public class ApplyProjectOverridesTests
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
         result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
-        // TODO: MinIssueSlots, MaxConcurrentDecompositions, and HarnessSuggestionsReviewEnabled were
+        // MinIssueSlots, MaxConcurrentDecompositions, and HarnessSuggestionsReviewEnabled were
         // removed from PipelineProject (issue #3150) and their [ProjectOverridable] attributes were
-        // stripped from PipelineConfiguration. This means the reflection-based merge path no longer
-        // touches these fields at all. Add a dedicated test asserting that ApplyProjectOverrides with
-        // any project still returns a PipelineConfiguration whose MinIssueSlots, MaxConcurrentDecompositions,
-        // and HarnessSuggestionsReviewEnabled equal the global values — confirming the attribute removal
-        // did not accidentally reset these fields to their type defaults.
+        // stripped from PipelineConfiguration. The reflection-based merge no longer touches these
+        // fields. Assert that the global values still pass through unchanged — i.e. the attribute
+        // removal did not accidentally reset them to their type defaults (0 / false).
+        result.MinIssueSlots.Should().Be(config.MinIssueSlots);
+        result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
+        result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────

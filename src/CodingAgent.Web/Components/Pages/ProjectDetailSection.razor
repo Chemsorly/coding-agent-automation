@@ -605,7 +605,7 @@
         {
             // Validate all int overrides that are rendered in this tab before saving.
             // Fields not rendered in the UI (AnalysisCommitThreshold, CiCancelledMoveMaxRetries,
-            // FeedbackTimeoutSeconds, MinIssueSlots) are omitted
+            // FeedbackTimeoutSeconds, MaxConsolidationDispatchRetries) are omitted
             // intentionally — they have no backing state in this component.
             var validationErrors = new List<string>();
 
@@ -624,7 +624,7 @@
                     "(reconciliation canary minimum).");
             }
 
-            // Generic range checks for the 14 rendered int fields.
+            // Generic range checks for the 13 rendered int fields.
             // Each tuple: (display label, backing field getter, min, max).
             var intOverrides = new (string Label, Func<int?> Getter, int Min, int Max)[]
             {
@@ -639,7 +639,6 @@
                 ("CI Not Started Max Retries", () => _ciNotStartedMaxRetries, 0, 20),
                 ("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, 1, 20),
                 ("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, 1, 30),
-                ("Max Concurrent Decompositions", () => _maxConcurrentDecompositions, 1, 10),
                 ("Max Open Issues for Context", () => _maxOpenIssuesForContext, 1, 200),
                 ("Max Refactoring Proposals", () => _maxRefactoringProposals, 1, 10),
             };
