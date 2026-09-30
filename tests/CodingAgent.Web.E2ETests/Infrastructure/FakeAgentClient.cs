@@ -662,7 +662,10 @@ public sealed class FakeAgentClient : IAsyncDisposable
         _connection.On("ForceDisconnect", async () =>
         {
             if (_connection is not null)
-                await _connection.StopAsync();
+            {
+                try { await _connection.StopAsync(); }
+                catch (ObjectDisposedException) { /* connection already disposed — safe to ignore */ }
+            }
         });
 
         // Use a 25s timeout if no token provided — prevents indefinite hangs under CI load
