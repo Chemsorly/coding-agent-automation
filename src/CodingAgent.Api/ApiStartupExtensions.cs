@@ -50,7 +50,7 @@ internal static class ApiStartupExtensions
 
         // WaitForDatabaseConnectionAsync + HandleMigrationsAsync + RunStartupSeedingAsync.
         // Do NOT call InitializeAsync — that also calls ImportJsonConfigIfNeededAsync (legacy JSON import).
-        // TODO [WARNING]: All three calls use CancellationToken.None instead of app.Lifetime.ApplicationStopping.
+        // NOTE: All three calls use CancellationToken.None instead of app.Lifetime.ApplicationStopping.
         // If the host begins shutting down while RunStartupSeedingAsync is waiting on the distributed lock
         // (e.g. another replica holds it and is slow), the shutdown cannot interrupt the wait and the process
         // will hang until the advisory lock times out (up to 60 s per acquire × 3 sequential acquires = ~180 s

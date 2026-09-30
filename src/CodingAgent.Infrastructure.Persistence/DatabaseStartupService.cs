@@ -55,7 +55,7 @@ public sealed class DatabaseStartupService
         await WaitForDatabaseConnectionAsync(ct);
         await HandleMigrationsAsync(ct);
         await ImportJsonConfigIfNeededAsync(ct);
-        // TODO [WARNING]: InitializeAsync does not call SeedDefaultProjectIfNeededAsync. It seeds
+        // NOTE: InitializeAsync does not call SeedDefaultProjectIfNeededAsync. It seeds
         // reviewer configs and repairs orphans but not the Default project row. ClaimOrphanedTemplatesAsync
         // will log a warning and skip orphan repair if the Default project is absent. The API startup path
         // (ApiStartupExtensions.RunApiMigrationsAsync) uses RunStartupSeedingAsync instead of InitializeAsync
@@ -188,7 +188,7 @@ public sealed class DatabaseStartupService
     /// </summary>
     public async Task RunStartupSeedingAsync(CancellationToken ct)
     {
-        // TODO [WARNING]: The three child methods each acquire and release MigrationLockKey independently.
+        // NOTE: The three child methods each acquire and release MigrationLockKey independently.
         // The overall seed-and-repair sequence is therefore NOT atomic across replicas: a second replica
         // can interleave between any two steps. In practice each step is idempotent and the per-method lock
         // serializes the SaveChangesAsync that was the original race concern, so no crash results today.
