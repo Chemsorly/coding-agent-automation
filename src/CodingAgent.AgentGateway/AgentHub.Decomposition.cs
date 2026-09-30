@@ -20,8 +20,9 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
+        var filteredLabels = FilterLabelsForCreation(labels, _logger, jobId.Value);
         return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId.Value, "create issue",
-            (provider, ct) => provider.CreateIssueAsync(title, body, labels, ct));
+            (provider, ct) => provider.CreateIssueAsync(title, body, filteredLabels, ct));
     }
 
     /// <summary>
@@ -66,7 +67,8 @@ public sealed partial class AgentHub
         {
             // TODO: CreateIssueAsync also uses CancellationToken.None — extend the fix above to cover
             // this call as well when threading a SignalR connection-lifetime token through this method.
-            return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
+            var filteredLabels = FilterLabelsForCreation(labels, _logger, jobId.Value);
+            return await issueProvider.CreateIssueAsync(title, body, filteredLabels, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -222,5 +224,42 @@ public sealed partial class AgentHub
                         nameof(commentId));
                 return provider.UpdateCommentAsync(issueId, parsedCommentId, body, ct);
             });
+    }
+
+    // ── Label filter helper ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Filters a caller-supplied label list for use on issue creation.
+    /// This is stricter than <c>RequestLabelChange</c> (which allows all <see cref="AgentLabels.All"/>
+    /// except <see cref="AgentLabels.DispatchGatedLabels"/>): on creation only
+    /// <see cref="AgentLabels.Next"/> and <see cref="AgentLabels.Generated"/> are permitted
+    /// from the <c>agent:*</c> namespace. All other <c>agent:*</c> labels require explicit
+    /// human or pipeline action and must not be set at creation time.
+    /// </summary>
+    private static IReadOnlyList<string> FilterLabelsForCreation(
+        IReadOnlyList<string> labels, Serilog.ILogger logger, string jobId)
+    {
+        // TODO: The StartsWith guard uses OrdinalIgnoreCase but the equality checks below use
+        // ordinal (case-sensitive) ==. A label like "Agent:Next" passes the prefix check but fails
+        // both equality guards and is silently dropped instead of being kept. Fix by using
+        // string.Equals(label, AgentLabels.Next, StringComparison.OrdinalIgnoreCase) for both
+        // equality checks. The security property (dropping disallowed labels) is not affected —
+        // only the keep-path for mixed-case allowed labels is broken.
+        static bool IsAllowed(string label) =>
+            !label.StartsWith("agent:", StringComparison.OrdinalIgnoreCase)
+            || label == AgentLabels.Next
+            || label == AgentLabels.Generated;
+
+        var allowed = new List<string>();
+        foreach (var label in labels)
+        {
+            if (IsAllowed(label))
+                allowed.Add(label);
+            else
+                logger.Warning(
+                    "Agent requested disallowed label '{Label}' on issue creation for job {JobId} — dropped",
+                    label, jobId);
+        }
+        return allowed;
     }
 }

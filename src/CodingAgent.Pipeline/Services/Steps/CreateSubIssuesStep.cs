@@ -225,11 +225,19 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
         foreach (var label in proposal.Labels)
         {
-            if (!string.IsNullOrWhiteSpace(label) &&
-                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(label)) continue;
+            if (labels.Contains(label, StringComparer.OrdinalIgnoreCase)) continue;
+            // Drop agent:* labels other than the ones already applied above.
+            // agent:next and agent:generated are already in the list; any other agent:*
+            // label (e.g. agent:epic-approved) must not be set at creation time.
+            if (label.StartsWith("agent:", StringComparison.OrdinalIgnoreCase))
             {
-                labels.Add(label);
+                context.Logger.Warning(
+                    "Sub-issue proposal '{Title}' contains disallowed label '{Label}' — dropped",
+                    proposal.Title, label);
+                continue;
             }
+            labels.Add(label);
         }
 
         // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)

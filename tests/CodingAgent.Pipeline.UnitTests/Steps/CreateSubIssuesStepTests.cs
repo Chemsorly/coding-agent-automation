@@ -421,4 +421,81 @@ public class CreateSubIssuesStepTests : IDisposable
         run.SubIssueResults[2].Success.Should().BeTrue();
         run.DecompositionSubIssuesCreated.Should().Be(2);
     }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalWithEpicApprovedLabel_DropsIt()
+    {
+        // agent:epic-approved in a proposal's label list must be dropped — it is a gated label
+        // that requires human approval and must not be silently applied at creation time.
+        WriteSubIssueFileWithLabels("01-epic-approved.json", "Sub-issue A", "Body A",
+            ["agent:epic-approved"]);
+
+        IReadOnlyList<string>? capturedLabels = null;
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "800", Url = "https://github.com/test/800" });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        capturedLabels.Should().NotBeNull();
+        capturedLabels.Should().NotContain("agent:epic-approved");
+        capturedLabels.Should().Contain(AgentLabels.Next);
+        capturedLabels.Should().Contain(AgentLabels.Generated);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalWithMixedLabels_KeepsNonAgentAndAllowedAgentDropsOthers()
+    {
+        // Non-agent labels and the two allowed agent labels (agent:next, agent:generated) pass through.
+        // All other agent:* labels are dropped regardless of their specific value.
+        WriteSubIssueFileWithLabels("01-mixed.json", "Sub-issue B", "Body B",
+            ["agent:epic-approved", "backend", "agent:epic", "priority:high"]);
+
+        IReadOnlyList<string>? capturedLabels = null;
+        _issueOps.Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "801", Url = "https://github.com/test/801" });
+
+        var run = CreateRun();
+        var context = BuildContext(run);
+        var step = new CreateSubIssuesStep();
+
+        await step.ExecuteAsync(context, CancellationToken.None);
+
+        capturedLabels.Should().NotBeNull();
+        capturedLabels.Should().NotContain("agent:epic-approved");
+        capturedLabels.Should().NotContain("agent:epic");
+        capturedLabels.Should().Contain(AgentLabels.Next);
+        capturedLabels.Should().Contain(AgentLabels.Generated);
+        capturedLabels.Should().Contain("backend");
+        capturedLabels.Should().Contain("priority:high");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    // TODO: WriteSubIssueFileWithLabels uses raw string interpolation to write JSON. If a future
+    // caller passes a title or body containing '"', '\', or other JSON-unsafe characters, the helper
+    // will produce malformed JSON and fail with a cryptic parse error instead of a meaningful
+    // assertion failure. Fix by using System.Text.Json.JsonSerializer.Serialize for the string values.
+    private void WriteSubIssueFileWithLabels(string filename, string title, string body, string[] labels)
+    {
+        var dir = Path.Combine(_workspacePath, AgentWorkspacePaths.SubIssuesDirectory);
+        Directory.CreateDirectory(dir);
+        var labelsJson = string.Join(", ", labels.Select(l => $"\"{l}\""));
+        var json = $$"""
+        {
+            "title": "{{title}}",
+            "body": "{{body}}",
+            "dependencies": [],
+            "labels": [{{labelsJson}}]
+        }
+        """;
+        File.WriteAllText(Path.Combine(dir, filename), json);
+    }
 }

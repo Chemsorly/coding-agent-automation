@@ -394,4 +394,163 @@ public sealed class AgentHubDecompositionPartialTests
         // so the ArgumentException from the parse guard becomes a HubException.
         await act.Should().ThrowAsync<HubException>();
     }
+
+    // ── RequestCreateIssue — label filtering ─────────────────────────────
+
+    [Fact]
+    public async Task RequestCreateIssue_WithGatedLabel_DropsGatedLabel()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var mockProvider = SetupIssueProviderForRun(run, "ip-1");
+        IReadOnlyList<string>? capturedLabels = null;
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#10", Url = "https://example.com/10" });
+
+        var hub = CreateHub();
+        await hub.RequestCreateIssue(new JobId("job-1"), "title", "body",
+            ["agent:next", "agent:epic-approved", "backend"]);
+
+        capturedLabels.Should().NotContain("agent:epic-approved");
+        capturedLabels.Should().Contain("agent:next");
+        capturedLabels.Should().Contain("backend");
+    }
+
+    [Fact]
+    public async Task RequestCreateIssue_WithEpicLabel_DropsEpicLabel()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var mockProvider = SetupIssueProviderForRun(run, "ip-1");
+        IReadOnlyList<string>? capturedLabels = null;
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#11", Url = "https://example.com/11" });
+
+        var hub = CreateHub();
+        await hub.RequestCreateIssue(new JobId("job-1"), "title", "body",
+            ["agent:epic", "agent:generated"]);
+
+        capturedLabels.Should().NotContain("agent:epic");
+        capturedLabels.Should().Contain("agent:generated");
+    }
+
+    [Fact]
+    public async Task RequestCreateIssue_WithStatusLabels_DropsAllStatusLabels()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var mockProvider = SetupIssueProviderForRun(run, "ip-1");
+        IReadOnlyList<string>? capturedLabels = null;
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#12", Url = "https://example.com/12" });
+
+        var hub = CreateHub();
+        await hub.RequestCreateIssue(new JobId("job-1"), "title", "body",
+            ["agent:done", "agent:in-progress", "agent:error", "enhancement"]);
+
+        capturedLabels.Should().NotContain("agent:done");
+        capturedLabels.Should().NotContain("agent:in-progress");
+        capturedLabels.Should().NotContain("agent:error");
+        capturedLabels.Should().Contain("enhancement");
+    }
+
+    [Fact]
+    public async Task RequestCreateIssue_WithAllowedLabels_KeepsNextGeneratedAndNonAgent()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var mockProvider = SetupIssueProviderForRun(run, "ip-1");
+        IReadOnlyList<string>? capturedLabels = null;
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#13", Url = "https://example.com/13" });
+
+        var hub = CreateHub();
+        await hub.RequestCreateIssue(new JobId("job-1"), "title", "body",
+            ["agent:next", "agent:generated", "bug", "backend"]);
+
+        capturedLabels.Should().Contain("agent:next");
+        capturedLabels.Should().Contain("agent:generated");
+        capturedLabels.Should().Contain("bug");
+        capturedLabels.Should().Contain("backend");
+        capturedLabels.Should().HaveCount(4);
+    }
+
+    // ── RequestCreateIssueForProvider — label filtering ───────────────────
+    // TODO: The for-provider path is missing coverage for status labels (agent:done, agent:in-progress,
+    // agent:error) and the "all allowed labels pass through" scenario (agent:next, agent:generated, and
+    // non-agent labels are kept). Both code paths delegate to the same FilterLabelsForCreation helper
+    // today, but if they ever diverge these gaps would not catch a regression on the for-provider path.
+    // TODO: No test exercises mixed-case variants of the allowed labels (e.g. "AGENT:NEXT",
+    // "Agent:Generated"). FilterLabelsForCreation has a case-sensitivity inconsistency (OrdinalIgnoreCase
+    // prefix check vs ordinal == equality) that silently drops mixed-case allowed labels. A test with
+    // ["AGENT:NEXT", "Agent:Generated", "backend"] asserting those labels are kept would catch this.
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_WithGatedLabel_DropsGatedLabel()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var mockProvider = SetupScopeCheck(run, "ip-1", epicTrackerId: "ip-1", EnabledTemplate("ip-1"));
+        IReadOnlyList<string>? capturedLabels = null;
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#20", Url = "https://example.com/20" });
+
+        var hub = CreateHub();
+        await hub.RequestCreateIssueForProvider(new JobId("job-1"), "ip-1", "title", "body",
+            ["agent:epic-approved", "backend"]);
+
+        capturedLabels.Should().NotContain("agent:epic-approved");
+        capturedLabels.Should().Contain("backend");
+    }
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_WithEpicLabel_DropsEpicLabel()
+    {
+        var run = CreateRun(issueProviderConfigId: "ip-1");
+        var mockProvider = SetupScopeCheck(run, "ip-1", epicTrackerId: "ip-1", EnabledTemplate("ip-1"));
+        IReadOnlyList<string>? capturedLabels = null;
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#21", Url = "https://example.com/21" });
+
+        var hub = CreateHub();
+        await hub.RequestCreateIssueForProvider(new JobId("job-1"), "ip-1", "title", "body",
+            ["agent:epic", "backend"]);
+
+        capturedLabels.Should().NotContain("agent:epic");
+        capturedLabels.Should().Contain("backend");
+    }
+
+    // ── Helpers for RequestCreateIssue label tests ────────────────────────
+
+    /// <summary>
+    /// Sets up the facade mocks needed for <see cref="AgentHub.RequestCreateIssue"/> to route
+    /// through <c>ExecuteWithIssueProviderAsync</c> → <c>ResolveIssueProviderForRunAsync</c>.
+    /// </summary>
+    private Mock<IIssueProvider> SetupIssueProviderForRun(PipelineRun run, string issueProviderConfigId)
+    {
+        var config = MakeProviderConfig(issueProviderConfigId);
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _facade.Setup(f => f.GetProviderConfigByIdAsync(
+                issueProviderConfigId, ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+        _facade.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
+
+        return mockProvider;
+    }
 }
