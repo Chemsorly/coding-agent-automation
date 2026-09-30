@@ -14,7 +14,6 @@ Projects can override most general settings on a per-project basis using a nulla
 |---------|---------|-------------|
 | `maxRetries` | 3 | Max retry attempts when quality gates fail |
 | `maxAnalysisRetries` | 2 | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
-| `issuePageSize` | 25 | Number of issues fetched per page when polling the issue provider |
 | `agentTimeout` | 00:30:00 | Maximum time for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
@@ -29,12 +28,8 @@ Projects can override most general settings on a per-project basis using a nulla
 | `brainReadOnly` | false | If true, brain repo is synced pre-run but not written to post-run, and brain consolidation does not run (see [Brain Consolidation](feedback-and-consolidation.md#brain-consolidation-per-brain)) |
 | `brainPushMaxRetries` | 3 | Max attempts for pushing brain repo changes, by runs and by brain consolidation (handles concurrent push conflicts) |
 | `outputBufferCapacity` | 10000 | Max lines of agent output kept in memory for the UI |
-| `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
-| `agentBusyProgressTimeout` | 01:00:00 | How long a busy agent can go without reporting progress before being marked stuck |
 | `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
 | `transientRetryDelay` | 00:00:30 | Delay between retry loop iterations when a transient provider error (`ProviderRateLimit` or `ProviderOverload`) is encountered. Default: 30 seconds. Set to zero in tests for faster execution. |
-| `heartbeatSweepIntervalSeconds` | 60 | Seconds between heartbeat monitor sweeps |
-| `heartbeatTimeoutSeconds` | 90 | Seconds without a heartbeat before an agent is considered stale |
 | `feedbackTimeoutSeconds` | 60 | Timeout in seconds for the agent call during feedback collection (both post-PR success path and post-retry-exhaustion failure path). Increase for slow models or large repositories. Configurable per project. |
 | `analysisCommitThreshold` | 30 | Number of commits on the default branch since last analysis that triggers automatic analysis refresh. Set to 0 to disable commit-count staleness detection |
 
@@ -75,12 +70,6 @@ These control in-memory bounded data structures for each pipeline run. Rarely ne
 | `maxDecompositionSubIssueFiles` | 12 | Maximum files a single decomposition sub-issue may create or modify (range: 1–30). Controls scope per sub-issue to keep each one within single-agent capacity |
 | `maxConcurrentDecompositions` | 2 | Maximum decomposition runs (across both phases) executing simultaneously |
 | `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
-
-### Consolidation Dispatch
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `maxConsolidationDispatchRetries` | 5 | Maximum attempts the drain service will make to dispatch a consolidation job to an agent before marking the run as `Failed`. Consolidation jobs are not subject to the standard quality gate retry budget. Configurable per project. |
 
 ### Kubernetes
 

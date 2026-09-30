@@ -376,7 +376,6 @@ public class HubMessageSerializationTests
             {
                 MaxRetries = 3,
                 MaxAnalysisRetries = 2,
-                IssuePageSize = 50,
                 AgentTimeout = TimeSpan.FromMinutes(45),
                 WorkspaceBaseDirectory = "/workspaces/agent",
                 AnalysisReviewEnabled = true,
@@ -749,7 +748,6 @@ public class HubMessageSerializationTests
             {
                 MaxRetries = 2,
                 MaxAnalysisRetries = 1,
-                IssuePageSize = 25,
                 AgentTimeout = TimeSpan.FromMinutes(30),
                 WorkspaceBaseDirectory = "/workspaces/consolidation",
                 AnalysisReviewEnabled = false,
@@ -811,7 +809,6 @@ public class HubMessageSerializationTests
         // PipelineConfiguration
         deserialized.PipelineConfiguration.MaxRetries.Should().Be(2);
         deserialized.PipelineConfiguration.MaxAnalysisRetries.Should().Be(1);
-        deserialized.PipelineConfiguration.IssuePageSize.Should().Be(25);
         deserialized.PipelineConfiguration.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
         deserialized.PipelineConfiguration.WorkspaceBaseDirectory.Should().Be("/workspaces/consolidation");
         deserialized.PipelineConfiguration.AnalysisReviewEnabled.Should().BeFalse();

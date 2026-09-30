@@ -220,18 +220,20 @@ public sealed class FakeJobController : IAsyncDisposable
     /// test asserting the disconnect path times out.
     ///
     /// <para>
-    /// A disconnect is not immediately fatal. <c>AgentDisconnectGracePeriod</c> is what lets a pod
-    /// survive a dropped websocket and re-register with its job intact, so this waits it out before
-    /// declaring the pod dead — reading the same configured value the product does. Failing on the
-    /// first Disconnected sighting made the reconnection path untestable: the work item was already
-    /// Failed by the time the agent came back, so there was no orphan left to restore.
+    /// A disconnect is not immediately fatal. A short grace period lets a pod survive a dropped
+    /// websocket and re-register with its job intact, so this waits it out before declaring the
+    /// pod dead. Failing on the first Disconnected sighting made the reconnection path untestable:
+    /// the work item was already Failed by the time the agent came back, so there was no orphan
+    /// left to restore.
     /// </para>
     /// </summary>
     private async Task ReconcileOnceAsync(CancellationToken ct)
     {
         if (_inFlight.IsEmpty) return;
 
-        var gracePeriod = (await _configStore.LoadPipelineConfigAsync(ct)).AgentDisconnectGracePeriod;
+        // AgentDisconnectGracePeriod was removed from PipelineConfiguration (issue #3149 — nothing read it).
+        // FakeJobController is a test harness so a fixed constant is appropriate here.
+        var gracePeriod = TimeSpan.FromSeconds(2);
 
         foreach (var (workItemId, agentId) in _inFlight.ToArray())
         {

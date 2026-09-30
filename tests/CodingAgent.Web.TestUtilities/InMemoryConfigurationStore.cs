@@ -17,7 +17,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
         MaxRetries = 3,
         AgentTimeout = TimeSpan.FromMinutes(2),
-        HeartbeatSweepIntervalSeconds = 5,
         CodeReview = new CodeReviewConfiguration { }
     };
 
@@ -42,7 +41,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
             MaxRetries = 3,
             AgentTimeout = TimeSpan.FromMinutes(2),
-            HeartbeatSweepIntervalSeconds = 5,
             CodeReview = new CodeReviewConfiguration { }
         };
         _providerConfigs.Clear();
@@ -78,16 +76,6 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             TestArguments = ["ok"],
             Enabled = true
         });
-
-        _pipelineConfig = _pipelineConfig with
-        {
-            LastUsedProviderIds = new Dictionary<string, string>
-            {
-                ["issue"] = "issue-e2e",
-                ["repository"] = "repo-e2e",
-                ["agent"] = "agent-e2e"
-            }
-        };
 
         _projects.Add(new PipelineProject
         {

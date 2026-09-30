@@ -313,8 +313,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 3,
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149
         }, CancellationToken.None);
 
         await using var agent = new FakeAgentClient("lifecycle-heartbeat", "disabled-test");
@@ -481,8 +480,7 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 2,
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149
         }, CancellationToken.None);
 
         var agent = new FakeAgentClient("lifecycle-disconnect-pool", "pool-test");

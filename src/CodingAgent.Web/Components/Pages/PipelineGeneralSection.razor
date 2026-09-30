@@ -100,13 +100,6 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
-                <label>Issue Page Size</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Number of issues fetched per page when polling. Default: 25">?</span>
-            </div>
-            <input type="number" @bind="_issuePageSize" min="1" max="100" />
-        </div>
-        <div class="form-group">
-            <div class="label-with-hint">
                 <label>Blacklisted Paths</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Comma-separated paths that are always unstaged before commit. Prevents agent from committing config/metadata files.">?</span>
             </div>
@@ -133,7 +126,6 @@
     private int _stallPollIntervalSeconds = 30;
     private bool _baselineHealthCheckEnabled = true;
     private string _workspaceBaseDirectory = "./workspaces";
-    private int _issuePageSize = 25;
     private string _blacklistedPathsText = ".kiro,.github,.brain";
     private bool _showAdvanced;
     private int _housekeepingConcurrencyLimit = 1;
@@ -152,7 +144,6 @@
         _stallPollIntervalSeconds = (int)config.StallPollInterval.TotalSeconds;
         _baselineHealthCheckEnabled = config.BaselineHealthCheckEnabled;
         _workspaceBaseDirectory = config.WorkspaceBaseDirectory;
-        _issuePageSize = config.IssuePageSize;
         _blacklistedPathsText = string.Join(",", config.BlacklistedPaths);
         _housekeepingConcurrencyLimit = config.HousekeepingConcurrencyLimit;
         _branchCleanupIntervalMinutes = config.HousekeepingBranchCleanupIntervalMinutes;
@@ -179,7 +170,6 @@
                     StallPollInterval = TimeSpan.FromSeconds(_stallPollIntervalSeconds),
                     BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
                     WorkspaceBaseDirectory = _workspaceBaseDirectory,
-                    IssuePageSize = _issuePageSize,
                     BlacklistedPaths = blacklistedPaths,
                     HousekeepingConcurrencyLimit = Math.Max(1, _housekeepingConcurrencyLimit),
                     HousekeepingBranchCleanupIntervalMinutes = Math.Max(0, _branchCleanupIntervalMinutes),

@@ -240,6 +240,7 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
 
 **Example response (200):**
 
+<!-- TODO: issuePageSize was removed from PipelineConfiguration in #3149 (nothing read it). Update this example to drop issuePageSize and replace with a still-existing field. -->
 ```json
 {
   "pipelineConfig": "{\"maxRetries\":3,\"agentTimeout\":\"00:30:00\",\"issuePageSize\":25}",

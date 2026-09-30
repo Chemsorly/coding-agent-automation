@@ -20,7 +20,6 @@ public static class TestPipelineConfig
     {
         MaxRetries = 3,
         MaxAnalysisRetries = 1,
-        IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         AnalysisReviewEnabled = false,
@@ -57,7 +56,6 @@ public static class TestPipelineConfig
         RetryErrorsCapacity = 100,
         OrphanedLabelSweepIntervalMinutes = 30,
         AnalysisCommitThreshold = 30,
-        MaxConsolidationDispatchRetries = 5,
         PipelineRunRetentionCount = -1,
         WorkItemRetentionCount = -1,
         DbRetentionSweepInterval = TimeSpan.FromHours(24),
@@ -76,7 +74,6 @@ public static class TestPipelineConfig
     {
         MaxRetries = 3,
         MaxAnalysisRetries = 1,
-        IssuePageSize = 25,
         AgentTimeout = TimeSpan.FromMinutes(30),
         WorkspaceBaseDirectory = workspaceBaseDirectory ?? Path.GetTempPath(),
         AnalysisReviewEnabled = false,
@@ -113,7 +110,6 @@ public static class TestPipelineConfig
         RetryErrorsCapacity = 100,
         OrphanedLabelSweepIntervalMinutes = 30,
         AnalysisCommitThreshold = 30,
-        MaxConsolidationDispatchRetries = 5,
         PipelineRunRetentionCount = -1,
         WorkItemRetentionCount = -1,
         DbRetentionSweepInterval = TimeSpan.FromHours(24),

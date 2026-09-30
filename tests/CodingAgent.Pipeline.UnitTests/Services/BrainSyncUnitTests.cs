@@ -142,14 +142,6 @@ public class BrainSyncUnitTests
     }
 
     [Fact]
-    public void PipelineConfiguration_LastUsedProviderIds_DefaultsEmpty()
-    {
-        var config = new PipelineConfiguration();
-
-        config.LastUsedProviderIds.Should().BeEmpty();
-    }
-
-    [Fact]
     public void PipelineRun_BrainFields_DefaultCorrectly()
     {
         var run = new PipelineRun
