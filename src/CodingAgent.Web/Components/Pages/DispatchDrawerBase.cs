@@ -23,12 +23,6 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<TItem> OnDispatch { get; set; }
     [Parameter] public RenderFragment? HeaderPrefix { get; set; }
-    /// <summary>
-    /// When true, the shortcut help overlay is currently displayed by <c>CockpitLayout</c>.
-    /// <c>HandleKeyDown</c> skips its <c>Escape</c> branch in this state so that Escape
-    /// closes the overlay (handled by the global JS keyboard handler) rather than the drawer.
-    /// </summary>
-    [Parameter] public bool IsShortcutHelpVisible { get; set; }
 
     protected string _filter = "";
     protected List<TItem> FilteredItems = [];
@@ -114,13 +108,11 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
                     _highlightedIndex = -1;
                 }
                 break;
-            case "Escape":
-                // Do not close the drawer when the shortcut help overlay is visible.
-                // In that state the global JS keyboard handler (CockpitLayout.HandleGlobalKey)
-                // is responsible for closing the overlay on Escape, and the drawer must remain open.
-                if (!IsShortcutHelpVisible)
-                    await Close();
-                break;
+            // Escape is intentionally not handled here.
+            // CockpitLayout.HandleGlobalKey (via the JS document-level keydown handler) owns Escape
+            // with correct priority: shortcut-help overlay → active drawer. Handling Escape here
+            // would race against the global handler and close the drawer even when the shortcut
+            // overlay should be closed first.
         }
     }
 

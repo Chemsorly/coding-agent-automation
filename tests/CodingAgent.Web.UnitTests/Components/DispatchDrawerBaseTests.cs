@@ -228,14 +228,19 @@ public class DispatchDrawerBaseTests : BunitContext
     }
 
     [Fact]
-    public async Task HandleKeyDown_Escape_InvokesClose()
+    public async Task HandleKeyDown_Escape_DoesNotCloseDrawer()
     {
+        // Escape is intentionally not handled by HandleKeyDown — it is owned by
+        // CockpitLayout.HandleGlobalKey (via the JS document-level keydown handler) which
+        // applies the correct priority: shortcut-help overlay → active drawer.
+        // If HandleKeyDown also handled Escape, it would race the global handler and close
+        // the drawer even when the shortcut overlay should be closed first.
         var items = new[] { new TestItem("1", "A") };
         var drawer = CreateDrawer(items);
 
         await drawer.InvokeHandleKeyDown("Escape");
 
-        Assert.True(drawer.CloseCalled);
+        Assert.False(drawer.CloseCalled, "HandleKeyDown must not close the drawer on Escape; the global keyboard handler owns this key");
     }
 
     [Fact]
@@ -269,20 +274,5 @@ public class DispatchDrawerBaseTests : BunitContext
         // Simulate a re-render without filter change
         drawer.InvokeApplyFilter();
         Assert.Equal(0, drawer.GetHighlightedIndex());
-    }
-
-    [Fact]
-    public async Task HandleKeyDown_Escape_DoesNotCloseWhenShortcutHelpVisible()
-    {
-        var items = new[] { new TestItem("1", "A") };
-        var drawer = CreateDrawer(items);
-
-        // Set IsShortcutHelpVisible = true on the drawer parameter
-        typeof(DispatchDrawerBase<TestItem>).GetProperty(nameof(DispatchDrawerBase<TestItem>.IsShortcutHelpVisible))!
-            .SetValue(drawer, true);
-
-        await drawer.InvokeHandleKeyDown("Escape");
-
-        Assert.False(drawer.CloseCalled, "Drawer must not close when the shortcut help overlay is visible");
     }
 }
