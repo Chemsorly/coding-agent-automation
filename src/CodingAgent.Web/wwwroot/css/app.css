@@ -1334,6 +1334,7 @@ select option { background: var(--surface); color: var(--text); }
 .refactoring-modal-param { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
 .refactoring-modal-param-label { color: var(--text-muted); font-weight: 500; min-width: 150px; }
 .refactoring-modal-param-value { color: var(--text); font-weight: 600; }
+.refactoring-modal-param-override { font-size: 0.75rem; color: var(--text-muted); font-style: italic; }
 
 .sidebar-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent-fill); color: white; font-size: 0.65rem; font-weight: 700; margin-left: auto; }
 
