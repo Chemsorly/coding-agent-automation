@@ -86,7 +86,7 @@ Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversa
 
 ### Harness Suggestions (global)
 
-Analyzes accumulated `RunFeedback` from all pipeline runs to identify recurring patterns. Produces a JSON file (`config/pipeline/harness-suggestions.json`) with the top 3-5 improvement opportunities ranked by frequency and impact.
+Analyzes accumulated `RunFeedback` from all pipeline runs to identify recurring patterns. Produces top 3-5 improvement opportunities ranked by frequency and impact, persisted to the database via `IHarnessSuggestionStore`.
 
 Each suggestion includes:
 - Concrete, actionable text (what to change)
@@ -100,17 +100,18 @@ Each suggestion includes:
 4. Execute agent to generate suggestions
 5. **Write-to-file step** — a follow-up agent call serializes suggestions to `.agent/harness-suggestions-output.json` (enables stable file for review)
 6. **Adversarial review** — evaluates suggestions against original feedback data. Checks for ungrounded suggestions, implausible frequency counts, and non-actionable advice.
-7. Parse final suggestions and persist to `config/pipeline/harness-suggestions.json`
+7. Parse final suggestions and persist to the database via `IHarnessSuggestionStore` (Postgres)
 
 Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the adversarial review step.
 
 ### Consolidation Dispatch
 
-Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mode, dispatch originates from the Orchestrator (Web) via `ConsolidationJobPreparationService` and routes through the Pipeline API's synchronous dispatch endpoint, using the `caa-{release}-dispatch-lock` lease for deduplication. (`ConsolidationDispatchService`, a standalone background loop that previously ran in the Job Controller, was removed in #2323.) The job naming format `caa-cons-{12 hex chars}` is preserved for compatibility with any in-flight Jobs created before that change. The service enforces:
+Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. `IConsolidationDispatchService` was removed in #2323; there is no separate synchronous dispatch endpoint or distributed lease for consolidation. The Job Controller dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). The job naming format `caa-cons-{12 hex chars}` is preserved for compatibility with any in-flight Jobs created before that change.
 
-- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. While a work item with that key is live, another trigger is rejected as already running.
+- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
-- **Dispatch retries:** Up to `maxConsolidationDispatchRetries` retry attempts (default: 5) before permanent failure. See [Configuration — Consolidation Dispatch](configuration.md#consolidation-dispatch).
+- **Dispatch retries:** Up to `MaxConsolidationDispatchRetries` (default: 5, per-project-overridable) attempts before permanent failure. The drain service increments `PendingJob.ConsolidationDispatchAttempt` on each dispatch failure; when it reaches the limit, the job is discarded and the run transitions to Failed. See [Configuration — Consolidation Dispatch](configuration.md#consolidation-dispatch).
+<!-- TODO: The dispatch-retry mechanism described above (drain service incrementing PendingJob.ConsolidationDispatchAttempt) is not implemented in the code — ConsolidationDispatchAttempt is defined in PendingJob but never incremented. The issue's own item 5 states "There are no dispatch retries." This bullet should be corrected to remove the retry description or updated when the retry loop is actually implemented. -->
 
 ### Consolidation Page
 

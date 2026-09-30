@@ -14,6 +14,7 @@ namespace CodingAgent.Pipeline.Models;
 /// Hex colour values (without leading '#') keyed by label name.
 /// Populated only when the provider exposes colour data (e.g. GitHub). Null otherwise.
 /// </param>
+/// <param name="BlockedByUrls">Full issue URLs in other trackers that are still open and block this one.</param>
 public sealed record BacklogIssue(
     string Identifier,
     string Title,
@@ -21,4 +22,5 @@ public sealed record BacklogIssue(
     bool IsReady,
     IReadOnlyList<int> BlockedBy,
     IReadOnlyList<string>? Labels = null,
-    IReadOnlyDictionary<string, string>? LabelColors = null);
+    IReadOnlyDictionary<string, string>? LabelColors = null,
+    IReadOnlyList<string>? BlockedByUrls = null);

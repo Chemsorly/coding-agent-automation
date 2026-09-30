@@ -119,7 +119,7 @@ public class ConsolidationServicePropertyTests : IDisposable
         mockDist2
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-2", ErrorMessage: null))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true, AlreadyExists: true))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-3", ErrorMessage: null));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(

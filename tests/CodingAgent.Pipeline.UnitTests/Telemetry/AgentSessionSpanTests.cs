@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -15,7 +16,10 @@ namespace CodingAgent.Pipeline.UnitTests.Telemetry;
 public class AgentSessionSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly List<Activity> _stoppedActivities = [];
+    // ConcurrentBag is used instead of List because ActivityStopped is invoked on the thread
+    // that stops the Activity, which may differ from the test thread. Enumerating a plain List
+    // while another thread calls Add causes a "Collection was modified" InvalidOperationException.
+    private readonly ConcurrentBag<Activity> _stoppedActivities = [];
     // Unique test-run tag to isolate activities from concurrent tests
     private readonly string _testRunTag = Guid.NewGuid().ToString("N")[..8];
 

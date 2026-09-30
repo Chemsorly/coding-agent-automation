@@ -18,25 +18,23 @@ The pipeline uses a two-level settings hierarchy with a nullable override patter
 ```mermaid
 flowchart LR
     A[Global PipelineConfiguration] -->|null = inherit| B[Project overrides]
-    B -->|non-null = replace| C[Resolved config]
-    C -->|blacklisted paths only| D[ProviderConfig overrides]
-    D --> E[Final config sent to agent]
+    B -->|non-null = replace| C[Template overrides<br/>BrainReadOnly + ProviderConfig blacklist]
+    C --> D[Final config sent to agent]
 ```
 
 **Rules:**
 - A `null` project setting means "inherit from global defaults"
 - A non-null project setting completely replaces the global value
 - Nested objects (e.g., `CodeReview`) use **deep-merge semantics** — only non-null sub-fields from the project override replace the corresponding global sub-fields; null sub-fields inherit the global value
-- Per-repository blacklist overrides (from ProviderConfig) still take precedence over project-level blacklist settings
+- Template-level `BrainReadOnly: true` overrides the resolved value to read-only (one-directional: can only switch on, never off)
+- Per-repository blacklist overrides (from ProviderConfig) are applied in the same template step and take precedence over project-level blacklist settings
 - Settings are resolved at dispatch time — changes take effect on the next dispatched job without restarting
 
 ### Resolution Order
 
 1. **Global defaults** — `pipeline-config.json` provides base values for all settings
 2. **Project overrides** — Non-null project settings replace corresponding global values
-3. **Repository overrides** — `BlacklistedPaths` from ProviderConfig overrides project values (if set)
-
-Templates do NOT carry behavioral overrides. They define provider bindings only (issue/repo/brain/pipeline provider IDs and feature toggles).
+3. **Template overrides** — Applied by `PipelineConfigurationResolver.ApplyTemplateOverrides`: `BrainReadOnly` from the matched template (one-directional: only overrides to `true`), then `BlacklistedPaths` from the repository's ProviderConfig (replaces if set)
 
 ## Project Storage
 
@@ -59,7 +57,6 @@ A project does not store its templates: each template names the project it belon
   "AgentTimeout": "00:45:00",
   "AnalysisPrompt": "You are working on a Java 21 Spring Boot microservice...",
   "CodeReview": {
-    "Enabled": true,
     "MaxIterations": 3
   },
   "BaselineHealthCheckEnabled": true,
@@ -271,7 +268,7 @@ flowchart TD
 
 ### Project Context File
 
-When decomposing a project epic (an epic in the project's `EpicIssueProviderId` tracker), the system generates `.agent/project-context.md` in the workspace. Repo epics get no project context, so their sub-issues stay in their own tracker:
+The system generates `.agent/project-context.md` in the workspace for every decomposition run where the epic lives in a project's `EpicIssueProviderId` tracker (a project epic). This applies to any project — including the Default project — that has `EpicIssueProviderId` configured and at least one enabled template. Repo epics (epics in a template's own tracker) do not receive a project context file; their sub-issues stay in that tracker.
 
 ```markdown
 # Project Context
@@ -285,17 +282,14 @@ repository using the `targetRepository` field. Values must EXACTLY match
 a repository name below (case-sensitive).
 
 ### frontend-app
-- **Description:** React frontend application
 - **Decomposition enabled:** True
 - **Status:** ✓
 
 ### backend-api
-- **Description:** .NET 10 REST API
 - **Decomposition enabled:** True
 - **Status:** ✓
 
 ### shared-libs
-- **Description:** Shared utility libraries
 - **Decomposition enabled:** False
 - **Status:** ✓
 

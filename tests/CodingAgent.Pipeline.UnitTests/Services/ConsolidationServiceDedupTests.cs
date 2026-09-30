@@ -96,15 +96,15 @@ public sealed class ConsolidationServiceDedupTests
     /// reports "already running" (returns null) and creates no second WorkItem.
     ///
     /// Mechanism: KubernetesWorkDistributor maps 409 Conflict →
-    ///   DistributionResult(Success=true, WorkItemId=null, Queued=true).
-    /// ConsolidationService.TriggerAsync detects WorkItemId==null as the duplicate-rejection
+    ///   DistributionResult(Success=true, WorkItemId=null, Queued=true, AlreadyExists=true).
+    /// ConsolidationService.TriggerAsync detects AlreadyExists=true as the duplicate-rejection
     /// signal, rolls back the second persisted run, and returns null.
     /// </summary>
     [Fact]
     public async Task TriggerAsync_SecondTrigger_WhileFirstNonTerminal_ReturnsNull_NoSecondWorkItem()
     {
         // Arrange: first trigger succeeds (WorkItem created, WorkItemId="wi-1");
-        // second trigger receives (Success=true, WorkItemId=null) simulating the 409 path.
+        // second trigger receives (Success=true, WorkItemId=null, AlreadyExists=true) simulating the 409 path.
         var mockDistributor = new Mock<IWorkDistributor>();
         mockDistributor
             .SetupSequence(d => d.DistributeAsync(
@@ -119,7 +119,8 @@ public sealed class ConsolidationServiceDedupTests
                 Success: true,
                 WorkItemId: null,       // 409 path — partial unique index rejected the duplicate
                 ErrorMessage: null,
-                Queued: true));
+                Queued: true,
+                AlreadyExists: true));  // explicit flag replaces the old null-WorkItemId sentinel
 
         var sut = CreateSut(mockDistributor);
 
@@ -165,7 +166,7 @@ public sealed class ConsolidationServiceDedupTests
 
     /// <summary>
     /// A duplicate trigger for a global (null templateId) consolidation run must also be
-    /// rejected via the WorkItemId==null detection path.
+    /// rejected via the AlreadyExists flag detection path.
     /// IssueIdentifier for global runs is "{type}:global".
     /// </summary>
     [Fact]
@@ -185,7 +186,8 @@ public sealed class ConsolidationServiceDedupTests
                 Success: true,
                 WorkItemId: null,   // 409 duplicate
                 ErrorMessage: null,
-                Queued: true));
+                Queued: true,
+                AlreadyExists: true));  // explicit flag
 
         var sut = CreateSut(mockDistributor);
 

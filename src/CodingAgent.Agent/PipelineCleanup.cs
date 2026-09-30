@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Steps;
+using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Agent;
 
@@ -11,7 +13,8 @@ namespace CodingAgent.Agent;
 internal static class PipelineCleanup
 {
     /// <summary>
-    /// Runs all cleanup steps sequentially. Error handling mirrors the original code:
+    /// Runs all cleanup steps sequentially inside a <c>PrePrCleanup</c> trace span.
+    /// Error handling mirrors the original code:
     /// only workspace deletion is wrapped in try/catch; other operations propagate exceptions.
     /// </summary>
     public static async Task RunAsync(
@@ -21,6 +24,9 @@ internal static class PipelineCleanup
         PipelineSignalRReporter reporter,
         Serilog.ILogger logger)
     {
+        using var cleanupSpan = PipelineTelemetry.ActivitySource.StartActivity("PrePrCleanup");
+        cleanupSpan?.SetTag("pipeline.run_id", run.RunId);
+
         localCts?.Dispose();
 
         // Workspace cleanup

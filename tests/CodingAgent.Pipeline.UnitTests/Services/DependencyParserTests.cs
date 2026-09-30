@@ -43,11 +43,13 @@ public class DependencyParserTests
     [InlineData("Depends on #456", 456)]
     [InlineData("Requires #789", 789)]
     [InlineData("After #42", 42)]
-    public void Parse_RecognizedPattern_ReturnsIssueNumber(string body, int expectedIssue)
+    public void Parse_RecognizedPattern_ReturnsNumberRef(string body, int expectedIssue)
     {
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { expectedIssue });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(expectedIssue);
     }
 
     // ─── 3. Case-insensitive matching ───────────────────────────────────────────
@@ -67,7 +69,9 @@ public class DependencyParserTests
     {
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { 10 });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(10);
     }
 
     // ─── 4. Multiple dependencies ───────────────────────────────────────────────
@@ -83,7 +87,8 @@ public class DependencyParserTests
 
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { 10, 20, 30, 40 });
+        result.Should().HaveCount(4);
+        result.OfType<NumberRef>().Select(r => r.Number).Should().BeEquivalentTo(new[] { 10, 20, 30, 40 });
     }
 
     // ─── 5. Deduplication ───────────────────────────────────────────────────────
@@ -99,7 +104,9 @@ public class DependencyParserTests
 
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { 10 });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(10);
     }
 
     // ─── 6. Self-reference filtering ────────────────────────────────────────────
@@ -111,7 +118,9 @@ public class DependencyParserTests
 
         var result = DependencyParser.Parse(body, selfIdentifier: 5);
 
-        result.Should().BeEquivalentTo(new[] { 10 });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(10);
     }
 
     [Fact]
@@ -131,7 +140,9 @@ public class DependencyParserTests
 
         var result = DependencyParser.Parse(body, selfIdentifier: null);
 
-        result.Should().BeEquivalentTo(new[] { 42 });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(42);
     }
 
     // ─── 7. Non-positive integers ───────────────────────────────────────────────
@@ -168,7 +179,9 @@ public class DependencyParserTests
     {
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { expectedIssue });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(expectedIssue);
     }
 
     // ─── 10. Malformed references ───────────────────────────────────────────────
@@ -202,6 +215,128 @@ public class DependencyParserTests
     {
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { expectedIssue });
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<NumberRef>()
+            .Which.Number.Should().Be(expectedIssue);
+    }
+
+    // ─── 12. GitHub issue URL references (AC3) ──────────────────────────────────
+
+    [Fact]
+    public void Parse_GitHubIssueUrl_ReturnsUrlRef()
+    {
+        var body = "Blocked by https://github.com/acme/repo/issues/40";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://github.com/acme/repo/issues/40");
+    }
+
+    [Fact]
+    public void Parse_GitHubIssueUrl_DependsOnKeyword_ReturnsUrlRef()
+    {
+        var body = "Depends on https://github.com/org/project/issues/123";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://github.com/org/project/issues/123");
+    }
+
+    // ─── 13. GitLab issue URL references (AC3) ──────────────────────────────────
+
+    [Fact]
+    public void Parse_GitLabIssueUrl_ReturnsUrlRef()
+    {
+        // GitLab uses /-/issues/ path separator
+        var body = "Depends on https://gitlab.com/org/proj/-/issues/7";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://gitlab.com/org/proj/-/issues/7");
+    }
+
+    [Fact]
+    public void Parse_GitLabIssueUrl_RequiresKeyword_ReturnsUrlRef()
+    {
+        var body = "Requires https://gitlab.com/mygroup/myproject/-/issues/99";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://gitlab.com/mygroup/myproject/-/issues/99");
+    }
+
+    // ─── 14. Mixed number and URL references ────────────────────────────────────
+
+    [Fact]
+    public void Parse_MixedNumberAndUrl_ReturnsBoth()
+    {
+        var body = "Blocked by #10\nDepends on https://github.com/acme/api/issues/40";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().HaveCount(2);
+        result.OfType<NumberRef>().Should().ContainSingle().Which.Number.Should().Be(10);
+        result.OfType<UrlRef>().Should().ContainSingle()
+            .Which.Url.Should().Be("https://github.com/acme/api/issues/40");
+    }
+
+    // ─── 15. Non-issue URLs are not matched ─────────────────────────────────────
+
+    [Fact]
+    public void Parse_GitHubPullRequestUrl_Ignored()
+    {
+        // PR URLs (/pull/) must not be matched
+        var body = "Blocked by https://github.com/acme/repo/pull/40";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Parse_GitLabMergeRequestUrl_Ignored()
+    {
+        var body = "Depends on https://gitlab.com/org/proj/-/merge_requests/7";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Parse_GitLabIssueUrlWithoutDashSlash_NotMatched()
+    {
+        // GitLab issues require /-/issues/, not /issues/
+        var body = "Depends on https://gitlab.com/org/proj/issues/7";
+
+        var result = DependencyParser.Parse(body);
+
+        // Not matched as a GitLab URL; also not a GitHub URL — result must be empty
+        result.Should().BeEmpty();
+    }
+
+    // ─── 16. Duplicate URL deduplication ────────────────────────────────────────
+
+    [Fact]
+    public void Parse_DuplicateUrls_ReturnsUnique()
+    {
+        var body = """
+            Blocked by https://github.com/acme/repo/issues/40
+            Depends on https://github.com/acme/repo/issues/40
+            """;
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://github.com/acme/repo/issues/40");
     }
 }

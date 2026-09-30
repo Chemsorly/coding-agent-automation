@@ -15,9 +15,9 @@ namespace CodingAgent.Pipeline.UnitTests.Properties;
 ///
 /// Properties tested:
 ///   - Crash-freedom: no arbitrary string input causes an exception
-///   - Result ⊆ positive integers: all returned values are ≥ 1
+///   - NumberRef results contain only positive integers (> 0)
 ///   - Idempotence: parsing the same body twice returns the same set
-///   - Self-exclusion: when selfIdentifier is set, that number is never in the result
+///   - Self-exclusion: when selfIdentifier is set, that number is never in NumberRef results
 /// </summary>
 [Trait("Feature", "027-issue-dependency-tracking")]
 public class DependencyParserPropertyTests
@@ -48,14 +48,14 @@ public class DependencyParserPropertyTests
     // ── Result invariants ──────────────────────────────────────────────────────
 
     /// <summary>
-    /// All returned issue numbers are strictly positive integers (> 0).
+    /// All <see cref="NumberRef"/> results contain strictly positive integers (> 0).
+    /// Alpha-identifiers (PROJ-123) are non-numeric and must produce no results.
     /// </summary>
     [Property(MaxTest = 100)]
-    public Property Parse_ReturnsOnlyPositiveIntegers()
+    public Property Parse_NumberRefs_ArePositiveIntegers()
     {
         // Mix numeric (#N) and alpha-identifier (PROJ-123) forms to exercise both capture groups.
-        // Alpha-identifiers are never parseable as int, so they must produce no results (not
-        // non-positive integers). This exercises the Group 2 branch of the regex.
+        // Alpha-identifiers are never parseable as int, so they must produce no NumberRef results.
         var numericBodyGen =
             from keyword in Gen.Elements("Blocked by", "Depends on", "Requires", "After")
             from number in Gen.Choose(1, 99999)
@@ -73,8 +73,8 @@ public class DependencyParserPropertyTests
         return Prop.ForAll(gen.ToArbitrary(), (string body) =>
         {
             var result = DependencyParser.Parse(body);
-            result.Should().AllSatisfy(n => n.Should().BeGreaterThan(0,
-                $"every parsed dependency must be a positive integer, got {n} from input: [{body}]"));
+            result.OfType<NumberRef>().Should().AllSatisfy(nr => nr.Number.Should().BeGreaterThan(0,
+                $"every NumberRef must contain a positive integer, got {nr.Number} from input: [{body}]"));
         });
     }
 
@@ -97,7 +97,7 @@ public class DependencyParserPropertyTests
     // ── Self-exclusion ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// When selfIdentifier is provided, that number is never in the result.
+    /// When selfIdentifier is provided, that number is never in the NumberRef results.
     /// </summary>
     [Property(MaxTest = 100)]
     public Property Parse_WithSelfIdentifier_ExcludesSelf()
@@ -112,10 +112,11 @@ public class DependencyParserPropertyTests
         {
             var (self, other, body) = t;
             var result = DependencyParser.Parse(body, selfIdentifier: self);
+            var numberRefs = result.OfType<NumberRef>().Select(r => r.Number).ToList();
 
-            result.Should().NotContain(self,
-                $"selfIdentifier={self} must be excluded from parse results");
-            result.Should().Contain(other,
+            numberRefs.Should().NotContain(self,
+                $"selfIdentifier={self} must be excluded from NumberRef results");
+            numberRefs.Should().Contain(other,
                 $"other dependency #{other} must still be included when selfIdentifier={self}");
         });
     }
@@ -138,7 +139,7 @@ public class DependencyParserPropertyTests
 
     /// <summary>
     /// Alpha-identifiers like "PROJ-123" match the regex but are non-numeric — they must
-    /// produce no results, not a positive integer. Regression guard for Group 2 branch.
+    /// produce no results. Regression guard for the alpha-identifier branch.
     /// </summary>
     [Theory]
     [InlineData("Blocked by PROJ-123", false)]
@@ -150,12 +151,13 @@ public class DependencyParserPropertyTests
     {
         var result = DependencyParser.Parse(body);
 
-        // Alpha identifiers are non-numeric so they must never appear in results
-        result.Should().AllSatisfy(n => n.Should().BeGreaterThan(0,
-            $"alpha identifiers like PROJ-123 must never produce non-positive integers, got {n}"));
+        // Alpha identifiers produce no DependencyRef at all
+        result.OfType<NumberRef>().Should().AllSatisfy(nr => nr.Number.Should().BeGreaterThan(0,
+            $"alpha identifiers like PROJ-123 must never produce non-positive NumberRefs, got {nr.Number}"));
 
-        // Mixed case: the numeric #42 should still be included
+        // Mixed case: the numeric #42 should still be included as a NumberRef
         if (containsNumericRef)
-            result.Should().Contain(42, "numeric refs alongside alpha refs must still be parsed");
+            result.OfType<NumberRef>().Should().Contain(nr => nr.Number == 42,
+                "numeric refs alongside alpha refs must still be parsed");
     }
 }

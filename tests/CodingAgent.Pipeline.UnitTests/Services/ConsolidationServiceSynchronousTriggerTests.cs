@@ -303,7 +303,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
     /// <summary>
     /// A duplicate trigger while a run is already Pending must be rejected.
     /// After issue #3027: dedup is API-layer — both triggers call DistributeAsync.
-    /// The second trigger receives DistributionResult(Success=true, WorkItemId=null) which
+    /// The second trigger receives DistributionResult(Success=true, WorkItemId=null, AlreadyExists=true) which
     /// signals a 409 from the partial unique index. TriggerAsync maps this to null.
     /// </summary>
     [Fact]
@@ -312,7 +312,7 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
         _mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-dup-1", ErrorMessage: null, Queued: true))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true, AlreadyExists: true));
 
         var sut = CreateSut();
 

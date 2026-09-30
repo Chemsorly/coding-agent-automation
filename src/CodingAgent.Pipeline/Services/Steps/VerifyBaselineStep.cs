@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services.Steps;
 
@@ -13,6 +15,10 @@ public sealed class VerifyBaselineStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("VerifyBaseline");
+        activity?.SetTag("pipeline.run_id", context.Run.RunId);
+        activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
+
         if (!context.Config.BaselineHealthCheckEnabled)
         {
             context.Callbacks.EmitOutputLine("⏭️ Baseline health check disabled, skipping");
@@ -22,17 +28,17 @@ public sealed class VerifyBaselineStep : IPipelineStep
         context.Callbacks.TransitionTo(PipelineStep.VerifyingBaseline);
 
         // Phase 1: Agent environment health (fatal)
-        var doctorResult = await RunAgentHealthCheckAsync(context, ct);
+        var doctorResult = await RunAgentHealthCheckAsync(context, activity, ct);
         if (!doctorResult)
             return StepResult.Stop;
 
         // Phase 2: Workspace baseline (non-fatal)
-        await RunWorkspaceBaselineAsync(context, ct);
+        await RunWorkspaceBaselineAsync(context, activity, ct);
 
         return StepResult.Continue;
     }
 
-    private static async Task<bool> RunAgentHealthCheckAsync(PipelineStepContext context, CancellationToken ct)
+    private static async Task<bool> RunAgentHealthCheckAsync(PipelineStepContext context, Activity? activity, CancellationToken ct)
     {
         context.Callbacks.EmitOutputLine("🩺 Running agent environment health check...");
 
@@ -45,6 +51,9 @@ public sealed class VerifyBaselineStep : IPipelineStep
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             context.Run.BaselineHealthPassed = false;
+            // Fatal: set Error status on the VerifyBaseline span before failing the run.
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
             await context.FailRunAsync($"Agent environment unhealthy: {ex.Message}", ct);
             return false;
         }
@@ -88,7 +97,7 @@ public sealed class VerifyBaselineStep : IPipelineStep
             context.Callbacks.EmitOutputLine($"  ❌ External CI: {report.ExternalCi.Details}");
     }
 
-    private static async Task RunWorkspaceBaselineAsync(PipelineStepContext context, CancellationToken ct)
+    private static async Task RunWorkspaceBaselineAsync(PipelineStepContext context, Activity? activity, CancellationToken ct)
     {
         if (context.QualityGateValidator is null || string.IsNullOrEmpty(context.Run.WorkspacePath))
         {
@@ -122,6 +131,14 @@ public sealed class VerifyBaselineStep : IPipelineStep
         {
             context.Run.BaselineHealthPassed = false;
             context.Callbacks.EmitOutputLine($"⚠️ Workspace baseline check failed (non-fatal): {ex.Message}");
+            // Non-fatal: add exception event without setting Error status on the span.
+            activity?.AddEvent(new ActivityEvent("exception", tags: new ActivityTagsCollection
+            {
+                { "exception.type", ex.GetType().FullName ?? "<unknown>" },
+                { "exception.message", ex.Message },
+                { "exception.stacktrace", ex.StackTrace ?? "" },
+                { "pipeline.non_critical", true }
+            }));
         }
     }
 
