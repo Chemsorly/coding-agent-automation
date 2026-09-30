@@ -122,12 +122,30 @@ public partial class QualityGateExecutor
         callbacks.EmitOutputLine("⏳ Waiting for external CI...");
         var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
 
+        using var ciSpan = PipelineTelemetry.ActivitySource.StartActivity("WaitForCi");
+        ciSpan?.SetTag("pipeline.run_id", run.RunId);
+        ciSpan?.SetTag("pipeline.run_type", run.RunType.ToString());
+        ciSpan?.SetTag("pipeline.ci_path", "pre_pr");
+
         using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
         try
         {
-            return await _ciPollingCoordinator.PollAndHandleInfraRetryAsync(
+            var result = await _ciPollingCoordinator.PollAndHandleInfraRetryAsync(
                 context, commitSha, config, callbacks, linkedCts.Token);
+            ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
+            ciSpan?.SetTag("pipeline.ci_status", result.ciPassed ? "passed" : result.ciStatus.State.ToString().ToLowerInvariant());
+            return result;
+        }
+        catch
+        {
+            // TODO: [WARNING] pipeline.ci_infra_retries is not set here, unlike the post-PR path in
+            // CiPollingCoordinator.WaitForPostPrCiAsync. If the poll throws after some infra retries,
+            // the WaitForCi span will be missing the retry count, making it inconsistent with the
+            // documented schema and the post-PR path behaviour. Add:
+            //   ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
+            ciSpan?.SetTag("pipeline.ci_status", "error");
+            throw;
         }
         finally
         {

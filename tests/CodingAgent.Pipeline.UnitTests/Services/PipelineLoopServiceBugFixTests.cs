@@ -519,7 +519,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             EnabledTemplates: templates,
             PollableTemplates: templates,
             TemplateLookup: templates.ToDictionary(t => t.Id).AsReadOnly(),
-            ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>());
+            ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+            ActiveDecompositionCount: 0);
     }
 
     /// <summary>

@@ -217,6 +217,22 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         return result.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)).ToList();
     }
 
+    public async Task<int> GetActiveDecompositionCountAsync(CancellationToken ct = default)
+    {
+        var result = await _http.GetFromJsonAsync<ActiveDecompositionCountResponse>(
+            "/api/work-items/active-decomposition-count",
+            PipelineJsonOptions.Default,
+            ct);
+        // TODO [WARNING]: A null result (e.g. malformed 200 body, missing 'count' field) silently
+        // returns 0 via the null-coalesce. The caller (LoadActiveDecompositionCountAsync) only wraps
+        // this in a try/catch for exceptions — a null deserialization result returns 0 without throwing
+        // and without any log or metric emission. A silent 0 from a serialization error is
+        // indistinguishable from a legitimate zero count, and would allow up to MaxConcurrentDecompositions
+        // extra dispatches with no diagnostic signal. Consider throwing or logging a warning when result
+        // is null so the failure is visible in telemetry.
+        return result?.Count ?? 0;
+    }
+
     public async Task<Guid> DispatchAsync(JobDistributionRequest request, CancellationToken ct = default)
     {
         var response = await _http.PostAsJsonAsync(
@@ -288,4 +304,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     /// for an expected reason (concurrency limit, not Pending, no template).
     /// </summary>
     private sealed record DispatchPendingResponse(bool Dispatched, string? Reason);
+
+    private sealed record ActiveDecompositionCountResponse(int Count);
 }

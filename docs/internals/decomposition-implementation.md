@@ -22,13 +22,17 @@ When polling for decomposition candidates:
 
 ## Loop Integration
 
-Three-way fair alternation (round-robin):
+Fixed priority order: PRs first, then Decomposition, then Issues (Implementation):
 ```
-Issue queue → PR queue → Decomposition queue → Issue queue → ...
+Priority 1 (highest): PR queue → dispatched first each cycle
+Priority 2:           Decomposition queue (repo epics + project epics share this tier)
+Priority 3:           Issue queue (Implementation)
 ```
 
 - Total dispatches per cycle ≤ `ClosedLoopMaxRunsPerCycle`
+- `MinIssueSlots` floor reservation: if Issues were not dispatched in the priority loop, up to `MinIssueSlots` issue slots are reserved in a floor pass, ensuring implementation work is never fully starved
 - `MaxConcurrentDecompositions` enforced by querying active `PipelineRun` instances filtered by `RunType == DecompositionAnalysis || Decomposition`
+- Repo epics and project epics share the same decomposition queue (the project's executor template holds its project epics alongside its own repo epics); there is no separate sub-priority between them
 
 ## Phase 1 Step Details
 

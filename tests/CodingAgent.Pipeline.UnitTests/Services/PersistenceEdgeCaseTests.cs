@@ -99,7 +99,7 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-persist-edge", ErrorMessage: null))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true, AlreadyExists: true));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),

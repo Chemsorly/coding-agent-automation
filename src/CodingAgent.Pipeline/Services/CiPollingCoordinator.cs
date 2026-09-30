@@ -251,11 +251,24 @@ internal sealed class CiPollingCoordinator
         run.InfrastructureRetryCount = 0;
 
         var waitSw = Stopwatch.StartNew();
+        using var ciSpan = PipelineTelemetry.ActivitySource.StartActivity("WaitForCi");
+        ciSpan?.SetTag("pipeline.run_id", run.RunId);
+        ciSpan?.SetTag("pipeline.run_type", run.RunType.ToString());
+        ciSpan?.SetTag("pipeline.ci_path", "post_pr");
         GateResult ciGate;
         try
         {
             ciGate = await PollPostPrCiWithTelemetryAsync(
                 context, commitSha, config, callbacks, priorInfraRetryCount, notBefore, ct);
+            // Set final status tags after successful poll (infra count before restoration).
+            ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
+            ciSpan?.SetTag("pipeline.ci_status", ciGate.Passed ? "passed" : "failed");
+        }
+        catch
+        {
+            ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
+            ciSpan?.SetTag("pipeline.ci_status", "error");
+            throw;
         }
         finally
         {

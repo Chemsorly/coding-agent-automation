@@ -81,10 +81,12 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             // to avoid a label-revert loop: reverting the label to agent:next would cause the
             // Scheduler to re-pick the issue next cycle, which would 409 again indefinitely
             // while the existing WorkItem is still active.
+            // AlreadyExists=true signals callers (DispatchScheduler, ConsolidationService) to
+            // treat this as a skip rather than a counted dispatch.
             _logger.LogInformation(
                 "CreateAsync returned 409 for issue {IssueIdentifier} — live WorkItem already exists; treating as already-queued",
                 request.IssueIdentifier);
-            return new DistributionResult(true, null, null, Queued: true);
+            return new DistributionResult(true, null, null, Queued: true, AlreadyExists: true);
         }
         catch (HttpRequestException ex)
         {
@@ -156,6 +158,10 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             .Select(p => ((IssueIdentifier)p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
             .ToHashSet();
     }
+
+    /// <inheritdoc />
+    public Task<int> GetActiveDecompositionCountAsync(CancellationToken ct)
+        => _apiClient.GetActiveDecompositionCountAsync(ct);
 
     private static JobDistributionStatus MapStatus(WorkItemStatus status) => status switch
     {

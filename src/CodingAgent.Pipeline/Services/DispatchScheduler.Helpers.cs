@@ -64,15 +64,24 @@ internal sealed partial class DispatchScheduler
 
     /// <summary>
     /// Shared helper: prepares and dispatches a job distribution request via the orchestration service.
+    /// Returns a <see cref="DispatchAttemptOutcome"/> distinguishing a genuine dispatch from a
+    /// 409 duplicate-skip (<see cref="DispatchAttemptOutcome.AlreadyQueued"/>) and a failure.
     /// </summary>
-    private async Task<bool> DispatchViaOrchestrationAsync(
+    private async Task<DispatchAttemptOutcome> DispatchViaOrchestrationAsync(
         Func<CancellationToken, Task<JobDistributionRequest?>> prepareDbRequest,
         CancellationToken ct)
     {
         var request = await prepareDbRequest(ct);
-        if (request is null) return false;
+        if (request is null) return DispatchAttemptOutcome.Failed;
         var outcome = await _dispatchOrchestration.DistributeAndFinalizeAsync(request, ct);
-        return outcome.Success;
+        if (!outcome.Success) return DispatchAttemptOutcome.Failed;
+        // TODO [WARNING]: The AlreadyExists check relies on the invariant that AlreadyExists → Success=true
+        // (documented in DistributionResult). If a future distributor variant returns Success=false,
+        // AlreadyExists=true, the AlreadyExists signal is silently swallowed here under the Failed branch
+        // above, causing budget/telemetry miscounting. Consider asserting or enforcing this invariant at
+        // the DistributionResult/DispatchOutcome record level.
+        if (outcome.AlreadyExists) return DispatchAttemptOutcome.AlreadyQueued;
+        return DispatchAttemptOutcome.Dispatched;
     }
 
     /// <summary>

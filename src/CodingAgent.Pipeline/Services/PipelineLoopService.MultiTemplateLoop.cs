@@ -162,6 +162,7 @@ public sealed partial class PipelineLoopService
                 Config = snapshot.Config,
                 MaxRunsPerCycle = snapshot.Config.ClosedLoopMaxRunsPerCycle,
                 ActiveIssueIdentifiers = snapshot.ActiveIssueIdentifiers,
+                ActiveDecompositionCount = snapshot.ActiveDecompositionCount,
                 IssueQueues = issueQueues,
                 PrQueues = prQueues,
                 DecompositionQueues = decompositionQueues,
@@ -609,7 +610,8 @@ public sealed partial class PipelineLoopService
         IReadOnlyList<PipelineJobTemplate> EnabledTemplates,
         IReadOnlyList<PipelineJobTemplate> PollableTemplates,
         IReadOnlyDictionary<string, PipelineJobTemplate> TemplateLookup,
-        HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssueIdentifiers);
+        HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssueIdentifiers,
+        int ActiveDecompositionCount = 0);
 
     /// <summary>
     /// Loads config and templates, reconciles provider caches, then loads active issue identifiers.
@@ -638,13 +640,20 @@ public sealed partial class PipelineLoopService
             // Step 2b: Load active issue identifiers (after cache reconciliation, per original order)
             var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
 
-            // Step 2c: Reconcile stuck work items (after active issue identifier load, per original order)
+            // Step 2c: Load active decomposition count for cross-cycle MaxConcurrentDecompositions enforcement.
+            // Runs in parallel with nothing here — placed after cache reconciliation to match
+            // the original load ordering. On failure, defaults to 0 (fail-open: slightly more
+            // permissive decomposition concurrency but no cycle abort).
+            var activeDecompositionCount = await LoadActiveDecompositionCountAsync(ct);
+
+            // Step 2d: Reconcile stuck work items (after active issue identifier load, per original order)
             await ReconcileStuckWorkItemsAsync(ct);
 
             return new CycleSnapshot(
                 config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
                 templateLookup.AsReadOnly(),
-                activeIssueIdentifiers);
+                activeIssueIdentifiers,
+                activeDecompositionCount);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -765,6 +774,45 @@ public sealed partial class PipelineLoopService
         {
             _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
             return new HashSet<(IssueIdentifier, ProviderConfigId)>();
+        }
+    }
+
+    /// <summary>
+    /// Loads the count of active (Pending/Dispatched/Running) decomposition WorkItems at cycle start.
+    /// Used to enforce <see cref="PipelineConfiguration.MaxConcurrentDecompositions"/> across cycles.
+    /// On failure, returns 0 (fail-open: does not abort the cycle, but see TODO below).
+    /// </summary>
+    // TODO [WARNING]: On API failure this returns 0, which is passed directly into
+    // DispatchRoundRobinRequest.ActiveDecompositionCount. Because the concurrency check is
+    // (activeDecompositionCount + additionalDecompDispatches >= MaxConcurrentDecompositions),
+    // a transient API blip allows up to MaxConcurrentDecompositions *new* dispatches even when
+    // the real count is already at or above the limit. For MaxConcurrentDecompositions=N, a
+    // single failing cycle can over-dispatch by up to N items — not just "one extra" as the
+    // previous comment implied. This is a deliberate availability trade-off; ensure it is
+    // acceptable for the configured MaxConcurrentDecompositions value.
+    private async Task<int> LoadActiveDecompositionCountAsync(CancellationToken ct)
+    {
+        if (_workDistributor is null)
+            return 0;
+
+        try
+        {
+            return await _workDistributor.GetActiveDecompositionCountAsync(ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        // TODO [WARNING]: HttpClient raises TaskCanceledException (a subclass of OperationCanceledException)
+        // on a request timeout even when the passed CancellationToken has NOT been signalled. The guard
+        // above only re-throws when ct.IsCancellationRequested — it does not inspect the exception's
+        // inner CancellationToken. A timed-out HTTP call therefore falls into the catch (Exception ex)
+        // branch below and returns 0 with a warning log, which is consistent with the stated fail-open
+        // intent. However, a systematic connectivity problem (API endpoint unreachable) will silently
+        // disable cross-cycle decomposition enforcement every cycle rather than surfacing via a health
+        // check or alert. Consider tracking consecutive failures and emitting a higher-severity event
+        // (e.g. metric or Error log) after a threshold is exceeded.
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to load active decomposition count — proceeding with 0 (cross-cycle decomposition cap may not be enforced this cycle)");
+            return 0;
         }
     }
 

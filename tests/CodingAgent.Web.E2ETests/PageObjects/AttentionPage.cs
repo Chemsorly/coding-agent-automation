@@ -43,18 +43,16 @@ public sealed class AttentionPage
     /// <summary>Waits until the loading card is gone and section content is visible.</summary>
     public async Task WaitForLoadCompleteAsync()
     {
-        // Wait until the "Loading…" empty card disappears
-        // TODO [WARNING]: If the Attention page renders with no .cockpit-empty elements at all (because all
-        // sections have rows and the blocked-issues section loaded immediately), the condition
-        // !document.querySelector('.cockpit-empty') evaluates to true immediately and this method returns
-        // before Blazor Server has finished its data round-trip, causing subsequent assertions to read stale
-        // page state. A more robust guard would wait for a known stable element (e.g. a section card's
-        // data-testid, or the blocked-count badge) rather than relying solely on the absence of a loading
-        // placeholder.
-        await _page.WaitForFunctionAsync(
-            "() => !document.querySelector('.cockpit-empty') || " +
-            "      ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.includes('Loading'))",
-            null,
+        // Wait for the attention-blocked-count badge to appear in the DOM.
+        // This badge is rendered inside the `else` block of the _loading guard in Attention.razor,
+        // meaning it is only present once _loading = false (the Blazor Server data round-trip is done).
+        // It is always present regardless of how many attention items exist, making it a stable,
+        // deterministic signal that the page has finished its initial render with data — unlike the
+        // previous approach of waiting for the absence of a "Loading…" text, which could fire early
+        // when .cockpit-empty elements contain non-"Loading" text (e.g. "Checking issue dependencies…"
+        // from the blocked-issues section) before the main run-history sections had actually rendered.
+        await _page.WaitForSelectorAsync(
+            "[data-testid='attention-blocked-count']",
             new() { Timeout = DefaultTimeout });
     }
 

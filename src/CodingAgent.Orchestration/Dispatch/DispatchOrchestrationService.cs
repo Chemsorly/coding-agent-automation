@@ -557,7 +557,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             // dispatch mode that is AgentHub.RegisterAgent (the agent connecting with an ActiveJob).
             // Dedup is unaffected: a Pending WorkItem already counts as active
             // (PipelineConstants.ActiveWorkItemStatuses), so the loop will not re-dispatch the issue.
-            return new DispatchOutcome(true, true, null);
+            //
+            // AlreadyExists: propagate the flag so callers (DispatchScheduler) can distinguish a
+            // 409 duplicate-skip from a genuine Pending enqueue and handle budget/telemetry correctly.
+            return new DispatchOutcome(true, true, null) { AlreadyExists = result.AlreadyExists };
         }
 
         // Synchronous dispatch path (non-Pending): item is already Dispatched (K8s Job running).

@@ -30,7 +30,7 @@ internal sealed partial class DispatchScheduler
             ctx.NotifyChange();
 
             var reviewProject = ctx.TemplateProjectLookup.GetValueOrDefault(template.Id);
-            var dispatched = await DispatchViaOrchestrationAsync(
+            var dispatchOutcome = await DispatchViaOrchestrationAsync(
                 async ct =>
                 {
                     var reviewDispatchReq = new ReviewDispatchRequest
@@ -56,9 +56,32 @@ internal sealed partial class DispatchScheduler
                 },
                 stopToken);
 
+            if (dispatchOutcome == DispatchAttemptOutcome.AlreadyQueued)
+            {
+                // 409 — live WorkItem already exists. Do not count as dispatched, do not consume budget.
+                // TODO [WARNING]: ActiveIssueIdentifiers is not updated here, so if a second template
+                // in the same cycle also queues this PR, it will reach PrepareReviewDistributionRequestAsync
+                // and call the API again, receiving a second 409. This is safe (handled correctly) but
+                // results in an extra prepare+distribute round-trip per duplicate per cycle. Consider
+                // adding the identifier to ctx.ActiveIssueIdentifiers on AlreadyQueued to short-circuit
+                // the redundant API call in the second template's turn.
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                    PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                return DispatchAttemptResult.Skip;
+            }
+
+            var dispatched = dispatchOutcome == DispatchAttemptOutcome.Dispatched;
+
             if (dispatched)
+            {
                 _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
                     pr.Identifier, template.Name);
+                // Add to the in-cycle active set so a second template queuing the same PR
+                // in this cycle sees it as already active and skips it.
+                // PR work items are keyed by RepoProviderId (not IssueProviderId), consistent
+                // with how IsIssueAlreadyActive checks PRs.
+                ctx.ActiveIssueIdentifiers.Add((pr.Identifier, template.RepoProviderId));
+            }
 
             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
                 dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));

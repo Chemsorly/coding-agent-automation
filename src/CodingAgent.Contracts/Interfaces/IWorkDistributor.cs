@@ -71,4 +71,20 @@ public interface IWorkDistributor
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Number of stuck items detected and remediated.</returns>
     Task<int> ReconcileStuckItemsAsync(CancellationToken ct) => Task.FromResult(0);
+
+    /// <summary>
+    /// Returns the count of decomposition WorkItems that are currently active
+    /// (Pending, Dispatched, or Running) across all poll cycles.
+    /// Used by <see cref="Services.DispatchScheduler"/> to enforce
+    /// <see cref="Models.PipelineConfiguration.MaxConcurrentDecompositions"/> across cycles.
+    /// </summary>
+    /// <remarks>
+    /// The default implementation returns 0 and is intended for test doubles only.
+    /// Production deployments must use <c>KubernetesWorkDistributor</c> backed by the Pipeline API,
+    /// which queries the database for a real count. Using the default in production silently
+    /// disables cross-cycle enforcement of the decomposition concurrency limit.
+    /// </remarks>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Count of active decomposition work items.</returns>
+    Task<int> GetActiveDecompositionCountAsync(CancellationToken ct) => Task.FromResult(0);
 }
