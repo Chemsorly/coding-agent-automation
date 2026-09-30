@@ -17,6 +17,10 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 /// </summary>
 public class VerifyBaselineStepSpanTests : IDisposable
 {
+    // Unique per test-class instance so parallel test runs don't cross-contaminate
+    // the shared ActivitySource listener (process-global static state).
+    private readonly string _runId = Guid.NewGuid().ToString();
+
     private readonly ActivityListener _listener;
     private readonly List<Activity> _activities = [];
 
@@ -46,29 +50,27 @@ public class VerifyBaselineStepSpanTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_AlwaysEmitsVerifyBaselineSpan()
     {
-        var runId = $"span-always-{Guid.NewGuid():N}";
-        var context = BuildContext(runId: runId, preResolvedQgcs: [CreateQgc()]);
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
         _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), runId),
+        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId),
             "VerifyBaselineStep must emit a VerifyBaseline span");
     }
 
     [Fact]
     public async Task ExecuteAsync_SpanHasPipelineRunIdTag()
     {
-        var runId = $"span-tags-{Guid.NewGuid():N}";
-        var context = BuildContext(runId: runId, preResolvedQgcs: [CreateQgc()]);
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
         _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), runId));
-        span.GetTagItem("pipeline.run_id").Should().Be(runId);
+        var span = GetMySpan();
+        span.GetTagItem("pipeline.run_id").Should().Be(_runId);
         span.GetTagItem("pipeline.issue").Should().NotBeNull();
     }
 
@@ -76,16 +78,15 @@ public class VerifyBaselineStepSpanTests : IDisposable
     public async Task ExecuteAsync_HealthCheckFails_SetsErrorOnVerifyBaselineSpan()
     {
         // Fatal failure: agent health check throws → span must have Error status.
-        var runId = $"span-hc-fail-{Guid.NewGuid():N}";
         var agentProviderMock = new Mock<IAgentProvider>();
         agentProviderMock.Setup(a => a.ValidateAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("agent binary not found"));
 
-        var context = BuildContext(runId: runId, agentProviderMock: agentProviderMock, preResolvedQgcs: [CreateQgc()]);
+        var context = BuildContext(agentProviderMock: agentProviderMock, preResolvedQgcs: [CreateQgc()]);
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), runId));
+        var span = GetMySpan();
         span.Status.Should().Be(ActivityStatusCode.Error,
             "a fatal agent health-check failure must set Error on the VerifyBaseline span");
         span.StatusDescription.Should().Contain("agent binary not found");
@@ -95,14 +96,13 @@ public class VerifyBaselineStepSpanTests : IDisposable
     public async Task ExecuteAsync_WorkspaceBaselineThrows_NoErrorOnVerifyBaselineSpan()
     {
         // Non-fatal failure: workspace baseline check throws → span must NOT have Error status.
-        var runId = $"span-ws-noerr-{Guid.NewGuid():N}";
-        var context = BuildContext(runId: runId, preResolvedQgcs: [CreateQgc()]);
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
         _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("build tool not found"));
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), runId));
+        var span = GetMySpan();
         span.Status.Should().NotBe(ActivityStatusCode.Error,
             "a non-critical workspace baseline failure must NOT set Error on the span");
     }
@@ -111,14 +111,13 @@ public class VerifyBaselineStepSpanTests : IDisposable
     public async Task ExecuteAsync_WorkspaceBaselineThrows_AddsNonCriticalExceptionEvent()
     {
         // Non-fatal failure: workspace baseline check throws → exception event with pipeline.non_critical=true.
-        var runId = $"span-ws-evt-{Guid.NewGuid():N}";
-        var context = BuildContext(runId: runId, preResolvedQgcs: [CreateQgc()]);
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
         _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("compilation failed"));
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), runId));
+        var span = GetMySpan();
         var evt = span.Events.Should().ContainSingle(e => e.Name == "exception").Which;
         evt.Tags.Should().Contain(t => t.Key == "pipeline.non_critical" && true.Equals(t.Value));
     }
@@ -126,14 +125,13 @@ public class VerifyBaselineStepSpanTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_HealthCheckSucceeds_SpanHasNoErrorStatus()
     {
-        var runId = $"span-hc-ok-{Guid.NewGuid():N}";
-        var context = BuildContext(runId: runId, preResolvedQgcs: [CreateQgc()]);
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
         _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreatePassingReport());
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        var span = _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), runId));
+        var span = GetMySpan();
         span.Status.Should().NotBe(ActivityStatusCode.Error,
             "a healthy baseline must not set Error on the span");
         span.Events.Should().BeEmpty();
@@ -141,14 +139,21 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Returns the VerifyBaseline activity emitted by this test's run, identified by the
+    /// unique <see cref="_runId"/>. Filters out activities leaked from parallel test classes
+    /// that also invoke VerifyBaselineStep (e.g. VerifyBaselineStepTests).
+    /// </summary>
+    private Activity GetMySpan() =>
+        _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId));
+
     private PipelineStepContext BuildContext(
-        string runId,
         Mock<IAgentProvider>? agentProviderMock = null,
         IReadOnlyList<QualityGateConfiguration>? preResolvedQgcs = null)
     {
         var run = new PipelineRun
         {
-            RunId = runId,
+            RunId = _runId,
             IssueIdentifier = "42",
             IssueTitle = "Test",
             IssueProviderConfigId = "ip",

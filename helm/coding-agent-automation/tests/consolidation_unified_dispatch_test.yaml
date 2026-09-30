@@ -1,0 +1,42 @@
+# helm unittest suite for consolidation unifiedDispatch removal (issue #3151).
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Acceptance criteria:
+#   1. web deployment env list does not contain Consolidation__UnifiedDispatch__Enabled
+#   2. api deployment env list does not contain Consolidation__UnifiedDispatch__Enabled
+
+suite: consolidation unifiedDispatch env var removal
+
+templates:
+  - templates/web-deployment.yaml
+  - templates/api-deployment.yaml
+
+# Minimum values required to render dependent templates without failure.
+# Matches the pattern used by otel_test.yaml.
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  secrets.agentApiKey: "test-key"
+  api.enabled: true
+  scheduler.enabled: true
+  jobController.enabled: true
+
+tests:
+
+  # ── AC1: Consolidation__UnifiedDispatch__Enabled absent from web deployment ──
+  - it: web deployment does not contain Consolidation__UnifiedDispatch__Enabled env var
+    template: templates/web-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Consolidation__UnifiedDispatch__Enabled
+
+  # ── AC2: Consolidation__UnifiedDispatch__Enabled absent from api deployment ──
+  - it: api deployment does not contain Consolidation__UnifiedDispatch__Enabled env var
+    template: templates/api-deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Consolidation__UnifiedDispatch__Enabled
