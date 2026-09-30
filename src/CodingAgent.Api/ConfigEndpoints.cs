@@ -396,12 +396,10 @@ public static class ConfigEndpoints
         CheckIntRange(project.MaxOpenIssuesForContext, nameof(PipelineProject.MaxOpenIssuesForContext), 1, 200, errors);
         CheckIntRange(project.MaxRefactoringProposals, nameof(PipelineProject.MaxRefactoringProposals), 1, 10, errors);
         // FeedbackTimeoutSeconds: must be positive (> 0); no upper cap in the domain
-        // TODO: int.MaxValue is a leaky abstraction — FeedbackTimeoutSeconds and MaxConsolidationDispatchRetries have no
-        // meaningful upper bound in the current domain model, but accepting int.MaxValue (a ~68-year timeout) is unrealistic.
-        // Replace int.MaxValue with explicit domain-appropriate caps once those limits are defined. (Review finding: ConfigEndpoints.cs:410)
+        // TODO: int.MaxValue is a leaky abstraction — FeedbackTimeoutSeconds has no meaningful upper bound in the current
+        // domain model, but accepting int.MaxValue (a ~68-year timeout) is unrealistic.
+        // Replace int.MaxValue with an explicit domain-appropriate cap once a limit is defined. (Review finding: ConfigEndpoints.cs:410)
         CheckIntRange(project.FeedbackTimeoutSeconds, nameof(PipelineProject.FeedbackTimeoutSeconds), 1, int.MaxValue, errors);
-        // MaxConsolidationDispatchRetries: retry count, must be non-negative
-        CheckIntRange(project.MaxConsolidationDispatchRetries, nameof(PipelineProject.MaxConsolidationDispatchRetries), 0, int.MaxValue, errors);
 
         return errors;
     }

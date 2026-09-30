@@ -46,9 +46,9 @@ Agent Profiles map label sets to agent provider configs (model, timeout, CLI pat
 
 | Profile | Match Labels | Effect |
 |---------|-------------|--------|
-| Kiro .NET 10 Agent | `kiro, dotnet, dotnet10` | Uses Opus model, 30min timeout |
-| Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model, 20min timeout |
-| Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model, 30min timeout |
+| Kiro .NET 10 Agent | `kiro, dotnet, dotnet10` | Uses Opus model |
+| Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model |
+| Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model |
 
 Resolution: most specific match wins (highest label count). A profile with empty MatchLabels acts as a default/catch-all.
 

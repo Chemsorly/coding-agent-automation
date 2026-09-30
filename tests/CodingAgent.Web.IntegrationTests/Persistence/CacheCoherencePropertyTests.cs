@@ -49,7 +49,7 @@ public class CacheCoherencePropertyTests : IDisposable
     /// <summary>
     /// Property 14: Cache Coherence.
     /// For any random PipelineConfiguration, saving via the store and loading it back
-    /// yields semantically equivalent values (MaxRetries, AgentTimeout, IssuePageSize).
+    /// yields semantically equivalent values (MaxRetries, AgentTimeout).
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
     public async Task<bool> SaveThenLoad_ProducesSameValues(PipelineConfiguration config)
@@ -66,7 +66,6 @@ public class CacheCoherencePropertyTests : IDisposable
         // Verify key properties survive round-trip through JSON serialization
         return loaded.MaxRetries == config.MaxRetries
             && loaded.AgentTimeout == config.AgentTimeout
-            && loaded.IssuePageSize == config.IssuePageSize
             && loaded.AnalysisReviewEnabled == config.AnalysisReviewEnabled
             && loaded.AcceptanceCriteriaEnabled == config.AcceptanceCriteriaEnabled
             && loaded.BaselineHealthCheckEnabled == config.BaselineHealthCheckEnabled;
@@ -123,7 +122,7 @@ public class CacheCoherencePropertyTests : IDisposable
 
 /// <summary>
 /// FsCheck arbitrary generators for PipelineConfiguration (Property 14).
-/// Generates configs with randomized MaxRetries, AgentTimeout, IssuePageSize, and boolean flags.
+/// Generates configs with randomized MaxRetries, AgentTimeout, and boolean flags.
 /// </summary>
 public class PipelineConfigArbitraries
 {
@@ -131,7 +130,6 @@ public class PipelineConfigArbitraries
     {
         var gen = from maxRetries in Gen.Choose(0, 10)
                   from timeoutMinutes in Gen.Choose(1, 120)
-                  from pageSize in Gen.Choose(1, 100)
                   from analysisReview in Gen.Elements(true, false)
                   from acceptanceCriteria in Gen.Elements(true, false)
                   from baselineHealth in Gen.Elements(true, false)
@@ -139,7 +137,6 @@ public class PipelineConfigArbitraries
                   {
                       MaxRetries = maxRetries,
                       AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
-                      IssuePageSize = pageSize,
                       AnalysisReviewEnabled = analysisReview,
                       AcceptanceCriteriaEnabled = acceptanceCriteria,
                       BaselineHealthCheckEnabled = baselineHealth

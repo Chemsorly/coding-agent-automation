@@ -38,8 +38,9 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Agent Routing", cut.Markup);
         Assert.Contains("Brain Repository", cut.Markup);
-        Assert.Contains("Agent Health Monitoring", cut.Markup);
         Assert.Contains("Buffer Capacities", cut.Markup);
+        // "Agent Health Monitoring" section was removed in #3149 — heartbeat/disconnect settings
+        // had no effect at runtime.
     }
 
     [Fact]
@@ -49,15 +50,13 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             p.Add(s => s.ConfigClient, _mockStore.Object));
         Assert.Contains("Default Required Agent Labels", cut.Markup);
         Assert.Contains("Brain Push Max Retries", cut.Markup);
-        Assert.Contains("Agent Disconnect Grace Period", cut.Markup);
-        Assert.Contains("Agent Busy Progress Timeout", cut.Markup);
-        Assert.Contains("Heartbeat Sweep Interval", cut.Markup);
-        Assert.Contains("Heartbeat Timeout", cut.Markup);
         Assert.Contains("Output Buffer Capacity", cut.Markup);
         Assert.Contains("Output Lines Capacity", cut.Markup);
         Assert.Contains("Chat History Capacity", cut.Markup);
         Assert.Contains("Quality Gate History Capacity", cut.Markup);
         Assert.Contains("Retry Errors Capacity", cut.Markup);
+        // Removed in #3149: AgentDisconnectGracePeriod, AgentBusyProgressTimeout,
+        // HeartbeatSweepIntervalSeconds, HeartbeatTimeoutSeconds
     }
 
     [Fact]
@@ -68,10 +67,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
             {
                 DefaultRequiredAgentLabels = "kiro,dotnet",
                 BrainPushMaxRetries = 5,
-                AgentDisconnectGracePeriod = TimeSpan.FromMinutes(10),
-                AgentBusyProgressTimeout = TimeSpan.FromMinutes(90),
-                HeartbeatSweepIntervalSeconds = 45,
-                HeartbeatTimeoutSeconds = 120,
                 OutputBufferCapacity = 20000,
                 OutputLinesCapacity = 8000,
                 ChatHistoryCapacity = 300,
@@ -87,10 +82,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
 
         var numberInputs = cut.FindAll("input[type='number']");
         Assert.Contains(numberInputs, i => i.GetAttribute("value") == "5");
-        Assert.Contains(numberInputs, i => i.GetAttribute("value") == "10");
-        Assert.Contains(numberInputs, i => i.GetAttribute("value") == "90");
-        Assert.Contains(numberInputs, i => i.GetAttribute("value") == "45");
-        Assert.Contains(numberInputs, i => i.GetAttribute("value") == "120");
         Assert.Contains(numberInputs, i => i.GetAttribute("value") == "20000");
     }
 
@@ -156,10 +147,6 @@ public class PipelineAdvancedSectionComponentTests : BunitContext
         Assert.NotNull(saved);
         Assert.Null(saved!.DefaultRequiredAgentLabels);
         Assert.Equal(3, saved.BrainPushMaxRetries);
-        Assert.Equal(TimeSpan.FromMinutes(5), saved.AgentDisconnectGracePeriod);
-        Assert.Equal(TimeSpan.FromMinutes(60), saved.AgentBusyProgressTimeout);
-        Assert.Equal(60, saved.HeartbeatSweepIntervalSeconds);
-        Assert.Equal(90, saved.HeartbeatTimeoutSeconds);
         Assert.Equal(10000, saved.OutputBufferCapacity);
         Assert.Equal(5000, saved.OutputLinesCapacity);
         Assert.Equal(200, saved.ChatHistoryCapacity);

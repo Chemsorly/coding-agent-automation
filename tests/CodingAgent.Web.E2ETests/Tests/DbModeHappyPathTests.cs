@@ -167,9 +167,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(1),
-            HeartbeatTimeoutSeconds = 2,
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
         }, CancellationToken.None);
 
         await SeedTestDataAsync("45", "Disconnect issue");
@@ -189,9 +187,7 @@ public sealed class DbModeHappyPathTests : HeadlessE2ETestBase
         // Disconnect the agent (dispose closes the connection)
         await agent.DisposeAsync();
 
-        // Wait for HeartbeatMonitor to detect disconnect and fail the run
-        // HeartbeatSweepIntervalSeconds=5 (set in InMemoryConfigurationStore defaults),
-        // grace period is 1s, so detection takes at most ~12s.
+        // FakeJobController uses a built-in 2s grace period, so detection takes at most ~12s.
         var failed = await WaitForWorkItemStatusAsync(
             workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
         Assert.Equal(WorkItemStatus.Failed, failed.Status);

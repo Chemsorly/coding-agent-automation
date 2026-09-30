@@ -31,7 +31,6 @@ public class PipelineConfigurationTests
         {
             MaxRetries = 7,
             MaxAnalysisRetries = 4,
-            IssuePageSize = 50,
             AgentTimeout = TimeSpan.FromMinutes(45),
             WorkspaceBaseDirectory = "/custom/workspaces",
             CodeReview = new CodeReviewConfiguration
@@ -70,11 +69,6 @@ public class PipelineConfigurationTests
             PipelineInjectedPaths = new[] { ".injected" },
             AnalysisCommitThreshold = 50,
             FailedWorkspaceRetentionDays = 14,
-            LastUsedProviderIds = new Dictionary<string, string>
-            {
-                ["issue"] = "ip-custom",
-                ["repository"] = "rp-custom",
-            },
             BrainReadOnly = true,
             ClosedLoopAutoStart = true,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
@@ -85,15 +79,11 @@ public class PipelineConfigurationTests
             ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(10),
             DefaultRequiredAgentLabels = "kiro,dotnet",
             BrainPushMaxRetries = 5,
-            AgentDisconnectGracePeriod = TimeSpan.FromMinutes(10),
-            AgentBusyProgressTimeout = TimeSpan.FromMinutes(90),
             OutputBufferCapacity = 20_000,
             OutputLinesCapacity = 8_000,
             ChatHistoryCapacity = 300,
             QualityGateHistoryCapacity = 75,
             RetryErrorsCapacity = 150,
-            HeartbeatSweepIntervalSeconds = 90,
-            HeartbeatTimeoutSeconds = 120,
             OrphanedLabelSweepIntervalMinutes = 60,
             MaxRefactoringProposals = 5,
             HotspotAnalysisLookback = TimeSpan.FromDays(180),
@@ -112,7 +102,6 @@ public class PipelineConfigurationTests
             ModelFetchTimeoutSeconds = 180,
             HousekeepingConcurrencyLimit = 2,
             HousekeepingBranchCleanupIntervalMinutes = 90,
-            MaxConsolidationDispatchRetries = 3,
             PipelineRunRetentionCount = 100,
             WorkItemRetentionCount = 200,
             DbRetentionSweepInterval = TimeSpan.FromHours(12),
@@ -142,7 +131,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(77,
+        keyPropertyCount.Should().Be(70,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -180,16 +169,12 @@ public class PipelineConfigurationTests
         // Agent sub-config defaults
         config.DefaultRequiredAgentLabels.Should().BeNull();
         config.BrainPushMaxRetries.Should().Be(3);
-        config.AgentDisconnectGracePeriod.Should().Be(PipelineConstants.DefaultAgentDisconnectGracePeriod);
-        config.AgentBusyProgressTimeout.Should().Be(PipelineConstants.DefaultAgentBusyProgressTimeout);
         config.OutputBufferCapacity.Should().Be(PipelineConstants.DefaultOutputBufferCapacity);
         config.OutputLinesCapacity.Should().Be(PipelineConstants.DefaultOutputLinesCapacity);
         config.ChatHistoryCapacity.Should().Be(PipelineConstants.DefaultChatHistoryCapacity);
         config.QualityGateHistoryCapacity.Should().Be(PipelineConstants.DefaultQualityGateHistoryCapacity);
         config.RetryErrorsCapacity.Should().Be(PipelineConstants.DefaultRetryErrorsCapacity);
         config.BrainReadOnly.Should().BeFalse();
-        config.HeartbeatSweepIntervalSeconds.Should().Be(PipelineConstants.DefaultHeartbeatSweepIntervalSeconds);
-        config.HeartbeatTimeoutSeconds.Should().Be(PipelineConstants.DefaultHeartbeatTimeoutSeconds);
         config.OrphanedLabelSweepIntervalMinutes.Should().Be(PipelineConstants.DefaultOrphanedLabelSweepIntervalMinutes);
 
         // Workspace sub-config defaults
@@ -200,7 +185,6 @@ public class PipelineConfigurationTests
         config.BlacklistedPaths.Should().BeEquivalentTo(s_AgentBrainPaths);
 
         // Direct properties with defaults
-        config.IssuePageSize.Should().Be(25);
         config.AnalysisReviewEnabled.Should().BeTrue();
         config.AcceptanceCriteriaEnabled.Should().BeTrue();
         config.BaselineHealthCheckEnabled.Should().BeTrue();
@@ -216,7 +200,6 @@ public class PipelineConfigurationTests
         config.RefactoringOutcomeLookback.Should().Be(TimeSpan.FromDays(90));
         config.AnalysisCommitThreshold.Should().Be(PipelineConstants.DefaultAnalysisCommitThreshold);
         config.PipelineInjectedPaths.Should().BeEmpty();
-        config.LastUsedProviderIds.Should().BeEmpty();
 
         // Image settings defaults
         config.MaxIssueImages.Should().Be(10);

@@ -99,7 +99,6 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
             from failedRetentionDays in Gen.Choose(0, 30)
             from analysisEnabled in Gen.Elements(true, false)
             from closedLoopAutoStart in Gen.Elements(true, false)
-            from heartbeatSweep in Gen.Choose(30, 120)
             select new PipelineConfiguration
             {
                 MaxRetries = maxRetries,
@@ -109,7 +108,6 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
                 FailedWorkspaceRetentionDays = failedRetentionDays,
                 AnalysisReviewEnabled = analysisEnabled,
                 ClosedLoopAutoStart = closedLoopAutoStart,
-                HeartbeatSweepIntervalSeconds = heartbeatSweep
             };
 
         return Prop.ForAll(gen.ToArbitrary(), (PipelineConfiguration original) =>
@@ -123,7 +121,6 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
             d.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
             d.AnalysisReviewEnabled.Should().Be(original.AnalysisReviewEnabled);
             d.ClosedLoopAutoStart.Should().Be(original.ClosedLoopAutoStart);
-            d.HeartbeatSweepIntervalSeconds.Should().Be(original.HeartbeatSweepIntervalSeconds);
         });
     }
 

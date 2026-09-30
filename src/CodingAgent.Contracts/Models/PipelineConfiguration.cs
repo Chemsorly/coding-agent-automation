@@ -230,19 +230,9 @@ public sealed record PipelineConfiguration
     [ProjectOverridable(Order = 27)]
     public bool BrainReadOnly { get; init; }
 
-    /// <summary>
-    /// How long to wait after an agent disconnects before marking its active run as Failed.
-    /// Default: 5 minutes.
-    /// </summary>
-    [Key(3)]
-    public TimeSpan AgentDisconnectGracePeriod { get; init; } = PipelineConstants.DefaultAgentDisconnectGracePeriod;
+    // Key(3) retired — AgentDisconnectGracePeriod removed — do NOT reuse this Key index
 
-    /// <summary>
-    /// How long a busy agent can go without pipeline step progress before being marked as stuck.
-    /// Default: 60 minutes.
-    /// </summary>
-    [Key(2)]
-    public TimeSpan AgentBusyProgressTimeout { get; init; } = PipelineConstants.DefaultAgentBusyProgressTimeout;
+    // Key(2) retired — AgentBusyProgressTimeout removed — do NOT reuse this Key index
 
     /// <summary>
     /// Maximum number of output lines to retain per active pipeline run (ring buffer capacity).
@@ -279,19 +269,9 @@ public sealed record PipelineConfiguration
     [Key(49)]
     public int RetryErrorsCapacity { get; init; } = PipelineConstants.DefaultRetryErrorsCapacity;
 
-    /// <summary>
-    /// Interval in seconds between heartbeat monitor sweeps. Requires restart to take effect.
-    /// Default: 60.
-    /// </summary>
-    [Key(29)]
-    public int HeartbeatSweepIntervalSeconds { get; init; } = PipelineConstants.DefaultHeartbeatSweepIntervalSeconds;
+    // Key(29) retired — HeartbeatSweepIntervalSeconds removed — do NOT reuse this Key index
 
-    /// <summary>
-    /// Seconds without a heartbeat before an agent is considered stale.
-    /// Default: 90.
-    /// </summary>
-    [Key(30)]
-    public int HeartbeatTimeoutSeconds { get; init; } = PipelineConstants.DefaultHeartbeatTimeoutSeconds;
+    // Key(30) retired — HeartbeatTimeoutSeconds removed — do NOT reuse this Key index
 
     /// <summary>
     /// Interval in minutes between orphaned label recovery sweeps.
@@ -316,8 +296,7 @@ public sealed record PipelineConfiguration
 
     // ── Analysis & Review settings ──────────────────────────────────────
 
-    [Key(33)]
-    public int IssuePageSize { get; init; } = 25;
+    // Key(33) retired — IssuePageSize removed — do NOT reuse this Key index
 
     [Key(22)]
     [ProjectOverridable(Order = 10, DeepMerge = true)]
@@ -428,14 +407,7 @@ public sealed record PipelineConfiguration
         }
     } = PipelineConstants.DefaultAnalysisCommitThreshold;
 
-    /// <summary>
-    /// Records the last-used provider ID for each provider selection per pipeline.
-    /// Keys: "issue", "repository", "agent", "brain", "pipeline".
-    /// Values: provider config IDs.
-    /// Pre-populates dropdowns on subsequent pipeline runs.
-    /// </summary>
-    [Key(34)]
-    public IReadOnlyDictionary<string, string> LastUsedProviderIds { get; init; } = new Dictionary<string, string>();
+    // Key(34) retired — LastUsedProviderIds removed — do NOT reuse this Key index
 
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
@@ -615,15 +587,7 @@ public sealed record PipelineConfiguration
 
     // ── Consolidation dispatch settings ──────────────────────────────────────
 
-    /// <summary>
-    /// Maximum number of times the drain service will attempt to dispatch a consolidation job
-    /// to an agent before giving up and transitioning the run to <c>Failed</c>.
-    /// Non-consolidation jobs are not subject to this limit.
-    /// Default: 5.
-    /// </summary>
-    [Key(74)]
-    [ProjectOverridable(Order = 30)]
-    public int MaxConsolidationDispatchRetries { get; init; } = 5;
+    // Key(74) retired — MaxConsolidationDispatchRetries removed — do NOT reuse this Key index
 
     // ── DB retention settings ─────────────────────────────────────────────
 

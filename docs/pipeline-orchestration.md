@@ -270,6 +270,7 @@ The `OrphanedLabelRecoveryService` (in `CodingAgent.Scheduler`) is a background 
 - The orchestrator crashes mid-run and restarts
 - A run is cleaned up from memory but the label swap to a terminal state fails
 - An agent disconnects and the run expires after `agentDisconnectGracePeriod` but label cleanup didn't complete
+<!-- TODO: agentDisconnectGracePeriod was removed from PipelineConfiguration in #3149 (nothing read it). Update this bullet to remove the reference to agentDisconnectGracePeriod as a configurable/effective setting. -->
 
 ### Behavior
 

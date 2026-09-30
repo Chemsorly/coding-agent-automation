@@ -75,9 +75,7 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(1),
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
         }, CancellationToken.None);
 
         await SeedIssueAndProfileAsync("2001", "Completion vs timeout race");

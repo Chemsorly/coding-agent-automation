@@ -78,12 +78,6 @@ public sealed record PipelineProject
     public int? AnalysisCommitThreshold { get; init; }
 
     /// <summary>
-    /// Override for <see cref="PipelineConfiguration.MaxConsolidationDispatchRetries"/>.
-    /// Null = inherit from global configuration.
-    /// </summary>
-    public int? MaxConsolidationDispatchRetries { get; init; }
-
-    /// <summary>
     /// Override for <see cref="PipelineConfiguration.CiCancelledMoveMaxRetries"/>.
     /// Null = inherit from global configuration.
     /// </summary>
