@@ -1080,4 +1080,89 @@ public class ConsolidationPageComponentTests : BunitContext
         Assert.Contains("queued", msg.TextContent, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("consolidation-status-error", msg.ClassName ?? "");
     }
+
+    // ═══ Issue #3148: Refactoring modal shows effective (project-overridden) values ═══
+
+    [Fact]
+    public void RefactoringModal_ShowsProjectOverrideValues_WhenProjectHasOverrides()
+    {
+        // Arrange: global config has defaults (MaxRefactoringProposals=3, RefactoringReviewEnabled=true).
+        // The project owning template "t1" overrides both to non-default values.
+        var template = CreateTemplate(id: "t1", issueProviderId: "issue-1", repoProviderId: "repo-1");
+        var globalConfig = new PipelineConfiguration(); // MaxRefactoringProposals=3, RefactoringReviewEnabled=true
+        RegisterServices(templates: [template], pipelineConfig: globalConfig);
+
+        // Override GetProjectsAsync AFTER RegisterServices — Moq last-wins replaces the setup
+        // for ALL callers of this mock (LoadDataAsync, LoadReadOnlyBrainTemplatesAsync, OpenRefactoringModal).
+        // Safe: LoadReadOnlyBrainTemplatesAsync only checks BrainReadOnly, which is not overridden here.
+        var projectWithOverrides = new PipelineProject
+        {
+            Id = WellKnownIds.DefaultProjectId,
+            Name = "Default",
+            TemplateIds = ["t1"],
+            Enabled = true,
+            MaxRefactoringProposals = 7,
+            RefactoringReviewEnabled = false
+        };
+        _mockConfigClient
+            .Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject> { projectWithOverrides });
+
+        var cut = Render<Consolidation>();
+
+        var refactoringButton = cut.FindAll(".btn-trigger")
+            .First(b => b.TextContent.Contains("Refactoring Scan"));
+        refactoringButton.Click();
+
+        var modal = cut.Find(".modal-card");
+
+        // Effective values from project overrides
+        // TODO: [WARNING] These Assert.Contains checks scan the entire modal TextContent. A coincidental "7"
+        // or "Disabled" in any other modal element (template name, title, etc.) would produce a false pass.
+        // Scope assertions to the specific .refactoring-modal-param-value span for each field.
+        // (Correctness review + TestQuality review, issue #3148)
+        Assert.Contains("7", modal.TextContent);        // overridden MaxRefactoringProposals
+        Assert.Contains("Disabled", modal.TextContent); // overridden RefactoringReviewEnabled
+        Assert.Contains("90 days", modal.TextContent);  // HotspotAnalysisLookback is global-only, unchanged
+
+        // Override indicators present for both overridden fields
+        Assert.Equal(2, modal.QuerySelectorAll(".refactoring-modal-param-override").Length);
+    }
+
+    // TODO: [WARNING] A partial-override scenario is not tested: one of MaxRefactoringProposals or
+    // RefactoringReviewEnabled overridden while the other is not. Without this case, the per-field
+    // independence of the override indicator logic is untested. A bug where both indicators are set
+    // whenever either field is overridden would not be caught. Add a test covering this case.
+    // (TestQuality review, issue #3148)
+
+    [Fact]
+    public void RefactoringModal_ShowsGlobalValues_WhenNoProjectOverrides()
+    {
+        // Arrange: non-default global value (5) so we can distinguish "showing global" from "showing default".
+        // RegisterServices creates a default project with all nullable overrides null — no extra setup needed.
+        var template = CreateTemplate(id: "t1", issueProviderId: "issue-1", repoProviderId: "repo-1");
+        var globalConfig = new PipelineConfiguration { MaxRefactoringProposals = 5 };
+        RegisterServices(templates: [template], pipelineConfig: globalConfig);
+
+        var cut = Render<Consolidation>();
+
+        var refactoringButton = cut.FindAll(".btn-trigger")
+            .First(b => b.TextContent.Contains("Refactoring Scan"));
+        refactoringButton.Click();
+
+        var modal = cut.Find(".modal-card");
+
+        // Global value shown (not the default 3, but the configured 5)
+        // TODO: [WARNING] Assert.Contains("5", ...) scans the entire modal TextContent. Scope to the specific
+        // .refactoring-modal-param-value span to avoid false passes from incidental "5" in other elements.
+        // (TestQuality review, issue #3148)
+        Assert.Contains("5", modal.TextContent);
+
+        // TODO: [WARNING] RefactoringReviewEnabled global value ("Enabled") is not asserted here.
+        // A regression breaking its display would not be caught. Add: Assert.Contains("Enabled", modal.TextContent)
+        // or scope to the relevant .refactoring-modal-param-value span. (TestQuality review, issue #3148)
+
+        // No override indicators when no project overrides are active
+        Assert.Empty(modal.QuerySelectorAll(".refactoring-modal-param-override"));
+    }
 }

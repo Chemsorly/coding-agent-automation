@@ -67,12 +67,15 @@ public class PipelineStepRunnerSpanTests : IDisposable
 
         await PipelineStepRunner.ExecuteAsync([step1, step2, step3], context, CancellationToken.None);
 
-        _activities.Should().Contain(a => a.DisplayName == "Step Alpha");
-        _activities.Should().Contain(a => a.DisplayName == "Step Beta");
-        _activities.Should().Contain(a => a.DisplayName == "Step Gamma");
+        // Snapshot the list to avoid "collection was modified" races with the global
+        // ActivityListener's ActivityStopped callback firing on a background thread.
+        var snapshot = _activities.ToList();
+        snapshot.Should().Contain(a => a.DisplayName == "Step Alpha");
+        snapshot.Should().Contain(a => a.DisplayName == "Step Beta");
+        snapshot.Should().Contain(a => a.DisplayName == "Step Gamma");
         // Filter by run_id to avoid counting Step spans from other tests running in parallel
         // that share the same global ActivityListener.
-        _activities.Count(a => a.DisplayName.StartsWith("Step ")
+        snapshot.Count(a => a.DisplayName.StartsWith("Step ")
             && Equals(a.GetTagItem("pipeline.run_id"), "run-multi")).Should().Be(3);
     }
 
