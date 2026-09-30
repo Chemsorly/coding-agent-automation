@@ -522,6 +522,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         _activeWatchers.TryRemove(agentId.Value, out _);
 
+        // Deregister on every clean exit path (completed, shutdown, faulted).
+        // ForceDeleteAndCleanupAsync also calls Deregister when it wins the Cleaned CAS;
+        // since only one path wins the CAS, Deregister is called exactly once across all paths.
+        _registry.Deregister(agentId);
+
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
