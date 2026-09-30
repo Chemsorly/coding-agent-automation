@@ -5,10 +5,12 @@ using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Moq;
 using Serilog;
 
 namespace CodingAgent.Api.IntegrationTests;
@@ -187,6 +189,85 @@ public sealed class ApiStartupSeedingTests : IDisposable
         await using var db = _dbFactory.CreateDbContext();
         var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
         (await db.Projects.CountAsync(p => p.Id == defaultGuid)).Should().Be(1);
+    }
+
+    // ── AC3: RunApiMigrationsAsync wires RunStartupSeedingAsync correctly ─────────
+
+    [Fact]
+    public async Task RunApiMigrationsAsync_WithInMemoryDb_SeedsDefaultProjectAndReviewerConfigs()
+    {
+        // Arrange: exercise RunApiMigrationsAsync lines 60-62 by passing a pre-built
+        // DatabaseStartupService that uses InMemory EF + in-process lock.
+        // The 'startupServiceOverride' parameter bypasses the internal 'new DatabaseStartupService()'
+        // construction, avoiding HandleMigrationsAsync's relational-provider requirement while still
+        // executing all three service calls (WaitForDatabase, HandleMigrations, RunStartupSeeding)
+        // through the extension method itself.
+        var dbName = $"RunApiMigrations-{Guid.NewGuid():N}";
+        var dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+
+        using var dbSetup = new InMemoryPipelineDbContext(dbOptions);
+        dbSetup.Database.EnsureCreated();
+
+        var factory = new InMemoryDbContextFactory(dbOptions);
+
+        var probeMock = new Mock<IDatabaseProbe>();
+        probeMock.Setup(p => p.ProbeAsync(It.IsAny<CancellationToken>()))
+                 .Returns(Task.CompletedTask);
+
+        var services = new ServiceCollection();
+        services.AddDistributedLockProvider(connectionString: null); // in-process
+        var sp = services.BuildServiceProvider();
+        var lockProvider = sp.GetRequiredService<IDistributedLockProvider>();
+
+        // Config with MigrateOnStartup=false — InMemory EF returns empty pending migrations.
+        var svcConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Database:MigrateOnStartup"] = "false"
+            })
+            .Build();
+
+        var startupService = new DatabaseStartupService(
+            factory, lockProvider, svcConfig, new LoggerConfiguration().CreateLogger(), probeMock.Object);
+
+        // Build a minimal WebApplication — its services are only used for the DI fallback
+        // path in RunApiMigrationsAsync (not reached when startupServiceOverride is supplied).
+        var builder = WebApplication.CreateBuilder();
+        builder.Services.AddDbContextFactory<PipelineDbContext>(o =>
+            o.UseInMemoryDatabase(dbName)
+             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning)));
+        builder.Services.AddDistributedLockProvider(connectionString: null);
+        await using var app = builder.Build();
+
+        var appConfig = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                // Non-empty host so DatabaseConnectionResolver.Resolve returns non-null.
+                ["Database:Host"]            = "localhost",
+                ["Database:SkipStartupInit"] = "false"
+            })
+            .Build();
+
+        // Act: passes startupServiceOverride so HandleMigrationsAsync uses InMemory EF
+        // (which reports 0 pending migrations with MigrateOnStartup=false via the mock probe).
+        await app.RunApiMigrationsAsync(appConfig, startupService);
+
+        // Assert: seeding ran through RunStartupSeedingAsync
+        await using var db = factory.CreateDbContext();
+        var defaultGuid = Guid.Parse(WellKnownIds.DefaultProjectId);
+        var project = await db.Projects.FindAsync(defaultGuid);
+        project.Should().NotBeNull(
+            "RunApiMigrationsAsync must seed the Default project via RunStartupSeedingAsync");
+
+        var hasReviewers = await db.ReviewerConfigs.AnyAsync();
+        hasReviewers.Should().BeTrue(
+            "RunApiMigrationsAsync must seed reviewer configs via RunStartupSeedingAsync");
+
+        using var cleanup = new InMemoryPipelineDbContext(dbOptions);
+        cleanup.Database.EnsureDeleted();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────────

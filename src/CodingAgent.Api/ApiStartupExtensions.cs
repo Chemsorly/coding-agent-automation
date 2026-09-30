@@ -28,7 +28,8 @@ internal static class ApiStartupExtensions
     /// </summary>
     public static async Task RunApiMigrationsAsync(
         this WebApplication app,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        DatabaseStartupService? startupServiceOverride = null)
     {
         if (configuration.GetValue<bool>("Database:SkipStartupInit"))
         {
@@ -45,8 +46,8 @@ internal static class ApiStartupExtensions
         var lockProvider = app.Services.GetRequiredService<IDistributedLockProvider>();
         var probe = app.Services.GetService<IDatabaseProbe>();
 
-        var startupService = new DatabaseStartupService(
-            dbFactory, lockProvider, configuration, Log.Logger, probe);
+        var startupService = startupServiceOverride
+            ?? new DatabaseStartupService(dbFactory, lockProvider, configuration, Log.Logger, probe);
 
         // WaitForDatabaseConnectionAsync + HandleMigrationsAsync + RunStartupSeedingAsync.
         // Do NOT call InitializeAsync — that also calls ImportJsonConfigIfNeededAsync (legacy JSON import).

@@ -115,9 +115,21 @@ public sealed class DatabaseStartupService
     /// <summary>
     /// When MigrateOnStartup is true (default for dev): acquires lock, applies migrations.
     /// When false (production): verifies no pending migrations, fails if any exist.
+    /// Non-relational providers (e.g. InMemory used in tests) are skipped — they have no migrations.
     /// </summary>
     public async Task HandleMigrationsAsync(CancellationToken ct)
     {
+        // Non-relational providers (InMemory, etc.) do not support migration history queries.
+        // Skip the migration check entirely — schema is managed by EnsureCreated in those environments.
+        await using (var dbCheck = await _dbFactory.CreateDbContextAsync(ct))
+        {
+            if (!dbCheck.Database.IsRelational())
+            {
+                _logger.Information("Database provider is non-relational — skipping migration check");
+                return;
+            }
+        }
+
         var migrateOnStartup = _configuration.GetValue("Database:MigrateOnStartup", true);
 
         if (migrateOnStartup)
