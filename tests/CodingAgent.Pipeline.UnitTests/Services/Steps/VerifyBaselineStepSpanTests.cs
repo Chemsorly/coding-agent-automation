@@ -143,6 +143,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
     /// Filtering by <see cref="_runId"/> prevents picking up spans from other tests
     /// running in parallel that also start a "VerifyBaseline" activity.
     /// </summary>
+    // TODO [WARNING]: _activities.First(...) throws an uninformative InvalidOperationException
+    // ("Sequence contains no matching element") when the span is absent. Replace with
+    // _activities.Should().ContainSingle(a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id"))).Which
+    // to produce a clear assertion-failure message that identifies the missing span by run ID.
     private Activity GetMySpan() =>
         _activities.First(a => a.DisplayName == "VerifyBaseline"
                                && _runId.Equals(a.GetTagItem("pipeline.run_id")));
