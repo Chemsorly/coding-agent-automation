@@ -634,6 +634,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // NavigateAsync can return while the page still shows its "Loading..." placeholder
         // (NavigateAsync resolves against .monitoring-empty which matches both the placeholder
         // and the real empty state). Poll until all 3 items are present in the DOM.
+        // TODO [WARNING]: The threshold `>= 3` allows 4+ items to satisfy the wait and pass the
+        // WaitForFunctionAsync, in which case the subsequent Assert.Equal(3, suggestionCount)
+        // will fail with a confusing DOM-count mismatch rather than a clear "stale data" error.
+        // If a prior run leaked suggestions into KeyValueStore (unlikely given ResetState clears
+        // db.KeyValueStore, but possible if the clear races with this poll), the count would be
+        // wrong. Fix: use `=== 3` here to make the wait and the assertion agree on the target
+        // count, so a stale-data failure produces a clear timeout on the wait rather than a
+        // numeric mismatch on the assertion. (TestQualityReviewer WARNING:L1000)
         await Page.WaitForFunctionAsync(
             "() => document.querySelectorAll('.consolidation-suggestion-item').length >= 3",
             null,
