@@ -55,7 +55,9 @@ public class ConsolidationPageComponentTests : BunitContext
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = (runHistory ?? Array.Empty<PipelineRunSummary>()).ToList(),
-                Page = 1, PageSize = 200, HasMore = false
+                Page = 1,
+                PageSize = 200,
+                HasMore = false
             });
 
         // Strict mock: GetRunHistoryAsync and GetLastRunAsync must NOT be called on IConsolidationService
@@ -166,7 +168,9 @@ public class ConsolidationPageComponentTests : BunitContext
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = new List<PipelineRunSummary> { run },
-                Page = 1, PageSize = 200, HasMore = false
+                Page = 1,
+                PageSize = 200,
+                HasMore = false
             });
 
         // Act: render the page
