@@ -316,15 +316,124 @@ public static class ConfigEndpoints
         IProjectStore store,
         CancellationToken ct)
     {
-        if (project.AgentTimeout.HasValue &&
-            project.AgentTimeout.Value.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
-            return TypedResults.BadRequest(
-                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
-                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
-                "because the ReconciliationLoop canary guard fires first on every cycle.");
+        var errors = ValidateProjectOverrides(project);
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join("; ", errors));
 
         await store.SaveProjectAsync(project, ct);
         return TypedResults.Ok();
+    }
+
+    /// <summary>
+    /// Validates all range-constrained project override fields and returns a list of
+    /// human-readable error messages for any that are out of range.
+    /// Uses a hybrid approach:
+    ///   - Probe-apply to a fresh PipelineConfiguration for fields that have range-validating
+    ///     init setters (these throw ArgumentOutOfRangeException on invalid values).
+    ///   - Explicit range checks for fields that are plain auto-properties with no init-setter guard.
+    /// The AgentTimeout canary minimum is also enforced here (unified with SaveProject).
+    /// </summary>
+    internal static IReadOnlyList<string> ValidateProjectOverrides(PipelineProject project)
+    {
+        var errors = new List<string>();
+
+        // ── AgentTimeout: canary minimum (existing check, unified here) ──────────
+        // TODO: AgentTimeout has no upper-bound check here. The project Settings UI caps it at 120 minutes,
+        // but a direct PUT /api/config/projects caller can supply an arbitrarily large value (e.g. 99999 hours)
+        // and it will be accepted and stored. Add an explicit upper-bound check aligned with the UI's 120-minute cap
+        // once the correct domain limit is confirmed. (Review finding: ConfigEndpoints.cs:369)
+        if (project.AgentTimeout.HasValue &&
+            project.AgentTimeout.Value.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
+        {
+            errors.Add(
+                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
+                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
+                "because the ReconciliationLoop canary guard fires first on every cycle.");
+        }
+
+        // ── Probe-apply for fields with range-validating init setters ────────────
+        // Each field is attempted independently so all violations are reported at once.
+        // TODO: `defaults` is a shared PipelineConfiguration instance passed into each ProbeField closure.
+        // Each closure uses `defaults with { ... }` (a record with-expression), which is immutable and never
+        // mutates `defaults` — so probes are independent and safe. If any future probe were refactored to mutate
+        // `defaults` directly (e.g. via reflection), earlier probes would affect later ones. Keep all closures
+        // using with-expressions, or allocate a fresh `new PipelineConfiguration()` per ProbeField call. (Review finding: ConfigEndpoints.cs:350)
+        var defaults = new PipelineConfiguration();
+
+        ProbeField(project.MaxDecompositionSubIssues,
+            v => _ = defaults with { MaxDecompositionSubIssues = v },
+            nameof(PipelineProject.MaxDecompositionSubIssues), errors);
+
+        ProbeField(project.MaxDecompositionSubIssueFiles,
+            v => _ = defaults with { MaxDecompositionSubIssueFiles = v },
+            nameof(PipelineProject.MaxDecompositionSubIssueFiles), errors);
+
+        ProbeField(project.CiNotStartedMaxRetries,
+            v => _ = defaults with { CiNotStartedMaxRetries = v },
+            nameof(PipelineProject.CiNotStartedMaxRetries), errors);
+
+        ProbeField(project.MaxInfrastructureRetries,
+            v => _ = defaults with { MaxInfrastructureRetries = v },
+            nameof(PipelineProject.MaxInfrastructureRetries), errors);
+
+        ProbeField(project.AnalysisCommitThreshold,
+            v => _ = defaults with { AnalysisCommitThreshold = v },
+            nameof(PipelineProject.AnalysisCommitThreshold), errors);
+
+        ProbeField(project.CiCancelledMoveMaxRetries,
+            v => _ = defaults with { CiCancelledMoveMaxRetries = v },
+            nameof(PipelineProject.CiCancelledMoveMaxRetries), errors);
+
+        ProbeField(project.MinIssueSlots,
+            v => _ = defaults with { MinIssueSlots = v },
+            nameof(PipelineProject.MinIssueSlots), errors);
+
+        // ── Explicit range checks for plain auto-properties (no init-setter guard) ──
+        // Ranges match the UI's RenderIntOverride min/max arguments.
+        CheckIntRange(project.MaxRetries, nameof(PipelineProject.MaxRetries), 0, 10, errors);
+        CheckIntRange(project.MaxAnalysisRetries, nameof(PipelineProject.MaxAnalysisRetries), 0, 10, errors);
+        CheckIntRange(project.MaxConcurrentDecompositions, nameof(PipelineProject.MaxConcurrentDecompositions), 1, 10, errors);
+        CheckIntRange(project.MaxOpenIssuesForContext, nameof(PipelineProject.MaxOpenIssuesForContext), 1, 200, errors);
+        CheckIntRange(project.MaxRefactoringProposals, nameof(PipelineProject.MaxRefactoringProposals), 1, 10, errors);
+        // FeedbackTimeoutSeconds: must be positive (> 0); no upper cap in the domain
+        // TODO: int.MaxValue is a leaky abstraction — FeedbackTimeoutSeconds and MaxConsolidationDispatchRetries have no
+        // meaningful upper bound in the current domain model, but accepting int.MaxValue (a ~68-year timeout) is unrealistic.
+        // Replace int.MaxValue with explicit domain-appropriate caps once those limits are defined. (Review finding: ConfigEndpoints.cs:410)
+        CheckIntRange(project.FeedbackTimeoutSeconds, nameof(PipelineProject.FeedbackTimeoutSeconds), 1, int.MaxValue, errors);
+        // MaxConsolidationDispatchRetries: retry count, must be non-negative
+        CheckIntRange(project.MaxConsolidationDispatchRetries, nameof(PipelineProject.MaxConsolidationDispatchRetries), 0, int.MaxValue, errors);
+
+        return errors;
+    }
+
+    /// <summary>
+    /// Attempts to construct a record with the given field set to the override value.
+    /// Catches ArgumentOutOfRangeException from the init setter and records the error.
+    /// </summary>
+    private static void ProbeField(int? overrideValue, Action<int> applyFn, string propertyName, List<string> errors)
+    {
+        if (!overrideValue.HasValue) return;
+        try
+        {
+            applyFn(overrideValue.Value);
+        }
+        catch (ArgumentOutOfRangeException ex)
+        {
+            errors.Add($"'{propertyName}' value {overrideValue.Value} is out of range. {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Checks that a nullable int override is within [min, max] when set.
+    /// </summary>
+    private static void CheckIntRange(int? overrideValue, string propertyName, int min, int max, List<string> errors)
+    {
+        if (!overrideValue.HasValue) return;
+        if (overrideValue.Value < min || overrideValue.Value > max)
+        {
+            var rangeText = max == int.MaxValue ? $">= {min}" : $"{min}–{max}";
+            errors.Add($"'{propertyName}' value {overrideValue.Value} is out of range. Valid range is {rangeText}.");
+        }
     }
 
     internal static async Task<IResult> DeleteProject(
@@ -624,6 +733,41 @@ public static class ConfigEndpoints
 
         if (bundle is null)
             return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
+
+        // Validate project override ranges BEFORE beginning the destructive transaction.
+        // The Settings blob is a raw JSON string (PipelineProject serialized with PipelineJsonOptions.Default).
+        // We must deserialize with PipelineJsonOptions.Default — NOT ImportOptions — because PipelineProject
+        // contains TimeSpan? fields that require TimeSpanJsonConverter, which ImportOptions lacks.
+        foreach (var proj in bundle.Projects ?? [])
+        {
+            if (proj.Settings is null) continue;
+
+            PipelineProject? typedProject;
+            try
+            {
+                typedProject = JsonSerializer.Deserialize<PipelineProject>(proj.Settings, PipelineJsonOptions.Default);
+            }
+            catch (JsonException ex)
+            {
+                return TypedResults.BadRequest(new ImportExportResult
+                {
+                    Success = false,
+                    Message = $"Project '{proj.Name}': invalid Settings JSON — {ex.Message}"
+                });
+            }
+
+            if (typedProject is null) continue;
+
+            var projectErrors = ValidateProjectOverrides(typedProject);
+            if (projectErrors.Count > 0)
+            {
+                return TypedResults.BadRequest(new ImportExportResult
+                {
+                    Success = false,
+                    Message = $"Project '{proj.Name}' has invalid override values: {string.Join("; ", projectErrors)}"
+                });
+            }
+        }
 
         // Obtain the execution strategy from a short-lived context that is properly disposed.
         // CreateDbContext() checks out a pooled slot — callers must dispose it to return the slot.
