@@ -73,8 +73,7 @@ A project does not store its templates: each template names the project it belon
   "Description": "Cross-repo product with Polarion epic tracking",
   "Enabled": true,
   "EpicIssueProviderId": "polarion-provider-id",
-  "MaxDecompositionSubIssues": 8,
-  "MaxConcurrentDecompositions": 3
+  "MaxDecompositionSubIssues": 8
 }
 ```
 
@@ -109,7 +108,6 @@ All settings below are nullable on the project. When `null`, the global default 
 | `CodeReview` | CodeReviewConfiguration? | Code review config (deep-merge: non-null sub-fields override global) |
 | `RefactoringReviewEnabled` | bool? | Enable refactoring review |
 | `BrainConsolidationReviewEnabled` | bool? | Enable brain consolidation review |
-| `HarnessSuggestionsReviewEnabled` | bool? | Enable harness suggestions review |
 
 ### CI/CD Settings
 
@@ -124,7 +122,6 @@ All settings below are nullable on the project. When `null`, the global default 
 | Setting | Type | Description |
 |---------|------|-------------|
 | `MaxDecompositionSubIssues` | int? | Max sub-issues per epic (1–20) |
-| `MaxConcurrentDecompositions` | int? | Max simultaneous decomposition runs |
 | `MaxOpenIssuesForContext` | int? | Max open issues fetched for deduplication context |
 
 ### Blacklist & Brain Settings

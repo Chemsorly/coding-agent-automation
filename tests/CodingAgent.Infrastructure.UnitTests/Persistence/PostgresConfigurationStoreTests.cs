@@ -996,6 +996,51 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.Id.Should().NotBe(staleJsonId);
     }
 
+    // ── Backward compat: removed fields in stored JSON are silently ignored ──
+
+    [Fact]
+    public async Task GetProjectByIdAsync_StoredJsonWithRemovedFields_LoadsWithoutError()
+    {
+        // Arrange: construct Settings JSON that still contains the three fields removed from
+        // PipelineProject in issue #3150 (MaxConcurrentDecompositions, MinIssueSlots,
+        // HarnessSuggestionsReviewEnabled). This simulates a row that was written before the
+        // upgrade and now loads into the trimmed model.
+        var projectId = Guid.NewGuid();
+        var legacyJson = $$"""
+            {
+              "id": "{{projectId}}",
+              "name": "LegacyProject",
+              "enabled": true,
+              "maxConcurrentDecompositions": 5,
+              "minIssueSlots": 2,
+              "harnessSuggestionsReviewEnabled": false
+            }
+            """;
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = projectId,
+                Name = "LegacyProject",
+                Enabled = true,
+                Settings = legacyJson
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var freshStore = CreateFreshStore();
+
+        // Act: loading must succeed — STJ silently ignores unknown properties by default.
+        var loaded = await freshStore.GetProjectByIdAsync(projectId.ToString(), CancellationToken.None);
+
+        // Assert: project is valid with correct base fields; removed fields are ignored.
+        loaded.Should().NotBeNull();
+        loaded!.Id.Should().Be(projectId.ToString());
+        loaded.Name.Should().Be("LegacyProject");
+        loaded.Enabled.Should().BeTrue();
+    }
+
     // ── Membership: the template's own project is the only record ─────────
 
     [Fact]

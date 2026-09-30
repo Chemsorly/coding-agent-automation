@@ -88,12 +88,10 @@
     private int? _stallWarningIntervalMinutes;
     private int? _maxDecompositionSubIssues;
     private int? _maxDecompositionSubIssueFiles;
-    private int? _maxConcurrentDecompositions;
     private int? _maxOpenIssuesForContext;
     private int? _maxRefactoringProposals;
     private bool? _refactoringReviewEnabled;
     private bool? _brainConsolidationReviewEnabled;
-    private bool? _harnessSuggestionsReviewEnabled;
     private bool? _brainReadOnly;
 
     // Blacklisted paths (null = inherit global)
@@ -177,12 +175,10 @@
         _stallWarningIntervalMinutes = _project.StallWarningInterval.HasValue ? (int?)_project.StallWarningInterval.Value.TotalMinutes : null;
         _maxDecompositionSubIssues = _project.MaxDecompositionSubIssues;
         _maxDecompositionSubIssueFiles = _project.MaxDecompositionSubIssueFiles;
-        _maxConcurrentDecompositions = _project.MaxConcurrentDecompositions;
         _maxOpenIssuesForContext = _project.MaxOpenIssuesForContext;
         _maxRefactoringProposals = _project.MaxRefactoringProposals;
         _refactoringReviewEnabled = _project.RefactoringReviewEnabled;
         _brainConsolidationReviewEnabled = _project.BrainConsolidationReviewEnabled;
-        _harnessSuggestionsReviewEnabled = _project.HarnessSuggestionsReviewEnabled;
         _brainReadOnly = _project.BrainReadOnly;
         _blacklistedPathsText = _project.BlacklistedPaths != null ? string.Join(",", _project.BlacklistedPaths) : null;
         _steeringContent = _project.SteeringContent;
@@ -349,7 +345,6 @@
             <h3>Decomposition</h3>
             @RenderIntOverride("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, v => _maxDecompositionSubIssues = v, _globalConfig.MaxDecompositionSubIssues, 1, 20)
             @RenderIntOverride("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, v => _maxDecompositionSubIssueFiles = v, _globalConfig.MaxDecompositionSubIssueFiles, 1, 30)
-            @RenderIntOverride("Max Concurrent Decompositions", () => _maxConcurrentDecompositions, v => _maxConcurrentDecompositions = v, _globalConfig.MaxConcurrentDecompositions, 1, 10)
             @RenderIntOverride("Max Open Issues for Context", () => _maxOpenIssuesForContext, v => _maxOpenIssuesForContext = v, _globalConfig.MaxOpenIssuesForContext, 1, 200)
             @RenderIntOverride("Max Refactoring Proposals", () => _maxRefactoringProposals, v => _maxRefactoringProposals = v, _globalConfig.MaxRefactoringProposals, 1, 10)
 
@@ -359,7 +354,6 @@
             @RenderBoolOverride("Baseline Health Check Enabled", () => _baselineHealthCheckEnabled, v => _baselineHealthCheckEnabled = v, _globalConfig.BaselineHealthCheckEnabled)
             @RenderBoolOverride("Refactoring Review Enabled", () => _refactoringReviewEnabled, v => _refactoringReviewEnabled = v, _globalConfig.RefactoringReviewEnabled)
             @RenderBoolOverride("Brain Consolidation Review Enabled", () => _brainConsolidationReviewEnabled, v => _brainConsolidationReviewEnabled = v, _globalConfig.BrainConsolidationReviewEnabled)
-            @RenderBoolOverride("Harness Suggestions Review Enabled", () => _harnessSuggestionsReviewEnabled, v => _harnessSuggestionsReviewEnabled = v, _globalConfig.HarnessSuggestionsReviewEnabled)
             @RenderBoolOverride("Brain Read-Only", () => _brainReadOnly, v => _brainReadOnly = v, _globalConfig.BrainReadOnly)
 
             <h3>Prompts</h3>
@@ -686,12 +680,10 @@
                 StallWarningInterval = _stallWarningIntervalMinutes.HasValue ? TimeSpan.FromMinutes(_stallWarningIntervalMinutes.Value) : null,
                 MaxDecompositionSubIssues = _maxDecompositionSubIssues,
                 MaxDecompositionSubIssueFiles = _maxDecompositionSubIssueFiles,
-                MaxConcurrentDecompositions = _maxConcurrentDecompositions,
                 MaxOpenIssuesForContext = _maxOpenIssuesForContext,
                 MaxRefactoringProposals = _maxRefactoringProposals,
                 RefactoringReviewEnabled = _refactoringReviewEnabled,
                 BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
-                HarnessSuggestionsReviewEnabled = _harnessSuggestionsReviewEnabled,
                 BrainReadOnly = _brainReadOnly,
                 BlacklistedPaths = ParseBlacklistedPaths(_blacklistedPathsText),
                 SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
