@@ -28,6 +28,7 @@ public sealed class HubConsolidationOperationsTests
     private readonly ConsolidationBadgeService _badge = new();
     private readonly Mock<IChangeNotifier> _notifier = new();
     private readonly Mock<IRunLifecycleManager> _lifecycleManager = new();
+    private readonly Mock<IOrchestratorRunService> _runService = new();
     private readonly Mock<ILogger> _logger = new();
     private readonly HubConsolidationOperations _sut;
 
@@ -40,6 +41,7 @@ public sealed class HubConsolidationOperationsTests
             _badge,
             _notifier.Object,
             _lifecycleManager.Object,
+            _runService.Object,
             _logger.Object);
     }
 
@@ -69,7 +71,7 @@ public sealed class HubConsolidationOperationsTests
     public void Constructor_NullConsolidation_Throws()
     {
         var act = () => new HubConsolidationOperations(
-            _modelFetch, null!, _badge, _notifier.Object, _lifecycleManager.Object, _logger.Object);
+            _modelFetch, null!, _badge, _notifier.Object, _lifecycleManager.Object, _runService.Object, _logger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -77,7 +79,7 @@ public sealed class HubConsolidationOperationsTests
     public void Constructor_NullBadge_Throws()
     {
         var act = () => new HubConsolidationOperations(
-            _modelFetch, _consolidation.Object, null!, _notifier.Object, _lifecycleManager.Object, _logger.Object);
+            _modelFetch, _consolidation.Object, null!, _notifier.Object, _lifecycleManager.Object, _runService.Object, _logger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -85,7 +87,15 @@ public sealed class HubConsolidationOperationsTests
     public void Constructor_NullLifecycleManager_Throws()
     {
         var act = () => new HubConsolidationOperations(
-            _modelFetch, _consolidation.Object, _badge, _notifier.Object, null!, _logger.Object);
+            _modelFetch, _consolidation.Object, _badge, _notifier.Object, null!, _runService.Object, _logger.Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullRunService_Throws()
+    {
+        var act = () => new HubConsolidationOperations(
+            _modelFetch, _consolidation.Object, _badge, _notifier.Object, _lifecycleManager.Object, null!, _logger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -153,6 +163,7 @@ public sealed class HubConsolidationOperationsTests
             _badge,
             _notifier.Object,
             _lifecycleManager.Object,
+            _runService.Object,
             _logger.Object);
 
         // Act: should complete without calling UpdateRunAsync (store writes stopped in #3028)

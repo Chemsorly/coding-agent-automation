@@ -335,6 +335,15 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // KubernetesWorkDistributor maps a 409 Conflict from POST /api/work-items to
         // DistributionResult(Success: true, WorkItemId: null, Queued: true). This signals that
         // a live WorkItem already exists for this consolidation type (partial unique index).
+        // TODO [WARNING]: `result.WorkItemId is null` (with result.Success == true) is used as
+        // the sole sentinel for the 409/duplicate path. This overloads a single value for two
+        // distinct outcomes: "duplicate rejected" and "any other non-error success with no ID".
+        // If any IWorkDistributor implementation ever returns Success=true, WorkItemId=null for a
+        // reason other than a 409 (e.g. an implementation that queues without returning an ID),
+        // this path silently treats that as a duplicate and returns null, masking the real outcome.
+        // The previous code used an explicit result.AlreadyExists flag for disambiguation.
+        // Verify that all IWorkDistributor implementations only return null WorkItemId on the 409
+        // path before removing this comment. (review-findings-correctness.md WARNING:L308)
         if (result.WorkItemId is null)
         {
             _logger.Warning(

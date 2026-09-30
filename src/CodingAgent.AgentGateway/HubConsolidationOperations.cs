@@ -48,6 +48,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
     private readonly ConsolidationBadgeService _badgeService;
     private readonly IChangeNotifier _changeNotifier;
     private readonly IRunLifecycleManager _lifecycleManager;
+    private readonly IOrchestratorRunService _runService;
     private readonly ILogger _logger;
 
     public HubConsolidationOperations(
@@ -56,6 +57,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         ConsolidationBadgeService badgeService,
         IChangeNotifier changeNotifier,
         IRunLifecycleManager lifecycleManager,
+        IOrchestratorRunService runService,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(modelFetchService);
@@ -63,6 +65,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         ArgumentNullException.ThrowIfNull(badgeService);
         ArgumentNullException.ThrowIfNull(changeNotifier);
         ArgumentNullException.ThrowIfNull(lifecycleManager);
+        ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(logger);
 
         _modelFetchService = modelFetchService;
@@ -70,6 +73,7 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         _badgeService = badgeService;
         _changeNotifier = changeNotifier;
         _lifecycleManager = lifecycleManager;
+        _runService = runService;
         _logger = logger;
     }
 
@@ -113,6 +117,32 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
         try
         {
             var runId = new RunId(result.JobId);
+
+            // Fix [CRITICAL]: Set ConsolidationResultSummary on the in-memory PipelineRun BEFORE
+            // RunLifecycleManager.RemoveRun claims it. RemoveRun is called inside CompleteRunAsync /
+            // FailRunAsync; after RemoveRun the run instance still exists but is no longer in the
+            // store — AddRunToHistoryAsync is called on the same instance immediately after, so the
+            // summary written here is serialised into PipelineRunSummary.ConsolidationResultSummary
+            // and persisted. Without this step the field is null and the history row renders "—".
+            // (review-findings-correctness.md CRITICAL:L299, L412)
+            var inMemoryRun = _runService.GetRun(runId);
+            if (inMemoryRun is not null)
+            {
+                if (result.Success)
+                    inMemoryRun.ConsolidationResultSummary = result.Summary;
+                else
+                    // Map the error message to ConsolidationResultSummary so it surfaces in the
+                    // history row's Summary column. FailureReason is also set by FailRunCoreAsync,
+                    // but that field is not rendered in the Consolidation history row markup.
+                    inMemoryRun.ConsolidationResultSummary = result.ErrorMessage;
+            }
+            else
+            {
+                _logger.Debug(
+                    "HubConsolidationOperations: in-memory run {JobId} not found — ConsolidationResultSummary not set (run may have been removed by another path)",
+                    result.JobId);
+            }
+
             if (result.Success)
             {
                 await _lifecycleManager.CompleteRunAsync(runId, WorkItemStatus.Succeeded, ct);

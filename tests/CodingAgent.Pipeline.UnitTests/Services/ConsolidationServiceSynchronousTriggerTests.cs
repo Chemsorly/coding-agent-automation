@@ -304,4 +304,37 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
             Times.Exactly(2),
             "both triggers call DistributeAsync; dedup is enforced by the API layer");
     }
+
+    /// <summary>
+    /// When IWorkDistributor.DistributeAsync throws an unexpected exception,
+    /// TriggerAsync must catch it, log an error, and return null.
+    /// This covers the catch (Exception ex) block at lines 303-309.
+    /// </summary>
+    [Fact]
+    public async Task TriggerAsync_WhenDistributorThrows_ReturnsNullAndDoesNotPropagate()
+    {
+        // Arrange: distributor throws an unexpected exception
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("network timeout"));
+
+        var sut = CreateSut();
+
+        // Act: must not throw — exception is caught internally
+        var act = async () => await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation,
+            new TemplateId(Template.Id),
+            CancellationToken.None);
+
+        await act.Should().NotThrowAsync(
+            "TriggerAsync must swallow unexpected distributor exceptions and return null");
+
+        var result = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation,
+            new TemplateId(Template.Id),
+            CancellationToken.None);
+
+        result.Should().BeNull(
+            "when DistributeAsync throws, TriggerAsync must return null (not a ConsolidationRun)");
+    }
 }

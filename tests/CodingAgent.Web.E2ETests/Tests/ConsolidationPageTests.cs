@@ -282,21 +282,17 @@ public sealed class ConsolidationPageTests : E2ETestBase
         });
 
         // Wait for server-side state to reflect completion.
-        // Resolve from the API host: HubConsolidationOperations.HandleConsolidationCompleteAsync
-        // updates the API host's IConsolidationService singleton (the hub lives there, not on the
-        // Blazor host). Polling Fixture.Factory.Services would read the Web host's separate
-        // IConsolidationService instance, which is never updated and causes a 25s timeout.
-        // TODO [WARNING]: After issue #3028, TriggerAsync no longer writes to IConsolidationRunStore,
-        // so GetRunHistoryAsync only returns rows seeded by the hub's completion path. If the hub's
-        // completion handler does not write to this store (e.g. it writes to PipelineRuns instead),
-        // this WaitUntilAsync will always time out with no useful diagnostic. If this test starts
-        // timing out at 25s, check whether HubConsolidationOperations.HandleConsolidationCompleteAsync
-        // still writes to IConsolidationRunStore on success. A supplementary assertion
-        // (Assert.NotEmpty(history)) after the wait would catch a permanent-empty store regression.
-        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
+        // Poll the WorkItem status via IPipelineApiWorkItemClient — this is the authoritative
+        // record after issue #3028 moved consolidation completions to the PipelineRun/WorkItem
+        // store. IConsolidationService.GetRunHistoryAsync reads IConsolidationRunStore, which the
+        // hub completion path (HandleConsolidationCompleteAsync → IRunLifecycleManager.CompleteRunAsync)
+        // never writes to; polling it would always time out.
+        var workItemGuid = Guid.Parse(jobId);
         await WaitUntilAsync(async () =>
-            (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
-                .Any(r => r.Status == ConsolidationRunStatus.Succeeded));
+        {
+            var status = await Fixture.WorkItems.GetStatusAsync(workItemGuid);
+            return status == WorkItemStatus.Succeeded || status == WorkItemStatus.Failed;
+        });
 
         // Reload page to trigger LoadDataAsync, then assert DOM
         await page.NavigateAsync();
@@ -389,11 +385,16 @@ public sealed class ConsolidationPageTests : E2ETestBase
         });
 
         // Wait for server-side state to reflect failure.
-        // Resolve from the API host: hub updates the API host's IConsolidationService.
-        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
+        // Poll the WorkItem status via IPipelineApiWorkItemClient — this is the authoritative
+        // record after issue #3028. IConsolidationService.GetRunHistoryAsync reads
+        // IConsolidationRunStore, which the hub failure path (FailRunAsync) never writes to;
+        // polling it would always time out.
+        var workItemGuid = Guid.Parse(jobId);
         await WaitUntilAsync(async () =>
-            (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
-                .Any(r => r.Status == ConsolidationRunStatus.Failed));
+        {
+            var status = await Fixture.WorkItems.GetStatusAsync(workItemGuid);
+            return status == WorkItemStatus.Succeeded || status == WorkItemStatus.Failed;
+        });
 
         // Reload and assert
         await page.NavigateAsync();
@@ -410,11 +411,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         Assert.Contains("Failed", rowText, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Brain provider unavailable", rowText);
 
-        // Nothing should remain Pending or Running
-        var history = await consolidationService.GetRunHistoryAsync(CancellationToken.None);
-        Assert.DoesNotContain(history, r =>
-            r.Status == ConsolidationRunStatus.Pending ||
-            r.Status == ConsolidationRunStatus.Running);
+        // Nothing should remain Pending or Running: verify via WorkItem status (not the
+        // ConsolidationRuns store, which is no longer authoritative after issue #3028).
+        var finalStatus = await Fixture.WorkItems.GetStatusAsync(workItemGuid);
+        Assert.True(
+            finalStatus == WorkItemStatus.Succeeded || finalStatus == WorkItemStatus.Failed || finalStatus == WorkItemStatus.Cancelled,
+            $"WorkItem should be in a terminal state after completion, but was: {finalStatus}");
     }
 
     [Fact]
@@ -520,11 +522,16 @@ public sealed class ConsolidationPageTests : E2ETestBase
         });
 
         // Wait for server-side completion.
-        // Resolve from the API host: hub updates the API host's IConsolidationService.
-        var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
+        // Poll the WorkItem status via IPipelineApiWorkItemClient — this is the authoritative
+        // record after issue #3028. IConsolidationService.GetRunHistoryAsync reads
+        // IConsolidationRunStore, which the hub refactoring completion path never writes to;
+        // polling it would always time out.
+        var workItemGuid = Guid.Parse(jobId);
         await WaitUntilAsync(async () =>
-            (await consolidationService.GetRunHistoryAsync(CancellationToken.None))
-                .Any(r => r.Status == ConsolidationRunStatus.Succeeded));
+        {
+            var status = await Fixture.WorkItems.GetStatusAsync(workItemGuid);
+            return status == WorkItemStatus.Succeeded || status == WorkItemStatus.Failed;
+        });
 
         // Reload and assert
         await page.NavigateAsync();
@@ -670,6 +677,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await page.WaitForStatusMessageAsync();
 
         // Reload so the Pending row appears in the run history table
+        // TODO [WARNING]: This step assumes the run history table synthesises a row with a
+        // Cancel button for a Pending WorkItem that has no in-memory PipelineRun (because no
+        // agent ever connects). The Cancel button is only rendered when run.WorkItemId.HasValue
+        // (Consolidation.razor:219-223). If RunHistoryClient.GetRunHistoryAsync omits WorkItemId
+        // from synthesised rows for Pending-without-PipelineRun items, WaitForRunHistoryCountAsync(1)
+        // or ClickCancelRunAsync(0) below will time out. This cross-component assumption is not
+        // covered by a lower-level test. (review-findings-correctness.md WARNING:L527)
         await page.NavigateAsync();
         await page.WaitForRunHistoryCountAsync(1);
 
@@ -713,6 +727,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         await page.WaitForRunHistoryCountAsync(1);
         var cancelledRowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(cancelledRowText);
+        // TODO [WARNING]: Assert.Contains("Cancelled") depends on GetStatusDisplay(run) returning
+        // "Cancelled", which only happens when run.FinalStep == PipelineStep.Cancelled. Because no
+        // PipelineRun exists in memory (no agent connected), CancelRunAsync's RemoveRun returns null
+        // and does nothing. The "Cancelled" status must come entirely from the WorkItem→PipelineRunSummary
+        // projection setting FinalStep=Cancelled for a cancelled-with-no-run WorkItem. If that
+        // projection maps a cancelled WorkItem to a null or non-Cancelled FinalStep, GetStatusDisplay
+        // returns "Running" and this assertion fails. Verify the projection before removing this comment.
+        // (review-findings-correctness.md WARNING:L538-544)
         Assert.Contains("Cancelled", cancelledRowText, StringComparison.OrdinalIgnoreCase);
 
         // Assert: connecting an agent now does NOT dispatch the cancelled item.
@@ -788,6 +810,15 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // whether FakeJobController claimed the item between WaitUntilAsync and these calls.
         // The dedup invariant is "exactly one item in any non-terminal state", not "one Pending item",
         // so combining the two sets is the correct check.
+        // TODO [WARNING]: There is a real race window between WaitUntilAsync returning true and the
+        // two count queries below. The background FakeJobController.PollAsync (250ms) can transition
+        // the item Pending→Dispatched between lines. The assertion sums both sets so the transition
+        // itself does not break the count. However, MatchLabels=[] means FindIdleAgentFor("") returns
+        // any idle[0] — a stale agent still draining from a prior test could claim the item. The
+        // dedup invariant (exactly one DB INSERT survived the unique index) is only exercised at the
+        // DB layer. Consider using a scoped label (e.g. "consol-s6=true") on both the S6 profile and
+        // a dedicated agent to make this test fully deterministic.
+        // (review-findings-correctness.md WARNING:L558, L566-579)
         var pending = await Fixture.WorkItems.GetPendingAsync(10);
         var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600);
         Assert.Equal(1, pending.Count + active.Count);

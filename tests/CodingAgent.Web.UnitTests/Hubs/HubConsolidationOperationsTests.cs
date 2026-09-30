@@ -27,6 +27,7 @@ public sealed class HubConsolidationOperationsTests
     private readonly Mock<IChangeNotifier> _mockChangeNotifier = new();
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
+    private readonly Mock<IOrchestratorRunService> _mockRunService = new();
 
     // Real instances (sealed — cannot mock)
     private readonly ConsolidationBadgeService _badgeService = new();
@@ -46,6 +47,7 @@ public sealed class HubConsolidationOperationsTests
         _badgeService,
         _mockChangeNotifier.Object,
         _mockLifecycleManager.Object,
+        _mockRunService.Object,
         _mockLogger.Object);
 
     private static HarnessSuggestions MakeSuggestions(params string[] texts) => new()
@@ -90,6 +92,7 @@ public sealed class HubConsolidationOperationsTests
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
+            _mockRunService.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("modelFetchService");
@@ -104,6 +107,7 @@ public sealed class HubConsolidationOperationsTests
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
+            _mockRunService.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationService");
@@ -118,6 +122,7 @@ public sealed class HubConsolidationOperationsTests
             null!,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
+            _mockRunService.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("badgeService");
@@ -132,6 +137,7 @@ public sealed class HubConsolidationOperationsTests
             _badgeService,
             null!,
             _mockLifecycleManager.Object,
+            _mockRunService.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("changeNotifier");
@@ -146,9 +152,25 @@ public sealed class HubConsolidationOperationsTests
             _badgeService,
             _mockChangeNotifier.Object,
             null!,
+            _mockRunService.Object,
             _mockLogger.Object);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("lifecycleManager");
+    }
+
+    [Fact]
+    public void Constructor_NullRunService_Throws()
+    {
+        var act = () => new HubConsolidationOperations(
+            CreateModelFetchService(),
+            _mockConsolidation.Object,
+            _badgeService,
+            _mockChangeNotifier.Object,
+            _mockLifecycleManager.Object,
+            null!,
+            _mockLogger.Object);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("runService");
     }
 
     [Fact]
@@ -160,6 +182,7 @@ public sealed class HubConsolidationOperationsTests
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
+            _mockRunService.Object,
             null!);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
@@ -265,6 +288,7 @@ public sealed class HubConsolidationOperationsTests
             _badgeService,
             _mockChangeNotifier.Object,
             _mockLifecycleManager.Object,
+            _mockRunService.Object,
             _mockLogger.Object);
 
         var result = new ConsolidationJobResult { JobId = "crun-success", Success = true, Summary = "Brain updated" };
@@ -601,5 +625,132 @@ public sealed class HubConsolidationOperationsTests
 
         var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
         await act.Should().NotThrowAsync("lifecycle manager failure is caught and logged, not propagated");
+    }
+
+    // ── ConsolidationResultSummary propagation — fix for CRITICAL review findings ──
+    // Verifies that ConsolidationResultSummary is set on the in-memory PipelineRun BEFORE
+    // RunLifecycleManager.RemoveRun claims it, so AddRunToHistoryAsync serialises the
+    // summary into the persisted PipelineRunSummary. (review-findings-correctness.md CRITICAL)
+
+    [Fact]
+    public async Task HandleConsolidationComplete_Success_SetsSummaryOnInMemoryRunBeforeLifecycleCall()
+    {
+        // Arrange: create an in-memory run that GetRun will return
+        var jobId = "crun-summary-success";
+        var inMemoryRun = new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("consol:brain-e2e"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-e2e"
+        };
+        _mockRunService.Setup(s => s.GetRun(new RunId(jobId))).Returns(inMemoryRun);
+
+        // Capture the run's ConsolidationResultSummary at the moment CompleteRunAsync is called
+        string? capturedSummary = null;
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync(new RunId(jobId), WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Callback(() => capturedSummary = inMemoryRun.ConsolidationResultSummary)
+            .ReturnsAsync((PipelineRun?)null);
+
+        var result = new ConsolidationJobResult
+        {
+            JobId = jobId,
+            Success = true,
+            Summary = "Consolidated 3 files"
+        };
+        var sut = CreateSut();
+
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        capturedSummary.Should().Be("Consolidated 3 files",
+            "ConsolidationResultSummary must be set on the in-memory run BEFORE CompleteRunAsync removes it, " +
+            "so that AddRunToHistoryAsync serialises it into the persisted PipelineRunSummary");
+        inMemoryRun.ConsolidationResultSummary.Should().Be("Consolidated 3 files");
+    }
+
+    [Fact]
+    public async Task HandleConsolidationComplete_Failure_SetsErrorMessageAsSummaryOnInMemoryRunBeforeLifecycleCall()
+    {
+        // Arrange: create an in-memory run that GetRun will return
+        var jobId = "crun-summary-fail";
+        var inMemoryRun = new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("consol:brain-e2e"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-e2e"
+        };
+        _mockRunService.Setup(s => s.GetRun(new RunId(jobId))).Returns(inMemoryRun);
+
+        // Capture the run's ConsolidationResultSummary at the moment FailRunAsync is called
+        string? capturedSummary = null;
+        _mockLifecycleManager
+            .Setup(l => l.FailRunAsync(new RunId(jobId), It.IsAny<string>(),
+                It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Callback(() => capturedSummary = inMemoryRun.ConsolidationResultSummary)
+            .ReturnsAsync((PipelineRun?)null);
+
+        var result = new ConsolidationJobResult
+        {
+            JobId = jobId,
+            Success = false,
+            ErrorMessage = "Brain provider unavailable"
+        };
+        var sut = CreateSut();
+
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        capturedSummary.Should().Be("Brain provider unavailable",
+            "ConsolidationResultSummary must be set to ErrorMessage on the in-memory run BEFORE FailRunAsync removes it, " +
+            "so that the failure message surfaces in the history row Summary column");
+        inMemoryRun.ConsolidationResultSummary.Should().Be("Brain provider unavailable");
+    }
+
+    [Fact]
+    public async Task HandleConsolidationComplete_Success_NullSummary_SetsSummaryToNull()
+    {
+        // Arrange: GetRun returns an in-memory run; result.Summary is null
+        var jobId = "crun-summary-null";
+        var inMemoryRun = new PipelineRun
+        {
+            RunId = jobId,
+            IssueIdentifier = new IssueIdentifier("consol:brain-e2e"),
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-e2e"
+        };
+        _mockRunService.Setup(s => s.GetRun(new RunId(jobId))).Returns(inMemoryRun);
+
+        var result = new ConsolidationJobResult { JobId = jobId, Success = true, Summary = null };
+        var sut = CreateSut();
+
+        await sut.HandleConsolidationCompleteAsync(result, null);
+
+        inMemoryRun.ConsolidationResultSummary.Should().BeNull(
+            "null Summary must not populate ConsolidationResultSummary — the row will show '—'");
+    }
+
+    [Fact]
+    public async Task HandleConsolidationComplete_RunNotInMemory_DoesNotThrowAndStillCallsLifecycleManager()
+    {
+        // Arrange: GetRun returns null (run already removed or never in memory)
+        var jobId = "crun-not-in-memory";
+        _mockRunService.Setup(s => s.GetRun(new RunId(jobId))).Returns((PipelineRun?)null);
+
+        var result = new ConsolidationJobResult { JobId = jobId, Success = true, Summary = "Done" };
+        var sut = CreateSut();
+
+        var act = async () => await sut.HandleConsolidationCompleteAsync(result, null);
+        await act.Should().NotThrowAsync("GetRun returning null must be handled gracefully");
+
+        // Lifecycle manager must still be called even when the run is not in memory
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync(
+            new RunId(jobId), WorkItemStatus.Succeeded,
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once,
+            "CompleteRunAsync must be called even when the in-memory run is not found");
     }
 }
