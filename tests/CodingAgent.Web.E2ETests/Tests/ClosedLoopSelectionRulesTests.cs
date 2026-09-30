@@ -331,6 +331,12 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         finally
         {
             loopService.StopLoop();
+            // Wait for the loop to actually stop so ResetAllAsync (called in the next test's
+            // InitializeAsync) finds a clean state. Without this wait, a timed-out test leaves
+            // the loop mid-cycle, which causes ObjectDisposedException in subsequent tests when
+            // ResetAllAsync tries to access LoopService on an already-stopping host.
+            try { await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(15)); }
+            catch (TimeoutException) { /* loop did not stop in time; ResetAllAsync will still attempt cleanup */ }
         }
     }
 
@@ -950,6 +956,12 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         finally
         {
             loopService.StopLoop();
+            // Wait for the loop to actually stop so ResetAllAsync finds a clean state.
+            // Same pattern as TypePriority_Budget2: a bare StopLoop() in the finally block
+            // without awaiting IsLoopActive==false leaves the loop mid-cycle, causing
+            // ObjectDisposedException cascades in subsequent tests.
+            try { await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(15)); }
+            catch (TimeoutException) { /* loop did not stop in time; ResetAllAsync will still attempt cleanup */ }
         }
     }
 }

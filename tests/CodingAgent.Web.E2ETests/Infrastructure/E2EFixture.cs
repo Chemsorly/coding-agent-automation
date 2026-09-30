@@ -252,19 +252,29 @@ public sealed class E2EFixture : IAsyncLifetime
         // PipelineLoopService lives in the Scheduler host; stop it there.
         if (_schedulerFactory is not null)
         {
-            var loop = _schedulerFactory.LoopService;
-            loop.StopLoop();
+            // Guard against ObjectDisposedException: if the scheduler host stopped (e.g. because a
+            // prior test left the loop mid-cycle and an unhandled exception propagated), accessing
+            // LoopService throws ObjectDisposedException. In that case the loop is definitionally
+            // stopped (the host is gone), so we can proceed to ResetAll() without waiting.
+            PipelineLoopService? loop = null;
+            try { loop = _schedulerFactory.LoopService; }
+            catch (ObjectDisposedException) { /* scheduler host already stopped; loop is no longer active */ }
 
-            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
-            // TODO [WARNING]: This busy-wait has no CancellationToken, so callers cannot interrupt
-            // early (e.g. via xUnit's test timeout). If StopLoop() fails to drive IsLoopActive to
-            // false before the 10s deadline (e.g. the loop hangs in a long cycle under CI load),
-            // ResetAll() is still called with the loop technically active, leaving a stale iteration
-            // in flight when the next test begins. The deadline expiry is silent — consider logging
-            // a warning so test pollution is visible in CI output rather than manifesting as a
-            // confusing failure in the next test.
-            while (loop.IsLoopActive && DateTime.UtcNow < deadline)
-                await Task.Delay(25);
+            if (loop is not null)
+            {
+                loop.StopLoop();
+
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+                // TODO [WARNING]: This busy-wait has no CancellationToken, so callers cannot interrupt
+                // early (e.g. via xUnit's test timeout). If StopLoop() fails to drive IsLoopActive to
+                // false before the 10s deadline (e.g. the loop hangs in a long cycle under CI load),
+                // ResetAll() is still called with the loop technically active, leaving a stale iteration
+                // in flight when the next test begins. The deadline expiry is silent — consider logging
+                // a warning so test pollution is visible in CI output rather than manifesting as a
+                // confusing failure in the next test.
+                while (loop.IsLoopActive && DateTime.UtcNow < deadline)
+                    await Task.Delay(25);
+            }
         }
 
         ResetAll();
