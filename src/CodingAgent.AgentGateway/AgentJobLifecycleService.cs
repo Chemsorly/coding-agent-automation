@@ -310,29 +310,108 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
 
-        // Fetch issue metadata for the label swap below. Fetched for ALL terminal statuses
-        // (Succeeded, Failed, Cancelled) because the label is currently agent:next, reverted by
-        // RevertFailedDistributionAsync. Duplicate dispatch is prevented by the partial unique
-        // index on WorkItems (IssueIdentifier, IssueProviderConfigId) filtered to non-terminal
-        // statuses, plus the in-process IsIssueBeingProcessed check at dispatch time.
-        var issueMetadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, ct);
+        // Fetch the full work item record for the label swap below.
+        // The record includes TaskType and RepoProviderConfigId which are needed to:
+        //   - select the correct label target (PullRequest for Review runs, Issue for all others)
+        //   - apply payload.FinalLabel when valid (e.g. agent:epic-review for a DecompositionAnalysis)
+        // The reverted label on the issue depends on the run type (see RevertFailedDistributionAsync).
+        // Duplicate dispatch is prevented by the partial unique index on WorkItems
+        // (IssueIdentifier, IssueProviderConfigId) filtered to non-terminal statuses,
+        // plus the in-process IsIssueBeingProcessed check at dispatch time.
+        var runRecord = await _facade.GetWorkItemRunRecordAsync(jobId, ct);
 
-        // Best-effort label correction after recovery (label is currently agent:next from RevertFailedDistributionAsync)
+        // Best-effort label correction after recovery.
         if (workItemStatus == WorkItemStatus.Succeeded)
         {
-            await TrySwapLabelAfterOrphanedRecoveryAsync(jobId, issueMetadata, ct);
+            await TrySwapLabelAfterOrphanedRecoveryAsync(jobId, runRecord, payload, ct);
         }
     }
 
     private Task TrySwapLabelAfterOrphanedRecoveryAsync(
         JobId jobId,
-        (string IssueIdentifier, string IssueProviderConfigId)? metadata,
+        WorkItemRunRecord? runRecord,
+        JobCompletionPayload payload,
         CancellationToken ct)
     {
-        if (!metadata.HasValue) return Task.CompletedTask;
+        if (runRecord is null) return Task.CompletedTask;
+
+        // Determine the label to apply — mirrors the logic in SwapLabelAndPostCommentAsync:
+        // use payload.FinalLabel when it is a known agent label, else fall back to a step-based
+        // default that depends on the task type.
+        //   - DecompositionAnalysis (Phase 1) sends FinalLabel = agent:epic-review via PostDecompositionPlanStep.
+        //   - Decomposition (Phase 2) sends no FinalLabel → falls back to agent:done (Completed default).
+        //   - Review sends no FinalLabel → falls back to agent:next (the queue label for re-review if needed).
+        //   - Implementation / Consolidation → agent:done.
+        // TODO: [WARNING] Validate payload.FinalLabel against AgentLabels.SwapTargets instead of AgentLabels.All.
+        // All.Contains("agent:generated") returns true, so a payload with FinalLabel = "agent:generated" would
+        // apply the provenance label as a pipeline status, stripping every real status label. SwapTargets
+        // excludes agent:generated and is the correct validator for the set of acceptable final labels.
+        // The same exposure exists in SwapLabelAndPostCommentAsync — fix both together. See review findings.
+        var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
+            ? payload.FinalLabel
+            : null;
+        // TODO: [WARNING] The Review fallback label (agent:next) diverges from the normal completion path
+        // (SwapLabelAndPostCommentAsync), which applies agent:done unconditionally for all task types
+        // including Review when FinalStep = Completed and no FinalLabel is set. A completed Review run
+        // that finishes on the normal path gets agent:done; the same run recovered via the orphan path
+        // gets agent:next. The comment above saying this "mirrors" SwapLabelAndPostCommentAsync is
+        // incorrect for the Review case. Align the two paths or document the intentional divergence.
+        // See review findings (Correctness reviewer, line 346).
+        var label = finalLabel ?? payload.FinalStep switch
+        {
+            PipelineStep.Completed => runRecord.TaskType switch
+            {
+                WorkItemTaskType.Review => AgentLabels.Next,
+                _ => AgentLabels.Done
+            },
+            PipelineStep.Failed => AgentLabels.Error,
+            PipelineStep.Cancelled => AgentLabels.Cancelled,
+            _ => null
+        };
+
+        if (label is null)
+        {
+            _logger.Warning(
+                "TrySwapLabelAfterOrphanedRecovery: no label to apply for job {JobId} (finalStep={FinalStep})",
+                jobId.Value, payload.FinalStep);
+            return Task.CompletedTask;
+        }
+
+        // Route to the correct provider and target kind.
+        // Review runs label the pull request; all others label the issue.
+        string providerConfigId;
+        LabelTargetKind targetKind;
+        if (runRecord.TaskType == WorkItemTaskType.Review)
+        {
+            if (runRecord.RepoProviderConfigId is null)
+            {
+                // TODO: [WARNING] Falling back to IssueProviderConfigId while still applying
+                // LabelTargetKind.PullRequest is incorrect when issues and pull requests are hosted
+                // on different providers (e.g. Jira + GitHub). The issue-tracker provider config
+                // cannot reliably resolve a pull-request target on the code-hosting provider.
+                // The safer behaviour is to skip the swap entirely when RepoProviderConfigId is null
+                // on a Review run — log the warning and return Task.CompletedTask — rather than
+                // silently routing to the wrong provider. See review findings (Correctness reviewer,
+                // line 390; DotNetSpecialist reviewer, line 397).
+                _logger.Warning(
+                    "TrySwapLabelAfterOrphanedRecovery: Review run {JobId} has null RepoProviderConfigId — falling back to IssueProviderConfigId",
+                    jobId.Value);
+                providerConfigId = runRecord.IssueProviderConfigId;
+            }
+            else
+            {
+                providerConfigId = runRecord.RepoProviderConfigId;
+            }
+            targetKind = LabelTargetKind.PullRequest;
+        }
+        else
+        {
+            providerConfigId = runRecord.IssueProviderConfigId;
+            targetKind = LabelTargetKind.Issue;
+        }
+
         return _labelService.TrySwapLabelAsync(
-            metadata.Value.IssueProviderConfigId, metadata.Value.IssueIdentifier,
-            AgentLabels.Done, LabelTargetKind.Issue,
+            providerConfigId, runRecord.IssueIdentifier, label, targetKind,
             _logger, $"AgentJobLifecycleService.TrySwapLabelAfterOrphanedRecovery (job {jobId.Value})",
             ct);
     }
