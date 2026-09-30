@@ -144,6 +144,9 @@ public class VerifyBaselineStepSpanTests : IDisposable
     /// unique <see cref="_runId"/>. Filters out activities leaked from parallel test classes
     /// that also invoke VerifyBaselineStep (e.g. VerifyBaselineStepTests).
     /// </summary>
+    // TODO: Replace _activities.First(...) with _activities.Should().ContainSingle(...).Which to produce
+    // a clear assertion failure message when the span is missing, rather than the uninformative
+    // "Sequence contains no matching element" exception thrown by First(). (WARNING: TestQualityReviewer)
     private Activity GetMySpan() =>
         _activities.First(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId));
 

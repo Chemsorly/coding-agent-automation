@@ -1,11 +1,9 @@
-# helm unittest suite for consolidation unifiedDispatch removal (issue #3151).
+# helm unittest suite for consolidation dead-flag removal (issue #3151).
 # Run with: helm unittest helm/coding-agent-automation
 #
-# Acceptance criteria:
-#   1. web deployment env list does not contain Consolidation__UnifiedDispatch__Enabled
-#   2. api deployment env list does not contain Consolidation__UnifiedDispatch__Enabled
+# Verifies that the removed feature-flag env var is absent from both deployments.
 
-suite: consolidation unifiedDispatch env var removal
+suite: consolidation dead-flag env var removal
 
 templates:
   - templates/web-deployment.yaml
@@ -23,8 +21,12 @@ set:
 
 tests:
 
-  # ── AC1: Consolidation__UnifiedDispatch__Enabled absent from web deployment ──
-  - it: web deployment does not contain Consolidation__UnifiedDispatch__Enabled env var
+  # TODO: Add a positive baseline assertion (e.g. hasDocuments: count: 1, or a `contains` check
+  # for a known-always-present env var such as ASPNETCORE_ENVIRONMENT) to ensure the templates
+  # rendered real container env lists — otherwise notContains is vacuously true if the container
+  # spec renders empty. (WARNING: TestQualityReviewer)
+
+  - it: web deployment does not inject the removed consolidation feature-flag env var
     template: templates/web-deployment.yaml
     asserts:
       - notContains:
@@ -32,8 +34,7 @@ tests:
           content:
             name: Consolidation__UnifiedDispatch__Enabled
 
-  # ── AC2: Consolidation__UnifiedDispatch__Enabled absent from api deployment ──
-  - it: api deployment does not contain Consolidation__UnifiedDispatch__Enabled env var
+  - it: api deployment does not inject the removed consolidation feature-flag env var
     template: templates/api-deployment.yaml
     asserts:
       - notContains:
