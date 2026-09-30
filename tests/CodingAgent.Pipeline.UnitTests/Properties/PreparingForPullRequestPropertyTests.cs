@@ -197,7 +197,6 @@ public class PreparingForPullRequestPropertyTests
         {
             MaxRetries = config.MaxRetries,
             MaxAnalysisRetries = config.MaxAnalysisRetries,
-            IssuePageSize = config.IssuePageSize,
             AgentTimeout = config.AgentTimeout,
             WorkspaceBaseDirectory = config.WorkspaceBaseDirectory,
             CodeReview = new CodeReviewConfiguration { },

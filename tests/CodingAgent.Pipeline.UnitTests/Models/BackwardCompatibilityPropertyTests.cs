@@ -72,7 +72,6 @@ public class BackwardCompatibilityPropertyTests
         Assert.Equal(originalConfig.WorkspaceBaseDirectory, result.WorkspaceBaseDirectory);
         Assert.Equal(originalConfig.ClosedLoopPollInterval, result.ClosedLoopPollInterval);
         Assert.Equal(originalConfig.ClosedLoopMaxRunsPerCycle, result.ClosedLoopMaxRunsPerCycle);
-        Assert.Equal(originalConfig.IssuePageSize, result.IssuePageSize);
     }
 
     /// <summary>

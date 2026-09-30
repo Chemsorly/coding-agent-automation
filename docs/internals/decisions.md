@@ -1320,14 +1320,16 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 ---
 
-### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025
+### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025 — **superseded by #3149**
 
-**Date:** 2026-08-14 · **Closed:** 2026-08-22
+**Date:** 2026-08-14 · **Closed:** 2026-08-22 · **Superseded:** 2026-09-30
 **Category:** configuration
 
-**Decision:** `MaxConsolidationDispatchRetries` is now a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value is 5. #2025 complete. No behavioral change.
+**Decision (original):** `MaxConsolidationDispatchRetries` was promoted to a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value was 5.
 
-**Reassess when:** Never — once fixed, this decision is stable.
+**Superseded by #3149:** The consolidation drain service that read this setting was removed in #2323. The property was never read by any production code. It was removed from `PipelineConfiguration` in #3149. Keys 23, 45, 74, and 84 are all retired — their indices are reserved and must not be reused. Existing stored data with these fields loads without error (STJ ignores unknown properties; MessagePack ignores unused array slots).
+
+**Reassess when:** Never — retired settings are tombstoned permanently.
 
 ---
 
@@ -2055,7 +2057,6 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "DispatchGatedLabels: extensible set for human-approval-required transitions" scoped by "Label lifecycle needs formalization (#1046)" (gated labels are one axis of the label state machine)
 - "DispatchGatedLabels: extensible" correlates with "Epic decomposition: two-phase with human gate" (EpicApproved is currently the only gated label, but the set is designed for future approval gates)
 - "MaxDecompositionSubIssueFiles=12: research-based low-confidence" scoped by "Epic decomposition: two-phase with human gate" (sub-issue scope constraint operationalizes 'achievable in one agent run')
-- "MaxConsolidationDispatchRetries → #2025" constrains "Dispatch priority: static ordering" (consolidation is lowest priority; its retry mechanism must be consistent with other priority-tier retry config)
 
 - "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (all deployments are K8s; the loop runs unconditionally only in test environments without leader election)
 - "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)

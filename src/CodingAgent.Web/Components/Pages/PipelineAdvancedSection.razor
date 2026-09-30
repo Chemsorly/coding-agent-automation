@@ -3,7 +3,7 @@
 
 <section class="settings-section">
     <h2>Advanced</h2>
-    <p class="section-description">Low-level agent orchestration settings — buffer capacities, heartbeat monitoring, brain repository, and agent routing. Changes may require restart.</p>
+    <p class="section-description">Low-level agent orchestration settings — buffer capacities, brain repository, and agent routing. Changes may require restart.</p>
     <div class="provider-form">
         <div class="config-sub-fields">
             <h3>Agent Routing</h3>
@@ -25,38 +25,6 @@
                     <span class="form-hint-icon" aria-hidden="true" title="Retry attempts when brain repo push fails with non-fast-forward (concurrent conflict). Each retry fetches, rebases, resolves conflicts. Default: 3">?</span>
                 </div>
                 <input type="number" @bind="_brainPushMaxRetries" min="0" max="10" />
-            </div>
-        </div>
-
-        <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3>Agent Health Monitoring</h3>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Agent Disconnect Grace Period (minutes)</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="How long to wait after an agent disconnects before marking its run as Failed. Default: 5 min">?</span>
-                </div>
-                <input type="number" @bind="_agentDisconnectGracePeriodMinutes" min="1" max="30" />
-            </div>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Agent Busy Progress Timeout (minutes)</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="How long a busy agent can go without pipeline step progress before being marked stuck. Default: 60 min">?</span>
-                </div>
-                <input type="number" @bind="_agentBusyProgressTimeoutMinutes" min="5" max="180" />
-            </div>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Heartbeat Sweep Interval (seconds)</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Interval between heartbeat monitor sweeps. Requires restart. Default: 60s">?</span>
-                </div>
-                <input type="number" @bind="_heartbeatSweepIntervalSeconds" min="10" max="300" />
-            </div>
-            <div class="form-group">
-                <div class="label-with-hint">
-                    <label>Heartbeat Timeout (seconds)</label>
-                    <span class="form-hint-icon" aria-hidden="true" title="Seconds without a heartbeat before an agent is considered stale. Default: 90s">?</span>
-                </div>
-                <input type="number" @bind="_heartbeatTimeoutSeconds" min="30" max="600" />
             </div>
         </div>
 
@@ -114,10 +82,6 @@
 
     private string _defaultRequiredAgentLabels = "";
     private int _brainPushMaxRetries = 3;
-    private int _agentDisconnectGracePeriodMinutes = 5;
-    private int _agentBusyProgressTimeoutMinutes = 60;
-    private int _heartbeatSweepIntervalSeconds = 60;
-    private int _heartbeatTimeoutSeconds = 90;
     private int _outputBufferCapacity = 10000;
     private int _outputLinesCapacity = 5000;
     private int _chatHistoryCapacity = 200;
@@ -129,10 +93,6 @@
         var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
         _defaultRequiredAgentLabels = config.DefaultRequiredAgentLabels ?? "";
         _brainPushMaxRetries = config.BrainPushMaxRetries;
-        _agentDisconnectGracePeriodMinutes = (int)config.AgentDisconnectGracePeriod.TotalMinutes;
-        _agentBusyProgressTimeoutMinutes = (int)config.AgentBusyProgressTimeout.TotalMinutes;
-        _heartbeatSweepIntervalSeconds = config.HeartbeatSweepIntervalSeconds;
-        _heartbeatTimeoutSeconds = config.HeartbeatTimeoutSeconds;
         _outputBufferCapacity = config.OutputBufferCapacity;
         _outputLinesCapacity = config.OutputLinesCapacity;
         _chatHistoryCapacity = config.ChatHistoryCapacity;
@@ -153,10 +113,6 @@
                 {
                     DefaultRequiredAgentLabels = labels,
                     BrainPushMaxRetries = _brainPushMaxRetries,
-                    AgentDisconnectGracePeriod = TimeSpan.FromMinutes(_agentDisconnectGracePeriodMinutes),
-                    AgentBusyProgressTimeout = TimeSpan.FromMinutes(_agentBusyProgressTimeoutMinutes),
-                    HeartbeatSweepIntervalSeconds = _heartbeatSweepIntervalSeconds,
-                    HeartbeatTimeoutSeconds = _heartbeatTimeoutSeconds,
                     OutputBufferCapacity = _outputBufferCapacity,
                     OutputLinesCapacity = _outputLinesCapacity,
                     ChatHistoryCapacity = _chatHistoryCapacity,

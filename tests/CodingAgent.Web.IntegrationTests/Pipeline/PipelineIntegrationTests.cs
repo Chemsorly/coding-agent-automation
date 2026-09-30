@@ -30,7 +30,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var original = new PipelineConfiguration
         {
             MaxRetries = 5,
-            IssuePageSize = 50,
             AgentTimeout = TimeSpan.FromMinutes(45),
             WorkspaceBaseDirectory = "/tmp/custom-workspaces",
             CodeReview = new CodeReviewConfiguration
@@ -46,12 +45,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             StallPollInterval = TimeSpan.FromSeconds(15),
             BlacklistedPaths = new[] { ".agent", ".github", ".secret" },
             FailedWorkspaceRetentionDays = 14,
-            LastUsedProviderIds = new Dictionary<string, string>
-            {
-                ["issue"] = "gh-issue-1",
-                ["repository"] = "gh-repo-1",
-                ["agent"] = "kiro-1"
-            },
             BrainReadOnly = true,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
             ClosedLoopMaxRunsPerCycle = 5,
@@ -65,7 +58,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         var loaded = await freshStore.LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.MaxRetries.Should().Be(original.MaxRetries);
-        loaded.IssuePageSize.Should().Be(original.IssuePageSize);
         loaded.AgentTimeout.Should().Be(original.AgentTimeout);
         loaded.WorkspaceBaseDirectory.Should().Be(original.WorkspaceBaseDirectory);
         loaded.AnalysisPrompt.Should().Be(original.AnalysisPrompt);
@@ -76,7 +68,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.StallPollInterval.Should().Be(original.StallPollInterval);
         loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
         loaded.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
-        loaded.LastUsedProviderIds.Should().BeEquivalentTo(original.LastUsedProviderIds);
         loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);
         loaded.ClosedLoopPollInterval.Should().Be(original.ClosedLoopPollInterval);
         loaded.ClosedLoopMaxRunsPerCycle.Should().Be(original.ClosedLoopMaxRunsPerCycle);
@@ -97,14 +88,12 @@ public class PipelineIntegrationTests : IntegrationTestBase
             {
                 FixPrompt = null
             },
-            LastUsedProviderIds = new Dictionary<string, string>()
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
         var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
 
         loaded.CodeReview.FixPrompt.Should().BeNull();
-        loaded.LastUsedProviderIds.Should().BeEmpty();
     }
 
     [Fact]

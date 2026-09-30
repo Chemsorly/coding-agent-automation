@@ -72,9 +72,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(1),
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
         }, CancellationToken.None);
 
         await SeedIssueAndProfileAsync("1000", "Crash test issue");
@@ -96,8 +94,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         await agent.DisposeAsync();
 
         // Assert: HeartbeatMonitor detects stale heartbeat → disconnect → grace expiry → Failed
-        // HeartbeatSweepIntervalSeconds=5 (set in InMemoryConfigurationStore defaults),
-        // so detection takes at most ~12s (sweep + grace + sweep).
+        // FakeJobController uses a built-in 2s grace period, so detection takes at most ~12s.
         var failedItem = await WaitForWorkItemStatusAsync(
             workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
         Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
@@ -219,9 +216,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(1),
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
         }, CancellationToken.None);
 
         await SeedIssueAndProfileAsync("1003", "Disconnect before accept");
@@ -319,9 +314,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 3,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(30), // Long enough to reconnect
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
         }, CancellationToken.None);
 
         await SeedIssueAndProfileAsync("1006", "Orphan restoration issue");
@@ -341,10 +334,14 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // Disconnect (simulating network blip)
         await agent.DisposeAsync();
 
-        // Wait for heartbeat timeout to trigger Disconnected transition
-        await Task.Delay(TimeSpan.FromSeconds(8));
+        // Wait briefly for the disconnect to be registered by the hub (OnDisconnectedAsync),
+        // but stay well within FakeJobController's 2-second grace period so the agent entry
+        // has not yet been removed when we assert below. 500ms is enough for the SignalR hub
+        // to transition the agent to Disconnected; the reconciler won't remove the entry until
+        // the full 2s grace has elapsed (~t=2.25s at the earliest given the 250ms poll interval).
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
 
-        // Verify agent is marked Disconnected (not yet removed — within grace period)
+        // Verify agent is marked Disconnected (not yet removed — still within 2s grace period)
         var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("unhappy-orphan-agent");
         // Entry might be Disconnected or already have ActiveJobId preserved
@@ -381,9 +378,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         await Fixture.ConfigStore.SavePipelineConfigAsync(config with
         {
-            HeartbeatTimeoutSeconds = 2,
-            AgentDisconnectGracePeriod = TimeSpan.FromSeconds(2), // Very short — orphan expires quickly
-            HeartbeatSweepIntervalSeconds = 5
+            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
         }, CancellationToken.None);
 
         await SeedIssueAndProfileAsync("1007", "Orphan expiry issue");

@@ -55,7 +55,7 @@ public class PipelineConfigurationMessagePackBinaryTests
     }
 
     /// <summary>
-    /// Verify that all 75 [Key]-annotated properties (Keys 0–74) survive MessagePack round-trip with correct values.
+    /// Verify that all [Key]-annotated properties survive MessagePack round-trip with correct values.
     /// </summary>
     [Fact]
     public void MessagePackRoundTrip_FullyPopulatedConfig_PreservesAllPropertyValues()
@@ -68,7 +68,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.Should().NotBeNull();
         deserialized!.MaxRetries.Should().Be(7);
         deserialized.MaxAnalysisRetries.Should().Be(4);
-        deserialized.IssuePageSize.Should().Be(50);
         deserialized.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
         deserialized.WorkspaceBaseDirectory.Should().Be("/custom/workspaces");
         deserialized.AnalysisPrompt.Should().Be("Custom analysis prompt");
@@ -103,15 +102,11 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.ClosedLoopCircuitBreakerCooldown.Should().Be(TimeSpan.FromMinutes(10));
         deserialized.DefaultRequiredAgentLabels.Should().Be("kiro,dotnet");
         deserialized.BrainPushMaxRetries.Should().Be(5);
-        deserialized.AgentDisconnectGracePeriod.Should().Be(TimeSpan.FromMinutes(10));
-        deserialized.AgentBusyProgressTimeout.Should().Be(TimeSpan.FromMinutes(90));
         deserialized.OutputBufferCapacity.Should().Be(20_000);
         deserialized.OutputLinesCapacity.Should().Be(8_000);
         deserialized.ChatHistoryCapacity.Should().Be(300);
         deserialized.QualityGateHistoryCapacity.Should().Be(75);
         deserialized.RetryErrorsCapacity.Should().Be(150);
-        deserialized.HeartbeatSweepIntervalSeconds.Should().Be(90);
-        deserialized.HeartbeatTimeoutSeconds.Should().Be(120);
         deserialized.OrphanedLabelSweepIntervalMinutes.Should().Be(60);
         deserialized.MaxRefactoringProposals.Should().Be(5);
         deserialized.HotspotAnalysisLookback.Should().Be(TimeSpan.FromDays(180));
@@ -127,7 +122,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.EnableIssueImageExtraction.Should().BeFalse();
         deserialized.EnableNativeImageParts.Should().BeFalse();
         deserialized.ImageDownloadTimeoutSeconds.Should().Be(60);
-        deserialized.MaxConsolidationDispatchRetries.Should().Be(7);
         deserialized.TransientRetryDelay.Should().Be(TimeSpan.FromSeconds(15));
         deserialized.CiCancelledMoveMaxRetries.Should().Be(7);
         deserialized.HousekeepingTriggerCooldownMinutes.Should().Be(30);
@@ -139,7 +133,6 @@ public class PipelineConfigurationMessagePackBinaryTests
     {
         MaxRetries = 7,
         MaxAnalysisRetries = 4,
-        IssuePageSize = 50,
         AgentTimeout = TimeSpan.FromMinutes(45),
         WorkspaceBaseDirectory = "/custom/workspaces",
         CodeReview = new CodeReviewConfiguration
@@ -178,11 +171,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         PipelineInjectedPaths = new[] { ".injected" },
         AnalysisCommitThreshold = 50,
         FailedWorkspaceRetentionDays = 14,
-        LastUsedProviderIds = new Dictionary<string, string>
-        {
-            ["issue"] = "ip-custom",
-            ["repository"] = "rp-custom",
-        },
         BrainReadOnly = true,
         ClosedLoopAutoStart = true,
         ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
@@ -193,15 +181,11 @@ public class PipelineConfigurationMessagePackBinaryTests
         ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(10),
         DefaultRequiredAgentLabels = "kiro,dotnet",
         BrainPushMaxRetries = 5,
-        AgentDisconnectGracePeriod = TimeSpan.FromMinutes(10),
-        AgentBusyProgressTimeout = TimeSpan.FromMinutes(90),
         OutputBufferCapacity = 20_000,
         OutputLinesCapacity = 8_000,
         ChatHistoryCapacity = 300,
         QualityGateHistoryCapacity = 75,
         RetryErrorsCapacity = 150,
-        HeartbeatSweepIntervalSeconds = 90,
-        HeartbeatTimeoutSeconds = 120,
         OrphanedLabelSweepIntervalMinutes = 60,
         MaxRefactoringProposals = 5,
         HotspotAnalysisLookback = TimeSpan.FromDays(180),
@@ -217,7 +201,6 @@ public class PipelineConfigurationMessagePackBinaryTests
         EnableIssueImageExtraction = false,
         EnableNativeImageParts = false,
         ImageDownloadTimeoutSeconds = 60,
-        MaxConsolidationDispatchRetries = 7,
         TransientRetryDelay = TimeSpan.FromSeconds(15),
         CiCancelledMoveMaxRetries = 7,
         HousekeepingTriggerCooldownMinutes = 30,
