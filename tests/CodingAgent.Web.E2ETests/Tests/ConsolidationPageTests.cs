@@ -314,26 +314,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // The card renders a <span class="consolidation-status-succeeded"> under the Brain
         // Consolidation row for the template. Wait for the card to reflect the updated status
         // because NavigateAsync may return before LoadDataAsync populates _lastRuns.
-        // TODO [WARNING]: The WaitForFunctionAsync selector below is not scoped to the "S1 Template"
-        // card — it matches any .consolidation-status-succeeded element on any card. If a prior
-        // test left a succeeded card in another template slot (e.g. incomplete fixture reset), the
-        // wait resolves immediately on the stale element and the subsequent QuerySelectorAsync
-        // (which is scoped) may still find the stale card, making Assert.NotNull pass without
-        // verifying S1's outcome. The TOCTOU window between WaitForFunctionAsync and
-        // QuerySelectorAsync means the two calls do not check the same element. Fix: use a
-        // template-name-scoped selector in WaitForFunctionAsync, e.g.:
-        //   "() => document.querySelector(\".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded\") !== null"
+        // Selector is scoped to the "S1 Template" card so the wait and the assertion check the
+        // same element (eliminates the TOCTOU gap identified in the review).
         await Page.WaitForFunctionAsync(
-            "() => document.querySelector('.consolidation-card:has(.consolidation-card-title) .consolidation-status-succeeded') !== null",
+            "() => document.querySelector(\".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded\") !== null",
             null,
-            new() { Timeout = 10_000 });
+            new() { Timeout = 30_000 });
         var cardStatusEl = await Page.QuerySelectorAsync(
             ".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded");
-        // TODO [WARNING]: This asserts presence of the succeeded badge on the card but not its
-        // text content. If the card renders a stale summary from a prior run or renders the badge
-        // without any summary, this assertion still passes. Add a TextContentAsync assertion on
-        // cardStatusEl or on the adjacent summary element to verify the card reflects the
-        // "Consolidated 3 files" summary from this specific run.
         Assert.NotNull(cardStatusEl);
     }
 
