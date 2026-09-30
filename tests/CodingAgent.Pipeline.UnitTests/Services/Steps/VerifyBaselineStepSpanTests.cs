@@ -56,13 +56,10 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        // TODO: This assertion does not filter by _testRunId, unlike every other test in this
-        // class. Under parallel test execution it can pass on a span emitted by a sibling test,
-        // meaning this test's own VerifyBaselineStep invocation could fail to emit a span and
-        // the assertion would still pass. Replace with GetOwnSpan("VerifyBaseline") for proper
-        // isolation (see review finding from correctness/dotnet-specialist/test-quality reviewers).
-        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline",
-            "VerifyBaselineStep must emit a VerifyBaseline span");
+        // Use GetOwnSpan to filter by this test's unique _testRunId, preventing false positives
+        // from spans emitted by sibling tests running in parallel.
+        var span = GetOwnSpan("VerifyBaseline");
+        span.Should().NotBeNull("VerifyBaselineStep must emit a VerifyBaseline span");
     }
 
     [Fact]
@@ -149,6 +146,12 @@ public class VerifyBaselineStepSpanTests : IDisposable
     /// test instance (matched by <see cref="_testRunId"/>). Filters out spans from other tests
     /// that run in parallel and share the same global ActivityListener.
     /// </summary>
+    // TODO: Replace _activities.First(...) with _activities.FirstOrDefault(...) so that callers
+    // receive null when no matching span is found. The current First() throws
+    // InvalidOperationException ("Sequence contains no matching element") before the caller's
+    // .Should().NotBeNull(...) assertion ever runs, producing an uninformative failure message.
+    // Each call site should guard with: GetOwnSpan("X").Should().NotBeNull("reason") — which
+    // will emit a clear assertion failure instead of a raw exception. (WARNING: multiple reviewers)
     private Activity GetOwnSpan(string displayName) =>
         _activities.First(a => a.DisplayName == displayName
                                 && _testRunId.Equals(a.GetTagItem("pipeline.run_id")));
