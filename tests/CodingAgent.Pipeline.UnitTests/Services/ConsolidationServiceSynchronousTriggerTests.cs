@@ -329,6 +329,14 @@ public sealed class ConsolidationServiceSynchronousTriggerTests
         await act.Should().NotThrowAsync(
             "TriggerAsync must swallow unexpected distributor exceptions and return null");
 
+        // TODO [WARNING]: The second TriggerAsync call below is redundant — act.Should().NotThrowAsync()
+        // already exercises the same code path (same mock, same sut state). The return-value assertion
+        // cannot be inferred from NotThrowAsync alone (it discards the return value), so a second call
+        // is used to capture it, but this invokes DistributeAsync a second time on the same always-
+        // throwing mock with no state reset. The same behaviour is already covered more precisely by
+        // TriggerAsync_WhenDistributeAsyncThrows_ReturnsNull in ConsolidationServiceTests. Consider
+        // either calling act() and extracting the return value from the first invocation, or removing
+        // this test in favour of the equivalent in ConsolidationServiceTests.
         var result = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation,
             new TemplateId(Template.Id),

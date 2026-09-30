@@ -625,6 +625,18 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Wait for server-side harness suggestions to be persisted.
         // Resolve from the API host: hub updates the API host's IConsolidationService.
         var consolidationService = Fixture.ApiServices.GetRequiredService<IConsolidationService>();
+        // TODO [WARNING]: This condition only confirms that the API host's in-memory
+        // IConsolidationService has a non-null HarnessSuggestions object — it does not verify
+        // the count is correct (3) or that the suggestions were persisted to KeyValueStore.
+        // A stale HarnessSuggestions object from a prior run that survived the ResetState
+        // db.KeyValueStore.RemoveRange (e.g. if the clear runs after this wait fires) could satisfy
+        // this condition prematurely. The subsequent Assert.Equal(3, suggestionCount) on the DOM
+        // will catch a wrong count, but with a confusing mismatch error rather than a clear
+        // "wrong data" message. Fix: poll for suggestions with the expected count, e.g.:
+        //   await WaitUntilAsync(async () => {
+        //       var s = await consolidationService.GetHarnessSuggestionsAsync(CancellationToken.None);
+        //       return s?.Suggestions.Count == 3;
+        //   });
         await WaitUntilAsync(async () =>
             await consolidationService.GetHarnessSuggestionsAsync(CancellationToken.None) is not null);
 
@@ -728,13 +740,16 @@ public sealed class ConsolidationPageTests : E2ETestBase
         var cancelledRowText = await page.GetRunHistoryRowTextAsync(0);
         Assert.NotNull(cancelledRowText);
         // TODO [WARNING]: Assert.Contains("Cancelled") depends on GetStatusDisplay(run) returning
-        // "Cancelled", which only happens when run.FinalStep == PipelineStep.Cancelled. Because no
-        // PipelineRun exists in memory (no agent connected), CancelRunAsync's RemoveRun returns null
-        // and does nothing. The "Cancelled" status must come entirely from the WorkItem→PipelineRunSummary
-        // projection setting FinalStep=Cancelled for a cancelled-with-no-run WorkItem. If that
-        // projection maps a cancelled WorkItem to a null or non-Cancelled FinalStep, GetStatusDisplay
-        // returns "Running" and this assertion fails. Verify the projection before removing this comment.
-        // (review-findings-correctness.md WARNING:L538-544)
+        // "Cancelled", which only happens when run.FinalStep == PipelineStep.Cancelled.
+        // Contrary to an older comment, a PipelineRun IS created for consolidation work items
+        // via PipelineRunFactory.CreateFromWorkItem (issue #3023) and added to IOrchestratorRunService
+        // at WorkItem creation time — so CancelRunAsync DOES find the in-memory run, calls
+        // MarkCompleted() + CurrentStep = Cancelled, and persists it to history. The "Cancelled"
+        // status therefore comes from the serialised PipelineRunSummary.FinalStep, not from a
+        // WorkItem→PipelineRunSummary projection. If the in-memory run is somehow absent (e.g. a
+        // server restart between trigger and cancel), the projection fallback path applies and the
+        // FinalStep value depends on how WorkItemStatus.Cancelled is mapped there. Verify that
+        // fallback mapping if this assertion ever fails with "Running" on a fresh cancellation.
         Assert.Contains("Cancelled", cancelledRowText, StringComparison.OrdinalIgnoreCase);
 
         // Assert: connecting an agent now does NOT dispatch the cancelled item.

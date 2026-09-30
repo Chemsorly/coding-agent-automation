@@ -149,6 +149,18 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
                 // Additionally, check the exception's own CancellationToken: if it matches ct (or a
                 // token derived from ct via a linked CTS), it is a real caller cancellation regardless
                 // of the IsCancellationRequested timing.
+                // TODO [WARNING]: oce.CancellationToken.IsCancellationRequested broadens the
+                // abort-and-rethrow path beyond caller cancellation. Any OperationCanceledException
+                // thrown by code inside SendMessageWithTimeoutAsync that carries any already-cancelled
+                // token (e.g. an internal timeout CTS not derived from the caller's ct) will satisfy
+                // this condition, causing AbortBestEffortAsync + rethrow instead of returning an error
+                // result. TimeoutHelper.ExecuteWithTimeoutAsync already handles the pure-timeout case
+                // internally, so the only scenario where oce.CancellationToken.IsCancellationRequested
+                // fires without ct.IsCancellationRequested also being true is an unexpected internal
+                // cancellation — which should not be treated as caller cancellation. The original
+                // two-catch design with a when-filter on ct was the correct discriminator; using
+                // ct.IsCancellationRequested alone in the body would be sufficient to address the
+                // described timing race without this broader condition.
                 if (ct.IsCancellationRequested || oce.CancellationToken.IsCancellationRequested)
                 {
                     await AbortBestEffortAsync(sessionId, workspacePath);
