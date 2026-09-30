@@ -201,7 +201,9 @@ public class DecompositionStepTests
                     new() { Identifier = "1", Title = "Issue Alpha", Labels = Array.Empty<string>() },
                     new() { Identifier = "2", Title = "Issue Beta", Labels = Array.Empty<string>() }
                 }.AsReadOnly(),
-                HasMore = false, Page = 1, PageSize = 50
+                HasMore = false,
+                Page = 1,
+                PageSize = 50
             });
 
         var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, null, "run-1", CancellationToken.None);
@@ -222,7 +224,9 @@ public class DecompositionStepTests
                 {
                     new() { Identifier = "1", Title = "Page1-Issue1", Labels = Array.Empty<string>() }
                 }.AsReadOnly(),
-                HasMore = true, Page = 1, PageSize = 50
+                HasMore = true,
+                Page = 1,
+                PageSize = 50
             })
             .ReturnsAsync(new CodingAgent.Pipeline.Models.PagedResult<CodingAgent.Pipeline.Models.IssueSummary>
             {
@@ -230,7 +234,9 @@ public class DecompositionStepTests
                 {
                     new() { Identifier = "2", Title = "Page2-Issue1", Labels = Array.Empty<string>() }
                 }.AsReadOnly(),
-                HasMore = false, Page = 2, PageSize = 50
+                HasMore = false,
+                Page = 2,
+                PageSize = 50
             });
 
         var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, null, "run-2", CancellationToken.None);
@@ -248,7 +254,9 @@ public class DecompositionStepTests
             .ReturnsAsync(new CodingAgent.Pipeline.Models.PagedResult<CodingAgent.Pipeline.Models.IssueSummary>
             {
                 Items = new List<CodingAgent.Pipeline.Models.IssueSummary>().AsReadOnly(),
-                HasMore = false, Page = 1, PageSize = 50
+                HasMore = false,
+                Page = 1,
+                PageSize = 50
             });
 
         var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, null, "run-3", CancellationToken.None);
@@ -729,7 +737,9 @@ public sealed class DecompositionStepExecuteAsyncTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [new IssueSummary { Identifier = "10", Title = "Existing Sub-Issue", Labels = [] }],
-                HasMore = false, Page = 1, PageSize = 50
+                HasMore = false,
+                Page = 1,
+                PageSize = 50
             });
 
         SetupAgentSuccess();

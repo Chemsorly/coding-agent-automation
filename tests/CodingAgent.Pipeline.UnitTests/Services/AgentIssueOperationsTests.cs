@@ -208,7 +208,9 @@ public sealed class IAgentIssueOperationsDefaultMethodTests
         new()
         {
             Items = [new CodingAgent.Pipeline.Models.IssueSummary { Identifier = "1", Title = title, Labels = [] }],
-            HasMore = false, Page = 1, PageSize = 50
+            HasMore = false,
+            Page = 1,
+            PageSize = 50
         };
 
     [Fact]
