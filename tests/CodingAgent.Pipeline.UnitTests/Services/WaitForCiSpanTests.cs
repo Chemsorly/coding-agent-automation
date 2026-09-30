@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -16,7 +17,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 public class WaitForCiSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    private readonly List<Activity> _activities = [];
+    private readonly ConcurrentBag<Activity> _activities = [];
 
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
     private readonly Mock<IRepositoryProvider> _repoProvider = new();

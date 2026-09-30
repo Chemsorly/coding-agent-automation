@@ -7,7 +7,7 @@ using System.Diagnostics.Metrics;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
-/// Shared helper that encapsulates the label-swap loop: iterate <see cref="AgentLabels.All"/>,
+/// Shared helper that encapsulates the label-swap loop: iterate <see cref="AgentLabels.SwapTargets"/>,
 /// skip the target label, remove each, then add the target.
 /// </summary>
 public static class AgentLabelOperations
@@ -47,9 +47,9 @@ public static class AgentLabelOperations
     /// <param name="currentLabels">
     /// Optional: the labels currently present on the issue or PR.
     /// When provided, the remove phase only attempts to remove labels that are actually
-    /// present — eliminating the DELETE 404s that occur when all <see cref="AgentLabels.All"/>
+    /// present — eliminating the DELETE 404s that occur when all <see cref="AgentLabels.SwapTargets"/>
     /// entries are removed unconditionally. When null (default), falls back to the original
-    /// behavior: attempt removal of every label in <see cref="AgentLabels.All"/> except
+    /// behavior: attempt removal of every label in <see cref="AgentLabels.SwapTargets"/> except
     /// <paramref name="newLabel"/>. The fallback guarantees correctness when the caller
     /// cannot supply current label state (Requirement #2).
     /// </param>
@@ -83,7 +83,7 @@ public static class AgentLabelOperations
             await addLabel(newLabel, ct);
         }
 
-        foreach (var label in AgentLabels.All)
+        foreach (var label in AgentLabels.SwapTargets)
         {
             // When the caller supplies the issue's current labels, skip any label that is not
             // actually present — avoids the DELETE 404s from removing labels the issue doesn't have.
@@ -92,7 +92,7 @@ public static class AgentLabelOperations
             // skip-if-new-label guard two lines below uses StringComparison.Ordinal. The
             // OrdinalIgnoreCase choice is intentional for robustness (GitHub label names are
             // case-insensitive), but the inconsistency is a latent correctness risk: if newLabel
-            // differs from an AgentLabels.All entry only in casing, the Ordinal guard below will
+            // differs from an AgentLabels.SwapTargets entry only in casing, the Ordinal guard below will
             // not fire and the label will be removed instead of skipped. Consider making both
             // guards use OrdinalIgnoreCase to be consistent. See issue #2971.
             if (currentLabels is not null && !currentLabels.Contains(label, StringComparer.OrdinalIgnoreCase))

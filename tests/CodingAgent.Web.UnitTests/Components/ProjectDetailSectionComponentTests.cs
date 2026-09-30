@@ -177,6 +177,145 @@ public class ProjectDetailSectionComponentTests : BunitContext
 }
 
 /// <summary>
+/// bUnit component tests for ProjectDetailSection — Settings tab numeric range validation.
+/// Verifies that out-of-range int overrides are rejected before saving and an error status is shown.
+/// </summary>
+public class ProjectDetailSectionSettingsValidationTests : BunitContext
+{
+    private readonly Mock<IPipelineApiConfigClient> _mockStore;
+
+    public ProjectDetailSectionSettingsValidationTests()
+    {
+        _mockStore = new Mock<IPipelineApiConfigClient>();
+        SetupDefaults();
+    }
+
+    private void SetupDefaults()
+    {
+        _mockStore.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockStore.Setup(s => s.GetProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockStore.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+    }
+
+    /// <summary>
+    /// Sets up a project, renders the component, navigates to Settings tab, overrides
+    /// MaxDecompositionSubIssues input to an out-of-range value (999), and returns
+    /// the rendered component along with a status message capture.
+    /// </summary>
+    private (IRenderedComponent<ProjectDetailSection> cut, Func<(string Message, bool IsError)?> getStatus)
+        RenderWithOutOfRangeMaxDecompositionSubIssues()
+    {
+        // Start with an in-range value so the Override button becomes a visible input
+        var project = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Test",
+            MaxDecompositionSubIssues = 10  // valid (1-20)
+        };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        (string Message, bool IsError)? capturedStatus = null;
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object)
+            .Add(s => s.OnShowStatus,
+                EventCallback.Factory.Create<(string, bool)>(this, msg => capturedStatus = msg)));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
+
+        // Find the number input for "Max Sub-Issues Per Epic" and change it to 999 (out of range, max 20)
+        var numberInputs = cut.FindAll("input[type='number']");
+        // MaxDecompositionSubIssues is in the Decomposition section. Find by querying min/max attrs.
+        // TODO: This selector is fragile — it matches the first input[type='number'] with min="1" max="20".
+        // If any other Settings tab field is also constrained to min=1 max=20, the test will silently target
+        // the wrong field. Replace with a stable selector (e.g. locate by label text "Max Sub-Issues Per Epic"
+        // or add a data-testid attribute). (Review findings: Correctness:237, TestQualityReviewer:213)
+        var subIssueInput = numberInputs.First(i =>
+            i.GetAttribute("min") == "1" && i.GetAttribute("max") == "20");
+        subIssueInput.Change(999);
+
+        return (cut, () => capturedStatus);
+    }
+
+    [Fact]
+    public void SaveSettings_WithOutOfRangeMaxDecompositionSubIssues_DoesNotCallSaveProjectAsync()
+    {
+        var (cut, _) = RenderWithOutOfRangeMaxDecompositionSubIssues();
+
+        cut.Find(".btn-save").Click();
+
+        _mockStore.Verify(
+            s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "SaveProjectAsync must not be called when an override value is out of range");
+    }
+
+    [Fact]
+    public void SaveSettings_WithOutOfRangeMaxDecompositionSubIssues_ShowsErrorStatus()
+    {
+        var (cut, getStatus) = RenderWithOutOfRangeMaxDecompositionSubIssues();
+
+        cut.Find(".btn-save").Click();
+
+        var status = getStatus();
+        Assert.NotNull(status);
+        Assert.True(status!.Value.IsError, "the status shown must be an error");
+        Assert.Contains("Max Sub-Issues", status.Value.Message,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void SaveSettings_WithValidOverrides_SavesSuccessfully()
+    {
+        // Project with valid MaxDecompositionSubIssues already set
+        var project = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Test",
+            MaxDecompositionSubIssues = 10  // valid (1-20)
+        };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        PipelineProject? savedProject = null;
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProject = p)
+            .Returns(Task.CompletedTask);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+
+        // TODO: This test does not navigate to the Settings tab before clicking .btn-save, unlike the two
+        // out-of-range tests which call RenderWithOutOfRangeMaxDecompositionSubIssues() and explicitly click
+        // the Settings tab. If .btn-save is only rendered/active when the Settings tab is selected, this test
+        // may be clicking the wrong button (or nothing) and producing a false pass. Add:
+        //   cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
+        // before the save click to mirror the real user flow. (Review finding: TestQualityReviewer:268)
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
+
+        // Keep value at 10 (valid, 1-20) — just click save
+        cut.Find(".btn-save").Click();
+
+        _mockStore.Verify(
+            s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "SaveProjectAsync must be called exactly once for valid overrides");
+        Assert.NotNull(savedProject);
+        Assert.Equal(10, savedProject!.MaxDecompositionSubIssues);
+    }
+}
+
+/// <summary>
 /// bUnit component tests for ProjectDetailSection — Templates tab dropdown and add/move behavior.
 /// </summary>
 public class ProjectDetailSectionTemplatesTabTests : BunitContext

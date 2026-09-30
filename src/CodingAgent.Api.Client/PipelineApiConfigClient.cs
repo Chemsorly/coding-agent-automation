@@ -166,7 +166,12 @@ internal sealed class PipelineApiConfigClient : IPipelineApiConfigClient
     public async Task SaveProjectAsync(PipelineProject project, CancellationToken ct = default)
     {
         var response = await _http.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"SaveProject failed ({(int)response.StatusCode}): {body}");
+        }
     }
 
     public async Task DeleteProjectAsync(string id, CancellationToken ct = default)
