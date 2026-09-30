@@ -55,6 +55,16 @@ public sealed class FakeJobController : IAsyncDisposable
     /// Tests that need a stable snapshot (to avoid holding the lock across awaits) should call
     /// <c>Fixture.JobController.ClaimedWorkItemIds.ToList()</c> or access individual indices
     /// only after asserting the expected count is already reached.
+    ///
+    /// TODO [WARNING]: ClaimedWorkItemIds is a public ThreadSafeList&lt;Guid&gt; that exposes
+    /// Add and Clear to any caller. The internal ClearClaimedWorkItemIds() method enforces the
+    /// intended clear-only-from-reset contract, but test code can also call
+    /// ClaimedWorkItemIds.Clear() directly, bypassing the contract. Add is also callable from
+    /// test code, enabling silent mutation of the claimed list in assertions. The prior design
+    /// (IReadOnlyList&lt;Guid&gt; snapshot property + private TrackClaimed) prevented both.
+    /// The new design trades encapsulation for indexed access; the risk is low in practice
+    /// (test-only code, no production path), but callers should prefer the snapshot pattern
+    /// (ClaimedWorkItemIds.ToList()) and avoid direct mutation.
     /// </summary>
     public ThreadSafeList<Guid> ClaimedWorkItemIds { get; } = new();
 

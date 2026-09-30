@@ -46,6 +46,7 @@ public sealed partial class PipelineLoopService
             {
                 if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
                     break;
+                Interlocked.Increment(ref _cycleCount);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -921,6 +922,13 @@ public sealed partial class PipelineLoopService
         // Build lookup for O(1) template resolution
         var templateLookup = templates.ToDictionary(t => t.Id);
 
+        // BUG (issue #3093 AC2): docs/projects.md states templates are polled in list/insertion order,
+        // but this OrderBy sorts alphabetically by project name (StringComparer.Ordinal). This means
+        // a project named "A-Project" is always polled before "Z-Project" regardless of configuration
+        // order, contradicting the documented guarantee.
+        // The E2E test EnabledTemplates_PolledInProjectNameOrder pins the actual (alphabetical) behaviour.
+        // When this bug is fixed (OrderBy removed, insertion order preserved), that test must be
+        // updated to assert list/insertion order instead. A GitHub issue must be filed and linked to #3093.
         foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
         {
             foreach (var templateId in project.TemplateIds)

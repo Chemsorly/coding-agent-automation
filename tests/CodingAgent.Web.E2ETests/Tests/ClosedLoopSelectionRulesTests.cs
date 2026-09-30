@@ -22,6 +22,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 {
     public ClosedLoopSelectionRulesTests(E2EFixture fixture) : base(fixture) { }
 
+    // ── Static label arrays (CA1861: avoid constant array arguments) ──────────
+
+    private static readonly string[] AgentNextLabel = ["agent:next"];
+    private static readonly string[] AgentNextAndErrorLabels = ["agent:next", "agent:error"];
+    private static readonly string[] AgentNextAndNeedsRefinementLabels = ["agent:next", "agent:needs-refinement"];
+    private static readonly string[] AgentEpicApprovedLabel = ["agent:epic-approved"];
+    private static readonly string[] E2EMatchLabels = ["e2e"];
+
     // ── Shared setup helpers ───────────────────────────────────────────────────
 
     private Task SaveDefaultTemplateAsync(
@@ -48,7 +56,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         {
             Id = id,
             DisplayName = "Selection Rules Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = E2EMatchLabels,
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -78,21 +86,21 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "1",
             Title = "Clean issue",
             Description = "Should be dispatched",
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "2",
             Title = "Error issue",
             Description = "Should be skipped",
-            Labels = new[] { "agent:next", "agent:error" }
+            Labels = AgentNextAndErrorLabels
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "3",
             Title = "Needs refinement issue",
             Description = "Should be skipped",
-            Labels = new[] { "agent:next", "agent:needs-refinement" }
+            Labels = AgentNextAndNeedsRefinementLabels
         });
 
         await SaveDefaultTemplateAsync();
@@ -156,7 +164,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "30",
             Title = "Newest issue",
             Description = "Created most recently",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             CreatedAt = now  // newest — first in list
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -164,7 +172,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "20",
             Title = "Middle issue",
             Description = "Created in the middle",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             CreatedAt = now.AddDays(-1)  // middle
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
@@ -172,7 +180,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "10",
             Title = "Oldest issue",
             Description = "Created longest ago",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             CreatedAt = now.AddDays(-2)  // oldest — last in list
         });
 
@@ -217,7 +225,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "42",
             Title = "PR for review",
             Description = "PR body",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             BranchName = "feature/some-branch",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/42",
@@ -243,14 +251,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "200",
             Title = "Epic — phase 2",
             Description = "Epic approved for decomposition",
-            Labels = new[] { "agent:epic-approved" }
+            Labels = AgentEpicApprovedLabel
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "300",
             Title = "Regular issue",
             Description = "Should wait until budget allows",
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
 
         await SaveDefaultTemplateAsync(
@@ -350,7 +358,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "43",
             Title = "PR for review",
             Description = "PR body",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             BranchName = "feature/another-branch",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/43",
@@ -373,14 +381,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "201",
             Title = "Epic — phase 2",
             Description = "Epic approved for decomposition",
-            Labels = new[] { "agent:epic-approved" }
+            Labels = AgentEpicApprovedLabel
         });
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "301",
             Title = "Regular issue",
             Description = "Should be dispatched with budget=3",
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
 
         await SaveDefaultTemplateAsync(
@@ -462,7 +470,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "50",
             Title = "PR that should not be dispatched",
             Description = "Review is disabled",
-            Labels = new[] { "agent:next" },
+            Labels = AgentNextLabel,
             BranchName = "feature/flag-test",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/50",
@@ -484,15 +492,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // Allow two cycles to complete (2s at 1s poll interval)
-            // TODO [WARNING]: This is a negative test asserting that nothing was dispatched.
-            // Task.Delay(2s) provides only a time-based guarantee that the loop ran at least once,
-            // which may not hold under CI load if the first cycle takes >2s to complete.
-            // The test could pass vacuously (loop never polled, ClaimedWorkItemIds empty) without
-            // exercising the ReviewEnabled=false flag at all. A stronger approach is to verify
-            // that the loop is still active and reached at least one iteration before asserting
-            // emptiness (e.g. WaitUntilAsync(loopService.CycleCount >= 1)).
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            // Wait for at least one full poll cycle to complete before asserting emptiness.
+            // CycleCount is incremented after each successful ExecuteCycleAsync call in
+            // RunMultiTemplateLoopAsync, so this wait is non-vacuous: it confirms the loop
+            // actually exercised the ReviewEnabled=false flag path. Without this guard
+            // (previously Task.Delay(2s)), the assertion could pass vacuously if the loop
+            // never completed a cycle under CI load.
+            await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
@@ -515,7 +521,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "51",
             Title = "Issue that should not be dispatched",
             Description = "Implementation is disabled",
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
 
         await SaveDefaultTemplateAsync(implementationEnabled: false);
@@ -531,11 +537,10 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // TODO [WARNING]: Same time-based negative-test weakness as FeatureFlags_ReviewDisabled.
-            // If the loop never completes a cycle within 2s (e.g. under CI load), ClaimedWorkItemIds
-            // is empty regardless of whether ImplementationEnabled=false logic is working, making the
-            // assertion vacuously true.
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            // Wait for at least one full poll cycle to complete before asserting emptiness.
+            // CycleCount is incremented after each successful ExecuteCycleAsync call, so this
+            // wait proves the loop ran and exercised the ImplementationEnabled=false path.
+            await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
@@ -558,15 +563,17 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "52",
             Title = "Epic that should not be dispatched",
             Description = "Decomposition is disabled",
-            Labels = new[] { "agent:epic-approved" }
+            Labels = AgentEpicApprovedLabel
         });
 
-        // TODO [WARNING]: implementationEnabled: false is set here alongside decompositionEnabled: false,
-        // which introduces a confounding variable. The feature flag under test is DecompositionEnabled;
-        // setting ImplementationEnabled=false masks whether epics are actually blocked by the decomposition
-        // flag or by some interaction with implementation being disabled. A cleaner test would only set
-        // decompositionEnabled: false and leave implementationEnabled at its default (true).
-        await SaveDefaultTemplateAsync(decompositionEnabled: false, implementationEnabled: false);
+        // ImplementationEnabled is intentionally left at the default (true) so that the loop
+        // still polls the implementation queue. This ensures the test is non-vacuous: the loop
+        // exercises the full dispatch path including the decomposition gate, rather than
+        // short-circuiting before it reaches the epic-dispatch check.
+        // Previously, implementationEnabled: false was set alongside decompositionEnabled: false,
+        // which introduced a confounding variable — the assertion would pass even if
+        // DecompositionEnabled=false logic were absent, because no work type was eligible at all.
+        await SaveDefaultTemplateAsync(decompositionEnabled: false, implementationEnabled: true);
         await SaveDefaultAgentProfileAsync();
         await SetPollIntervalAsync(maxRunsPerCycle: 1);
 
@@ -579,8 +586,10 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // TODO [WARNING]: Same time-based negative-test weakness as FeatureFlags_ReviewDisabled.
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            // Wait for at least one full poll cycle to complete before asserting emptiness.
+            // CycleCount is incremented after each successful ExecuteCycleAsync call, so this
+            // wait proves the loop ran and exercised the DecompositionEnabled=false path.
+            await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
@@ -605,7 +614,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "60",
             Title = "Issue for disabled template",
             Description = "Template is disabled",
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
 
         // Template with Enabled=false
@@ -628,41 +637,50 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     /// <summary>
     /// A disabled project is skipped entirely; templates in it are never polled.
     /// The loop must start (an enabled template exists in the default enabled project) and
-    /// run at least one cycle, yet never dispatch the issue that belongs exclusively to the
-    /// disabled project.
+    /// run at least one cycle.
     ///
-    /// Design: both issues share the same issue-e2e provider (InMemoryIssueProvider is
-    /// not per-template). Issue "62" is given an older CreatedAt so FIFO always selects it
-    /// first, ensuring budget=1 dispatches "62" and never "61". The assertion that "61" is
-    /// never dispatched is then non-vacuous: the loop ran (it dispatched "62"), but the
-    /// disabled project rule prevented a second dispatch of "61" from the disabled template.
+    /// Design: the default (enabled) project's template uses the primary issue provider
+    /// ("issue-e2e") and has issue "62". The disabled project's template uses the primary
+    /// provider too (same InMemoryIssueProvider), but FlattenTemplates must skip it entirely.
+    ///
+    /// Discriminating assertion: budget=2 is used so the loop COULD dispatch two items if the
+    /// disabled project's template were incorrectly included. Issue "62" (older CreatedAt) is
+    /// FIFO-first and is dispatched via the default template. After the loop stops, a DB lookup
+    /// verifies that no work item was ever created for issue "61" (which would only appear if
+    /// the disabled project's template were incorrectly polled and budget allowed it).
+    ///
+    /// This is stronger than Assert.Single + count inference: if FlattenTemplates were broken
+    /// and included the disabled project's template, issue "62" (FIFO-first) would still be
+    /// dispatched by the first template, AND "61" could be dispatched by the second template
+    /// within the same budget=2 cycle. The DB assertion on "61" catches this bug directly.
     /// </summary>
     [Fact]
     public async Task DisabledProject_NothingDispatched()
     {
         var now = DateTime.UtcNow;
 
-        // Issue "62" — owned by the enabled default-project template.
-        // Seeded with an older CreatedAt so FIFO always dispatches it first (budget=1).
+        // Issue "62" — in the primary provider, dispatched by the default (enabled) project's template.
+        // Older CreatedAt so FIFO always selects it ahead of "61".
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "62",
             Title = "Issue for enabled default project",
-            Description = "Default project is enabled — WILL be dispatched first",
-            Labels = new[] { "agent:next" },
+            Description = "Default project is enabled — WILL be dispatched",
+            Labels = AgentNextLabel,
             CreatedAt = now.AddDays(-1)  // older: FIFO selects this first
         });
 
-        // Issue "61" — intended for the disabled project's template.
-        // With budget=1 it cannot be dispatched in cycle 1 even if the disabled template were polled.
-        // Its absence from ClaimedWorkItemIds after loop stop proves the disabled project was skipped.
+        // Issue "61" — also in the primary provider.
+        // With budget=2, this WOULD be dispatched if the disabled project's template were
+        // incorrectly included by FlattenTemplates (since both templates share the same provider).
+        // The DB assertion below confirms it was never dispatched.
         Fixture.IssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "61",
             Title = "Issue for disabled project",
             Description = "Project is disabled — must NOT be dispatched",
-            Labels = new[] { "agent:next" },
-            CreatedAt = now  // newer: FIFO defers this; only relevant if budget > 1
+            Labels = AgentNextLabel,
+            CreatedAt = now  // newer: FIFO-second; dispatched only if budget > 1 AND template included
         });
 
         // 1. An enabled template in the default (enabled) project — this is what starts the loop.
@@ -689,14 +707,16 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         }, CancellationToken.None);
 
         await SaveDefaultAgentProfileAsync();
-        // Budget=1: only one dispatch per cycle. Issue "62" (older CreatedAt) is dispatched;
-        // issue "61" is never reached within budget. The disabled project's template is also
-        // not polled by FlattenTemplates, so even if budget were higher, "61" could only be
-        // dispatched via the default template's next cycle.
-        await SetPollIntervalAsync(maxRunsPerCycle: 1, pollInterval: TimeSpan.FromSeconds(60));
+        // Budget=2: if FlattenTemplates incorrectly includes the disabled project's template,
+        // it gets a second dispatch slot. The 60s poll interval prevents a second cycle from
+        // starting before StopLoop() fires, so any second dispatch must come from the disabled
+        // template being incorrectly included within cycle 1.
+        await SetPollIntervalAsync(maxRunsPerCycle: 2, pollInterval: TimeSpan.FromSeconds(60));
 
         await using var fakeAgent = new FakeAgentClient("loop-disabled-proj-1", "e2e");
+        await using var fakeAgent2 = new FakeAgentClient("loop-disabled-proj-2", "e2e");
         await fakeAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        await fakeAgent2.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         var loopService = Fixture.SchedulerFactory.Services.GetRequiredService<PipelineLoopService>();
 
@@ -712,23 +732,22 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal("62", assignment.IssueIdentifier);
 
+            // Wait for CycleCount >= 1 to confirm the cycle completed (not just that a dispatch
+            // happened mid-cycle) before asserting DB state.
+            await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
-            // Assert.Single: budget=1 means exactly one dispatch per cycle. The 60s poll interval
-            // prevents cycle 2 from starting before StopLoop() fires.
-            // Issue "61" must never have appeared in ClaimedWorkItemIds: the disabled project's
-            // template is skipped by FlattenTemplates, and budget=1 prevents a second dispatch
-            // from the default template in the same cycle.
-            // TODO [WARNING]: Assert.Single proves budget=1 was honoured, but does NOT prove the
-            // disabled-project rule is enforced. If FlattenTemplates were broken and included the
-            // disabled project's template, both templates would see the same InMemoryIssueProvider
-            // and issue "62" (older CreatedAt) would still be the only dispatch with budget=1.
-            // Assert.Single would still pass even if the disabled-project skip was silently
-            // removed. A stronger test would use budget=2 (or a longer observation window across
-            // two cycles) and assert that issue "61" was never claimed by work-item lookup in the
-            // database, not merely by count.
-            Assert.Single(Fixture.JobController.ClaimedWorkItemIds);
+            // DB assertion: no work item for issue "61" must ever have been created.
+            // If FlattenTemplates were broken and included the disabled project's template,
+            // the second budget slot within cycle 1 would have dispatched "61" from the shared
+            // provider (both templates see the same InMemoryIssueProvider). This is the
+            // discriminating assertion that budget-count alone cannot provide.
+            await using var db = Fixture.DbContextFactory.CreateDbContext();
+            var issue61WorkItems = await db.WorkItems.AsNoTracking()
+                .Where(w => w.IssueIdentifier == "61")
+                .ToListAsync();
+            Assert.Empty(issue61WorkItems);
         }
         finally
         {
@@ -753,15 +772,26 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     /// linked to issue #3093 to satisfy acceptance criterion #2. This test pins the actual
     /// (alphabetical) behaviour; the bug filing is the required process artefact.
     ///
-    /// To disambiguate project ordering from FIFO ordering, Z-Project is seeded BEFORE
-    /// A-Project (so insertion order and alphabetical order diverge), and both issues carry
-    /// null CreatedAt (so FIFO treats them as equal and cannot mask a project-order regression).
+    /// Design: A-Project's template uses IssueProviderId="issue-e2e" (primary provider,
+    /// contains only issue "100"). Z-Project's template uses IssueProviderId="issue-e2e-2"
+    /// (secondary provider, contains only issue "200"). Because each project's template can
+    /// only see its own provider, the test is a true discriminator: whichever template is
+    /// polled first, only ITS issue is in queue[0]. If A-Project is polled first (alphabetical
+    /// order), issue "100" is dispatched; if Z-Project were polled first (insertion order or
+    /// reverse-alphabetical), issue "200" would be dispatched. The assertion thus fails on any
+    /// project-ordering regression, unlike the prior design where both templates shared the same
+    /// provider and both queues were identical ([100, 200]).
+    ///
+    /// To further disambiguate from FIFO, Z-Project is seeded BEFORE A-Project (insertion order
+    /// differs from alphabetical order) and both issues are given the same CreatedAt so FIFO
+    /// cannot be the deciding factor. Within each provider the issue list is a single element,
+    /// so sort stability is irrelevant.
     /// </summary>
     [Fact]
     public async Task EnabledTemplates_PolledInProjectNameOrder()
     {
-        // Project "A-Project" (alphabetically first) issues issue "100"
-        // Project "Z-Project" (alphabetically last) issues issue "200"
+        // Project "A-Project" (alphabetically first) — uses primary issue provider ("issue-e2e")
+        // Project "Z-Project" (alphabetically last) — uses secondary issue provider ("issue-e2e-2")
         // Z-Project is seeded FIRST so insertion order ≠ alphabetical order.
         // Budget=1 → only the alphabetically-first template dispatches.
         const string aProjectId = "a-project-id";
@@ -769,8 +799,8 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
         // Z saved before A intentionally — ensures alphabetical and insertion order diverge.
         // If FlattenTemplates used insertion order, "200" would be dispatched; if alphabetical,
-        // "100" is dispatched. Only one of the two possible outcomes passes the assertion below,
-        // making this test a true discriminator for the ordering rule.
+        // "100" is dispatched. The two templates use DISTINCT issue providers so each template's
+        // queue contains only ITS own issue — making the assertion a true discriminator.
         await Fixture.ConfigStore.SaveProjectAsync(new PipelineProject
         {
             Id = zProjectId,
@@ -787,6 +817,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             TemplateIds = new List<string>()
         }, CancellationToken.None);
 
+        // A-Project uses the primary issue provider ("issue-e2e")
         await Fixture.ConfigStore.SaveTemplateAsync(aProjectId, new PipelineJobTemplate
         {
             Id = "template-a-proj",
@@ -797,21 +828,45 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             ImplementationEnabled = true
         }, CancellationToken.None);
 
+        // Z-Project uses the secondary issue provider ("issue-e2e-2")
         await Fixture.ConfigStore.SaveTemplateAsync(zProjectId, new PipelineJobTemplate
         {
             Id = "template-z-proj",
             Name = "Template Z",
-            IssueProviderId = "issue-e2e",
+            IssueProviderId = FakeProviderFactory.SecondaryIssueProviderConfigId,
             RepoProviderId = "repo-e2e",
             Enabled = true,
             ImplementationEnabled = true
         }, CancellationToken.None);
 
-        // Both issues have agent:next and null CreatedAt so FIFO treats them as equal
-        // (SortByCreatedAtFifo maps null → DateTime.MaxValue). With equal FIFO timestamps,
-        // only project ordering determines which is dispatched first. A FIFO-based dispatch
-        // of either issue would not distinguish between project-order rules; with equal timestamps
-        // the scheduler must rely entirely on project order.
+        var now = DateTime.UtcNow;
+
+        // Issue "100" — only accessible via A-Project's template (primary provider "issue-e2e")
+        // Given an older CreatedAt so that if FIFO were the deciding factor it would still be
+        // selected first — but the real discriminator is which template is polled first.
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "100",
+            Title = "Issue from A-Project",
+            Description = "From alphabetically first project; reachable only via issue-e2e",
+            Labels = AgentNextLabel,
+            CreatedAt = now.AddDays(-1)  // older — also FIFO-first within each provider
+        });
+
+        // Issue "200" — only accessible via Z-Project's template (secondary provider "issue-e2e-2")
+        Fixture.FakeProviders.SecondaryIssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "200",
+            Title = "Issue from Z-Project",
+            Description = "From alphabetically last project; reachable only via issue-e2e-2",
+            Labels = AgentNextLabel,
+            CreatedAt = now  // newer — FIFO-later, but irrelevant since it's in a separate provider
+        });
+
+        await SaveDefaultAgentProfileAsync();
+        // Budget=1: only one dispatch per cycle. The alphabetically-first template (A-Project)
+        // is polled first and its issue "100" is dispatched. Z-Project's template (and issue "200")
+        // waits for the next cycle.
         // TODO [WARNING]: docs/projects.md says "project order" means list/insertion order, but
         // FlattenTemplates (PipelineLoopService.MultiTemplateLoop.cs) currently orders by
         // p.Name alphabetically (StringComparer.Ordinal). This test encodes the actual product
@@ -827,24 +882,6 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // here. Do not change the test to match the bug." Filing the bug satisfies AC2; until it
         // is filed AC2 is NOT met. Do not change this test to assert list/insertion order until
         // FlattenTemplates is corrected to match the docs.
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
-        {
-            Identifier = "100",
-            Title = "Issue from A-Project",
-            Description = "From alphabetically first project",
-            Labels = new[] { "agent:next" },
-            CreatedAt = null  // equal FIFO weight — project order is the only discriminator
-        });
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
-        {
-            Identifier = "200",
-            Title = "Issue from Z-Project",
-            Description = "From alphabetically last project",
-            Labels = new[] { "agent:next" },
-            CreatedAt = null  // equal FIFO weight
-        });
-
-        await SaveDefaultAgentProfileAsync();
         await SetPollIntervalAsync(maxRunsPerCycle: 1);
 
         await using var fakeAgent = new FakeAgentClient("loop-order-1", "e2e");
@@ -856,8 +893,11 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // With budget=1, the first template polled (A-Project) dispatches issue "100"
-            // The issue from Z-Project ("200") must wait
+            // With budget=1, the first template polled (A-Project — alphabetically first) dispatches
+            // issue "100" from the primary provider. Z-Project's template (and issue "200" in the
+            // secondary provider) is not polled in this cycle.
+            // If this assertion fails (dispatch returns "200"), the project-ordering rule is broken:
+            // Z-Project (insertion-first or reverse-alphabetical) is being polled before A-Project.
             var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal("100", assignment.IssueIdentifier);
         }
@@ -882,7 +922,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Identifier = "60",
             Title = "Blocked issue",
             Description = "Blocked by #100",  // same body format as DependencyBlockingTests
-            Labels = new[] { "agent:next" }
+            Labels = AgentNextLabel
         });
         // Issue #100 is NOT in ClosedIssueIdentifiers — it is open
 
@@ -901,17 +941,15 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
         try
         {
-            // Allow at least two full poll cycles (poll interval = 1s, so 2.5s is enough)
-            // TODO [WARNING]: Task.Delay(2.5s) at a 1s poll interval provides only ~2 poll cycles to
-            // establish that the blocked issue was NOT dispatched. Under CI load the first cycle may not
-            // complete within 2.5s, causing Assert.Empty to pass vacuously (loop never ran a full cycle).
-            // A stronger guard would poll WaitUntilAsync for a sentinel condition (e.g. a counter
-            // incremented per loop cycle) to confirm at least one cycle completed before asserting emptiness.
-            await Task.Delay(TimeSpan.FromSeconds(2.5));
+            // Wait for at least one full poll cycle to complete before asserting emptiness.
+            // CycleCount is incremented after each successful ExecuteCycleAsync call, so this
+            // wait proves the loop ran and exercised the dependency-block path. Without this guard
+            // (previously Task.Delay(2.5s)), the assertion could pass vacuously if the loop
+            // never completed a cycle under CI load.
+            await WaitUntilAsync(() => loopService.CycleCount >= 1, timeout: TimeSpan.FromSeconds(15));
             loopService.StopLoop();
             // Use 30s (matching other dispatch-wait timeouts) so CI under load has time for the
-            // current cycle to finish before CleanupAsync sets IsLoopActive=false. 10s was not
-            // enough when the suite ran near its 228-test end under maximum resource pressure.
+            // current cycle to finish before CleanupAsync sets IsLoopActive=false.
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(30));
         }
         catch
@@ -922,6 +960,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             throw;
         }
 
+        // TODO [WARNING]: Assert.Empty is evaluated after WaitUntilAsync(!IsLoopActive), but
+        // FakeJobController.PollAsync runs on its own background task with a 250ms interval
+        // and is never stopped between Part A and Part B. There is a narrow window between
+        // WaitUntilAsync(!IsLoopActive) returning and this assertion executing in which the
+        // FakeJobController's next 250ms tick could claim a work item (if orchestration for the
+        // blocked issue completed and a pending work item appeared in the queue during that window),
+        // resulting in a false assertion failure. This is distinct from the CycleCount timing issue
+        // — it arises from FakeJobController's independent poll loop, not PipelineLoopService.
         Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
 
         // Part B: mark blocker closed and run a second cycle.
