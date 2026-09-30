@@ -333,6 +333,10 @@ public sealed class E2EFixture : IAsyncLifetime
         // container disposes its singletons (IHubContext, IHttpClientFactory). The exception
         // is a race between circuit cleanup and host disposal, not a test failure — all 280+
         // tests pass. Propagating it as a collection-cleanup failure would obscure real issues.
+        // TODO [WARNING]: this catch is broad — any ObjectDisposedException from Factory.DisposeAsync()
+        // is silently swallowed, not just the documented circuit-teardown race. A programming error
+        // that double-disposes a DI singleton during the test run would also be silently ignored here.
+        // Consider logging the exception at Debug level before swallowing so CI artifacts capture it.
         try { await Factory.DisposeAsync(); }
         catch (ObjectDisposedException) { /* circuit-teardown/host-disposal race — safe to ignore */ }
 

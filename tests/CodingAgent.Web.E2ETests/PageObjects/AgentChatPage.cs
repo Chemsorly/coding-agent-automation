@@ -110,6 +110,12 @@ public sealed class AgentChatPage
         // Wait until .agent-detail-warning is present AND does not contain "Launching"
         // (the in-progress counter). Once _launching = false and _launchError is set the
         // "Launching…" div is removed and the error div takes its place.
+        // TODO [WARNING]: this heuristic is fragile — if the actual error message produced by
+        // ChatJobDispatcher contains the word "Launching" (e.g. "Launching timed out after…"),
+        // the wait condition never becomes true and this method blocks until timeoutMs expires.
+        // A more robust approach would use a data attribute set by the component when _launching
+        // is false and _launchError is non-null (e.g. data-launch-state="error"), avoiding the
+        // substring exclusion entirely.
         await _page.WaitForFunctionAsync(
             "() => { " +
             "  const el = document.querySelector('.agent-detail-warning'); " +

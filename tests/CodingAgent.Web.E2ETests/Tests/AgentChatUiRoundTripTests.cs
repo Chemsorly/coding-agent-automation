@@ -83,6 +83,12 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         }
         catch
         {
+            // TODO [WARNING]: if WaitAsync(timeout) fires, the catch block unsubscribes the handler
+            // correctly. However, FakeKubernetesJobClient.Reset() must clear the ChatJobCreated
+            // event subscribers (set it to null) between tests; if it does not, a stale handler
+            // from a timed-out WaitForFirstChatJobAsync call could fire during a subsequent test's
+            // dispatch and satisfy that test's TCS with the wrong job. Verify Reset() clears
+            // ChatJobCreated before the next test in the collection runs.
             Fixture.K8sClient.ChatJobCreated -= handler;
             throw;
         }
@@ -249,6 +255,15 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
 
             // Confirm the chat window header is gone.
             var header = await chatPage.GetChatHeaderTextAsync();
+            // TODO [WARNING]: GetChatHeaderTextAsync uses QuerySelectorAsync which is not
+            // visibility-aware — it returns the element even if it is hidden via display:none.
+            // If the Blazor component hides rather than removes .chat-header-bar when returning
+            // to launch state, this assertion passes despite the header still being in the DOM.
+            // TODO [WARNING]: there is no wait for .chat-header-bar to disappear before this
+            // assertion. WaitForLaunchStateAsync returns as soon as #template-select appears,
+            // but the header element may still be in the DOM in the same render frame. Use
+            // WaitForSelectorAsync with State=Hidden on .chat-header-bar before calling
+            // GetChatHeaderTextAsync to make this assertion non-racy.
             Assert.Null(header);
             // TODO [WARNING]: this test does not assert that the K8s job is deleted or reaches a
             // terminal state after EndChatAsync. If TerminateChatSessionAsync fails to call
@@ -306,6 +321,11 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         // the Blazor component renders the error message in .agent-detail-warning.
         var errorText = await chatPage.WaitForLaunchErrorAsync(timeoutMs: 40_000);
         Assert.NotNull(errorText);
+        // TODO [WARNING]: these assertions are too weak — any non-empty string satisfies them,
+        // including an unrelated warning or the transient "Launching…" text if WaitForLaunchErrorAsync
+        // returns early. Add a scenario-specific substring assertion (e.g. Assert.Contains("timed out",
+        // errorText, StringComparison.OrdinalIgnoreCase) or a fragment from ChatPodTimeoutException's
+        // message) to distinguish a genuine connect-timeout error from any incidental non-empty text.
         Assert.False(string.IsNullOrWhiteSpace(errorText),
             "Expected a non-empty error message in the page error banner");
 
@@ -314,6 +334,9 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
         // If ChatJobDispatcher catches the timeout internally and does not call DeleteJobAsync
         // (e.g. it only terminates the in-memory PVC reservation), this assertion will fail.
         // This is the intended behavior — the assertion catches that regression.
+        // TODO [WARNING]: WaitUntilAsync does not include the expected job name in its timeout
+        // message, making CI failures hard to diagnose. Pass a descriptive message or use an
+        // overload that includes jobName in the assertion failure output.
         await WaitUntilAsync(
             () => Fixture.K8sClient.DeletedJobs.Contains(jobName),
             timeout: TimeSpan.FromSeconds(10));

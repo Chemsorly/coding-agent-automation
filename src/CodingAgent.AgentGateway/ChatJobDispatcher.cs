@@ -683,12 +683,20 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
+            // TODO [WARNING]: "kiro" is hard-coded here and in CleanupSession. Both sites must be
+            // updated if additional PVC pool types are introduced. The pool tag should be derived
+            // from the entry (e.g. entry.ClaimedPvc.Pool) to avoid silent misattribution of
+            // PvcUtilization telemetry for non-Kiro agents.
             ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
         var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
         ChatTelemetry.SessionDuration.Record(duration, selectorTag, new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
         try { entry.WatcherCts.Dispose(); }
         catch { /* already disposed */ }
         if (_heartbeatTracker is not null)
+            // TODO [WARNING]: fire-and-forget — if DeleteRedisHeartbeatAsync faults (e.g. transient
+            // Redis connection error), the exception is silently swallowed (same pre-existing pattern
+            // as CleanupSession). A faulted task may leave a stale Redis heartbeat key after the job
+            // is deleted. Consider awaiting or logging the failure.
             _ = _heartbeatTracker.DeleteRedisHeartbeatAsync(agentId);
 
         ChatTelemetry.PodForceTerminations.Add(1,
