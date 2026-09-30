@@ -133,6 +133,12 @@
     private DotNetObjectReference<CockpitLayout>? _dotNetRef;
     private bool _showShortcutHelp;
 
+    /// <summary>
+    /// Exposes the shortcut-help overlay state so page components (e.g. dispatch drawers) can
+    /// suppress their own Escape handling while the overlay is visible.
+    /// </summary>
+    public bool IsShortcutHelpVisible => _showShortcutHelp;
+
     /// <summary>Raised on Escape so pages (e.g. Pipelines dispatch drawers) can close their overlays.</summary>
     public event Action? OnEscapePressed;
 

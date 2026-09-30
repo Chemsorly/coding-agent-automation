@@ -169,6 +169,7 @@
     IsDispatching="_drawerDispatching" GetProcessingStatus="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId ?? ""))"
     Readiness="_drawerReadiness"
     AvailableLabels="_drawerLabels" SelectedLabels="_drawerSelectedLabels"
+    IsShortcutHelpVisible="@(Layout?.IsShortcutHelpVisible ?? false)"
     OnToggleLabel="DrawerToggleLabel" OnClearLabels="DrawerClearLabels"
     OnClose="CloseDrawer" OnNextPage="DrawerNextPage" OnPrevPage="DrawerPrevPage" OnDispatch="DispatchFromDrawer">
     <HeaderPrefix>
@@ -190,6 +191,7 @@
     PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
     IsDispatching="_prDrawerDispatching" GetProcessingStatus="@(id => IsIssueActive(id, _prDrawerTemplate?.RepoProviderId ?? ""))"
     AvailableLabels="_prDrawerLabels" SelectedLabels="_prDrawerSelectedLabels"
+    IsShortcutHelpVisible="@(Layout?.IsShortcutHelpVisible ?? false)"
     OnToggleLabel="PrDrawerToggleLabel" OnClearLabels="PrDrawerClearLabels"
     OnClose="ClosePrDrawer" OnNextPage="PrDrawerNextPage" OnPrevPage="PrDrawerPrevPage" OnDispatch="DispatchPrReviewFromDrawer">
     <HeaderPrefix>
@@ -208,6 +210,7 @@
     Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" HasMore="_epicDrawerHasMore" Page="_epicDrawerPage"
     IsDispatching="_epicDrawerDispatching" GetProcessingStatus="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
     AvailableLabels="_epicDrawerLabels" SelectedLabels="_epicDrawerSelectedLabels"
+    IsShortcutHelpVisible="@(Layout?.IsShortcutHelpVisible ?? false)"
     OnToggleLabel="EpicDrawerToggleLabel" OnClearLabels="EpicDrawerClearLabels"
     OnClose="CloseEpicDrawer" OnNextPage="EpicDrawerNextPage" OnPrevPage="EpicDrawerPrevPage" OnDispatch="DispatchDecompositionFromDrawer">
     <HeaderPrefix>

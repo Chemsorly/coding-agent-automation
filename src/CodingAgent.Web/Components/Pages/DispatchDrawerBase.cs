@@ -23,12 +23,23 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<TItem> OnDispatch { get; set; }
     [Parameter] public RenderFragment? HeaderPrefix { get; set; }
+    /// <summary>
+    /// When true, the shortcut help overlay is currently displayed by <c>CockpitLayout</c>.
+    /// <c>HandleKeyDown</c> skips its <c>Escape</c> branch in this state so that Escape
+    /// closes the overlay (handled by the global JS keyboard handler) rather than the drawer.
+    /// </summary>
+    [Parameter] public bool IsShortcutHelpVisible { get; set; }
 
     protected string _filter = "";
     protected List<TItem> FilteredItems = [];
     protected TItem? SelectedItem;
     protected int _highlightedIndex = -1;
     protected IReadOnlyList<TItem> Items { get; set; } = [];
+
+    // Tracks the filter value at the last ApplyFilter() call so that highlight is only
+    // reset when the user actually changes the filter — not on every parent re-render
+    // (e.g. background dependency-check StateHasChanged) that calls OnParametersSet.
+    private string _lastAppliedFilter = "";
 
     // TODO: OnParametersSet allocates a new filtered list on every parent re-render because the
     // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
@@ -40,6 +51,9 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
 
     protected void ApplyFilter()
     {
+        var filterChanged = _filter != _lastAppliedFilter;
+        _lastAppliedFilter = _filter;
+
         if (string.IsNullOrWhiteSpace(_filter))
         {
             FilteredItems = Items.ToList();
@@ -49,8 +63,12 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
             var f = _filter.Trim();
             FilteredItems = Items.Where(i => MatchesFilter(i, f)).ToList();
         }
-        // Reset highlight when filter changes
-        _highlightedIndex = -1;
+        // Reset highlight only when the filter text actually changes.
+        // Parent re-renders triggered by background tasks (e.g. dependency checks) call
+        // OnParametersSet → ApplyFilter without changing the filter, and must not reset
+        // the user's keyboard navigation position.
+        if (filterChanged)
+            _highlightedIndex = -1;
     }
 
     protected abstract bool MatchesFilter(TItem item, string filter);
@@ -97,7 +115,11 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
                 }
                 break;
             case "Escape":
-                await Close();
+                // Do not close the drawer when the shortcut help overlay is visible.
+                // In that state the global JS keyboard handler (CockpitLayout.HandleGlobalKey)
+                // is responsible for closing the overlay on Escape, and the drawer must remain open.
+                if (!IsShortcutHelpVisible)
+                    await Close();
                 break;
         }
     }

@@ -253,4 +253,36 @@ public class DispatchDrawerBaseTests : BunitContext
         drawer.InvokeApplyFilter();
         Assert.Equal(-1, drawer.GetHighlightedIndex());
     }
+
+    [Fact]
+    public async Task ApplyFilter_DoesNotResetHighlightIndex_WhenFilterUnchanged()
+    {
+        // Re-renders from background tasks (e.g. dependency checks) call OnParametersSet →
+        // ApplyFilter without changing the filter. The highlight must survive such re-renders
+        // so that keyboard navigation is not interrupted.
+        var items = new[] { new TestItem("1", "First"), new TestItem("2", "Second") };
+        var drawer = CreateDrawer(items);
+
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        Assert.Equal(0, drawer.GetHighlightedIndex());
+
+        // Simulate a re-render without filter change
+        drawer.InvokeApplyFilter();
+        Assert.Equal(0, drawer.GetHighlightedIndex());
+    }
+
+    [Fact]
+    public async Task HandleKeyDown_Escape_DoesNotCloseWhenShortcutHelpVisible()
+    {
+        var items = new[] { new TestItem("1", "A") };
+        var drawer = CreateDrawer(items);
+
+        // Set IsShortcutHelpVisible = true on the drawer parameter
+        typeof(DispatchDrawerBase<TestItem>).GetProperty(nameof(DispatchDrawerBase<TestItem>.IsShortcutHelpVisible))!
+            .SetValue(drawer, true);
+
+        await drawer.InvokeHandleKeyDown("Escape");
+
+        Assert.False(drawer.CloseCalled, "Drawer must not close when the shortcut help overlay is visible");
+    }
 }
