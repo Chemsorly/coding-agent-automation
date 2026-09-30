@@ -21,7 +21,6 @@ public sealed class ConsolidationServiceDedupTests
 {
     private static readonly string[] SelectorLabels = ["dotnet", "kiro", "dotnet10"];
 
-    private readonly Mock<IConsolidationRunStore> _mockRunStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory = new();
     private readonly Mock<IConsolidationSelectorResolver> _mockSelectorResolver = new();
@@ -60,14 +59,6 @@ public sealed class ConsolidationServiceDedupTests
                 It.IsAny<PipelineConfiguration>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)SelectorLabels);
-
-        // Default store operations succeed
-        _mockRunStore
-            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockRunStore
-            .Setup(s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
     }
 
     private ConsolidationService CreateSut(Mock<IWorkDistributor> mockDistributor)
@@ -82,7 +73,6 @@ public sealed class ConsolidationServiceDedupTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDistributor.Object,
@@ -149,18 +139,6 @@ public sealed class ConsolidationServiceDedupTests
                 It.IsAny<CancellationToken>()),
             Times.Exactly(2),
             "both triggers call DistributeAsync; dedup is enforced by the API-layer partial unique index");
-
-        // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
-        // SaveRunAsync must NOT be called.
-        _mockRunStore.Verify(
-            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "TriggerAsync must not write to the ConsolidationRuns store (issue #3028)");
-
-        _mockRunStore.Verify(
-            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "no rollback needed since nothing was persisted");
     }
 
     /// <summary>

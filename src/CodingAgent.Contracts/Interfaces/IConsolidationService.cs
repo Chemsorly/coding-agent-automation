@@ -37,12 +37,4 @@ public interface IConsolidationService
     /// Fired when any consolidation run changes state (created, completed, or failed).
     /// </summary>
     event Action? OnChange;
-
-    /// <summary>
-    /// Deletes a consolidation run by ID. Invalidates the run history cache.
-    /// Used by retention cleanup services.
-    /// </summary>
-    /// <param name="runId">The run ID to delete.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task DeleteRunAsync(RunId runId, CancellationToken ct);
 }

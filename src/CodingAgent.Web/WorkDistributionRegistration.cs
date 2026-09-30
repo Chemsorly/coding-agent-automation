@@ -43,13 +43,6 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<IPipelineApiWorkItemClient>(),
                 Log.Logger));
 
-        // ── Consolidation run persistence — API-backed ──────────────────────────────────────────
-        // The API is the sole owner of the ConsolidationRuns table. The orchestrator must not
-        // write to it directly — that caused dual-write race conditions where the API's status
-        // updates were overwritten by the orchestrator's CleanupOrphanedRunsAsync on restart.
-        services.AddSingleton<IConsolidationRunStore>(sp =>
-            new ApiBackedConsolidationRunStore(sp.GetRequiredService<IPipelineApiConsolidationRunClient>()));
-
         // ── Harness suggestions persistence — API-backed ────────────────────────────────────────
         services.AddSingleton<IHarnessSuggestionStore>(sp =>
             new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));

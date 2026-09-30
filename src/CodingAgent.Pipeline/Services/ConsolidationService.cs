@@ -12,7 +12,6 @@ public sealed class ConsolidationService : IConsolidationService
 {
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
-    private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
@@ -35,12 +34,10 @@ public sealed class ConsolidationService : IConsolidationService
         ArgumentNullException.ThrowIfNull(deps.Logger);
         ArgumentNullException.ThrowIfNull(deps.Config);
         ArgumentNullException.ThrowIfNull(deps.ProjectStore);
-        ArgumentNullException.ThrowIfNull(deps.RunStore);
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
 
         _logger = deps.Logger;
         _config = deps.Config;
-        _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
@@ -276,19 +273,6 @@ public sealed class ConsolidationService : IConsolidationService
     /// no-op to avoid breaking call sites in E2E infrastructure until they are updated.
     /// </remarks>
     internal void Reset() { /* no-op: _runningRuns removed in issue #3027 */ }
-
-    /// <inheritdoc />
-    public async Task DeleteRunAsync(RunId runId, CancellationToken ct)
-    {
-        try
-        {
-            await _runStore.DeleteRunAsync(runId, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to delete consolidation run {RunId}", runId.Value);
-        }
-    }
 
     private static ConsolidationRun BuildNewRun(
         ConsolidationRunType type,

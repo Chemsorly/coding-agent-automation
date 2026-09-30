@@ -1,4 +1,3 @@
-#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 // Feature: 021-consolidation-loops
 // Property 3: Template Filtering by Provider Configuration
 // Property 5: Concurrency Guard Rejects Duplicate Running
@@ -122,7 +121,6 @@ public class ConsolidationServicePropertyTests : IDisposable
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             Serilog.Log.Logger, config, mockProjectStore.Object,
-            new Mock<IConsolidationRunStore>().Object,
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDist2.Object));

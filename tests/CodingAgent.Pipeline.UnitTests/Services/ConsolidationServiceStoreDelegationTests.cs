@@ -8,12 +8,11 @@ using Serilog;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Verifies ConsolidationService delegates to IConsolidationRunStore and IHarnessSuggestionStore
+/// Verifies ConsolidationService delegates to IHarnessSuggestionStore
 /// by using mocks. Ensures no filesystem I/O happens inside the service itself.
 /// </summary>
 public sealed class ConsolidationServiceStoreDelegationTests
 {
-    private readonly Mock<IConsolidationRunStore> _mockRunStore = new();
     private readonly Mock<IHarnessSuggestionStore> _mockHarnessStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
 
@@ -44,7 +43,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             _mockHarnessStore.Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
@@ -88,32 +86,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
     }
 
     [Fact]
-    public async Task DeleteRunAsync_Calls_DeleteRunAsync_OnStore()
-    {
-        var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var sut = CreateSut();
-        await sut.DeleteRunAsync(runId, CancellationToken.None);
-
-        _mockRunStore.Verify(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DeleteRunAsync_WhenStoreThrows_LogsAndSwallowsException()
-    {
-        var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("disk error"));
-
-        var sut = CreateSut();
-        // Must not throw — the method swallows the exception and logs a warning
-        var act = () => sut.DeleteRunAsync(runId, CancellationToken.None);
-        await act.Should().NotThrowAsync();
-    }
-
-    [Fact]
     public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_LogsAndSwallowsException()
     {
         var suggestions = new HarnessSuggestions
@@ -130,4 +102,12 @@ public sealed class ConsolidationServiceStoreDelegationTests
         var act = () => sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
+
+    // TODO: [WARNING] DeleteRunAsync_Calls_DeleteRunAsync_OnStore and
+    // DeleteRunAsync_WhenStoreThrows_LogsAndSwallowsException were deleted together with
+    // IConsolidationService.DeleteRunAsync and IConsolidationRunStore (issue #3031).
+    // The build enforces that no caller can invoke the removed method, but if DeleteRunAsync-like
+    // functionality is ever re-introduced on IConsolidationService via a different store dependency,
+    // add delegation and exception-swallowing tests here to match the pattern used for
+    // SaveHarnessSuggestionsAsync above.
 }
