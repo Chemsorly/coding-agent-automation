@@ -649,21 +649,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
 
-        // Deregister unconditionally before the CAS guard: the watcher's CleanupSession path can win
-        // the Cleaned CAS first (when WatcherCts cancellation fires and the watcher catches OCE before
-        // ForceDeleteAndCleanupAsync resumes), causing an early return below that would bypass
-        // Deregister entirely. Deregister is a TryRemove — calling it when the agent is already gone
-        // is safe (returns false). The registry must always be cleaned up when force-delete is triggered.
+        // Deregister the agent from the registry unconditionally — this must happen regardless of
+        // whether CleanupSession has already run on the watcher thread (which sets entry.Cleaned).
+        // Deregister is idempotent and safe to call even if the agent has already disconnected.
         _registry.Deregister(agentId);
 
         // Guard: CleanupSession uses entry.Cleaned for idempotency, but DeleteJobAsync is called
         // before CleanupSession here and has no guard of its own. If a concurrent path (e.g. the
-        // watcher's idle-kill callback) already ran ForceDeleteAndCleanupAsync and set entry.Cleaned,
-        // skip the delete to prevent a double DeleteJobAsync call.
+        // watcher's OCE path in ChatSessionWatcher) already ran CleanupSession and set entry.Cleaned,
+        // skip the K8s delete and telemetry to prevent double-delete and double-decrement.
         if (Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) != 0)
         {
             _logger.Debug(
-                "ChatJobDispatcher: ForceDeleteAndCleanupAsync skipped for {JobName} — already cleaned by concurrent path",
+                "ChatJobDispatcher: ForceDeleteAndCleanupAsync skipped cleanup for {JobName} — already cleaned by concurrent path",
                 entry.JobName);
             return;
         }

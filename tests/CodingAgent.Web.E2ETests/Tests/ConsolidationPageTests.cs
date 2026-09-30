@@ -314,15 +314,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // The card renders a <span class="consolidation-status-succeeded"> under the Brain
         // Consolidation row for the template. Wait for the card to reflect the updated status
         // because NavigateAsync may return before LoadDataAsync populates _lastRuns.
-        // Selector is scoped to the "S1 Template" card so the wait and the assertion check the
-        // same element (eliminates the TOCTOU gap identified in the review).
-        await Page.WaitForFunctionAsync(
-            "() => document.querySelector(\".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded\") !== null",
-            null,
-            new() { Timeout = 30_000 });
-        var cardStatusEl = await Page.QuerySelectorAsync(
+        // Use Locator.WaitForAsync (which supports :has-text()) instead of WaitForFunctionAsync
+        // (which runs in the browser's native JS engine and does not understand :has-text()).
+        // The locator is scoped to the "S1 Template" card, eliminating the TOCTOU gap between
+        // the wait and the assertion.
+        var cardStatusLocator = Page.Locator(
             ".consolidation-card:has(.consolidation-card-title:has-text('S1 Template')) .consolidation-status-succeeded");
-        Assert.NotNull(cardStatusEl);
+        await cardStatusLocator.WaitForAsync(new() { Timeout = 30_000 });
+        Assert.True(await cardStatusLocator.CountAsync() > 0);
     }
 
     [Fact]
