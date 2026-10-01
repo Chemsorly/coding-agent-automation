@@ -504,6 +504,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         _activeWatchers.TryRemove(agentId.Value, out _);
 
+        // Always deregister the chat agent from the registry regardless of which cleanup path wins
+        // the CAS above (watcher shutdown or ForceDeleteAndCleanupAsync). Without this call, a race
+        // where the watcher's cancellation-catch fires and calls CleanupSession before
+        // ForceDeleteAndCleanupAsync runs would leave the agent as a ghost in the registry (issue #2109).
+        // Deregister is idempotent — the second call from ForceDeleteAndCleanupAsync (if it runs after
+        // this path) is a safe no-op that returns false.
+        _registry.Deregister(agentId);
+
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
