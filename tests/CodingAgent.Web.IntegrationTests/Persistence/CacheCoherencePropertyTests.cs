@@ -66,6 +66,7 @@ public class CacheCoherencePropertyTests : IDisposable
         // Verify key properties survive round-trip through JSON serialization
         return loaded.MaxRetries == config.MaxRetries
             && loaded.AgentTimeout == config.AgentTimeout
+            && loaded.MaxIssueImages == config.MaxIssueImages
             && loaded.AnalysisReviewEnabled == config.AnalysisReviewEnabled
             && loaded.AcceptanceCriteriaEnabled == config.AcceptanceCriteriaEnabled
             && loaded.BaselineHealthCheckEnabled == config.BaselineHealthCheckEnabled;
@@ -122,7 +123,7 @@ public class CacheCoherencePropertyTests : IDisposable
 
 /// <summary>
 /// FsCheck arbitrary generators for PipelineConfiguration (Property 14).
-/// Generates configs with randomized MaxRetries, AgentTimeout, and boolean flags.
+/// Generates configs with randomized MaxRetries, AgentTimeout, MaxIssueImages, and boolean flags.
 /// </summary>
 public class PipelineConfigArbitraries
 {
@@ -130,6 +131,7 @@ public class PipelineConfigArbitraries
     {
         var gen = from maxRetries in Gen.Choose(0, 10)
                   from timeoutMinutes in Gen.Choose(1, 120)
+                  from maxIssueImages in Gen.Choose(0, 50)
                   from analysisReview in Gen.Elements(true, false)
                   from acceptanceCriteria in Gen.Elements(true, false)
                   from baselineHealth in Gen.Elements(true, false)
@@ -137,6 +139,7 @@ public class PipelineConfigArbitraries
                   {
                       MaxRetries = maxRetries,
                       AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
+                      MaxIssueImages = maxIssueImages,
                       AnalysisReviewEnabled = analysisReview,
                       AcceptanceCriteriaEnabled = acceptanceCriteria,
                       BaselineHealthCheckEnabled = baselineHealth

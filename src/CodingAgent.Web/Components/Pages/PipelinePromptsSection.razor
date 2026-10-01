@@ -3,14 +3,14 @@
 
 <section class="settings-section">
     <h2>Prompts</h2>
-    <p class="section-description">System prompts sent to agents during analysis and implementation phases. Customize to adjust agent behavior and output format.</p>
+    <p class="section-description">System prompts sent to agents during analysis and implementation phases. Customize to adjust agent behavior and output format. The acceptance criteria prompt is on the Code Review page.</p>
     <div class="provider-form">
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisPrompt)">
             <label>Analysis Prompt</label>
             <textarea @bind="_analysisPrompt" rows="6"></textarea>
             <button type="button" class="btn-revert" disabled="@(_analysisPrompt == PipelineConfigurationDefaults.DefaultAnalysisPrompt)" @onclick="() => _analysisPrompt = PipelineConfigurationDefaults.DefaultAnalysisPrompt">Reset to default</button>
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ImplementationPrompt)">
             <label>Implementation Prompt</label>
             <textarea @bind="_implementationPrompt" rows="6"></textarea>
             <button type="button" class="btn-revert" disabled="@(_implementationPrompt == PipelineConfigurationDefaults.DefaultImplementationPrompt)" @onclick="() => _implementationPrompt = PipelineConfigurationDefaults.DefaultImplementationPrompt">Reset to default</button>
@@ -26,35 +26,21 @@
             <div class="form-hint">
                 <Icon Name="info" /> When enabled, a second agent reviews the analysis in an isolated session and feeds findings back for refinement before implementation begins.
             </div>
-            <div class="form-group form-checkbox">
+            <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.AnalysisReviewEnabled)">
                 <label>
                     <input type="checkbox" @bind="_analysisReviewEnabled" />
                     Enable Analysis Review
                 </label>
             </div>
-            <div class="form-group">
+            <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisReviewPrompt)">
                 <label>Analysis Review Prompt</label>
                 <textarea @bind="_analysisReviewPrompt" rows="6" disabled="@(!_analysisReviewEnabled)"></textarea>
                 <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisReviewPrompt == PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt)" @onclick="() => _analysisReviewPrompt = PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt">Reset to default</button>
             </div>
-            <div class="form-group">
+            <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisRefinementPrompt)">
                 <label>Analysis Refinement Prompt</label>
                 <textarea @bind="_analysisRefinementPrompt" rows="6" disabled="@(!_analysisReviewEnabled)"></textarea>
                 <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisRefinementPrompt == PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt)" @onclick="() => _analysisRefinementPrompt = PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt">Reset to default</button>
-            </div>
-        </div>
-        <div class="config-sub-fields" style="margin-top: 1rem;">
-            <h3>Acceptance Criteria</h3>
-            <div class="form-group form-checkbox">
-                <label>
-                    <input type="checkbox" @bind="_acceptanceCriteriaEnabled" />
-                    Enable Acceptance Criteria Check
-                </label>
-            </div>
-            <div class="form-group">
-                <label>Acceptance Criteria Prompt</label>
-                <textarea @bind="_acceptanceCriteriaPrompt" rows="6" disabled="@(!_acceptanceCriteriaEnabled)"></textarea>
-                <button type="button" class="btn-revert" disabled="@(!_acceptanceCriteriaEnabled || _acceptanceCriteriaPrompt == DefaultPrompts.AcceptanceCriteriaCompliance)" @onclick="() => _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance">Reset to default</button>
             </div>
         </div>
         }
@@ -70,8 +56,6 @@
 
     private string _analysisPrompt = PipelineConfigurationDefaults.DefaultAnalysisPrompt;
     private string _implementationPrompt = PipelineConfigurationDefaults.DefaultImplementationPrompt;
-    private bool _acceptanceCriteriaEnabled = true;
-    private string _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance;
     private bool _analysisReviewEnabled = true;
     private string _analysisReviewPrompt = PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt;
     private string _analysisRefinementPrompt = PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt;
@@ -82,8 +66,6 @@
         var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
         _analysisPrompt = config.AnalysisPrompt;
         _implementationPrompt = config.ImplementationPrompt;
-        _acceptanceCriteriaEnabled = config.AcceptanceCriteriaEnabled;
-        _acceptanceCriteriaPrompt = config.AcceptanceCriteriaPrompt;
         _analysisReviewEnabled = config.AnalysisReviewEnabled;
         _analysisReviewPrompt = config.AnalysisReviewPrompt;
         _analysisRefinementPrompt = config.AnalysisRefinementPrompt;
@@ -98,8 +80,6 @@
                 {
                     AnalysisPrompt = _analysisPrompt,
                     ImplementationPrompt = _implementationPrompt,
-                    AcceptanceCriteriaEnabled = _acceptanceCriteriaEnabled,
-                    AcceptanceCriteriaPrompt = _acceptanceCriteriaPrompt,
                     AnalysisReviewEnabled = _analysisReviewEnabled,
                     AnalysisReviewPrompt = _analysisReviewPrompt,
                     AnalysisRefinementPrompt = _analysisRefinementPrompt

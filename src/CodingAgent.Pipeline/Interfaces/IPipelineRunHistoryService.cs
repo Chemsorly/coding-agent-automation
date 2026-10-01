@@ -8,7 +8,6 @@ namespace CodingAgent.Pipeline.Interfaces;
 public interface IPipelineRunHistoryService
 {
     void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory);
-    void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null);
 
     /// <summary>Persists a completed run to history.</summary>
     Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default);

@@ -63,7 +63,7 @@ public class PostgresConfigurationStoreTests : IDisposable
             MaxRetries = 7,
             AgentTimeout = TimeSpan.FromMinutes(60),
             WorkspaceBaseDirectory = "/custom/path",
-            FailedWorkspaceRetentionDays = 21
+            MaxIssueImages = 21
         };
 
         await _store.SavePipelineConfigAsync(original, CancellationToken.None);
@@ -74,7 +74,7 @@ public class PostgresConfigurationStoreTests : IDisposable
         loaded.MaxRetries.Should().Be(7);
         loaded.AgentTimeout.Should().Be(TimeSpan.FromMinutes(60));
         loaded.WorkspaceBaseDirectory.Should().Be("/custom/path");
-        loaded.FailedWorkspaceRetentionDays.Should().Be(21);
+        loaded.MaxIssueImages.Should().Be(21);
     }
 
     [Fact]

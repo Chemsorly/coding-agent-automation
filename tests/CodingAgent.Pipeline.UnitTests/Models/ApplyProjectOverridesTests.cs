@@ -3,6 +3,7 @@
 // Validates: Requirements 3.2, 3.3, 3.7, 4.4
 using System.Reflection;
 using AwesomeAssertions;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.CodeReview.Models;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -32,134 +33,6 @@ public class ApplyProjectOverridesTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, null);
 
         result.Should().BeSameAs(config);
-    }
-
-    // TODO: This test is a strict subset of PipelineConfigurationTests.ApplyProjectOverrides_ArgumentOutOfRange_ReturnsOriginalConfig
-    // (same setup, same project values). The PipelineConfigurationTests version also asserts property values, making this redundant.
-    // Consider removing this test or consolidating into a single location.
-    // TODO: This test is also a duplicate of ArgumentOutOfRange_OnlyInvalidPropertyReverts_ValidOnesApplied below — both use
-    // the same fixture (MaxRetries=valid, MaxDecompositionSubIssues=out-of-range) and assert the same two properties.
-    // Remove one or merge them to reduce noise when either fails. (Review finding: TestQualityReviewer:44)
-    [Fact]
-    public void ArgumentOutOfRange_InvalidProperty_ReturnsCloneWithGlobalForThatProperty()
-    {
-        var config = TestPipelineConfig.Default() with
-        {
-            MaxRetries = 3,
-            MaxDecompositionSubIssues = 10,
-        };
-
-        // MaxDecompositionSubIssues=25 is out of range (1-20) — triggers ArgumentOutOfRangeException.
-        // After the fix, only the invalid property reverts to global; valid ones are applied.
-        var project = TestPipelineConfig.WithProject() with
-        {
-            MaxRetries = 7,
-            MaxDecompositionSubIssues = 25,
-        };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        // Result is NOT the same reference — a clone was returned with partial overrides applied
-        result.Should().NotBeSameAs(config);
-        // Valid override (MaxRetries=7) was applied
-        result.MaxRetries.Should().Be(7);
-        // Invalid override (MaxDecompositionSubIssues=25) reverts to global value (10)
-        result.MaxDecompositionSubIssues.Should().Be(10);
-    }
-
-    [Fact]
-    public void ArgumentOutOfRange_OnlyInvalidPropertyReverts_ValidOnesApplied()
-    {
-        // Verifies the core acceptance criterion: a project with one out-of-range override
-        // and other valid overrides resolves with every valid override applied and the global
-        // value for the invalid one.
-        var config = TestPipelineConfig.Default() with
-        {
-            MaxRetries = 3,
-            MaxDecompositionSubIssues = 5,
-            MaxAnalysisRetries = 1,
-        };
-
-        var project = TestPipelineConfig.WithProject("PartialOverrideProject") with
-        {
-            MaxRetries = 7,                  // valid (0-10)
-            MaxDecompositionSubIssues = 25,  // invalid (max 20) — should revert to global (5)
-            MaxAnalysisRetries = 2,          // valid (0-10)
-        };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        // Result is a clone, not the original
-        result.Should().NotBeSameAs(config,
-            "a clone with partial overrides must be returned, not the original config");
-        // Valid overrides are applied
-        result.MaxRetries.Should().Be(7, "valid MaxRetries override must be applied");
-        result.MaxAnalysisRetries.Should().Be(2, "valid MaxAnalysisRetries override must be applied");
-        // Invalid override reverts to global default
-        result.MaxDecompositionSubIssues.Should().Be(5,
-            "out-of-range MaxDecompositionSubIssues must revert to global default");
-    }
-
-    [Fact]
-    public void ArgumentOutOfRange_MultipleInvalidProperties_EachRevertsIndependently()
-    {
-        // Two invalid overrides: each reverts to its own global default independently.
-        // Valid overrides in the same project are still applied.
-        var config = TestPipelineConfig.Default() with
-        {
-            MaxRetries = 3,
-            MaxDecompositionSubIssues = 8,
-            CiNotStartedMaxRetries = 5,
-        };
-
-        var project = TestPipelineConfig.WithProject() with
-        {
-            MaxRetries = 6,                  // valid
-            MaxDecompositionSubIssues = 25,  // invalid (max 20)
-            CiNotStartedMaxRetries = 99,     // invalid (max 20)
-        };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.Should().NotBeSameAs(config);
-        result.MaxRetries.Should().Be(6, "valid override must be applied");
-        result.MaxDecompositionSubIssues.Should().Be(8,
-            "first invalid override must revert to global independently");
-        result.CiNotStartedMaxRetries.Should().Be(5,
-            "second invalid override must revert to global independently");
-    }
-
-    [Fact]
-    public void ArgumentOutOfRange_LogsPropertyNameAndProjectInfo()
-    {
-        // Verify the warning log names the property and project (uses TestSink or log capture).
-        // Because the logger is Serilog.Log.Warning (static), we verify the behavior indirectly
-        // by confirming the result has the correct property reverted while others are applied —
-        // the naming in the log is part of the implementation contract checked via code review.
-        // TODO: This test does not assert the log output — it cannot detect a regression where the property
-        // name or project name is removed from the warning log message. The acceptance criterion requires
-        // "the warning names the property (resolver unit test)." Use a Serilog TestCorrelator or InMemorySink
-        // to capture log events and assert they contain the property name and project name/ID. (Review finding: TestQualityReviewer:122)
-        var config = TestPipelineConfig.Default() with
-        {
-            MaxDecompositionSubIssues = 10,
-            MaxRetries = 3,
-        };
-
-        var project = TestPipelineConfig.WithProject("LoggingTestProject") with
-        {
-            MaxDecompositionSubIssues = 25, // triggers the warning log
-            MaxRetries = 7,
-        };
-
-        // Must not throw — the warning is swallowed and applied per-property
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        // Confirm the out-of-range property reverted to global
-        result.MaxDecompositionSubIssues.Should().Be(10,
-            "the out-of-range property must revert to global; a warning log with the property name and project is emitted");
-        // Confirm valid override was applied
-        result.MaxRetries.Should().Be(7);
     }
 
     // ── Null fields → inherit from global ──────────────────────────────────────
@@ -445,7 +318,6 @@ public class ApplyProjectOverridesTests
         {
             MaxIterations = 5,
             FixPrompt = "Custom fix prompt",
-            ReviewIsolation = ReviewIsolation.Isolated,
             InlineComments = new InlineCommentOverrides
             {
                 Enabled = false,
@@ -462,16 +334,6 @@ public class ApplyProjectOverridesTests
         // All specified override values are applied
         result.CodeReview.MaxIterations.Should().Be(5);
         result.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
-        // TODO: This assertion cannot distinguish "ReviewIsolation was actively applied from the
-        // override" from "default Isolated was left in place". Both the override value and the
-        // default are ReviewIsolation.Isolated since Shared was removed. The pre-change test used
-        // ReviewIsolation.Shared precisely to make this assertion meaningful. Now that only Isolated
-        // exists, the merge path for ReviewIsolation is not covered: ApplyOverrides could silently
-        // drop the ReviewIsolation field and this assertion would still pass. Consider removing the
-        // ReviewIsolation field from CodeReviewConfiguration/CodeReviewOverrides entirely (see the
-        // [SUGGESTION] in review findings) to remove the dead merge path rather than leaving an
-        // untestable code branch.
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         result.CodeReview.InlineComments.Enabled.Should().BeFalse();
         result.CodeReview.InlineComments.MaxInlineComments.Should().Be(10);
         result.CodeReview.InlineComments.MaxRetries.Should().Be(3);
@@ -482,14 +344,13 @@ public class ApplyProjectOverridesTests
     [Fact]
     public void CodeReview_PartialOverride_PreservesUnspecifiedGlobalValues()
     {
-        // Global has MaxIterations=2, FixPrompt=null, ReviewIsolation=Isolated, InlineComments defaults
+        // Global has MaxIterations=2, FixPrompt=null, InlineComments defaults
         var config = TestPipelineConfig.Default() with
         {
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 2,
                 FixPrompt = "Global fix prompt",
-                ReviewIsolation = ReviewIsolation.Isolated,
                 InlineComments = new InlineCommentSettings
                 {
                     Enabled = true,
@@ -512,7 +373,6 @@ public class ApplyProjectOverridesTests
         // Deep-merge: only MaxIterations is overridden, everything else preserved from global
         result.CodeReview.MaxIterations.Should().Be(1);
         result.CodeReview.FixPrompt.Should().Be("Global fix prompt");
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         result.CodeReview.InlineComments.Enabled.Should().BeTrue();
         result.CodeReview.InlineComments.MaxInlineComments.Should().Be(20);
         result.CodeReview.InlineComments.MaxRetries.Should().Be(2);
@@ -719,10 +579,10 @@ public class ApplyProjectOverridesTests
         result.ClosedLoopPollInterval.Should().Be(config.ClosedLoopPollInterval);
         result.ClosedLoopMaxRunsPerCycle.Should().Be(config.ClosedLoopMaxRunsPerCycle);
         result.ClosedLoopMaxConsecutivePollFailures.Should().Be(config.ClosedLoopMaxConsecutivePollFailures);
-        result.ClosedLoopMaxBackoffInterval.Should().Be(config.ClosedLoopMaxBackoffInterval);
         result.ClosedLoopMaxPagesToFetch.Should().Be(config.ClosedLoopMaxPagesToFetch);
-        result.FailedWorkspaceRetentionDays.Should().Be(config.FailedWorkspaceRetentionDays);
     }
+
+    // ── CI and feedback overrides ───────────────────────────────
 
     [Fact]
     public void CiCancelledMoveMaxRetries_NonNull_OverridesGlobal()
@@ -917,5 +777,40 @@ public class ApplyProjectOverridesTests
         var act = () => PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         act.Should().Throw<NullReferenceException>();
+    }
+
+    // ── Removed overrides ──────────────────────────────────────────────────────
+
+    [Fact]
+    public void StoredProject_WithRemovedOverrides_Loads()
+    {
+        // MaxConcurrentDecompositions, MinIssueSlots and HarnessSuggestionsReviewEnabled are enforced for the whole loop
+        // (or globally), and MaxConsolidationDispatchRetries had no reader; stored projects may still carry them.
+        const string json = """
+            {
+              "id": "p-1",
+              "name": "Legacy",
+              "maxRetries": 4,
+              "maxConcurrentDecompositions": 3,
+              "minIssueSlots": 2,
+              "harnessSuggestionsReviewEnabled": false,
+              "maxConsolidationDispatchRetries": 7,
+              "codeReview": { "maxIterations": 1, "reviewIsolation": "Shared" }
+            }
+            """;
+
+        var project = System.Text.Json.JsonSerializer.Deserialize<PipelineProject>(json, PipelineJsonOptions.Default);
+
+        project.Should().NotBeNull();
+        project!.MaxRetries.Should().Be(4);
+        project.CodeReview!.MaxIterations.Should().Be(1);
+    }
+
+    [Fact]
+    public void LoopWideSettings_AreNotProjectOverridable()
+    {
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MaxConcurrentDecompositions)).Should().BeNull();
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.MinIssueSlots)).Should().BeNull();
+        typeof(PipelineProject).GetProperty(nameof(PipelineConfiguration.HarnessSuggestionsReviewEnabled)).Should().BeNull();
     }
 }

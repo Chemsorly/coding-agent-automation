@@ -250,8 +250,8 @@ public class DecompositionCapPropertyTests
     /// <summary>
     /// Feature: 027-epic-decomposition-pipeline, Property 13: MaxDecompositionSubIssues Validation
     ///
-    /// PipelineConfiguration.MaxDecompositionSubIssues accepts values in [1, 20] only.
-    /// Values outside this range throw ArgumentOutOfRangeException.
+    /// PipelineConfiguration.MaxDecompositionSubIssues accepts values in [1, 20] only:
+    /// the settings validator refuses any other value.
     ///
     /// **Validates: Requirements 7.1, 7.2, 7.5**
     /// </summary>
@@ -259,38 +259,10 @@ public class DecompositionCapPropertyTests
     public Property MaxDecompositionSubIssues_AcceptsOnlyValidRange(MaxSubIssuesInput input)
     {
         var isInRange = input.Value is >= 1 and <= 20;
+        var errors = PipelineSettingsValidator.Validate(new PipelineConfiguration { MaxDecompositionSubIssues = input.Value });
 
-        if (isInRange)
-        {
-            // Should succeed without exception
-            try
-            {
-                var config = new PipelineConfiguration { MaxDecompositionSubIssues = input.Value };
-                var accepted = config.MaxDecompositionSubIssues == input.Value;
-                return accepted.ToProperty()
-                    .Label($"Value {input.Value} should be accepted and stored correctly");
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                return false.ToProperty()
-                    .Label($"Value {input.Value} is in [1,20] but threw ArgumentOutOfRangeException");
-            }
-        }
-        else
-        {
-            // Should throw ArgumentOutOfRangeException
-            try
-            {
-                _ = new PipelineConfiguration { MaxDecompositionSubIssues = input.Value };
-                return false.ToProperty()
-                    .Label($"Value {input.Value} is outside [1,20] but did NOT throw");
-            }
-            catch (ArgumentOutOfRangeException)
-            {
-                return true.ToProperty()
-                    .Label($"Value {input.Value} correctly rejected with ArgumentOutOfRangeException");
-            }
-        }
+        return (errors.Count == 0 == isInRange).ToProperty()
+            .Label($"Value {input.Value}: in range {isInRange}, errors: {string.Join(" ", errors)}");
     }
 
     // --- Helper methods ---

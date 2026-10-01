@@ -42,6 +42,8 @@ public sealed record PipelineProject
         && string.Equals(EpicIssueProviderId, issueProviderId, StringComparison.Ordinal);
 
     // ── Behavioral overrides (null = inherit from global) ──────────────
+    // Each one overrides the [ProjectOverridable] PipelineConfiguration property of the same name and is held to that
+    // property's [Range]: saving a project rejects a value outside it, and the resolver skips a stored one.
 
     public int? MaxRetries { get; init; }
     public int? MaxAnalysisRetries { get; init; }

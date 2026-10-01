@@ -61,15 +61,13 @@ public static partial class ServiceCollectionExtensions
     /// HeartbeatMonitorService was deleted at Spec 041–045 arc close — agent timeouts
     /// are enforced by ReconciliationService in JobController.
     /// </summary>
-    public static IServiceCollection AddOrchestrationServices(
-        this IServiceCollection services,
-        PipelineConfiguration pipelineConfig)
+    public static IServiceCollection AddOrchestrationServices(this IServiceCollection services)
     {
         // ── Agent Registry ─────────────────────────────────────────────────
         RegisterAgentRegistry(services);
 
         // ── Token Vending & Run Services ───────────────────────────────────
-        RegisterTokenAndRunServices(services, pipelineConfig);
+        RegisterTokenAndRunServices(services);
 
         // ── Background Services ────────────────────────────────────────────
         RegisterOrchestrationBackgroundServices(services);
