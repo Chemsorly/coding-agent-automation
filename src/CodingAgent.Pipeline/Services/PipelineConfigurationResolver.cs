@@ -18,26 +18,39 @@ public static class PipelineConfigurationResolver
     /// Called BEFORE ApplyTemplateOverrides in the dispatch pipeline.
     /// Each non-null property on the project replaces the corresponding global value.
     /// Nested objects (e.g., CodeReview) use deep-merge semantics via ApplyOverrides.
+    /// An override outside the range of its setting is skipped with a warning, so that setting keeps the
+    /// global value and every other override still applies.
     /// </summary>
     public static PipelineConfiguration ApplyProjectOverrides(
         PipelineConfiguration config, PipelineProject? project)
     {
         if (project is null) return config;
 
+        var skipped = new List<string>();
+        project = PipelineSettingsValidator.WithoutInvalidOverrides(project, skipped);
+        foreach (var reason in skipped)
+        {
+            Log.Warning(
+                "Project '{ProjectName}' (ID: {ProjectId}): override skipped, the global value applies. {Reason}",
+                project.Name, project.Id, reason);
+        }
+
         // Clone once via the compiler-generated <Clone>$ method, then mutate via PropertyInfo.SetValue.
         // This is equivalent to the previous per-property `config = config with { Prop = value }` pattern.
         // Init setters are callable via reflection because they are regular setters at the IL level —
         // the runtime does not enforce init-only semantics during reflection. This is a stable .NET
         // contract relied upon by System.Text.Json and MessagePack serializers.
-        var clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
+        PipelineConfiguration clone;
 
-        foreach (var mapping in s_overrideMappings)
+        try
         {
-            var projectValue = mapping.ProjectGetter(project);
-            if (projectValue is null) continue;
+            clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
 
-            try
+            foreach (var mapping in s_overrideMappings)
             {
+                var projectValue = mapping.ProjectGetter(project);
+                if (projectValue is null) continue;
+
                 if (mapping.DeepMerge)
                 {
                     // Deep-merge: read current config value, invoke ApplyOverrides, assign result
@@ -55,25 +68,15 @@ public static class PipelineConfigurationResolver
                     mapping.ConfigProperty.SetValue(clone, unwrapped);
                 }
             }
-            catch (TargetInvocationException ex) when (ex.InnerException is ArgumentOutOfRangeException rangeEx)
-            {
-                // This individual property has an out-of-range value. Skip it so the clone
-                // retains the global default for this property, but continue applying the
-                // remaining overrides. Valid overrides already applied are preserved.
-                Log.Warning(
-                    "Project '{ProjectName}' (ID: {ProjectId}) has an out-of-range override for '{PropertyName}' — using global default. {ErrorMessage}",
-                    project.Name, project.Id, mapping.ConfigProperty.Name, rangeEx.Message);
-                // Continue to next mapping — do not return config early
-            }
-            catch (TargetInvocationException ex)
-            {
-                // Unwrap and re-throw with original exception type and stack trace preserved.
-                // All reflection calls (GetValue, SetValue, Invoke) wrap thrown exceptions in
-                // TargetInvocationException — this ensures callers observe the original exception type.
-                // TODO: Consider defensive null-check (ex.InnerException ?? ex) — InnerException is always non-null from MethodInfo.Invoke but the type is nullable
-                ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
-                throw; // Unreachable but satisfies compiler
-            }
+        }
+        catch (TargetInvocationException ex)
+        {
+            // Unwrap and re-throw with original exception type and stack trace preserved.
+            // All reflection calls (GetValue, SetValue, Invoke) wrap thrown exceptions in
+            // TargetInvocationException — this ensures callers observe the original exception type.
+            // TODO: Consider defensive null-check (ex.InnerException ?? ex) — InnerException is always non-null from MethodInfo.Invoke but the type is nullable
+            ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+            throw; // Unreachable but satisfies compiler
         }
 
         return clone;

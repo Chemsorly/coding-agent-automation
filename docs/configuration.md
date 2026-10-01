@@ -1,89 +1,179 @@
 # Pipeline Configuration
 
-Pipeline behavior is configured via the web UI (Settings page) or the database. All configuration is persisted to PostgreSQL.
+Pipeline behavior is configured in the web UI (Settings page) and stored in PostgreSQL. Deployment details (images, replicas, chat pods, age-based retention) come from the Helm chart instead.
 
 See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, [Label Routing](label-routing.md) for per-stack quality gate and reviewer configuration, and [Projects](projects.md) for per-project settings inheritance.
 
-## Project-Level Settings
+## Where Settings Live
 
-Projects can override most general settings on a per-project basis using a nullable override pattern. When a project setting is non-null, it replaces the corresponding global value for all templates in that project. See [Projects](projects.md) for full details on the inheritance model and configuration examples.
+Each setting has one home:
 
-## General Settings
+| Scope | What it holds | Where to edit it |
+|-------|---------------|------------------|
+| Global settings | Every setting in the [reference](#settings-reference) below: the pipeline's policy defaults, and the loop, retention and delivery settings | Settings → Global Defaults (the model-fetch timeout is under Settings → Providers → Agent) |
+| Project | Overrides of the settings marked **Project** in the reference, plus secrets, steering and MCP servers | Settings → Projects → (project) |
+| Pipeline job template | The issue tracker and repository it binds, brain and CI providers, the workflow switches (implementation, review, decomposition, housekeeping), `BrainReadOnly` and the housekeeping limit | Pipelines page |
+| Repository provider | Labels (which pick the agent profile, quality gates and reviewers), commit blacklist, secrets, setup steps, steering | Settings → Providers → Repository |
+| Label catalogs | Agent profiles, quality gate configs and reviewer configs, each chosen by the repository's labels | Settings → Label Routing |
+| Deployment | Images, concurrency per label set, chat pod lifetimes, age-based retention | Helm `values.yaml` and environment variables |
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `maxRetries` | 3 | Max retry attempts when quality gates fail |
-| `maxAnalysisRetries` | 2 | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
-| `agentTimeout` | 00:30:00 | Maximum time for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds |
-| `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
-| `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
-| `ciNotStartedTimeout` | 00:10:00 | How long to wait for CI runs to appear before concluding CI never started. Triggers re-push instead of burning the full `externalCiTimeout` |
-| `ciNotStartedMaxRetries` | 15 | Max re-push retries when CI never starts (range: 0–20). Each retry creates an empty commit and force-pushes to re-trigger CI |
-| `acceptanceCriteriaEnabled` | true | Enable acceptance criteria compliance check (runs in parallel with code reviewers, produces structured JSON report) |
-| `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
-| `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between orphaned label recovery sweeps (periodic background check for issues stuck with `agent:in-progress` label when no active run exists) |
-| `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
-| `stallWarningInterval` | 00:02:00 | Time without agent output before a stall warning is logged |
-| `stallPollInterval` | 00:00:30 | How often to check for agent silence |
-| `brainReadOnly` | false | If true, brain repo is synced pre-run but not written to post-run, and brain consolidation does not run (see [Brain Consolidation](feedback-and-consolidation.md#brain-consolidation-per-brain)) |
-| `brainPushMaxRetries` | 3 | Max attempts for pushing brain repo changes, by runs and by brain consolidation (handles concurrent push conflicts) |
-| `outputBufferCapacity` | 10000 | Max lines of agent output kept in memory for the UI |
-| `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
-| `transientRetryDelay` | 00:00:30 | Delay between retry loop iterations when a transient provider error (`ProviderRateLimit` or `ProviderOverload`) is encountered. Default: 30 seconds. Set to zero in tests for faster execution. |
-| `feedbackTimeoutSeconds` | 60 | Timeout in seconds for the agent call during feedback collection (both post-PR success path and post-retry-exhaustion failure path). Increase for slow models or large repositories. Configurable per project. |
-| `analysisCommitThreshold` | 30 | Number of commits on the default branch since last analysis that triggers automatic analysis refresh. Set to 0 to disable commit-count staleness detection |
+How the layers combine:
 
-### Feature Toggles
+- A project override replaces the global value; an empty override inherits it. `codeReview` is merged field by field.
+- A template can turn `BrainReadOnly` on, never off.
+- Secrets merge by name, and the repository's win over the project's. MCP servers merge by name, and the project's win over the agent profile's. Project and repository steering are both written.
+- A repository's blacklist replaces the global or project blacklist. `.agent` and `.brain` are always excluded.
+- A repository's labels replace `defaultRequiredAgentLabels`. Every quality gate config and reviewer config whose labels match applies.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `analysisReviewEnabled` | true | Enable adversarial analysis review — a second agent reviews the analysis and feeds findings back for refinement before implementation begins |
-| `baselineHealthCheckEnabled` | true | Run baseline health check (build + tests) on the default branch after branch creation and before code analysis. Catches broken base branches early |
-| `refactoringReviewEnabled` | true | Enable discriminator review of refactoring proposals before issues are created |
-| `brainConsolidationReviewEnabled` | true | Enable discriminator review of brain consolidation changes before they are committed |
-| `harnessSuggestionsReviewEnabled` | true | Enable discriminator review of harness suggestions before they are persisted |
+A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels only (see [Label Routing](label-routing.md)).
 
-### Refactoring
+### Limits
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `maxRefactoringProposals` | 3 | Maximum refactoring proposals the agent produces per run. Controls both the prompt instruction and the issue creation cap |
-| `hotspotAnalysisLookback` | 90.00:00:00 | Time window for git hotspot analysis in refactoring detection. Only commits within this window are counted |
-| `refactoringOutcomeLookback` | 90.00:00:00 | Time window for querying past refactoring proposal outcomes. Only closed issues within this window are included in feedback context |
+Every number and duration has a range, listed in the reference. Saving global settings, a project or an import with a value outside its range is refused with a message that names the setting. A project override stored outside its range (saved before this check existed) is skipped when the configuration is resolved: that setting keeps the global value, the project's other overrides still apply, and the log gets a warning.
 
-### Buffer Capacities
+<!-- settings-reference:start -->
+## Settings Reference
 
-These control in-memory bounded data structures for each pipeline run. Rarely need adjustment unless running on constrained memory or needing deeper history.
+Settings are listed by their page under Settings → Global Defaults. The **Project** column marks the settings a project can override. Durations are written as `[d.]hh:mm:ss`.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `outputLinesCapacity` | 5000 | Max lines in the `PipelineRun.OutputLines` bounded queue (UI live output) |
-| `chatHistoryCapacity` | 200 | Max entries in the `PipelineRun.ChatHistory` bounded queue |
-| `qualityGateHistoryCapacity` | 50 | Max entries in the `PipelineRun.QualityGateHistory` bounded queue |
-| `retryErrorsCapacity` | 100 | Max entries in the `PipelineRun.RetryErrors` bounded queue |
+### General
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `maxRetries` | 3 | 0–10 | ✓ | Max retry attempts when quality gates fail |
+| `agentTimeout` | 00:30:00 | 1 min–1 day | ✓ | Limit for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds. The minimum is the reconciliation canary minimum |
+| `maxInfrastructureRetries` | 5 | 0–10 | ✓ | Max retries for transient infrastructure failures; they don't consume the quality gate retry budget |
+| `housekeepingConcurrencyLimit` | 1 | 1–20 | | Max PRs per repository in the "update triggered, CI running" state. A template can override it (see [Housekeeping](#housekeeping)) |
+| `housekeepingBranchCleanupIntervalMinutes` | 60 | 0–10080 | | How often stale agent branch cleanup runs per repository; 0 runs every poll cycle |
+| `housekeepingTriggerCooldownMinutes` | 25 | 1–1440 | | Minimum minutes between branch-update triggers for the same PR |
+| `maxAnalysisRetries` | 2 | 0–10 | ✓ | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
+| `analysisCommitThreshold` | 30 | 0–1000 | ✓ | Commits on the default branch since the last analysis that trigger a fresh analysis; 0 turns this off |
+| `stallWarningInterval` | 00:02:00 | 30 s–1 h | ✓ | Time without agent output before a stall warning is logged |
+| `stallPollInterval` | 00:00:30 | 5 s–2 min | | How often to check for agent silence |
+| `feedbackTimeoutSeconds` | 60 | 10–600 | ✓ | Limit for the agent call that collects feedback after the PR is opened or after the retries are used up |
+| `baselineHealthCheckEnabled` | true | | ✓ | Run a baseline health check (build + tests) after branch creation and before analysis; catches broken base branches early |
+| `blacklistedPaths` | .agent, .brain | | ✓ | Paths excluded from agent commits; a repository provider's list replaces it |
+
+### Pipeline Loop
+
+The pipeline loop polls for `agent:next` issues, PRs and epics and dispatches them. Start and stop it with the loop controls on the Pipelines page. See also: [Issue Workflows — Closed-Loop Mode](github-issue-workflows.md#closed-loop-mode).
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `closedLoopPollInterval` | 00:01:00 | 10 s–10 min | | How often the loop checks for new work when idle |
+| `closedLoopMaxRunsPerCycle` | 0 | 0–1000 | | Max dispatches per cycle; 0 = unlimited |
+| `minIssueSlots` | 1 | 0–100 | | Slots per cycle held back for implementation issues when PRs and other higher-priority work would take them all. Applies when `closedLoopMaxRunsPerCycle` is 0 or at least 2; 0 = strict priority |
+| `closedLoopMaxPagesToFetch` | 10 | 1–100 | | Max pages of issues fetched per poll (100 issues per page) |
+| `closedLoopMaxConsecutivePollFailures` | 5 | 1–50 | | Consecutive poll failures before the circuit breaker pauses the loop |
+| `closedLoopCircuitBreakerCooldown` | 00:05:00 | 30 s–1 h | | Pause before the circuit breaker resumes polling |
+| `orphanedLabelSweepIntervalMinutes` | 30 | 5–1440 | | Minutes between sweeps for issues stuck with an agent label and no active run |
+| `queueSweepEnabled` | true | | | After each dispatch pass, cancel Pending work items whose issue or PR is no longer eligible (closed, label removed, or terminal) |
+
+### Prompts
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `analysisPrompt` | *(built in)* | | ✓ | Prompt for the analysis phase |
+| `implementationPrompt` | *(built in)* | | ✓ | Prompt for the implementation phase |
+| `analysisReviewEnabled` | true | | ✓ | Adversarial analysis review: a second agent reviews the analysis in an isolated session and feeds its findings back before implementation begins |
+| `analysisReviewPrompt` | *(built in)* | | ✓ | Prompt for the analysis reviewer |
+| `analysisRefinementPrompt` | *(built in)* | | ✓ | Prompt that asks the analysis agent to refine the analysis from the review |
 
 ### Decomposition
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `maxDecompositionSubIssues` | 10 | Maximum sub-issues the decomposition agent may propose per epic (range: 1–20) |
-| `maxDecompositionSubIssueFiles` | 12 | Maximum files a single decomposition sub-issue may create or modify (range: 1–30). Controls scope per sub-issue to keep each one within single-agent capacity |
-| `maxConcurrentDecompositions` | 2 | Maximum decomposition runs (across both phases) executing simultaneously |
-| `maxOpenIssuesForContext` | 50 | Maximum open issues downloaded for deduplication context |
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `maxDecompositionSubIssues` | 10 | 1–20 | ✓ | Max sub-issues the decomposition agent may propose per epic |
+| `maxDecompositionSubIssueFiles` | 12 | 1–30 | ✓ | Max files one sub-issue may create or modify, to keep each within one agent's capacity |
+| `maxConcurrentDecompositions` | 2 | 1–10 | | Max decomposition runs at the same time, across all projects |
+| `maxOpenIssuesForContext` | 50 | 1–200 | ✓ | Max open issues downloaded as de-duplication context |
 
-### Kubernetes
+### External CI
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `modelFetchTimeoutSeconds` | 120 | Timeout in seconds for the model-fetch K8s Job (`caa-models-*`). Increase on slow setups where image pull or pod scheduling takes longer than the default. Range: 30–600. |
+External CI runs when a Pipeline/CI provider is set on the pipeline job template.
 
-### Chat Pod Lifecycle
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `externalCiTimeout` | 00:15:00 | 1 min–1 day | ✓ | Max wait for external CI to complete |
+| `externalCiPollInterval` | 00:00:30 | 5 s–5 min | ✓ | How often CI status is polled |
+| `ciNotStartedTimeout` | 00:10:00 | 1–30 min | ✓ | How long to wait for CI runs to appear before re-pushing, instead of waiting out `externalCiTimeout` |
+| `ciNotStartedMaxRetries` | 15 | 0–20 | ✓ | Max re-pushes when CI never starts; each pushes an empty commit |
+| `ciCancelledMoveMaxRetries` | 3 | 0–10 | ✓ | Re-polls when CI is cancelled because the branch moved to a new commit, instead of counting a failed gate. The whole wait stays within `externalCiTimeout` |
+
+### Code Review
+
+Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository label in [Reviewer Configs](label-routing.md); whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `codeReview.maxIterations` | 2 | 0–5 | ✓ | Review → fix cycles in implementation runs; 0 turns their review step off. PR reviews are not affected |
+| `codeReview.fixPrompt` | *(empty)* | | ✓ | When set, implementation-run review splits into find-then-fix: this prompt runs only if `[CRITICAL]` findings exist. Empty = single pass |
+| `codeReview.inlineComments.enabled` | true | | ✓ | PR reviews post findings as comments on the changed lines, in addition to the review summary |
+| `codeReview.inlineComments.severityThreshold` | `Warning` | | ✓ | Minimum severity for inline comments; the other findings appear only in the summary |
+| `codeReview.inlineComments.maxInlineComments` | 15 | 1–50 | ✓ | Max inline comments per review; the rest appear only in the summary |
+| `codeReview.inlineComments.orderBySeverity` | true | | ✓ | Choose inline comments by severity (Critical → Warning → Suggestion) when there are more than the limit |
+| `codeReview.inlineComments.maxRetries` | 1 | 0–5 | ✓ | Re-asks when a reviewer's output lacks file:line references; each is one more LLM call per reviewer |
+| `acceptanceCriteriaEnabled` | true | | ✓ | Acceptance criteria check next to the reviewers, reporting criterion by criterion |
+| `acceptanceCriteriaPrompt` | *(built in)* | | | Prompt for the acceptance criteria check |
+
+### Consolidation
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `maxRefactoringProposals` | 3 | 1–10 | ✓ | Max refactoring proposals per scan; caps both the prompt and the issues created |
+| `refactoringReviewEnabled` | true | | ✓ | Discriminator review of refactoring proposals before issues are created |
+| `brainConsolidationReviewEnabled` | true | | ✓ | Discriminator review of brain consolidation changes before they are committed |
+| `harnessSuggestionsReviewEnabled` | true | | | Discriminator review of harness suggestions before they are stored; global, because harness suggestions belong to no project |
+| `hotspotAnalysisLookback` | 90.00:00:00 | 7–365 days | | Window of commits counted by the hotspot analysis of refactoring scans |
+| `refactoringOutcomeLookback` | 90.00:00:00 | 7–365 days | | Window of closed refactoring issues used as feedback |
+
+### Advanced
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `defaultRequiredAgentLabels` | *(empty)* | | | Agent labels for repositories whose provider sets none; empty = any agent |
+| `brainReadOnly` | false | | ✓ | Runs read the brain but never write to it, and brain consolidation does not run. A project or template can also turn it on (see [Brain Consolidation](feedback-and-consolidation.md#brain-consolidation-per-brain)) |
+| `brainPushMaxRetries` | 3 | 0–10 | | Attempts to push brain changes, by runs and by brain consolidation |
+| `enableIssueImageExtraction` | true | | | Download images from issue and PR bodies and give them to the agent |
+| `enableNativeImageParts` | true | | | Send downloaded images to the agent as images; when off, the prompt still references the downloaded files |
+| `maxIssueImages` | 10 | 0–50 | | Max images per issue or PR |
+| `maxImageSizeBytes` | 5242880 | 1–50 MB | | Larger images are skipped (default 5 MB) |
+| `maxTotalImageSizeBytes` | 20971520 | 1–200 MB | | Download stops once one issue's images reach this size (default 20 MB) |
+| `totalImageDownloadTimeoutSeconds` | 60 | 5–600 | | Time budget for downloading one issue's images |
+| `pipelineRunRetentionCount` | -1 | -1–1000000 | | Completed pipeline runs kept per project by the hourly retention sweep; 0 or -1 keeps all (see [Database Maintenance](#database-maintenance)) |
+| `workItemRetentionCount` | -1 | -1–1000000 | | Finished work items kept per project; 0 or -1 keeps all |
+| `feedbackCommentOutboxMaxAttempts` | 5 | 1–100 | | Attempts to post a run's feedback comment before giving up on it |
+
+### Agent Provider
+
+Edited under Settings → Providers → Agent, in the Kiro provider form in Kubernetes mode.
+
+| Setting | Default | Range | Project | Description |
+|---------|---------|-------|---------|-------------|
+| `modelFetchTimeoutSeconds` | 120 | 30–600 | | Limit for the model-fetch Kubernetes Job (`caa-models-*`); increase where image pulls or pod scheduling are slow |
+
+<!-- settings-reference:end -->
+
+### Internal Fields
+
+The stored configuration has four fields that are not settings, and no page offers them:
+
+- `closedLoopAutoStart` records whether the loop runs; the loop controls set it.
+- `pipelineInjectedPaths` is filled in at runtime from the agent provider.
+- `transientRetryDelay` is the wait after a provider rate limit or overload (30 seconds); tests set it to zero.
+- `workspaceBaseDirectory` is where agents create run workspaces: `./workspaces`, which is `/app/workspaces` in the agent images.
+
+### Removed Settings
+
+These settings had no effect and were removed: `issuePageSize`, `lastUsedProviderIds`, `failedWorkspaceRetentionDays`, `agentDisconnectGracePeriod`, `agentBusyProgressTimeout`, `heartbeatSweepIntervalSeconds`, `heartbeatTimeoutSeconds`, `outputBufferCapacity`, `outputLinesCapacity`, `chatHistoryCapacity`, `qualityGateHistoryCapacity`, `retryErrorsCapacity`, `closedLoopMaxBackoffInterval`, `dbRetentionSweepInterval`, `imageDownloadTimeoutSeconds`, `maxConsolidationDispatchRetries` and `codeReview.reviewIsolation`, as well as the agent provider's timeout. Stored configurations and exports that still contain them load normally, and the values are ignored.
+
+## Chat Pod Lifecycle
 
 These settings control the lifetime of ephemeral chat session pods. Pod dispatch is handled by `ChatJobDispatcher`; the per-session idle-kill loop and K8s job polling run in `ChatSessionWatcher`; cross-replica heartbeat storage uses `ChatHeartbeatTracker` (only when Redis is configured). Settings map to `workDistribution.dispatch.*` in `values.yaml` and are bound via `WorkDistribution:Dispatch:*` environment variables on the Pipeline API and Job Controller.
 
 | values.yaml key / env var | Default | Description |
 |---------------------------|---------|-------------|
-| `workDistribution.dispatch.chatJobMaxDurationSeconds` | 7200 | Maximum lifetime (seconds) of a **chat session** K8s Job pod. Sets `activeDeadlineSeconds` on the chat pod spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. **Note:** this setting does NOT apply to work-item agent jobs or consolidation jobs; those derive their `activeDeadlineSeconds` from `PipelineConfiguration.AgentTimeout` (per-project overridable, default 30 min). See [Configuration — Pipeline Settings](configuration.md#pipeline-settings). |
+| `workDistribution.dispatch.chatJobMaxDurationSeconds` | 7200 | Maximum lifetime (seconds) of a **chat session** K8s Job pod. Sets `activeDeadlineSeconds` on the chat pod spec — the pod is forcibly terminated by Kubernetes when this deadline passes. Minimum: 60s. **Note:** this setting does NOT apply to work-item agent jobs or consolidation jobs; those derive their `activeDeadlineSeconds` from `agentTimeout` (per-project overridable, default 30 min). See [General](#general). |
 | `workDistribution.dispatch.chatPodConnectTimeoutSeconds` | 120 | Maximum time (seconds) the dispatcher waits for a chat pod to connect to the hub after the Job is created before aborting and returning an error to the caller. Minimum: 5s. |
 | `workDistribution.dispatch.chatTerminationGracePeriodSeconds` | 120 | `terminationGracePeriodSeconds` on the chat pod spec — time Kubernetes allows for graceful shutdown before SIGKILL. Minimum: 5s. |
 | `workDistribution.dispatch.chatIdleTimeoutSeconds` | 90 | Seconds a chat pod may remain idle (no client keepalive heartbeat) before `ChatSessionWatcher` terminates it automatically. The Blazor UI sends a heartbeat while the chat window is open; closed or crashed windows are cleaned up within this window. Minimum: 10s. |
@@ -113,86 +203,29 @@ The retry loop classifies agent failures into categories to distinguish provider
 
 > **Operator note:** A sustained 429/503 storm from the upstream LLM provider causes the retry loop to spin indefinitely until the job's `agentTimeout` fires. If you observe stalled runs with no code changes, check agent logs for repeated `ProviderRateLimit` or `ProviderOverload` classifications and investigate your LLM provider's rate limits or quota.
 
-## Code Review Settings
+## Housekeeping
 
-Code review behavior is configured via the `codeReview` sub-object on the pipeline configuration.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `codeReview.maxIterations` | 2 | Max review → fix cycles |
-| `codeReview.fixPrompt` | *(null)* | When set, review splits into find-then-fix: review agents report findings with severity markers, then this fix prompt runs only if `[CRITICAL]` findings exist. When null, falls back to single-pass behavior |
-| `codeReview.reviewIsolation` | Isolated | Review agents always run in isolated sessions (no shared context — prevents self-attribution bias). `Isolated` is the only valid value; the `Shared` option was removed in #2233. |
-
-### Inline Comments
-
-Inline comments post review findings directly on PR diff lines. Configured via `codeReview.inlineComments`:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `inlineComments.enabled` | true | Master switch for inline comment posting. When false, posts body-only reviews |
-| `inlineComments.maxInlineComments` | 15 | Maximum inline comments per review submission (range: 1–50). Excess findings appear only in the body summary |
-| `inlineComments.maxRetries` | 1 | Retry attempts when the review agent doesn't produce structured file:line output (range: 0–5). Each retry is an additional LLM API call per agent |
-| `inlineComments.orderBySeverity` | true | Sort inline comments by severity (Critical → Warning → Suggestion) when selecting within the limit |
-| `inlineComments.severityThreshold` | `Warning` | Minimum severity for inline posting. Findings below this threshold appear only in the body summary |
-
-### Image Extraction
-
-Issue and PR bodies can contain embedded images (screenshots, diagrams). The pipeline extracts and downloads these images, then provides them to agents as native image parts for vision-capable models. Configured via the top-level pipeline settings:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `enableIssueImageExtraction` | true | Master switch for image extraction from issue/PR bodies |
-| `enableNativeImageParts` | true | When false, downloaded images are not forwarded as native parts to the agent API; images are still downloaded for prompt-text references when `enableIssueImageExtraction` is true |
-| `maxIssueImages` | 10 | Maximum images extracted per issue/PR |
-| `maxImageSizeBytes` | 5242880 | Maximum size in bytes for a single downloaded image (5 MB) |
-| `maxTotalImageSizeBytes` | 20971520 | Maximum total bytes for all downloaded images combined (20 MB) |
-| `imageDownloadTimeoutSeconds` | 30 | Timeout in seconds for downloading a single image |
-| `totalImageDownloadTimeoutSeconds` | 60 | Total time budget in seconds for downloading all images |
-
-### Housekeeping
-
-Controls automated PR branch management for templates with `HousekeepingEnabled: true`. On each poll cycle, the housekeeping service evaluates `agent:done` PRs: triggers server-side branch updates for PRs that are behind base (fire-and-forget, respects concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. Optionally runs stale branch cleanup on a configurable interval.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `housekeepingConcurrencyLimit` | `1` | Max PRs simultaneously in "update triggered, CI running" state per repository. Enforced per `RepoProviderId`, not per template. Default: 1 (fully serial). Can be overridden per template via `HousekeepingConcurrencyLimit` on the `PipelineJobTemplate`. |
-| `housekeepingBranchCleanupIntervalMinutes` | `60` | How often (in minutes) stale agent branch cleanup runs per repository. Set to `0` to run every poll cycle. Only active when the template has `HousekeepingBranchCleanupEnabled: true`. |
-| `housekeepingTriggerCooldownMinutes` | `25` | Minimum minutes between consecutive branch-update triggers for the same PR. Prevents a single PR from consuming the update slot on every poll cycle when CI takes longer than one interval. |
+Housekeeping manages the agent's pull requests for pipeline job templates with `HousekeepingEnabled: true`. On each poll cycle it evaluates `agent:done` PRs: it triggers server-side branch updates for PRs that are behind base (fire-and-forget, within the concurrency limit), and re-queues conflicted PRs for rework by swapping the linked issue label back to `agent:next`. It can also delete stale agent branches at an interval. The global settings are `housekeepingConcurrencyLimit`, `housekeepingBranchCleanupIntervalMinutes` and `housekeepingTriggerCooldownMinutes` (see [General](#general)).
 
 Per-template controls (on `PipelineJobTemplate`):
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `HousekeepingEnabled` | `false` | Master switch — enables PR mergeability polling and conflict rework for this template |
-| `HousekeepingConcurrencyLimit` | `null` | Per-template override for concurrency limit. When `null`, falls back to the global `housekeepingConcurrencyLimit` |
+| `HousekeepingConcurrencyLimit` | `null` | Per-template override for the concurrency limit, within the global setting's range. When `null`, the global `housekeepingConcurrencyLimit` applies |
 | `HousekeepingBranchCleanupEnabled` | `false` | When `true`, deletes remote agent branches that have no open PR and whose linked issue carries no active label |
-
-
-
-The pipeline can run autonomously, polling for `agent:next` labeled issues and processing them sequentially. Enable it from the web UI's pipeline loop controls.
-
-See also: [Issue Workflows — Closed-Loop Mode](github-issue-workflows.md#closed-loop-mode) for behavioral details.
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `closedLoopPollInterval` | 00:01:00 | How often to check for new issues |
-| `closedLoopMaxRunsPerCycle` | 0 | Max issues per cycle (0 = unlimited) |
-| `closedLoopMaxConsecutivePollFailures` | 5 | Failures before backing off |
-| `closedLoopMaxBackoffInterval` | 00:15:00 | Max backoff between poll attempts |
-| `closedLoopCircuitBreakerCooldown` | 00:05:00 | Cooldown before circuit breaker auto-resumes polling after all templates fail |
-| `closedLoopMaxPagesToFetch` | 10 | Max pages of issues to fetch when polling |
 
 ## Pipeline Job Templates
 
 Pipeline Job Templates define which provider combination to use when polling for issues. Each template links an issue provider, repository provider, and optional brain/CI providers. Multiple templates enable round-robin polling across repositories.
 
-Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels.
+Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels. **Edit** changes a template in place; it keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project.
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | Name | Yes | Display name for the template |
-| Issue Provider | Yes | Which repository to poll for `agent:next` issues |
-| Repository Provider | Yes | Which repository to clone and push changes to |
+| Issue Provider | Yes | Which issue tracker to poll for `agent:next` issues. Fixed once the template is saved |
+| Repository Provider | Yes | Which repository to clone and push changes to. Fixed once the template is saved |
 | Brain Provider | No | Brain repository for knowledge persistence |
 | Pipeline/CI Provider | No | External CI provider for pipeline status checks |
 | ImplementationEnabled | No | Whether this template processes issues for implementation (default: true) |
@@ -267,23 +300,16 @@ For full request/response examples, authentication details, and query parameters
 
 ### Database Maintenance
 
-A background `DatabaseMaintenanceService` periodically deletes terminal records to prevent unbounded table growth. Configuration is via `PipelineConfiguration` properties (set in the pipeline config JSON in the database, not as environment variables):
+The Scheduler triggers a retention sweep every hour (`POST /api/scheduler/maintenance/retention-sweep`); in multi-replica Scheduler deployments, its leader election (`caa-{release}-scheduler-lock`) ensures only one replica triggers it. The sweep deletes old rows in two ways:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `PipelineRunRetentionCount` | `-1` (disabled) | Max `PipelineRuns` rows to retain per project. `-1` disables count-based retention. |
-| `WorkItemRetentionCount` | `-1` (disabled) | Max terminal `WorkItems` rows to retain per project. `-1` disables count-based retention. |
-| `DbRetentionSweepInterval` | `24h` | Interval between maintenance cycles. Minimum 1 minute. |
-| `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Days to retain terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) before deletion. Set via env var. |
+| Setting | Default | Where | Description |
+|---------|---------|-------|-------------|
+| `pipelineRunRetentionCount` | `-1` (keep all) | Settings → Global Defaults → Advanced | Completed `PipelineRuns` kept per project; 0 or -1 keeps all |
+| `workItemRetentionCount` | `-1` (keep all) | Settings → Global Defaults → Advanced | Terminal `WorkItems` kept per project; 0 or -1 keeps all |
+| `WorkDistribution:Reconciliation:StaleRetentionDays` | `7` | Helm `workDistribution.reconciliation.staleRetentionDays` | Days to keep terminal `WorkItems` (`Succeeded`, `Failed`, `Cancelled`) |
+| `WorkDistribution:Reconciliation:PipelineRunRetentionDays` | `30` | environment variable | Days to keep completed `PipelineRuns`, which includes consolidation run history |
 
-> **Note:** Two retention mechanisms coexist for `PipelineRuns`:
-> - `PipelineRunRetentionCount` (in `PipelineConfiguration`) — count-based cap per project; default `-1` (disabled)
-> - `WorkDistribution:Reconciliation:PipelineRunRetentionDays` (on `DatabaseMaintenanceOptions`) — age-based deletion; default `30` days
->
-> Both run on each maintenance sweep. Set `PipelineRunRetentionCount` to limit row count; set `PipelineRunRetentionDays` to limit row age. The `MaintenanceIntervalHours` config key no longer exists — it was replaced by `DbRetentionSweepInterval` in `PipelineConfiguration`. Consolidation run history is now covered by the standard `PipelineRunRetentionDays` (default: **30 days**) age-based sweep — since `BackfillConsolidationRunsAsync` migrates `ConsolidationRuns` rows into `PipelineRuns`, the age-based PipelineRun cleanup covers consolidation history automatically.
-<!-- TODO [WARNING]: This paragraph is stale after issue #3032. BackfillConsolidationRunsAsync and the ConsolidationRuns table no longer exist. Consolidation runs are recorded directly as PipelineRuns at dispatch time; the standard PipelineRunRetentionDays sweep covers them automatically without any backfill step. Update this paragraph to remove the BackfillConsolidationRunsAsync reference. -->
-
-The maintenance service is triggered by the Scheduler via `POST /api/scheduler/maintenance/retention-sweep`. In multi-replica Scheduler deployments, the Scheduler's leader election (`caa-{release}-scheduler-lock`) ensures only one Scheduler replica triggers sweeps.
+Both limits apply on each sweep: the counts cap the rows per project, the days cap their age.
 
 ### OpenTelemetry
 

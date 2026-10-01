@@ -54,17 +54,6 @@ public class NullPipelineRunHistoryServiceTests
     }
 
     [Fact]
-    public void CleanupExpiredWorkspaces_DoesNotThrow()
-    {
-        var sut = new NullPipelineRunHistoryService();
-        var config = new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" };
-
-        var act = () => sut.CleanupExpiredWorkspaces(config, "active-run");
-
-        act.Should().NotThrow();
-    }
-
-    [Fact]
     public async Task QualityGateExecutor_WithNullHistoryService_DoesNotThrow()
     {
         // Arrange: construct QualityGateExecutor with NullPipelineRunHistoryService

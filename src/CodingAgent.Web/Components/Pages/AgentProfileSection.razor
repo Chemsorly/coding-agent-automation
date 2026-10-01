@@ -207,7 +207,7 @@
                             </div>
                             <div class="form-group">
                                 <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
-                                <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                                <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="@McpHeadersPlaceholder"></textarea>
                             </div>
                         }
                         else
@@ -269,6 +269,9 @@
 </section>
 
 @code {
+    // A multi-line placeholder is a C# string: in an attribute of a rendered element, "&#10;" would show up as text.
+    private const string McpHeadersPlaceholder = "Authorization=Bearer mytoken\nX-Org=myorg";
+
     [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }

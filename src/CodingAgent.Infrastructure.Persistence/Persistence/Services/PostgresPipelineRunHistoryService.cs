@@ -184,42 +184,6 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory)
         => WorkspaceDeletionGuard.TryDelete(workspacePath?.Value, runId, workspaceBaseDirectory, _logger);
 
-    /// <inheritdoc />
-    public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        if (config.FailedWorkspaceRetentionDays < 0)
-            return;
-
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
-
-        try
-        {
-            using var db = _dbFactory.CreateDbContext();
-            var query = db.PipelineRuns
-                .AsNoTracking()
-                .Where(r => r.FinalStep != PipelineStep.Completed)
-                .Where(r => r.CompletedAt != null && r.CompletedAt < cutoff);
-
-            if (!string.IsNullOrEmpty(activeRunId) && Guid.TryParse(activeRunId, out var activeGuid))
-                query = query.Where(r => r.RunId != activeGuid);
-
-            var expiredRuns = query
-                .Select(r => new { RunId = r.RunId.ToString(), CompletedAt = r.CompletedAt!.Value })
-                .ToList();
-
-            foreach (var expired in expiredRuns)
-            {
-                var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, expired.RunId);
-                TryDeleteWorkspace(workspacePath, expired.RunId, config.WorkspaceBaseDirectory);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to query expired runs for workspace cleanup");
-        }
-    }
-
     // ── Async internals ─────────────────────────────────────────────────
 
     /// <summary>

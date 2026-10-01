@@ -240,6 +240,52 @@ public class AgentCodingPageService
         return (true, null, $"Template \"{newTemplate.Name}\" added.");
     }
 
+    /// <summary>
+    /// Checks an edit against the rules the API enforces on save. The edited template keeps its enabled state,
+    /// repository and issue tracker.
+    /// </summary>
+    public (bool Valid, string? FormError) ValidateEditTemplate(TemplateTableSection.TemplateFormModel form)
+    {
+        if (string.IsNullOrWhiteSpace(form.Name)) return (false, "Name is required.");
+        var existing = Templates.FirstOrDefault(t => t.Id == form.EditingTemplateId);
+        if (existing is null) return (false, "The template no longer exists.");
+
+        var conflict = TemplateBindingRules.Validate(
+            ApplyEdit(existing, form), GetParentProject(existing.Id)?.Id ?? WellKnownIds.DefaultProjectId, Templates, Projects);
+        return conflict is null ? (true, null) : (false, conflict);
+    }
+
+    /// <summary>
+    /// Saves an edit of an existing template: name, brain and its read-only switch, CI provider, workflow switches and
+    /// housekeeping. The id, project, enabled state, repository and issue tracker stay as they are.
+    /// </summary>
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> UpdateTemplateAsync(TemplateTableSection.TemplateFormModel form)
+    {
+        var idx = Templates.FindIndex(t => t.Id == form.EditingTemplateId);
+        if (idx < 0) return (false, "The template no longer exists.", null);
+
+        var updated = ApplyEdit(Templates[idx], form);
+        var projectId = GetParentProject(updated.Id)?.Id ?? WellKnownIds.DefaultProjectId;
+        try { await _configClient.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
+        catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
+        Templates[idx] = updated;
+        return (true, null, $"Template \"{updated.Name}\" saved.");
+    }
+
+    private static PipelineJobTemplate ApplyEdit(PipelineJobTemplate existing, TemplateTableSection.TemplateFormModel form) => existing with
+    {
+        Name = form.Name.Trim(),
+        BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? null : form.BrainProviderId,
+        BrainReadOnly = !string.IsNullOrEmpty(form.BrainProviderId) && form.BrainReadOnly,
+        PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? null : form.PipelineProviderId,
+        ImplementationEnabled = form.ImplementationEnabled,
+        ReviewEnabled = form.ReviewEnabled,
+        DecompositionEnabled = form.DecompositionEnabled,
+        HousekeepingEnabled = form.HousekeepingEnabled,
+        HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
+        HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
+    };
+
     public async Task<(bool Success, string? Error, string? SuccessMessage)> RemoveTemplateAsync(PipelineJobTemplate template)
     {
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;

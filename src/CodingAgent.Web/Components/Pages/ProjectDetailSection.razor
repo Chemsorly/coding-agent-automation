@@ -1,5 +1,5 @@
 @using CodingAgent.Api.Client
-@using CodingAgent.Pipeline
+@using CodingAgent.Pipeline.CodeReview.Models
 @using CodingAgent.Pipeline.Models
 @using System.Text.RegularExpressions
 @implements IAsyncDisposable
@@ -39,6 +39,14 @@
 </section>
 
 @code {
+    // Multi-line placeholders are C# strings: in an attribute of a rendered element, "&#10;" would show up as text.
+    private const string SteeringPlaceholder =
+        "## Code Style\n- Use descriptive variable names\n- Prefer composition over inheritance\n\n" +
+        "## Build & Test\n- Always run the build after changes\n- Run tests before considering work complete\n\n" +
+        "## Tool Preferences\n- Use context7 to look up library documentation before using unfamiliar APIs\n" +
+        "- Use sequential-thinking for complex multi-step reasoning";
+    private const string McpHeadersPlaceholder = "Authorization=Bearer mytoken\nX-Org=myorg";
+
     private const string TabOverview = "overview";
     private const string TabTemplates = "templates";
     private const string TabSecrets = "secrets";
@@ -69,30 +77,8 @@
     // Steering
     private string? _steeringContent;
 
-    // Settings override fields
-    private int? _maxRetries;
-    private int? _maxAnalysisRetries;
-    private int? _agentTimeoutMinutes;
-    private string? _analysisPrompt;
-    private string? _implementationPrompt;
-    private bool? _analysisReviewEnabled;
-    private string? _analysisReviewPrompt;
-    private string? _analysisRefinementPrompt;
-    private bool? _acceptanceCriteriaEnabled;
-    private bool? _baselineHealthCheckEnabled;
-    private int? _externalCiTimeoutMinutes;
-    private int? _externalCiPollIntervalSeconds;
-    private int? _ciNotStartedTimeoutMinutes;
-    private int? _ciNotStartedMaxRetries;
-    private int? _maxInfrastructureRetries;
-    private int? _stallWarningIntervalMinutes;
-    private int? _maxDecompositionSubIssues;
-    private int? _maxDecompositionSubIssueFiles;
-    private int? _maxOpenIssuesForContext;
-    private int? _maxRefactoringProposals;
-    private bool? _refactoringReviewEnabled;
-    private bool? _brainConsolidationReviewEnabled;
-    private bool? _brainReadOnly;
+    // The Settings tab edits the overrides on this copy of the project; saving takes them over (see SaveSettingsAsync).
+    private PipelineProject _draft = new() { Id = "", Name = "" };
 
     // Blacklisted paths (null = inherit global)
     private string? _blacklistedPathsText;
@@ -113,13 +99,15 @@
     private int _editingMcpIndex = -1;
     private McpServerFormModel _mcpForm = new();
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadDataAsync();
-    }
+    // The project the tabs were loaded for. The parent re-renders this section whenever it shows a status, so reloading
+    // on every parameter set would discard the unsaved edits after a refused save; only another project is loaded.
+    private string? _loadedProjectId;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (ProjectId == _loadedProjectId)
+            return;
+        _loadedProjectId = ProjectId;
         await LoadDataAsync();
     }
 
@@ -152,34 +140,12 @@
         _enabled = _project.Enabled;
         _epicIssueProviderId = _project.EpicIssueProviderId;
 
-        // Populate settings override fields
-        _maxRetries = _project.MaxRetries;
-        _maxAnalysisRetries = _project.MaxAnalysisRetries;
-
         // Populate secrets
         _secrets = _project.Secrets?.Select(kv => new SecretEntry { Key = kv.Key, Value = kv.Value }).ToList() ?? new();
         _revealedSecrets.Clear();
-        _agentTimeoutMinutes = _project.AgentTimeout.HasValue ? (int?)_project.AgentTimeout.Value.TotalMinutes : null;
-        _analysisPrompt = _project.AnalysisPrompt;
-        _implementationPrompt = _project.ImplementationPrompt;
-        _analysisReviewEnabled = _project.AnalysisReviewEnabled;
-        _analysisReviewPrompt = _project.AnalysisReviewPrompt;
-        _analysisRefinementPrompt = _project.AnalysisRefinementPrompt;
-        _acceptanceCriteriaEnabled = _project.AcceptanceCriteriaEnabled;
-        _baselineHealthCheckEnabled = _project.BaselineHealthCheckEnabled;
-        _externalCiTimeoutMinutes = _project.ExternalCiTimeout.HasValue ? (int?)_project.ExternalCiTimeout.Value.TotalMinutes : null;
-        _externalCiPollIntervalSeconds = _project.ExternalCiPollInterval.HasValue ? (int?)_project.ExternalCiPollInterval.Value.TotalSeconds : null;
-        _ciNotStartedTimeoutMinutes = _project.CiNotStartedTimeout.HasValue ? (int?)_project.CiNotStartedTimeout.Value.TotalMinutes : null;
-        _ciNotStartedMaxRetries = _project.CiNotStartedMaxRetries;
-        _maxInfrastructureRetries = _project.MaxInfrastructureRetries;
-        _stallWarningIntervalMinutes = _project.StallWarningInterval.HasValue ? (int?)_project.StallWarningInterval.Value.TotalMinutes : null;
-        _maxDecompositionSubIssues = _project.MaxDecompositionSubIssues;
-        _maxDecompositionSubIssueFiles = _project.MaxDecompositionSubIssueFiles;
-        _maxOpenIssuesForContext = _project.MaxOpenIssuesForContext;
-        _maxRefactoringProposals = _project.MaxRefactoringProposals;
-        _refactoringReviewEnabled = _project.RefactoringReviewEnabled;
-        _brainConsolidationReviewEnabled = _project.BrainConsolidationReviewEnabled;
-        _brainReadOnly = _project.BrainReadOnly;
+
+        // Populate settings overrides
+        _draft = _project;
         _blacklistedPathsText = _project.BlacklistedPaths != null ? string.Join(",", _project.BlacklistedPaths) : null;
         _steeringContent = _project.SteeringContent;
 
@@ -332,45 +298,61 @@
             <p class="form-hint">Override global defaults for this project. Fields set to "Using global default" inherit from the global pipeline configuration.</p>
 
             <h3>Retries &amp; Timeouts</h3>
-            @RenderIntOverride("Max Retries", () => _maxRetries, v => _maxRetries = v, _globalConfig.MaxRetries, 0, 10)
-            @RenderIntOverride("Max Analysis Retries", () => _maxAnalysisRetries, v => _maxAnalysisRetries = v, _globalConfig.MaxAnalysisRetries, 0, 10)
-            @RenderIntOverride("Agent Timeout (minutes)", () => _agentTimeoutMinutes, v => _agentTimeoutMinutes = v, (int)_globalConfig.AgentTimeout.TotalMinutes, 1, 120)
-            @RenderIntOverride("Max Infrastructure Retries", () => _maxInfrastructureRetries, v => _maxInfrastructureRetries = v, _globalConfig.MaxInfrastructureRetries, 0, 10)
-            @RenderIntOverride("Stall Warning Interval (minutes)", () => _stallWarningIntervalMinutes, v => _stallWarningIntervalMinutes = v, (int)_globalConfig.StallWarningInterval.TotalMinutes, 1, 60)
-            @RenderIntOverride("External CI Timeout (minutes)", () => _externalCiTimeoutMinutes, v => _externalCiTimeoutMinutes = v, (int)_globalConfig.ExternalCiTimeout.TotalMinutes, 1, 120)
-            @RenderIntOverride("External CI Poll Interval (seconds)", () => _externalCiPollIntervalSeconds, v => _externalCiPollIntervalSeconds = v, (int)_globalConfig.ExternalCiPollInterval.TotalSeconds, 5, 300)
-            @RenderIntOverride("CI Not Started Timeout (minutes)", () => _ciNotStartedTimeoutMinutes, v => _ciNotStartedTimeoutMinutes = v, (int)_globalConfig.CiNotStartedTimeout.TotalMinutes, 1, 30)
-            @RenderIntOverride("CI Not Started Max Retries", () => _ciNotStartedMaxRetries, v => _ciNotStartedMaxRetries = v, _globalConfig.CiNotStartedMaxRetries, 0, 20)
+            @RenderIntOverride("Max Retries", nameof(PipelineConfiguration.MaxRetries), () => _draft.MaxRetries, v => _draft = _draft with { MaxRetries = v }, _globalConfig.MaxRetries)
+            @RenderIntOverride("Max Analysis Retries", nameof(PipelineConfiguration.MaxAnalysisRetries), () => _draft.MaxAnalysisRetries, v => _draft = _draft with { MaxAnalysisRetries = v }, _globalConfig.MaxAnalysisRetries)
+            @RenderIntOverride("Agent Timeout (minutes)", nameof(PipelineConfiguration.AgentTimeout), () => Minutes(_draft.AgentTimeout), v => _draft = _draft with { AgentTimeout = FromMinutes(v) }, (int)_globalConfig.AgentTimeout.TotalMinutes, SettingUnit.Minutes)
+            @RenderIntOverride("Max Infrastructure Retries", nameof(PipelineConfiguration.MaxInfrastructureRetries), () => _draft.MaxInfrastructureRetries, v => _draft = _draft with { MaxInfrastructureRetries = v }, _globalConfig.MaxInfrastructureRetries)
+            @RenderIntOverride("Stall Warning Interval (seconds)", nameof(PipelineConfiguration.StallWarningInterval), () => Seconds(_draft.StallWarningInterval), v => _draft = _draft with { StallWarningInterval = FromSeconds(v) }, (int)_globalConfig.StallWarningInterval.TotalSeconds, SettingUnit.Seconds)
+            @RenderIntOverride("Feedback Timeout (seconds)", nameof(PipelineConfiguration.FeedbackTimeoutSeconds), () => _draft.FeedbackTimeoutSeconds, v => _draft = _draft with { FeedbackTimeoutSeconds = v }, _globalConfig.FeedbackTimeoutSeconds)
+
+            <h3>Analysis</h3>
+            @RenderBoolOverride("Baseline Health Check Enabled", nameof(PipelineConfiguration.BaselineHealthCheckEnabled), () => _draft.BaselineHealthCheckEnabled, v => _draft = _draft with { BaselineHealthCheckEnabled = v }, _globalConfig.BaselineHealthCheckEnabled)
+            @RenderBoolOverride("Analysis Review Enabled", nameof(PipelineConfiguration.AnalysisReviewEnabled), () => _draft.AnalysisReviewEnabled, v => _draft = _draft with { AnalysisReviewEnabled = v }, _globalConfig.AnalysisReviewEnabled)
+            @RenderIntOverride("Analysis Refresh After Commits", nameof(PipelineConfiguration.AnalysisCommitThreshold), () => _draft.AnalysisCommitThreshold, v => _draft = _draft with { AnalysisCommitThreshold = v }, _globalConfig.AnalysisCommitThreshold)
+
+            <h3>External CI</h3>
+            @RenderIntOverride("CI Timeout (minutes)", nameof(PipelineConfiguration.ExternalCiTimeout), () => Minutes(_draft.ExternalCiTimeout), v => _draft = _draft with { ExternalCiTimeout = FromMinutes(v) }, (int)_globalConfig.ExternalCiTimeout.TotalMinutes, SettingUnit.Minutes)
+            @RenderIntOverride("CI Poll Interval (seconds)", nameof(PipelineConfiguration.ExternalCiPollInterval), () => Seconds(_draft.ExternalCiPollInterval), v => _draft = _draft with { ExternalCiPollInterval = FromSeconds(v) }, (int)_globalConfig.ExternalCiPollInterval.TotalSeconds, SettingUnit.Seconds)
+            @RenderIntOverride("CI Not Started Timeout (minutes)", nameof(PipelineConfiguration.CiNotStartedTimeout), () => Minutes(_draft.CiNotStartedTimeout), v => _draft = _draft with { CiNotStartedTimeout = FromMinutes(v) }, (int)_globalConfig.CiNotStartedTimeout.TotalMinutes, SettingUnit.Minutes)
+            @RenderIntOverride("CI Not Started Max Retries", nameof(PipelineConfiguration.CiNotStartedMaxRetries), () => _draft.CiNotStartedMaxRetries, v => _draft = _draft with { CiNotStartedMaxRetries = v }, _globalConfig.CiNotStartedMaxRetries)
+            @RenderIntOverride("CI Re-Polls After Branch Moves", nameof(PipelineConfiguration.CiCancelledMoveMaxRetries), () => _draft.CiCancelledMoveMaxRetries, v => _draft = _draft with { CiCancelledMoveMaxRetries = v }, _globalConfig.CiCancelledMoveMaxRetries)
+
+            <h3>Code Review</h3>
+            @RenderIntOverride("Review Iterations in Implementation Runs (0 = off)", "CodeReview.MaxIterations", () => _draft.CodeReview?.MaxIterations, v => SetCodeReview(o => o with { MaxIterations = v }), _globalConfig.CodeReview.MaxIterations)
+            @RenderStringOverride("Fix Prompt", "CodeReview.FixPrompt", () => _draft.CodeReview?.FixPrompt, v => SetCodeReview(o => o with { FixPrompt = v }), _globalConfig.CodeReview.FixPrompt ?? "")
+            @RenderBoolOverride("Acceptance Criteria Check", nameof(PipelineConfiguration.AcceptanceCriteriaEnabled), () => _draft.AcceptanceCriteriaEnabled, v => _draft = _draft with { AcceptanceCriteriaEnabled = v }, _globalConfig.AcceptanceCriteriaEnabled)
+            @RenderBoolOverride("Inline Comments on PR Reviews", "CodeReview.InlineComments.Enabled", () => _draft.CodeReview?.InlineComments?.Enabled, v => SetInlineComments(o => o with { Enabled = v }), _globalConfig.CodeReview.InlineComments.Enabled)
+            @RenderSeverityOverride("Minimum Severity for Inline Comments", "CodeReview.InlineComments.SeverityThreshold", () => _draft.CodeReview?.InlineComments?.SeverityThreshold, v => SetInlineComments(o => o with { SeverityThreshold = v }), _globalConfig.CodeReview.InlineComments.SeverityThreshold)
+            @RenderIntOverride("Max Inline Comments per Review", "CodeReview.InlineComments.MaxInlineComments", () => _draft.CodeReview?.InlineComments?.MaxInlineComments, v => SetInlineComments(o => o with { MaxInlineComments = v }), _globalConfig.CodeReview.InlineComments.MaxInlineComments)
+            @RenderBoolOverride("Prioritize Inline Comments by Severity", "CodeReview.InlineComments.OrderBySeverity", () => _draft.CodeReview?.InlineComments?.OrderBySeverity, v => SetInlineComments(o => o with { OrderBySeverity = v }), _globalConfig.CodeReview.InlineComments.OrderBySeverity)
+            @RenderIntOverride("Format Correction Retries", "CodeReview.InlineComments.MaxRetries", () => _draft.CodeReview?.InlineComments?.MaxRetries, v => SetInlineComments(o => o with { MaxRetries = v }), _globalConfig.CodeReview.InlineComments.MaxRetries)
 
             <h3>Decomposition</h3>
-            @RenderIntOverride("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, v => _maxDecompositionSubIssues = v, _globalConfig.MaxDecompositionSubIssues, 1, 20)
-            @RenderIntOverride("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, v => _maxDecompositionSubIssueFiles = v, _globalConfig.MaxDecompositionSubIssueFiles, 1, 30)
-            @RenderIntOverride("Max Open Issues for Context", () => _maxOpenIssuesForContext, v => _maxOpenIssuesForContext = v, _globalConfig.MaxOpenIssuesForContext, 1, 200)
-            @RenderIntOverride("Max Refactoring Proposals", () => _maxRefactoringProposals, v => _maxRefactoringProposals = v, _globalConfig.MaxRefactoringProposals, 1, 10)
+            @RenderIntOverride("Max Sub-Issues Per Epic", nameof(PipelineConfiguration.MaxDecompositionSubIssues), () => _draft.MaxDecompositionSubIssues, v => _draft = _draft with { MaxDecompositionSubIssues = v }, _globalConfig.MaxDecompositionSubIssues)
+            @RenderIntOverride("Max Files Per Sub-Issue", nameof(PipelineConfiguration.MaxDecompositionSubIssueFiles), () => _draft.MaxDecompositionSubIssueFiles, v => _draft = _draft with { MaxDecompositionSubIssueFiles = v }, _globalConfig.MaxDecompositionSubIssueFiles)
+            @RenderIntOverride("Max Open Issues for Context", nameof(PipelineConfiguration.MaxOpenIssuesForContext), () => _draft.MaxOpenIssuesForContext, v => _draft = _draft with { MaxOpenIssuesForContext = v }, _globalConfig.MaxOpenIssuesForContext)
 
-            <h3>Feature Toggles</h3>
-            @RenderBoolOverride("Analysis Review Enabled", () => _analysisReviewEnabled, v => _analysisReviewEnabled = v, _globalConfig.AnalysisReviewEnabled)
-            @RenderBoolOverride("Acceptance Criteria Enabled", () => _acceptanceCriteriaEnabled, v => _acceptanceCriteriaEnabled = v, _globalConfig.AcceptanceCriteriaEnabled)
-            @RenderBoolOverride("Baseline Health Check Enabled", () => _baselineHealthCheckEnabled, v => _baselineHealthCheckEnabled = v, _globalConfig.BaselineHealthCheckEnabled)
-            @RenderBoolOverride("Refactoring Review Enabled", () => _refactoringReviewEnabled, v => _refactoringReviewEnabled = v, _globalConfig.RefactoringReviewEnabled)
-            @RenderBoolOverride("Brain Consolidation Review Enabled", () => _brainConsolidationReviewEnabled, v => _brainConsolidationReviewEnabled = v, _globalConfig.BrainConsolidationReviewEnabled)
-            @RenderBoolOverride("Brain Read-Only", () => _brainReadOnly, v => _brainReadOnly = v, _globalConfig.BrainReadOnly)
+            <h3>Consolidation</h3>
+            @RenderIntOverride("Max Refactoring Proposals", nameof(PipelineConfiguration.MaxRefactoringProposals), () => _draft.MaxRefactoringProposals, v => _draft = _draft with { MaxRefactoringProposals = v }, _globalConfig.MaxRefactoringProposals)
+            @RenderBoolOverride("Refactoring Review Enabled", nameof(PipelineConfiguration.RefactoringReviewEnabled), () => _draft.RefactoringReviewEnabled, v => _draft = _draft with { RefactoringReviewEnabled = v }, _globalConfig.RefactoringReviewEnabled)
+            @RenderBoolOverride("Brain Consolidation Review Enabled", nameof(PipelineConfiguration.BrainConsolidationReviewEnabled), () => _draft.BrainConsolidationReviewEnabled, v => _draft = _draft with { BrainConsolidationReviewEnabled = v }, _globalConfig.BrainConsolidationReviewEnabled)
+            @RenderBoolOverride("Brain Read-Only", nameof(PipelineConfiguration.BrainReadOnly), () => _draft.BrainReadOnly, v => _draft = _draft with { BrainReadOnly = v }, _globalConfig.BrainReadOnly)
 
             <h3>Prompts</h3>
-            @RenderStringOverride("Analysis Prompt", () => _analysisPrompt, v => _analysisPrompt = v, _globalConfig.AnalysisPrompt)
-            @RenderStringOverride("Implementation Prompt", () => _implementationPrompt, v => _implementationPrompt = v, _globalConfig.ImplementationPrompt)
-            @RenderStringOverride("Analysis Review Prompt", () => _analysisReviewPrompt, v => _analysisReviewPrompt = v, _globalConfig.AnalysisReviewPrompt)
-            @RenderStringOverride("Analysis Refinement Prompt", () => _analysisRefinementPrompt, v => _analysisRefinementPrompt = v, _globalConfig.AnalysisRefinementPrompt)
+            @RenderStringOverride("Analysis Prompt", nameof(PipelineConfiguration.AnalysisPrompt), () => _draft.AnalysisPrompt, v => _draft = _draft with { AnalysisPrompt = v }, _globalConfig.AnalysisPrompt)
+            @RenderStringOverride("Implementation Prompt", nameof(PipelineConfiguration.ImplementationPrompt), () => _draft.ImplementationPrompt, v => _draft = _draft with { ImplementationPrompt = v }, _globalConfig.ImplementationPrompt)
+            @RenderStringOverride("Analysis Review Prompt", nameof(PipelineConfiguration.AnalysisReviewPrompt), () => _draft.AnalysisReviewPrompt, v => _draft = _draft with { AnalysisReviewPrompt = v }, _globalConfig.AnalysisReviewPrompt)
+            @RenderStringOverride("Analysis Refinement Prompt", nameof(PipelineConfiguration.AnalysisRefinementPrompt), () => _draft.AnalysisRefinementPrompt, v => _draft = _draft with { AnalysisRefinementPrompt = v }, _globalConfig.AnalysisRefinementPrompt)
 
             <h3>Steering</h3>
             <div class="form-group">
                 <label>Steering Instructions</label>
                 <p class="form-hint">These instructions are provided to every agent working on issues in this project. Use them for cross-cutting rules like code style, build commands, tool preferences, or quality expectations.</p>
-                <textarea @bind="_steeringContent" rows="15" placeholder="## Code Style&#10;- Use descriptive variable names&#10;- Prefer composition over inheritance&#10;&#10;## Build &amp; Test&#10;- Always run the build after changes&#10;- Run tests before considering work complete&#10;&#10;## Tool Preferences&#10;- Use context7 to look up library documentation before using unfamiliar APIs&#10;- Use sequential-thinking for complex multi-step reasoning"></textarea>
+                <textarea @bind="_steeringContent" rows="15" placeholder="@SteeringPlaceholder"></textarea>
             </div>
 
             <h3>Commit Blacklist</h3>
-            <div class="form-group override-group">
+            <div class="form-group override-group" data-setting="@nameof(PipelineConfiguration.BlacklistedPaths)">
                 <div class="override-header">
                     <label>Blacklisted Paths</label>
                     @if (_blacklistedPathsText is not null)
@@ -399,10 +381,12 @@
         </div>
     };
 
-    private RenderFragment RenderIntOverride(string label, Func<int?> getter, Action<int?> setter, int globalDefault, int min, int max) => __builder =>
+    // Each override renders with data-setting set to the setting's path; a test checks the tab offers every project-overridable setting.
+    // Number inputs take their limits from the setting's [Range]; the API rejects a value outside it when the project is saved.
+    private RenderFragment RenderIntOverride(string label, string setting, Func<int?> getter, Action<int?> setter, int globalDefault, SettingUnit unit = SettingUnit.None) => __builder =>
     {
         var value = getter();
-        <div class="form-group override-group">
+        <div class="form-group override-group" data-setting="@setting">
             <div class="override-header">
                 <label>@label</label>
                 @if (value.HasValue)
@@ -416,7 +400,7 @@
             </div>
             @if (value.HasValue)
             {
-                <input type="number" value="@value.Value" @onchange="e => setter(int.TryParse(e.Value?.ToString(), out var v) ? v : null)" min="@min" max="@max" />
+                <input type="number" value="@value.Value" @onchange="e => setter(int.TryParse(e.Value?.ToString(), out var v) ? v : null)" min="@SettingLimits.Min(setting, unit)" max="@SettingLimits.Max(setting, unit)" />
             }
             else
             {
@@ -425,10 +409,40 @@
         </div>
     };
 
-    private RenderFragment RenderBoolOverride(string label, Func<bool?> getter, Action<bool?> setter, bool globalDefault) => __builder =>
+    private RenderFragment RenderSeverityOverride(string label, string setting, Func<FindingSeverity?> getter, Action<FindingSeverity?> setter, FindingSeverity globalDefault) => __builder =>
     {
         var value = getter();
-        <div class="form-group override-group">
+        <div class="form-group override-group" data-setting="@setting">
+            <div class="override-header">
+                <label>@label</label>
+                @if (value.HasValue)
+                {
+                    <button class="btn-revert" @onclick="() => { setter(null); }">Reset to global</button>
+                }
+                else
+                {
+                    <button class="btn-override" @onclick="() => { setter(globalDefault); }">Override</button>
+                }
+            </div>
+            @if (value.HasValue)
+            {
+                <select value="@value.Value" @onchange="e => setter(Enum.TryParse<FindingSeverity>(e.Value?.ToString(), out var v) ? v : null)">
+                    <option value="@FindingSeverity.Critical">Critical</option>
+                    <option value="@FindingSeverity.Warning">Warning</option>
+                    <option value="@FindingSeverity.Suggestion">Suggestion</option>
+                </select>
+            }
+            else
+            {
+                <span class="global-default-hint">Using global default: @globalDefault</span>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderBoolOverride(string label, string setting, Func<bool?> getter, Action<bool?> setter, bool globalDefault) => __builder =>
+    {
+        var value = getter();
+        <div class="form-group override-group" data-setting="@setting">
             <div class="override-header">
                 <label>@label</label>
                 @if (value.HasValue)
@@ -454,10 +468,10 @@
         </div>
     };
 
-    private RenderFragment RenderStringOverride(string label, Func<string?> getter, Action<string?> setter, string globalDefault) => __builder =>
+    private RenderFragment RenderStringOverride(string label, string setting, Func<string?> getter, Action<string?> setter, string globalDefault) => __builder =>
     {
         var value = getter();
-        <div class="form-group override-group">
+        <div class="form-group override-group" data-setting="@setting">
             <div class="override-header">
                 <label>@label</label>
                 @if (value is not null)
@@ -603,92 +617,26 @@
     {
         try
         {
-            // Validate all int overrides that are rendered in this tab before saving.
-            // Fields not rendered in the UI (AnalysisCommitThreshold, CiCancelledMoveMaxRetries,
-            // FeedbackTimeoutSeconds, MaxConsolidationDispatchRetries) are omitted
-            // intentionally — they have no backing state in this component.
-            var validationErrors = new List<string>();
-
-            // AgentTimeout is stored in minutes; validate against the seconds-based canary minimum separately.
-            // TODO: AgentTimeout is validated twice — once by the explicit canary-minimum check below and again by the
-            // "Agent Timeout (minutes)" entry in the intOverrides loop (min=1). At the current TimeoutCanaryMinAgeSeconds=60
-            // (1 minute) the two ranges don't overlap, so no duplicate error fires. If TimeoutCanaryMinAgeSeconds is ever
-            // raised above 60, values in the range (1 .. TimeoutCanaryMinAgeSeconds/60) would produce two error messages
-            // for the same field. Fix by removing "Agent Timeout (minutes)" from the intOverrides loop and relying solely
-            // on this dedicated check, or vice versa. (Review findings: ProjectDetailSection.razor:620, DotNetSpecialist:619)
-            if (_agentTimeoutMinutes.HasValue &&
-                _agentTimeoutMinutes.Value * 60 < PipelineConstants.TimeoutCanaryMinAgeSeconds)
-            {
-                validationErrors.Add(
-                    $"Agent Timeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds / 60} minutes " +
-                    "(reconciliation canary minimum).");
-            }
-
-            // Generic range checks for the 13 rendered int fields.
-            // Each tuple: (display label, backing field getter, min, max).
-            var intOverrides = new (string Label, Func<int?> Getter, int Min, int Max)[]
-            {
-                ("Max Retries", () => _maxRetries, 0, 10),
-                ("Max Analysis Retries", () => _maxAnalysisRetries, 0, 10),
-                ("Agent Timeout (minutes)", () => _agentTimeoutMinutes, 1, 120),
-                ("Max Infrastructure Retries", () => _maxInfrastructureRetries, 0, 10),
-                ("Stall Warning Interval (minutes)", () => _stallWarningIntervalMinutes, 1, 60),
-                ("External CI Timeout (minutes)", () => _externalCiTimeoutMinutes, 1, 120),
-                ("External CI Poll Interval (seconds)", () => _externalCiPollIntervalSeconds, 5, 300),
-                ("CI Not Started Timeout (minutes)", () => _ciNotStartedTimeoutMinutes, 1, 30),
-                ("CI Not Started Max Retries", () => _ciNotStartedMaxRetries, 0, 20),
-                ("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, 1, 20),
-                ("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, 1, 30),
-                ("Max Open Issues for Context", () => _maxOpenIssuesForContext, 1, 200),
-                ("Max Refactoring Proposals", () => _maxRefactoringProposals, 1, 10),
-            };
-
-            foreach (var (label, getter, min, max) in intOverrides)
-            {
-                var value = getter();
-                if (value.HasValue && (value.Value < min || value.Value > max))
-                    validationErrors.Add($"'{label}' must be between {min} and {max} (got {value.Value}).");
-            }
-
-            if (validationErrors.Count > 0)
-            {
-                await OnShowStatus.InvokeAsync((string.Join(" ", validationErrors), true));
-                return;
-            }
-
             if (!ValidateSecrets())
                 return;
 
-            _project = _project with
+            // The draft holds the overrides; everything the other tabs own comes from the project as last saved.
+            var updated = _draft with
             {
-                MaxRetries = _maxRetries,
-                MaxAnalysisRetries = _maxAnalysisRetries,
-                AgentTimeout = _agentTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_agentTimeoutMinutes.Value) : null,
-                AnalysisPrompt = _analysisPrompt,
-                ImplementationPrompt = _implementationPrompt,
-                AnalysisReviewEnabled = _analysisReviewEnabled,
-                AnalysisReviewPrompt = _analysisReviewPrompt,
-                AnalysisRefinementPrompt = _analysisRefinementPrompt,
-                AcceptanceCriteriaEnabled = _acceptanceCriteriaEnabled,
-                BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
-                ExternalCiTimeout = _externalCiTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_externalCiTimeoutMinutes.Value) : null,
-                ExternalCiPollInterval = _externalCiPollIntervalSeconds.HasValue ? TimeSpan.FromSeconds(_externalCiPollIntervalSeconds.Value) : null,
-                CiNotStartedTimeout = _ciNotStartedTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_ciNotStartedTimeoutMinutes.Value) : null,
-                CiNotStartedMaxRetries = _ciNotStartedMaxRetries,
-                MaxInfrastructureRetries = _maxInfrastructureRetries,
-                StallWarningInterval = _stallWarningIntervalMinutes.HasValue ? TimeSpan.FromMinutes(_stallWarningIntervalMinutes.Value) : null,
-                MaxDecompositionSubIssues = _maxDecompositionSubIssues,
-                MaxDecompositionSubIssueFiles = _maxDecompositionSubIssueFiles,
-                MaxOpenIssuesForContext = _maxOpenIssuesForContext,
-                MaxRefactoringProposals = _maxRefactoringProposals,
-                RefactoringReviewEnabled = _refactoringReviewEnabled,
-                BrainConsolidationReviewEnabled = _brainConsolidationReviewEnabled,
-                BrainReadOnly = _brainReadOnly,
+                Name = _project.Name,
+                Description = _project.Description,
+                Enabled = _project.Enabled,
+                EpicIssueProviderId = _project.EpicIssueProviderId,
+                Secrets = _project.Secrets,
+                McpServers = _project.McpServers,
+                TemplateIds = _project.TemplateIds,
                 BlacklistedPaths = ParseBlacklistedPaths(_blacklistedPathsText),
                 SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()
             };
 
-            await ConfigClient.SaveProjectAsync(_project, CancellationToken.None);
+            await ConfigClient.SaveProjectAsync(updated, CancellationToken.None);
+            _project = updated;
+            _draft = updated;
             await OnProjectSaved.InvokeAsync();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
         }
@@ -696,6 +644,27 @@
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
+    }
+
+    private static int? Minutes(TimeSpan? value) => value.HasValue ? (int)value.Value.TotalMinutes : null;
+    private static int? Seconds(TimeSpan? value) => value.HasValue ? (int)value.Value.TotalSeconds : null;
+    private static TimeSpan? FromMinutes(int? value) => value.HasValue ? TimeSpan.FromMinutes(value.Value) : null;
+    private static TimeSpan? FromSeconds(int? value) => value.HasValue ? TimeSpan.FromSeconds(value.Value) : null;
+
+    /// <summary>Changes the draft's code review overrides; overrides with nothing set become null (inherit everything).</summary>
+    private void SetCodeReview(Func<CodeReviewOverrides, CodeReviewOverrides> change)
+    {
+        var next = change(_draft.CodeReview ?? new CodeReviewOverrides());
+        var empty = next.FixPrompt is null && next.MaxIterations is null && next.InlineComments is null;
+        _draft = _draft with { CodeReview = empty ? null : next };
+    }
+
+    private void SetInlineComments(Func<InlineCommentOverrides, InlineCommentOverrides> change)
+    {
+        var next = change(_draft.CodeReview?.InlineComments ?? new InlineCommentOverrides());
+        var empty = next.Enabled is null && next.MaxInlineComments is null && next.MaxRetries is null
+            && next.OrderBySeverity is null && next.SeverityThreshold is null;
+        SetCodeReview(o => o with { InlineComments = empty ? null : next });
     }
 
     // --- Secrets management ---
@@ -900,7 +869,7 @@
                     </div>
                     <div class="form-group">
                         <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
-                        <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                        <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="@McpHeadersPlaceholder"></textarea>
                     </div>
                 }
                 else

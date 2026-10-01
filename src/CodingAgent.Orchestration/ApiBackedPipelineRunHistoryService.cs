@@ -101,10 +101,4 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
         // The orchestrator has no local workspace — no-op.
         // The API host (CodingAgent.Api) owns workspace cleanup in K8s mode.
     }
-
-    /// <inheritdoc />
-    public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
-    {
-        // No-op — same reasoning as TryDeleteWorkspace.
-    }
 }

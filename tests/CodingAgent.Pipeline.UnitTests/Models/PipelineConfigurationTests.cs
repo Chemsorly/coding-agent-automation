@@ -37,7 +37,6 @@ public class PipelineConfigurationTests
             {
                 MaxIterations = 5,
                 FixPrompt = "Custom fix prompt",
-                ReviewIsolation = ReviewIsolation.Isolated,
                 InlineComments = new InlineCommentSettings
                 {
                     Enabled = false,
@@ -68,22 +67,15 @@ public class PipelineConfigurationTests
             BlacklistedPaths = new[] { "custom/path", "another/path" },
             PipelineInjectedPaths = new[] { ".injected" },
             AnalysisCommitThreshold = 50,
-            FailedWorkspaceRetentionDays = 14,
             BrainReadOnly = true,
             ClosedLoopAutoStart = true,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
             ClosedLoopMaxRunsPerCycle = 5,
             ClosedLoopMaxConsecutivePollFailures = 10,
-            ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30),
             ClosedLoopMaxPagesToFetch = 20,
             ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(10),
             DefaultRequiredAgentLabels = "kiro,dotnet",
             BrainPushMaxRetries = 5,
-            OutputBufferCapacity = 20_000,
-            OutputLinesCapacity = 8_000,
-            ChatHistoryCapacity = 300,
-            QualityGateHistoryCapacity = 75,
-            RetryErrorsCapacity = 150,
             OrphanedLabelSweepIntervalMinutes = 60,
             MaxRefactoringProposals = 5,
             HotspotAnalysisLookback = TimeSpan.FromDays(180),
@@ -98,13 +90,11 @@ public class PipelineConfigurationTests
             TotalImageDownloadTimeoutSeconds = 120,
             EnableIssueImageExtraction = false,
             EnableNativeImageParts = false,
-            ImageDownloadTimeoutSeconds = 60,
             ModelFetchTimeoutSeconds = 180,
             HousekeepingConcurrencyLimit = 2,
             HousekeepingBranchCleanupIntervalMinutes = 90,
             PipelineRunRetentionCount = 100,
             WorkItemRetentionCount = 200,
-            DbRetentionSweepInterval = TimeSpan.FromHours(12),
             TransientRetryDelay = TimeSpan.FromSeconds(45),
             QueueSweepEnabled = true,
             CiCancelledMoveMaxRetries = 7,
@@ -131,7 +121,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(70,
+        keyPropertyCount.Should().Be(61,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -162,24 +152,17 @@ public class PipelineConfigurationTests
         config.ClosedLoopPollInterval.Should().Be(PipelineConstants.DefaultClosedLoopPollInterval);
         config.ClosedLoopMaxRunsPerCycle.Should().Be(0);
         config.ClosedLoopMaxConsecutivePollFailures.Should().Be(5);
-        config.ClosedLoopMaxBackoffInterval.Should().Be(PipelineConstants.DefaultClosedLoopMaxBackoffInterval);
         config.ClosedLoopMaxPagesToFetch.Should().Be(10);
         config.ClosedLoopCircuitBreakerCooldown.Should().Be(PipelineConstants.DefaultClosedLoopCircuitBreakerCooldown);
 
         // Agent sub-config defaults
         config.DefaultRequiredAgentLabels.Should().BeNull();
         config.BrainPushMaxRetries.Should().Be(3);
-        config.OutputBufferCapacity.Should().Be(PipelineConstants.DefaultOutputBufferCapacity);
-        config.OutputLinesCapacity.Should().Be(PipelineConstants.DefaultOutputLinesCapacity);
-        config.ChatHistoryCapacity.Should().Be(PipelineConstants.DefaultChatHistoryCapacity);
-        config.QualityGateHistoryCapacity.Should().Be(PipelineConstants.DefaultQualityGateHistoryCapacity);
-        config.RetryErrorsCapacity.Should().Be(PipelineConstants.DefaultRetryErrorsCapacity);
         config.BrainReadOnly.Should().BeFalse();
         config.OrphanedLabelSweepIntervalMinutes.Should().Be(PipelineConstants.DefaultOrphanedLabelSweepIntervalMinutes);
 
         // Workspace sub-config defaults
         config.WorkspaceBaseDirectory.Should().Be("./workspaces");
-        config.FailedWorkspaceRetentionDays.Should().Be(7);
 
         // Commit sub-config defaults
         config.BlacklistedPaths.Should().BeEquivalentTo(s_AgentBrainPaths);
@@ -208,7 +191,6 @@ public class PipelineConfigurationTests
         config.TotalImageDownloadTimeoutSeconds.Should().Be(60);
         config.EnableIssueImageExtraction.Should().BeTrue();
         config.EnableNativeImageParts.Should().BeTrue();
-        config.ImageDownloadTimeoutSeconds.Should().Be(30);
         config.ModelFetchTimeoutSeconds.Should().Be(120);
         config.HousekeepingConcurrencyLimit.Should().Be(1);
         config.HousekeepingTriggerCooldownMinutes.Should().Be(25);
@@ -217,7 +199,6 @@ public class PipelineConfigurationTests
         config.CodeReview.Should().NotBeNull();
         config.CodeReview.MaxIterations.Should().Be(2);
         config.CodeReview.FixPrompt.Should().BeNull();
-        config.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         config.CodeReview.InlineComments.Enabled.Should().BeTrue();
 
         // Transient retry delay default
@@ -229,12 +210,12 @@ public class PipelineConfigurationTests
     // ── MinIssueSlots validation ────────────────────────────────────────────────
 
     [Fact]
-    public void MinIssueSlots_NegativeValue_ThrowsArgumentOutOfRangeException()
+    public void MinIssueSlots_NegativeValue_IsReportedByTheValidator()
     {
-        var act = () => new PipelineConfiguration { MinIssueSlots = -1 };
+        var config = new PipelineConfiguration { MinIssueSlots = -1 };
 
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName(nameof(PipelineConfiguration.MinIssueSlots));
+        PipelineSettingsValidator.Validate(config).Should().ContainSingle()
+            .Which.Should().StartWith(nameof(PipelineConfiguration.MinIssueSlots));
     }
 
     [Fact]
@@ -321,7 +302,6 @@ public class PipelineConfigurationTests
             {
                 MaxIterations = 5,
                 FixPrompt = "Global fix prompt",
-                ReviewIsolation = ReviewIsolation.Isolated,
                 InlineComments = new InlineCommentSettings
                 {
                     Enabled = true,
@@ -344,7 +324,6 @@ public class PipelineConfigurationTests
 
         // Preserved properties (deep-merge semantics)
         result.CodeReview.FixPrompt.Should().Be("Global fix prompt");
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         result.CodeReview.InlineComments.Enabled.Should().BeTrue();
         result.CodeReview.InlineComments.MaxInlineComments.Should().Be(20);
         result.CodeReview.InlineComments.OrderBySeverity.Should().BeTrue();
@@ -439,35 +418,70 @@ public class PipelineConfigurationTests
     }
 
     [Fact]
-    public void ApplyProjectOverrides_ArgumentOutOfRange_ReturnsOriginalConfig()
+    public void ApplyProjectOverrides_OutOfRangeOverride_KeepsTheGlobalValueAndAppliesTheOthers()
     {
         var config = TestPipelineConfig.Default() with
         {
             MaxRetries = 3,
             MaxDecompositionSubIssues = 10,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 2, InlineComments = new InlineCommentSettings { MaxInlineComments = 15 } },
         };
 
-        // MaxRetries (Order=1) is valid; MaxDecompositionSubIssues (Order=18) is out of range 1-20.
-        // After the fix: only the invalid property reverts to global; valid ones are applied.
+        // MaxDecompositionSubIssues allows 1–20 and MaxInlineComments 1–50; the other overrides are valid.
         var project = TestPipelineConfig.WithProject() with
         {
             MaxRetries = 7,
-            MaxDecompositionSubIssues = 25, // Out of range — triggers ArgumentOutOfRangeException
+            MaxDecompositionSubIssues = 25,
+            AnalysisReviewEnabled = true,
+            CodeReview = new CodeReviewOverrides
+            {
+                MaxIterations = 1,
+                InlineComments = new InlineCommentOverrides { MaxInlineComments = 500, OrderBySeverity = false },
+            },
         };
 
-        // Should NOT throw — the per-property catch handles the ArgumentOutOfRangeException
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
-        // Valid override (MaxRetries=7) is applied — the fix changes this from 3 to 7
-        result.MaxRetries.Should().Be(7,
-            "MaxRetries=7 is a valid override and must be applied even when another property is invalid");
-        // Invalid override (MaxDecompositionSubIssues=25) reverts to global default (10)
-        result.MaxDecompositionSubIssues.Should().Be(10,
-            "MaxDecompositionSubIssues=25 is out of range and must revert to the global default");
+        result.MaxDecompositionSubIssues.Should().Be(10, "an out-of-range override keeps the global value");
+        result.CodeReview.InlineComments.MaxInlineComments.Should().Be(15, "an out-of-range nested override keeps the global value");
+        result.MaxRetries.Should().Be(7);
+        result.AnalysisReviewEnabled.Should().BeTrue();
+        result.CodeReview.MaxIterations.Should().Be(1);
+        result.CodeReview.InlineComments.OrderBySeverity.Should().BeFalse();
+    }
 
-        // Result is a clone, NOT the same reference (the old buggy behavior returned the original)
-        result.Should().NotBeSameAs(config,
-            "a clone with partial overrides is returned; the original config is unmodified");
+    [Fact]
+    public void Deserialize_StoredConfigWithRemovedSettings_Loads()
+    {
+        // Settings removed because nothing read them may still be in stored configs and exports.
+        const string json = """
+            {
+              "maxRetries": 4,
+              "agentDisconnectGracePeriod": "00:05:00",
+              "agentBusyProgressTimeout": "01:00:00",
+              "heartbeatSweepIntervalSeconds": 60,
+              "heartbeatTimeoutSeconds": 90,
+              "issuePageSize": 25,
+              "lastUsedProviderIds": { "issue": "ip-1" },
+              "maxConsolidationDispatchRetries": 5,
+              "outputBufferCapacity": 10000,
+              "outputLinesCapacity": 5000,
+              "chatHistoryCapacity": 200,
+              "qualityGateHistoryCapacity": 50,
+              "retryErrorsCapacity": 100,
+              "closedLoopMaxBackoffInterval": "00:15:00",
+              "dbRetentionSweepInterval": "1.00:00:00",
+              "imageDownloadTimeoutSeconds": 30,
+              "failedWorkspaceRetentionDays": 7,
+              "codeReview": { "maxIterations": 3, "reviewIsolation": "Shared" }
+            }
+            """;
+
+        var config = JsonSerializer.Deserialize<PipelineConfiguration>(json, JsonOptions);
+
+        config.Should().NotBeNull();
+        config!.MaxRetries.Should().Be(4);
+        config.CodeReview.MaxIterations.Should().Be(3);
     }
 
     // ── ApplyProjectOverrides — Previously untested properties ─────────────────
@@ -526,10 +540,12 @@ public class PipelineConfigurationTests
     [InlineData(0)]
     [InlineData(31)]
     [InlineData(-1)]
-    public void MaxDecompositionSubIssueFiles_OutOfRange_Throws(int value)
+    public void MaxDecompositionSubIssueFiles_OutOfRange_IsReportedByTheValidator(int value)
     {
-        var act = () => new PipelineConfiguration { MaxDecompositionSubIssueFiles = value };
-        act.Should().Throw<ArgumentOutOfRangeException>();
+        var config = new PipelineConfiguration { MaxDecompositionSubIssueFiles = value };
+
+        PipelineSettingsValidator.Validate(config).Should().ContainSingle()
+            .Which.Should().Be($"MaxDecompositionSubIssueFiles must be between 1 and 30 (was {value}).");
     }
 
     [Theory]
