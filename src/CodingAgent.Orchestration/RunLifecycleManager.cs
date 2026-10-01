@@ -164,6 +164,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // PipelineRunSummary.CompletedAtOffset is non-null in history — GetStatusDisplay returns
         // "Running" when CompletedAtOffset is null, which caused the E2E consolidation success/fail
         // scenarios to show "Running" instead of "Succeeded"/"Failed" in the history table.
+        // TODO [WARNING]: For non-consolidation runs that arrive via JobCompletionMapper,
+        // run.MarkCompleted(payload.CompletedAt) is called by JobCompletionMapper.Apply before the
+        // hub dispatches to RunLifecycleManager, so CompletedAtOffset will already be non-null and
+        // this guard is a no-op on the normal pipeline completion path. The guard correctly preserves
+        // the caller-supplied timestamp in that case. However, this contract is undocumented: a future
+        // caller that reaches CompleteRunAsync with a pre-populated CompletedAtOffset expecting the
+        // timestamp to be preserved will get the correct behaviour, but only because the guard skips
+        // re-stamping — not because the intent is stated. Document the invariant explicitly if this
+        // method is called from additional sites. (DotNetSpecialist WARNING)
         if (run.CompletedAtOffset is null)
             run.MarkCompleted();
 
