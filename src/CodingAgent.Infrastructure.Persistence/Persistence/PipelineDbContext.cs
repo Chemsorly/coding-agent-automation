@@ -25,7 +25,6 @@ public class PipelineDbContext : DbContext
     public DbSet<AgentProfileEntity> AgentProfiles => Set<AgentProfileEntity>();
     public DbSet<QualityGateConfigEntity> QualityGateConfigs => Set<QualityGateConfigEntity>();
     public DbSet<ReviewerConfigEntity> ReviewerConfigs => Set<ReviewerConfigEntity>();
-    public DbSet<ConsolidationRunEntity> ConsolidationRuns => Set<ConsolidationRunEntity>();
     public DbSet<PipelineConfigEntity> PipelineConfig => Set<PipelineConfigEntity>();
     public DbSet<KeyValueEntity> KeyValueStore => Set<KeyValueEntity>();
     public DbSet<FeedbackCommentOutboxEntity> FeedbackCommentOutbox => Set<FeedbackCommentOutboxEntity>();
@@ -120,13 +119,6 @@ public class PipelineDbContext : DbContext
             e.HasKey(r => r.Id);
             e.Property(r => r.RowVersion).IsRowVersion();
             e.Property(r => r.Configuration).HasColumnType(JsonbColumnType);
-        });
-
-        modelBuilder.Entity<ConsolidationRunEntity>(e =>
-        {
-            e.HasKey(c => c.Id);
-            e.Property(c => c.RowVersion).IsRowVersion();
-            e.Property(c => c.Data).HasColumnType(JsonbColumnType);
         });
 
         modelBuilder.Entity<PipelineConfigEntity>(e =>

@@ -103,11 +103,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
         await act.Should().NotThrowAsync();
     }
 
-    // TODO: [WARNING] DeleteRunAsync_Calls_DeleteRunAsync_OnStore and
-    // DeleteRunAsync_WhenStoreThrows_LogsAndSwallowsException were deleted together with
-    // IConsolidationService.DeleteRunAsync and IConsolidationRunStore (issue #3031).
-    // The build enforces that no caller can invoke the removed method, but if DeleteRunAsync-like
-    // functionality is ever re-introduced on IConsolidationService via a different store dependency,
-    // add delegation and exception-swallowing tests here to match the pattern used for
-    // SaveHarnessSuggestionsAsync above.
+    // DeleteRunAsync and IConsolidationRunStore were removed in issue #3031.
+    // IConsolidationService.TriggerAsync return type changed from ConsolidationRun to ConsolidationTriggerResult in issue #3032.
 }
