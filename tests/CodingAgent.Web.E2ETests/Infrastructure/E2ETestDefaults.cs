@@ -247,6 +247,11 @@ internal static class E2ETestDefaults
               imagePullPolicy: "Always"
               providerType: "opencode"
               maxConcurrent: 5
+            - labels: "cancel-redispatch-e2e"
+              image: "chemsorly/coding-agent:opencode-dotnet10-latest"
+              imagePullPolicy: "Always"
+              providerType: "opencode"
+              maxConcurrent: 5
             """));
     }
 
