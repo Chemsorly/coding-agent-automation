@@ -230,14 +230,16 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             var storedThemeBeforeToggle = await Page.EvaluateAsync<string?>("() => localStorage.getItem('theme')");
             Assert.Null(storedThemeBeforeToggle);
 
-            // Verify the initial theme is "dark" (headless Chromium system preference, no localStorage key).
-            // This assertion distinguishes a working toggle from a page that unconditionally sets data-theme
-            // without responding to the toggle click.
+            // Read the initial theme — don't assert a specific value because the headless browser's
+            // system colour-scheme preference is environment-dependent (dark in some CI runners,
+            // light in others). What matters is that the toggle flips it to the opposite value.
             var initialTheme = await Page.EvaluateAsync<string>(
                 "() => document.documentElement.getAttribute('data-theme')");
-            Assert.Equal("dark", initialTheme);
+            Assert.True(initialTheme == "dark" || initialTheme == "light",
+                $"Expected data-theme to be 'dark' or 'light' before toggle, got: '{initialTheme}'");
 
-            var expectedAfterToggle = "light"; // toggling from "dark" must yield "light"
+            // Compute expected post-toggle value from whatever the current state is.
+            var expectedAfterToggle = initialTheme == "dark" ? "light" : "dark";
 
             // Click the theme toggle button
             var toggleBtn = Page.Locator("button.cockpit-theme-toggle");
