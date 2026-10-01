@@ -77,6 +77,28 @@ internal sealed class CiPollingCoordinator
 
         if (!ciPassed)
         {
+            // When the CI run is Cancelled (all jobs cancelled, none failed), it was superseded by
+            // GitHub Actions' concurrency cancel-in-progress. The branch-moved retry loop above
+            // already attempted to re-poll on the updated HEAD; if we still have a Cancelled result
+            // here it means the new HEAD's CI also got cancelled. Pushing another empty commit via
+            // ExecuteInfraRetryAsync would itself trigger another concurrency cancellation, creating
+            // an infinite push loop. Instead, return IsInfrastructureFailure = true so that:
+            //   1. RunRetryLoopAsync short-circuits (no LLM invocation — code hasn't changed).
+            //   2. The pipeline's outer quality-gate retry mechanism re-polls after a brief wait,
+            //      allowing the existing CI run on the current HEAD to complete uninterrupted.
+            if (ciStatus.State == PipelineRunState.Cancelled)
+            {
+                _logger.Warning(
+                    "Pipeline {RunId} CI persistently Cancelled after branch-moved retries — returning infrastructure failure without pushing",
+                    run.RunId);
+                return (false, new PipelineRunStatus
+                {
+                    State = PipelineRunState.Failed,
+                    Jobs = ciStatus.Jobs,
+                    IsInfrastructureFailure = true
+                }, ciLogPaths);
+            }
+
             var classification = CiFailureClassifier.Classify(ciStatus);
             while (!ciPassed
                    && classification == CiFailureClassifier.CiFailureCategory.Infrastructure

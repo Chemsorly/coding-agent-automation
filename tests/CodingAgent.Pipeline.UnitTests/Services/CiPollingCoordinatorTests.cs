@@ -245,7 +245,80 @@ public class CiPollingCoordinatorTests
         run.InfrastructureRetryCount.Should().Be(maxInfraRetries);
     }
 
-    // ── Gap 4: WaitForPostPrCiAsync — InfrastructureRetryCount isolation ──
+    // ── Gap 3b: PollAndHandleInfraRetryAsync — persistent CI cancellation must not create push loop ──
+
+    /// <summary>
+    /// When CI is persistently cancelled by GitHub's concurrency group (cancel-in-progress: true),
+    /// all CI jobs report State == Cancelled and no jobs are Failed. The branch-moved retry loop
+    /// exhausts its budget, then the infra-retry path is reached. The infra-retry MUST NOT push
+    /// additional empty commits (which would themselves be cancelled, creating an infinite push loop).
+    /// Instead it must return IsInfrastructureFailure = true so the pipeline's outer retry mechanism
+    /// can re-try the quality gates after the CI run completes on the existing HEAD.
+    ///
+    /// Regression guard: fixes the loop introduced by CiFailureClassifier correctly classifying
+    /// all-cancelled runs as Infrastructure (attempt 2 fix) — without this guard, the infra-retry
+    /// path would push a commit, causing another cancellation, causing another infra-retry push, etc.
+    /// </summary>
+    [Fact]
+    public async Task WhenCiPersistentlyCancelled_InfraRetryDoesNotPush_ReturnsInfrastructureFailure()
+    {
+        const int maxInfraRetries = 2;
+        const int ciCancelledMoveMaxRetries = 2;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        // Each infra-retry read returns a new SHA (simulating the pipeline's prior re-trigger commits)
+        _mockRepoProvider.SetupSequence(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-1")
+            .ReturnsAsync("sha-2")
+            .ReturnsAsync("sha-3")
+            .ReturnsAsync("sha-4")
+            .ReturnsAsync("sha-5");
+
+        var context = BuildContext(run,
+            ciNotStartedMaxRetries: 0,
+            maxInfraRetries: maxInfraRetries,
+            ciCancelledMoveMaxRetries: ciCancelledMoveMaxRetries);
+
+        // GetRunStatusAsync: always returns non-Pending so WaitForCiRunsToAppearAsync passes through
+        var cancelledStatus = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new List<PipelineJobResult>
+            {
+                new() { Name = "docker-push",   State = PipelineRunState.Cancelled },
+                new() { Name = "publish-chart", State = PipelineRunState.Cancelled }
+            }
+        };
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cancelledStatus);
+
+        // WaitForCompletionAsync: always returns Cancelled (concurrency group keeps cancelling)
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cancelledStatus);
+
+        var result = await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Must fail with IsInfrastructureFailure so RunRetryLoopAsync skips LLM invocation
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse("CI was cancelled — gate must fail");
+        result.ExternalCi.IsInfrastructureFailure.Should().BeTrue(
+            "CI cancellation by concurrency group is an infrastructure event, not a code failure; " +
+            "IsInfrastructureFailure=true allows the pipeline's outer retry to re-poll without LLM invocation");
+
+        // Critical: NO additional empty commits must be pushed by the infra-retry path.
+        // Pushing creates more cancellations and forms an infinite push loop.
+        _mockRepoProvider.Verify(
+            r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                true, It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()),
+            Times.Never,
+            "infra-retry must NOT push an empty commit when CI is cancelled — pushing creates more cancellations");
+    }
 
     /// <summary>
     /// Verifies that WaitForPostPrCiAsync resets InfrastructureRetryCount to 0 before polling
@@ -513,7 +586,8 @@ public class CiPollingCoordinatorTests
     private QualityGateContext BuildContext(
         PipelineRun run,
         int ciNotStartedMaxRetries = 1,
-        int maxInfraRetries = 0) => new()
+        int maxInfraRetries = 0,
+        int ciCancelledMoveMaxRetries = 3) => new()
         {
             Run = run,
             Config = new PipelineConfiguration
@@ -521,6 +595,7 @@ public class CiPollingCoordinatorTests
                 AgentTimeout = TimeSpan.FromMinutes(10),
                 MaxRetries = 0,
                 MaxInfrastructureRetries = maxInfraRetries,
+                CiCancelledMoveMaxRetries = ciCancelledMoveMaxRetries,
                 ExternalCiTimeout = TimeSpan.FromMinutes(5),
                 CiNotStartedTimeout = TimeSpan.FromMilliseconds(50),
                 CiNotStartedMaxRetries = ciNotStartedMaxRetries,
