@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
@@ -18,12 +19,10 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 public class VerifyBaselineStepSpanTests : IDisposable
 {
     private readonly ActivityListener _listener;
-    // TODO [WARNING]: List<Activity> is not thread-safe. ActivityListener.ActivityStopped is invoked on
-    // whatever thread stops the Activity (potentially a thread-pool continuation), so concurrent Add calls
-    // race with test-thread reads in assertions. The previous ConcurrentBag<Activity> was correct for this
-    // pattern. If tests become flaky under parallel execution, replace with ConcurrentBag<Activity> or
-    // protect _activities with a lock. (DotNetSpecialist review)
-    private readonly List<Activity> _activities = [];
+    // ConcurrentBag is used instead of List<Activity> because ActivityListener.ActivityStopped is invoked
+    // on whatever thread stops the Activity (potentially a thread-pool continuation), so concurrent Add
+    // calls race with test-thread reads in assertions on a plain List<T>.
+    private readonly ConcurrentBag<Activity> _activities = [];
 
     // Unique per test instance so parallel runs don't pick up each other's spans.
     private readonly string _runId = $"test-run-{Guid.NewGuid():N}";
