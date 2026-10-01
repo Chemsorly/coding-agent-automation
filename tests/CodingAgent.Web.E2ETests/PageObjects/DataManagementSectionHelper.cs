@@ -62,8 +62,26 @@ public sealed class DataManagementSectionHelper
     // ── Export ──────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Clicks the "Download Config" button without attempting to capture the download.
+    /// Blob URL downloads (created by URL.createObjectURL in downloadFileFromStream) are not
+    /// reliably interceptable via Playwright's download event in headless Chromium, so this
+    /// method simply triggers the button click. Use <see cref="WaitForResultAsync"/> afterwards
+    /// to confirm the export completed successfully.
+    /// </summary>
+    public async Task ClickExportAsync()
+    {
+        await DownloadButton.ClickAsync();
+    }
+
+    /// <summary>
     /// Clicks "Download Config" and captures the Playwright download event.
     /// Saves the file to a unique path under <see cref="Path.GetTempPath()"/>.
+    ///
+    /// NOTE: This method is unreliable in headless Chromium for Blob URL downloads.
+    /// The <c>downloadFileFromStream</c> JS function uses <c>URL.createObjectURL</c> which
+    /// produces a Blob URL that Playwright cannot intercept as a download event in all
+    /// environments. Prefer <see cref="ClickExportAsync"/> for UI interaction tests and
+    /// verify bundle content directly via the fake client.
     /// </summary>
     /// <returns>
     /// The temp file path the download was saved to. The caller is responsible for
