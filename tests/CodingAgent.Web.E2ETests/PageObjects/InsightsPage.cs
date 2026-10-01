@@ -135,8 +135,16 @@ public sealed class InsightsPage
     public async Task<string?> GetNoGateFailuresMessageTextAsync()
     {
         var el = _page.Locator("[data-testid='insights-gate-no-failures']");
-        if (await el.CountAsync() == 0)
+        // Wait up to 5s for the element — the Blazor auto-refresh can briefly remove it
+        // between a prior IsNoGateFailuresMessageVisibleAsync() check and this read.
+        try
+        {
+            await el.WaitForAsync(new() { Timeout = 5_000, State = WaitForSelectorState.Visible });
+        }
+        catch (Microsoft.Playwright.PlaywrightException)
+        {
             return null;
+        }
         return (await el.TextContentAsync())?.Trim();
     }
 

@@ -123,7 +123,12 @@ public static class PipelineRunEndpoints
         }
 
         var inFlightSummaries = activeRuns
-            .Where(r => !pendingIds.Contains(r.RunId))          // exclude Pending (queued) runs
+            // Exclude Pending (queued) runs from the merge, EXCEPT for consolidation runs.
+            // The Consolidation page needs to see Pending consolidation items so it can render
+            // the Cancel button (run.WorkItemId.HasValue && run.CompletedAtOffset == null).
+            // Regular pipeline Pending runs are excluded per issue #2528 (they show as
+            // "queued" in the monitoring page before the agent starts, which was confusing).
+            .Where(r => !pendingIds.Contains(r.RunId) || r.RunType == PipelineRunType.Consolidation)
             .Where(r => !activeRunIds.Contains(r.RunId))        // not already in history page
             .Select(r => r.ToSummary())
             .Where(s => string.IsNullOrEmpty(projectId) || s.ProjectId == projectId)  // honor the project scope

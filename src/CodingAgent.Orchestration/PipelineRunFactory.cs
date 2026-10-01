@@ -66,6 +66,12 @@ public static class PipelineRunFactory
             });
             consolidationRun.ProjectId = request.ProjectId?.ToString();
             consolidationRun.ProjectName = request.ProjectName;
+            // Set consolidation-specific fields so the Consolidation page can populate
+            // _lastRuns per template and render the card status. Without these, IsSameScope
+            // never matches (ConsolidationType is null ≠ BrainConsolidation) and the card
+            // always shows "Never run" even after a successful completion.
+            consolidationRun.ConsolidationType = request.ConsolidationRunType;
+            consolidationRun.ConsolidationTemplateId = request.ConsolidationTemplateId;
             return consolidationRun;
         }
 

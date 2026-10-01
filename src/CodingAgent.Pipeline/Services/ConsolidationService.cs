@@ -15,11 +15,6 @@ public sealed class ConsolidationService : IConsolidationService
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
-    // TODO [WARNING]: _projectStore is assigned but never read after the constructor.
-    // _templateResolver already holds its own reference to deps.ProjectStore (see constructor line).
-    // This dead field adds confusion and suggests a refactor was incompletely applied. Consider
-    // removing it once it is confirmed no future code path requires direct access. (review-findings-dotnetspecialist.md)
-    private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
     private readonly IConsolidationSelectorResolver? _selectorResolver;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
@@ -41,7 +36,6 @@ public sealed class ConsolidationService : IConsolidationService
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
-        _projectStore = deps.ProjectStore;
         _workDistributor = deps.WorkDistributor;
         _selectorResolver = deps.SelectorResolver;
         _pipelineConfigStore = deps.PipelineConfigStore;
@@ -138,11 +132,8 @@ public sealed class ConsolidationService : IConsolidationService
             selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config);
         }
 
-        // ── 4. Capture run identity fields ────────────────────────────────────
-        // ConsolidationRun was deleted in issue #3032. The run identity fields are
-        // captured as local variables; the caller receives a ConsolidationTriggerResult.
+        // ── 4. Build a unique RunId for this trigger ──────────────────────────
         var runId = Guid.NewGuid().ToString();
-        var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
         // ── 5. Build and submit the JobDistributionRequest ───────────────────
@@ -230,8 +221,13 @@ public sealed class ConsolidationService : IConsolidationService
             return null;
         }
 
-        // ── 7. Build and return the ConsolidationTriggerResult ───────────────
-        // ConsolidationRun was deleted in issue #3032; return a minimal result record instead.
+        // ── 7. Build and return the result ────────────────────────────────────
+        // TODO [WARNING]: StartedAtUtc is captured here, after DistributeAsync returns. Under load,
+        // DistributeAsync (HTTP call to the Pipeline API) can take several seconds, so StartedAtUtc
+        // on the returned record can be materially later than the actual start of the consolidation
+        // operation. This affects the accuracy of the "Started" column in the run-history table.
+        // Fix: capture DateTimeOffset.UtcNow before the DistributeAsync call (step 4) and pass it
+        // through, or record the timestamp at WorkItem creation time in the API layer.
         var triggerResult = new ConsolidationTriggerResult(
             RunId: runId,
             Type: type,
@@ -239,7 +235,7 @@ public sealed class ConsolidationService : IConsolidationService
             TemplateName: templateName,
             ProjectId: projectId,
             ProjectName: projectName,
-            StartedAtUtc: startedAtUtc,
+            StartedAtUtc: DateTimeOffset.UtcNow,
             WorkItemId: result.WorkItemId);
 
         _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem {WorkItemId} created as Pending)",

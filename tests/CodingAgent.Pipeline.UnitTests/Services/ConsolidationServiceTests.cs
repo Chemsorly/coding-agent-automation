@@ -122,7 +122,7 @@ public sealed class ConsolidationServiceTests
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        // Status (ConsolidationRunStatus) was removed in issue #3032 — success is implied by non-null return.
+        // ConsolidationRunStatus was removed in issue #3032 — success is implied by non-null return.
         run!.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
@@ -161,26 +161,23 @@ public sealed class ConsolidationServiceTests
     public async Task TriggerAsync_ValidTemplate_PersistsRunToDisk()
     {
         // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
-        // This test now verifies that TriggerAsync returns a valid run object with the
+        // This test now verifies that TriggerAsync returns a valid result object with the
         // correct fields even without store persistence.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        run.Should().NotBeNull("TriggerAsync must return a run even without store persistence");
+        run.Should().NotBeNull("TriggerAsync must return a result even without store persistence");
         run!.RunId.Should().NotBeNullOrEmpty();
         run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
-        // Status (ConsolidationRunStatus) was removed in issue #3032 — success is implied by non-null return.
-        // TODO [WARNING]: WorkItemId (populated from the mocked distributor result) is not asserted here.
-        // A ConsolidationTriggerResult with a null WorkItemId would still pass this test after the return-type
-        // change. Add run!.WorkItemId.Should().NotBeNullOrEmpty() to confirm the field is correctly wired.
+        // ConsolidationRunStatus.Pending was removed in issue #3032 — success is implied by non-null return.
     }
 
     [Fact]
     public async Task TriggerAsync_ValidTemplate_SetsProjectNameFromOwningProject()
     {
-        // Validates: ConsolidationRun must carry the owning project's display name and ID
+        // Validates: ConsolidationTriggerResult must carry the owning project's display name and ID
         // so the UI PROJECT column shows the project instead of "—" and WorkItemEntity.ProjectId
         // is populated.
         var sut = CreateSut();
@@ -212,7 +209,7 @@ public sealed class ConsolidationServiceTests
     public async Task TriggerAsync_WithProjectId_ProjectIdSurvivesPersistenceRoundTrip()
     {
         // Issue #3028: TriggerAsync no longer persists to the store.
-        // This test now verifies that the in-memory ConsolidationRun object has the correct ProjectId.
+        // This test now verifies that the in-memory ConsolidationTriggerResult object has the correct ProjectId.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
@@ -399,6 +396,101 @@ public sealed class ConsolidationServiceTests
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().BeNull("TriggerAsync must return null when DistributeAsync fails");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WhenDistributeAsyncThrows_ReturnsNull()
+    {
+        // Covers the catch block when DistributeAsync throws an unexpected exception.
+        // TriggerAsync must return null and not propagate the exception.
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated distributor failure"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            new InMemoryHarnessSuggestionStore(),
+            _mockProviderConfigStore.Object,
+            WorkDistributor: _mockWorkDistributor.Object));
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().BeNull("TriggerAsync must return null when DistributeAsync throws");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_WorkItemId_SetFromDistributor()
+    {
+        // TriggerAsync must set WorkItemId on the returned result from the distributor result.
+        var sut = CreateSut();
+
+        // _mockWorkDistributor returns WorkItemId = "wi-test-default" by default.
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        run!.WorkItemId.Should().Be("wi-test-default",
+            "TriggerAsync must set the WorkItemId returned by IWorkDistributor on the returned result");
+        run.RunId.Should().NotBe("wi-test-default",
+            "ConsolidationTriggerResult.RunId must be a freshly generated Guid, distinct from the WorkItemId");
+    }
+
+    #endregion
+
+    #region GetHarnessSuggestionsAsync / SaveHarnessSuggestionsAsync — exception paths
+
+    [Fact]
+    public async Task GetHarnessSuggestionsAsync_WhenStoreThrows_ReturnsNull()
+    {
+        // Covers the catch block in GetHarnessSuggestionsAsync.
+        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
+        mockHarnessStore
+            .Setup(s => s.LoadAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated read failure"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            mockHarnessStore.Object,
+            _mockProviderConfigStore.Object));
+
+        var result = await sut.GetHarnessSuggestionsAsync(CancellationToken.None);
+
+        result.Should().BeNull("GetHarnessSuggestionsAsync must return null when the store throws");
+    }
+
+    [Fact]
+    public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_DoesNotThrow()
+    {
+        // Covers the catch block in SaveHarnessSuggestionsAsync.
+        var mockHarnessStore = new Mock<IHarnessSuggestionStore>();
+        mockHarnessStore
+            .Setup(s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("simulated write failure"));
+
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            mockHarnessStore.Object,
+            _mockProviderConfigStore.Object));
+
+        var suggestions = new HarnessSuggestions
+        {
+            GeneratedAtUtc = DateTime.UtcNow,
+            BasedOnRunCount = 1,
+            SuccessRate = 1.0m,
+            Suggestions = []
+        };
+
+        var act = () => sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
+
+        await act.Should().NotThrowAsync(
+            "SaveHarnessSuggestionsAsync must swallow store exceptions and not propagate them");
     }
 
     #endregion
