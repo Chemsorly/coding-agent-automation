@@ -29,30 +29,33 @@ public class PipelineCiSectionComponentTests : BunitContext
         var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
 
-        Assert.Contains("External CI", cut.Markup);
-        Assert.Contains("CI Timeout (minutes)", cut.Markup);
-        Assert.Contains("CI Not Started Max Retries", cut.Markup);
+        Assert.Equal("External CI", cut.Find("h2").TextContent);
+        Assert.Equal(
+            [
+                nameof(PipelineConfiguration.ExternalCiTimeout),
+                nameof(PipelineConfiguration.ExternalCiPollInterval),
+                nameof(PipelineConfiguration.CiNotStartedTimeout),
+                nameof(PipelineConfiguration.CiNotStartedMaxRetries),
+            ],
+            SettingsOnThePage(cut));
     }
 
     [Fact]
-    public void DoesNotRenderCodeReviewSettings()
+    public void AdvancedExpanded_AddsBranchMoveRePolls_AndNoCodeReviewSetting()
     {
         var cut = Render<PipelineCiSection>(p =>
             p.Add(s => s.ConfigClient, _mockStore.Object));
         cut.Find(".advanced-toggle").Click();
 
-        Assert.DoesNotContain("Review Iterations", cut.Markup);
-        Assert.DoesNotContain("Fix Prompt", cut.Markup);
-    }
-
-    [Fact]
-    public void RendersBranchMoveRePolls_WhenAdvancedExpanded()
-    {
-        var cut = Render<PipelineCiSection>(p =>
-            p.Add(s => s.ConfigClient, _mockStore.Object));
-        cut.Find(".advanced-toggle").Click();
-
-        Assert.Contains("CI Re-Polls After Branch Moves", cut.Markup);
+        Assert.Equal(
+            [
+                nameof(PipelineConfiguration.ExternalCiTimeout),
+                nameof(PipelineConfiguration.ExternalCiPollInterval),
+                nameof(PipelineConfiguration.CiNotStartedTimeout),
+                nameof(PipelineConfiguration.CiNotStartedMaxRetries),
+                nameof(PipelineConfiguration.CiCancelledMoveMaxRetries),
+            ],
+            SettingsOnThePage(cut));
     }
 
     [Fact]
@@ -120,4 +123,8 @@ public class PipelineCiSectionComponentTests : BunitContext
         Assert.True(status.IsError);
         Assert.Contains("CiNotStartedMaxRetries must be between 0 and 20", status.Message);
     }
+
+    /// <summary>The settings the page offers, by the <c>data-setting</c> anchors the settings coverage guard also uses.</summary>
+    private static IEnumerable<string> SettingsOnThePage(IRenderedComponent<PipelineCiSection> cut) =>
+        cut.FindAll("[data-setting]").Select(e => e.GetAttribute("data-setting")!);
 }

@@ -13,7 +13,8 @@ namespace CodingAgent.Pipeline.Models;
 /// </summary>
 public static class PipelineSettingsValidator
 {
-    private static readonly MethodInfo MemberwiseCloneMethod = typeof(object).GetMethod(nameof(MemberwiseClone), BindingFlags.Instance | BindingFlags.NonPublic)!;
+    /// <summary>The copy method the compiler generates for every record; <c>with</c> expressions call it.</summary>
+    private const string RecordCloneMethodName = "<Clone>$";
 
     /// <summary>One error per setting outside its range, for example "MaxRetries must be between 0 and 10 (was 12).".</summary>
     public static IReadOnlyList<string> Validate(PipelineConfiguration config)
@@ -50,9 +51,7 @@ public static class PipelineSettingsValidator
             if (overrideProperty?.GetValue(project) is not { } value)
                 continue;
 
-            var valid = IsSettingsObject(setting.PropertyType)
-                ? WithoutInvalidNested(value, setting.PropertyType, setting.Name + ".", errors)
-                : IsInRange(setting, value, setting.Name, errors) ? value : null;
+            var valid = ValidPart(setting, value, setting.Name, errors);
             if (!ReferenceEquals(valid, value))
                 result = CloneWith(result, overrideProperty, valid);
         }
@@ -147,14 +146,24 @@ public static class PipelineSettingsValidator
             if (setting is null || overrideProperty.GetValue(overrides) is not { } value)
                 continue;
 
-            var valid = IsSettingsObject(setting.PropertyType)
-                ? WithoutInvalidNested(value, setting.PropertyType, prefix + setting.Name + ".", errors)
-                : IsInRange(setting, value, prefix + setting.Name, errors) ? value : null;
+            var valid = ValidPart(setting, value, prefix + setting.Name, errors);
             if (!ReferenceEquals(valid, value))
                 result = CloneWith(result, overrideProperty, valid);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// The part of an override <paramref name="value"/> for <paramref name="setting"/> that is in range: the value itself,
+    /// null when it is out of range, or for a settings object the object without its out-of-range values.
+    /// </summary>
+    private static object? ValidPart(PropertyInfo setting, object value, string path, ICollection<string> errors)
+    {
+        if (IsSettingsObject(setting.PropertyType))
+            return WithoutInvalidNested(value, setting.PropertyType, path + ".", errors);
+
+        return IsInRange(setting, value, path, errors) ? value : null;
     }
 
     private static bool IsInRange(PropertyInfo setting, object? value, string path, ICollection<string> errors)
@@ -174,10 +183,10 @@ public static class PipelineSettingsValidator
     private static bool IsSettingsObject(Type type) =>
         type.IsClass && type != typeof(string) && !typeof(IEnumerable).IsAssignableFrom(type);
 
-    /// <summary>A shallow copy of a settings record with one property changed; init setters are ordinary setters to reflection.</summary>
+    /// <summary>A copy of a settings record with one property changed; init setters are ordinary setters to reflection.</summary>
     private static object CloneWith(object target, PropertyInfo property, object? value)
     {
-        var clone = MemberwiseCloneMethod.Invoke(target, null)!;
+        var clone = target.GetType().GetMethod(RecordCloneMethodName)!.Invoke(target, null)!;
         property.SetValue(clone, value);
         return clone;
     }

@@ -1,6 +1,5 @@
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Http.Resilience;
 using Serilog;
 
@@ -11,7 +10,7 @@ public static partial class ServiceCollectionExtensions
     /// <summary>
     /// Registers token vending, orchestrator run service, and label service.
     /// </summary>
-    private static void RegisterTokenAndRunServices(IServiceCollection services, PipelineConfiguration pipelineConfig)
+    private static void RegisterTokenAndRunServices(IServiceCollection services)
     {
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
