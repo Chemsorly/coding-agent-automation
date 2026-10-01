@@ -8,12 +8,16 @@ using Serilog;
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Verifies ConsolidationService delegates to IConsolidationRunStore and IHarnessSuggestionStore
+/// Verifies ConsolidationService delegates to IHarnessSuggestionStore
 /// by using mocks. Ensures no filesystem I/O happens inside the service itself.
+///
+/// IConsolidationRunStore was removed in issue #3031 — ConsolidationService no longer
+/// holds a reference to it. Tests that previously verified DeleteRunAsync / SaveRunAsync
+/// delegation have been removed. DeleteRunAsync itself was removed from ConsolidationService
+/// along with IConsolidationRunStore.
 /// </summary>
 public sealed class ConsolidationServiceStoreDelegationTests
 {
-    private readonly Mock<IConsolidationRunStore> _mockRunStore = new();
     private readonly Mock<IHarnessSuggestionStore> _mockHarnessStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
 
@@ -44,7 +48,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             _mockHarnessStore.Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
@@ -88,32 +91,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
     }
 
     [Fact]
-    public async Task DeleteRunAsync_Calls_DeleteRunAsync_OnStore()
-    {
-        var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var sut = CreateSut();
-        await sut.DeleteRunAsync(runId, CancellationToken.None);
-
-        _mockRunStore.Verify(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task DeleteRunAsync_WhenStoreThrows_LogsAndSwallowsException()
-    {
-        var runId = new RunId(Guid.NewGuid().ToString());
-        _mockRunStore.Setup(s => s.DeleteRunAsync(runId, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new IOException("disk error"));
-
-        var sut = CreateSut();
-        // Must not throw — the method swallows the exception and logs a warning
-        var act = () => sut.DeleteRunAsync(runId, CancellationToken.None);
-        await act.Should().NotThrowAsync();
-    }
-
-    [Fact]
     public async Task SaveHarnessSuggestionsAsync_WhenStoreThrows_LogsAndSwallowsException()
     {
         var suggestions = new HarnessSuggestions
@@ -132,11 +109,11 @@ public sealed class ConsolidationServiceStoreDelegationTests
     }
 
     /// <summary>
-    /// TriggerAsync must not call SaveRunAsync on the IConsolidationRunStore after issue #3028
-    /// (store writes stopped; PipelineRun is the authoritative record).
+    /// TriggerAsync must not call SaveAsync on the IHarnessSuggestionStore as a side-effect of triggering.
+    /// Issue #3028: TriggerAsync no longer persists to any store; the PipelineRun is the authoritative record.
     /// </summary>
     [Fact]
-    public async Task TriggerAsync_DoesNotWriteToConsolidationRunStore()
+    public async Task TriggerAsync_DoesNotWriteToHarnessSuggestionStore()
     {
         var sut = CreateSut();
 
@@ -145,10 +122,10 @@ public sealed class ConsolidationServiceStoreDelegationTests
             new TemplateId("t1"),
             CancellationToken.None);
 
-        _mockRunStore.Verify(
-            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+        _mockHarnessStore.Verify(
+            s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()),
             Times.Never,
-            "TriggerAsync must not write to the ConsolidationRuns store (issue #3028)");
+            "TriggerAsync must not write to the HarnessSuggestion store as a side-effect of triggering");
     }
 
     /// <summary>
@@ -168,7 +145,6 @@ public sealed class ConsolidationServiceStoreDelegationTests
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath(), DefaultRequiredAgentLabels = "kiro" },
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             _mockHarnessStore.Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
@@ -179,8 +155,8 @@ public sealed class ConsolidationServiceStoreDelegationTests
             CancellationToken.None);
 
         result.Should().BeNull("AlreadyExists=true must result in a null return (409 duplicate path)");
-        _mockRunStore.Verify(
-            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+        _mockHarnessStore.Verify(
+            s => s.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 }

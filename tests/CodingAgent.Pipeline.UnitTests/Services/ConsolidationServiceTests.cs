@@ -24,7 +24,6 @@ public sealed class ConsolidationServiceTests
     private readonly PipelineConfiguration _config;
     private readonly List<PipelineJobTemplate> _templates;
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
-    private readonly Mock<IConsolidationRunStore> _mockRunStore;
 
     public ConsolidationServiceTests()
     {
@@ -93,8 +92,6 @@ public sealed class ConsolidationServiceTests
         _mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-test-default", ErrorMessage: null));
-
-        _mockRunStore = new Mock<IConsolidationRunStore>();
     }
 
     // TODO [WARNING]: Each CreateSut() call allocates a fresh InMemoryHarnessSuggestionStore(), not a shared
@@ -106,7 +103,6 @@ public sealed class ConsolidationServiceTests
         _logger,
         _config,
         _mockProjectStore.Object,
-        _mockRunStore.Object,
         new InMemoryHarnessSuggestionStore(),
         _mockProviderConfigStore.Object,
         WorkDistributor: _mockWorkDistributor.Object));
@@ -126,8 +122,8 @@ public sealed class ConsolidationServiceTests
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Pending);
-        run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
+        // ConsolidationRunStatus was removed in issue #3032 — success is implied by non-null return.
+        run!.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
         run.RunId.Should().NotBeNullOrEmpty();
@@ -150,7 +146,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             configWithoutLabels,
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object));
 
@@ -166,23 +161,23 @@ public sealed class ConsolidationServiceTests
     public async Task TriggerAsync_ValidTemplate_PersistsRunToDisk()
     {
         // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
-        // This test now verifies that TriggerAsync returns a valid run object with the
+        // This test now verifies that TriggerAsync returns a valid result object with the
         // correct fields even without store persistence.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        run.Should().NotBeNull("TriggerAsync must return a run even without store persistence");
+        run.Should().NotBeNull("TriggerAsync must return a result even without store persistence");
         run!.RunId.Should().NotBeNullOrEmpty();
         run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
-        run.Status.Should().Be(ConsolidationRunStatus.Pending, "new runs start as Pending");
+        // ConsolidationRunStatus.Pending was removed in issue #3032 — success is implied by non-null return.
     }
 
     [Fact]
     public async Task TriggerAsync_ValidTemplate_SetsProjectNameFromOwningProject()
     {
-        // Validates: ConsolidationRun must carry the owning project's display name and ID
+        // Validates: ConsolidationTriggerResult must carry the owning project's display name and ID
         // so the UI PROJECT column shows the project instead of "—" and WorkItemEntity.ProjectId
         // is populated.
         var sut = CreateSut();
@@ -214,7 +209,7 @@ public sealed class ConsolidationServiceTests
     public async Task TriggerAsync_WithProjectId_ProjectIdSurvivesPersistenceRoundTrip()
     {
         // Issue #3028: TriggerAsync no longer persists to the store.
-        // This test now verifies that the in-memory ConsolidationRun object has the correct ProjectId.
+        // This test now verifies that the in-memory ConsolidationTriggerResult object has the correct ProjectId.
         var sut = CreateSut();
 
         var run = await sut.TriggerAsync(
@@ -393,7 +388,6 @@ public sealed class ConsolidationServiceTests
                 _logger,
                 _config,
                 _mockProjectStore.Object,
-                _mockRunStore.Object,
                 new InMemoryHarnessSuggestionStore(),
                 _mockProviderConfigStore.Object,
                 WorkDistributor: _mockWorkDistributor.Object));
@@ -417,7 +411,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             _config,
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             new InMemoryHarnessSuggestionStore(),
             _mockProviderConfigStore.Object,
             WorkDistributor: _mockWorkDistributor.Object));
@@ -431,7 +424,7 @@ public sealed class ConsolidationServiceTests
     [Fact]
     public async Task TriggerAsync_WorkItemId_SetFromDistributor()
     {
-        // TriggerAsync must set WorkItemId on the returned run from the distributor result.
+        // TriggerAsync must set WorkItemId on the returned result from the distributor result.
         var sut = CreateSut();
 
         // _mockWorkDistributor returns WorkItemId = "wi-test-default" by default.
@@ -440,9 +433,9 @@ public sealed class ConsolidationServiceTests
 
         run.Should().NotBeNull();
         run!.WorkItemId.Should().Be("wi-test-default",
-            "TriggerAsync must set the WorkItemId returned by IWorkDistributor on the returned run");
+            "TriggerAsync must set the WorkItemId returned by IWorkDistributor on the returned result");
         run.RunId.Should().NotBe("wi-test-default",
-            "ConsolidationRun.RunId must be a freshly generated Guid, distinct from the WorkItemId");
+            "ConsolidationTriggerResult.RunId must be a freshly generated Guid, distinct from the WorkItemId");
     }
 
     #endregion
@@ -462,7 +455,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             _config,
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             mockHarnessStore.Object,
             _mockProviderConfigStore.Object));
 
@@ -484,7 +476,6 @@ public sealed class ConsolidationServiceTests
             _logger,
             _config,
             _mockProjectStore.Object,
-            _mockRunStore.Object,
             mockHarnessStore.Object,
             _mockProviderConfigStore.Object));
 

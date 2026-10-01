@@ -270,6 +270,13 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // is populated after the RegisterAgent call, so the server may not have confirmed the
         // ActiveJobId when ReportConsolidationCompleteAsync fires, causing the authorization
         // filter to reject the report and the test to time out waiting for Succeeded.
+        // TODO [WARNING]: This relies on the sequencing assumption that JobAssigned.TrySetResult
+        // is called only after the RegisterAgent InvokeAsync round-trip completes (setting
+        // ActiveJobId server-side). If that assumption is violated (e.g. TrySetResult fires before
+        // the server-side confirm), ReportConsolidationCompleteAsync will be rejected by the
+        // AgentAuthorizationFilter and the test will time out waiting for WorkItemStatus.Succeeded.
+        // The same pattern is replicated in Scenarios 2, 3b, and 4. If these tests become flaky
+        // with auth-filter rejections, audit StartAssignedWorkItemAsync to verify call ordering.
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(25));
         var jobId = assignment.JobId;
 
@@ -401,6 +408,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // Nothing should remain Pending or Running: verify via WorkItem status (not the
         // ConsolidationRuns store, which is no longer authoritative after issue #3028).
         var finalStatus = await Fixture.WorkItems.GetStatusAsync(workItemGuid);
+        // TODO [WARNING]: The guard below allows WorkItemStatus.Cancelled as a passing value for
+        // a failure-path test. If a bug causes the run to be cancelled instead of failed, this
+        // assertion still passes. The correct guard for a failure-path test is
+        // `finalStatus == WorkItemStatus.Failed` only. The broad guard was introduced to handle
+        // races, but the correct fix is to tighten the assertion and investigate if Cancelled
+        // ever actually appears here. (TestQualityReviewer WARNING:L459)
         Assert.True(
             finalStatus == WorkItemStatus.Succeeded || finalStatus == WorkItemStatus.Failed || finalStatus == WorkItemStatus.Cancelled,
             $"WorkItem should be in a terminal state after completion, but was: {finalStatus}");
@@ -671,6 +684,14 @@ public sealed class ConsolidationPageTests : E2ETestBase
         {
             Id = "profile-consol-s5",
             DisplayName = "S5 Profile",
+            // TODO [WARNING]: Empty MatchLabels means FakeJobController.FindIdleAgentFor matches
+            // ANY idle agent connected to the shared fixture — including agents from prior tests
+            // that were disposed but whose SignalR connections are still draining. If such a stale
+            // agent claims the S5 work item, it will not stay Pending, WaitForRunHistoryCountAsync(1)
+            // or ClickCancelRunAsync(0) will operate on the wrong state, and the test may fail or
+            // pass for the wrong reason. Mitigation: assign a unique label (e.g. "consol-s5=true")
+            // to both this profile and a dedicated agent that is intentionally not connected, to
+            // prevent dispatch to any stale agent. (DotNetSpecialist WARNING:L1249)
             MatchLabels = [],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
@@ -692,6 +713,12 @@ public sealed class ConsolidationPageTests : E2ETestBase
         // or ClickCancelRunAsync(0) below will time out. This cross-component assumption is not
         // covered by a lower-level test. (review-findings-correctness.md WARNING:L527)
         await page.NavigateAsync();
+        // TODO [WARNING]: WaitForRunHistoryCountAsync uses >= 1 but does not assert that the total
+        // row count is exactly 1 before acting on row 0. If a stale row from a prior test leaked
+        // into the fixture, WaitForRunHistoryCountAsync(1) resolves on the stale row and
+        // ClickCancelRunAsync(0) cancels the wrong item. Fix: assert
+        // `Assert.Equal(1, await page.GetRunHistoryRowCountAsync())` after the wait, before the
+        // click. (Correctness WARNING:L535)
         await page.WaitForRunHistoryCountAsync(1);
 
         // Act: click Cancel on the Pending row

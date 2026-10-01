@@ -12,15 +12,9 @@ public sealed class ConsolidationService : IConsolidationService
 {
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
-    private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
     private readonly ConsolidationTemplateResolver _templateResolver;
     private readonly IProviderConfigStore _providerConfigStore;
-    // TODO [WARNING]: _projectStore is assigned but never read after the constructor.
-    // _templateResolver already holds its own reference to deps.ProjectStore (see constructor line).
-    // This dead field adds confusion and suggests a refactor was incompletely applied. Consider
-    // removing it once it is confirmed no future code path requires direct access. (review-findings-dotnetspecialist.md)
-    private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
     private readonly IConsolidationSelectorResolver? _selectorResolver;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
@@ -35,23 +29,20 @@ public sealed class ConsolidationService : IConsolidationService
         ArgumentNullException.ThrowIfNull(deps.Logger);
         ArgumentNullException.ThrowIfNull(deps.Config);
         ArgumentNullException.ThrowIfNull(deps.ProjectStore);
-        ArgumentNullException.ThrowIfNull(deps.RunStore);
         ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
 
         _logger = deps.Logger;
         _config = deps.Config;
-        _runStore = deps.RunStore;
         _harnessSuggestionStore = deps.HarnessSuggestionStore;
         _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
         _providerConfigStore = deps.ProviderConfigStore;
-        _projectStore = deps.ProjectStore;
         _workDistributor = deps.WorkDistributor;
         _selectorResolver = deps.SelectorResolver;
         _pipelineConfigStore = deps.PipelineConfigStore;
     }
 
     /// <inheritdoc />
-    public async Task<ConsolidationRun?> TriggerAsync(
+    public async Task<ConsolidationTriggerResult?> TriggerAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
         CancellationToken ct,
@@ -141,14 +132,9 @@ public sealed class ConsolidationService : IConsolidationService
             selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config);
         }
 
-        // ── 4. Build the ConsolidationRun (no longer persisted) ──────────────
-        // ConsolidationRuns writes stopped (issue #3028). The PipelineRun is the authoritative
-        // record; it is created by PipelineRunFactory.CreateFromWorkItem at dispatch time.
-        // The ConsolidationRun object is still built here for its RunId and trace context,
-        // but it is NOT written to the store.
+        // ── 4. Build a unique RunId for this trigger ──────────────────────────
+        var runId = Guid.NewGuid().ToString();
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch);
-        run.TraceParent = traceContext?.GetValueOrDefault("traceparent");
 
         // ── 5. Build and submit the JobDistributionRequest ───────────────────
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
@@ -226,11 +212,6 @@ public sealed class ConsolidationService : IConsolidationService
         // DistributionResult(Success: true, WorkItemId: null, Queued: true, AlreadyExists: true).
         // This happens when the partial unique index on (IssueIdentifier, IssueProviderConfigId)
         // rejects a duplicate insert because a live WorkItem already exists for this consolidation type.
-        // TODO [WARNING]: `result.AlreadyExists` is the explicit flag for the 409/duplicate path.
-        // A previous version of this code used `result.WorkItemId is null` as the sole sentinel,
-        // which overloaded a single value for two distinct outcomes: "duplicate rejected" and "any
-        // other non-error success with no ID". The AlreadyExists flag is the correct discriminator.
-        // (review-findings-correctness.md WARNING:L308)
         if (result.AlreadyExists)
         {
             _logger.Warning(
@@ -240,15 +221,27 @@ public sealed class ConsolidationService : IConsolidationService
             return null;
         }
 
-        // ── 7. Record WorkItemId on the in-memory run object ─────────────────
-        // ConsolidationRun store writes have been stopped (issue #3028); the PipelineRun is the
-        // authoritative record.
-        run.WorkItemId = result.WorkItemId;
+        // ── 7. Build and return the result ────────────────────────────────────
+        // TODO [WARNING]: StartedAtUtc is captured here, after DistributeAsync returns. Under load,
+        // DistributeAsync (HTTP call to the Pipeline API) can take several seconds, so StartedAtUtc
+        // on the returned record can be materially later than the actual start of the consolidation
+        // operation. This affects the accuracy of the "Started" column in the run-history table.
+        // Fix: capture DateTimeOffset.UtcNow before the DistributeAsync call (step 4) and pass it
+        // through, or record the timestamp at WorkItem creation time in the API layer.
+        var triggerResult = new ConsolidationTriggerResult(
+            RunId: runId,
+            Type: type,
+            TemplateId: templateIdValue,
+            TemplateName: templateName,
+            ProjectId: projectId,
+            ProjectName: projectName,
+            StartedAtUtc: DateTimeOffset.UtcNow,
+            WorkItemId: result.WorkItemId);
 
         _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem {WorkItemId} created as Pending)",
-            run.RunId, type, templateName, result.WorkItemId);
+            runId, type, templateName, result.WorkItemId);
         OnChange?.Invoke();
-        return run;
+        return triggerResult;
     }
 
     /// <inheritdoc />
@@ -281,39 +274,4 @@ public sealed class ConsolidationService : IConsolidationService
     /// no-op to avoid breaking call sites in E2E infrastructure until they are updated.
     /// </remarks>
     internal void Reset() { /* no-op: _runningRuns removed in issue #3027 */ }
-
-    /// <inheritdoc />
-    public async Task DeleteRunAsync(RunId runId, CancellationToken ct)
-    {
-        try
-        {
-            await _runStore.DeleteRunAsync(runId, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to delete consolidation run {RunId}", runId.Value);
-        }
-    }
-
-    private static ConsolidationRun BuildNewRun(
-        ConsolidationRunType type,
-        string? templateIdValue,
-        string templateName,
-        string? projectName,
-        string? projectId,
-        bool autoDispatch) => new()
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = type,
-            TemplateId = templateIdValue,
-            TemplateName = templateName,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            // New runs start as Pending — the WorkItem has been successfully submitted to the
-            // unified dispatch queue. The Scheduler's WorkItemDispatchLoop will create the K8s Job.
-            Status = ConsolidationRunStatus.Pending,
-            AutoDispatch = autoDispatch,
-            ProjectName = projectName,
-            ProjectId = projectId,
-            // TraceParent is populated after BuildNewRun returns (set from the request TraceContext).
-        };
 }
