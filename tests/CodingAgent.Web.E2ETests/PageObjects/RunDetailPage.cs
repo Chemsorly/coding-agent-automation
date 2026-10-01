@@ -47,6 +47,39 @@ public sealed class RunDetailPage
     public async Task<bool> HasLiveOutputPanelAsync()
         => await _page.Locator(".cockpit-card:has(h2:has-text('Live output'))").IsVisibleAsync();
 
+    /// <summary>
+    /// Returns the text content of the live-output <c>&lt;pre&gt;</c> while the run is active.
+    ///
+    /// <para>
+    /// Uses <c>.cockpit-card:not([data-testid="output-tail-card"]) pre.run-live-log</c> to scope
+    /// strictly to the live panel. The bare <c>:not([data-testid="output-tail-card"])</c> prefix
+    /// is intentionally avoided — in CSS, <c>:not(X) Y</c> matches Y inside <em>any</em> ancestor
+    /// without attribute X (e.g. <c>body</c>, <c>div.cockpit-page</c>), which would match both
+    /// the live panel and the finished-run tail panel simultaneously. Scoping to
+    /// <c>.cockpit-card:not([data-testid="output-tail-card"])</c> restricts the ancestor to the
+    /// correct card element.
+    /// </para>
+    /// </summary>
+    public async Task<string?> GetLiveOutputLinesTextAsync()
+        => await _page
+            .Locator(".cockpit-card:not([data-testid='output-tail-card']) pre.run-live-log")
+            .TextContentAsync();
+
+    /// <summary>
+    /// Returns true when the finished-run output tail card is visible.
+    /// This card is rendered after completion when <c>run.OutputTail</c> is non-empty.
+    /// </summary>
+    public async Task<bool> HasOutputTailCardAsync()
+        => await _page.Locator("[data-testid='output-tail-card']").IsVisibleAsync();
+
+    /// <summary>
+    /// Returns the text content of the saved output tail shown after run completion.
+    /// </summary>
+    public async Task<string?> GetOutputTailTextAsync()
+        => await _page
+            .Locator("[data-testid='output-tail-card'] pre.run-live-log")
+            .TextContentAsync();
+
     /// <summary>Clicks the sidebar's "Cancel Pipeline" button (present only while the run is active).</summary>
     public async Task CancelAsync()
     {

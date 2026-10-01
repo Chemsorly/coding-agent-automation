@@ -204,6 +204,26 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Sends output lines to the hub for the specified job, exercising the
+    /// <c>ReportOutputLines</c> hub method and the live-output streaming path.
+    ///
+    /// <para>
+    /// Requires the agent to have an accepted job: <c>ActiveJobId</c> is set by
+    /// <see cref="StartAssignedWorkItemAsync"/> (triggered by <see cref="FakeJobController"/>
+    /// before <see cref="JobAssigned"/> resolves). Call <see cref="AcceptJobAsync"/> before this
+    /// method to also transition the WorkItem to Running, matching the established test convention.
+    /// </para>
+    /// </summary>
+    public async Task ReportOutputAsync(string jobId, params string[] lines)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync(
+            HubMethodNames.ReportOutputLines,
+            new JobId(jobId),
+            (IReadOnlyList<string>)lines);
+    }
+
+    /// <summary>
     /// Reports job completion with a full payload. Use after <see cref="AcceptJobAsync"/> and <see cref="ReportStepAsync"/>.
     /// </summary>
     public async Task ReportCompletionAsync(string jobId, JobCompletionPayload payload)

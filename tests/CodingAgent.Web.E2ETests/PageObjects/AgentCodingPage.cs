@@ -127,23 +127,6 @@ public sealed class AgentCodingPage
         return element is not null ? await element.TextContentAsync() : null;
     }
 
-    /// <summary>Gets all visible output lines from the output panel.</summary>
-    public async Task<IReadOnlyList<string>> GetOutputLinesAsync()
-    {
-        var elements = await _page.QuerySelectorAllAsync("[data-testid='output-line']");
-        var lines = new List<string>();
-        foreach (var el in elements)
-            lines.Add(await el.TextContentAsync() ?? "");
-        return lines;
-    }
-
-    /// <summary>Checks if the output panel is visible.</summary>
-    public async Task<bool> IsOutputPanelVisibleAsync()
-    {
-        var element = await _page.QuerySelectorAsync("[data-testid='output-panel']");
-        return element is not null;
-    }
-
     /// <summary>Clicks the "Browse Pull Requests" button to open the PR drawer.</summary>
     public async Task ClickBrowsePrsAsync()
     {

@@ -1,4 +1,7 @@
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.E2ETests.Fakes;
+using CodingAgent.Web.E2ETests.PageObjects;
+using CodingAgent.Pipeline.Interfaces;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Playwright;
 
@@ -168,5 +171,75 @@ public abstract class E2ETestBase : IAsyncLifetime
 
         throw new TimeoutException(
             $"Condition not met within {effectiveTimeout.TotalSeconds}s");
+    }
+
+    // ── Dispatch Helpers ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Seeds a template, agent profile, and issue; dispatches via the UI; has the connected
+    /// <paramref name="agent"/> accept the job and report <paramref name="step"/>; then waits for
+    /// the run service to reflect that step. Returns the active run id.
+    ///
+    /// <para>
+    /// This shared helper avoids duplicating the seed+dispatch+activate boilerplate across test
+    /// classes. Each test class that uses it must choose unique issue identifiers (and template
+    /// names if needed) to avoid collision within the shared <see cref="E2ECollection"/>.
+    /// </para>
+    /// </summary>
+    protected async Task<string> SeedDispatchAndActivateAsync(
+        FakeAgentClient agent,
+        string templateName,
+        string issueId,
+        PipelineStep step = PipelineStep.GeneratingCode)
+    {
+        // TODO [WARNING]: Template and profile are seeded with hardcoded Ids ("template-1",
+        // "profile-e2e"). SaveTemplateAsync/SaveAgentProfileAsync are upserts keyed on Id, so
+        // concurrent or sequential callers using different template names but the same Id will
+        // silently overwrite each other. The comment below documents that unique issue identifiers
+        // are required, but does not mention that the displayed template name will always reflect
+        // the last caller's value. If the E2ECollection ever becomes parallel, or if a future
+        // test varies the template config (not just the name), the Id must be made unique per
+        // caller as well. (DotNetSpecialist review, line 197)
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-1",
+            Name = templateName,
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            MatchLabels = new[] { "e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = issueId,
+            Title = $"Issue {issueId} test",
+            Description = "Test",
+            Labels = new[] { "enhancement" }
+        });
+
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync(templateName);
+        await codingPage.ClickBrowseIssuesAsync();
+        await codingPage.SelectIssueAsync(issueId);
+        await codingPage.ClickStartPipelineAsync();
+
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await agent.AcceptJobAsync(assignment.JobId);
+        await agent.ReportStepAsync(assignment.JobId, step);
+
+        var runService = Fixture.RunService;
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId && r.CurrentStep == step));
+        return runService.GetActiveRuns().First(r => r.IssueIdentifier == issueId).RunId;
     }
 }

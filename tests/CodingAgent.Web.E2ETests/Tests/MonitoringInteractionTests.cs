@@ -26,57 +26,6 @@ public sealed class MonitoringInteractionTests : E2ETestBase
     public MonitoringInteractionTests(E2EFixture fixture) : base(fixture) { }
 
     /// <summary>
-    /// Seeds a template/profile/issue, dispatches it, then has the connected <paramref name="agent"/>
-    /// accept the job and report <paramref name="step"/>. Returns the active run's id once the server
-    /// reflects the step. Mirrors the arrange the old monitoring tests repeated inline.
-    /// </summary>
-    private async Task<string> SeedDispatchAndActivateAsync(
-        FakeAgentClient agent, string templateName, string issueId, PipelineStep step = PipelineStep.GeneratingCode)
-    {
-        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
-        {
-            Id = "template-1",
-            Name = templateName,
-            IssueProviderId = "issue-e2e",
-            RepoProviderId = "repo-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "profile-e2e",
-            DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
-            AgentProviderConfigId = "agent-e2e",
-            Enabled = true
-        }, CancellationToken.None);
-
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
-        {
-            Identifier = issueId,
-            Title = $"Issue {issueId} test",
-            Description = "Test",
-            Labels = new[] { "enhancement" }
-        });
-
-        var codingPage = new AgentCodingPage(Page, BaseUrl);
-        await codingPage.NavigateAsync();
-        await codingPage.SelectTemplateAsync(templateName);
-        await codingPage.ClickBrowseIssuesAsync();
-        await codingPage.SelectIssueAsync(issueId);
-        await codingPage.ClickStartPipelineAsync();
-
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 15_000 });
-        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        await agent.AcceptJobAsync(assignment.JobId);
-        await agent.ReportStepAsync(assignment.JobId, step);
-
-        var runService = Fixture.RunService;
-        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId && r.CurrentStep == step));
-        return runService.GetActiveRuns().First(r => r.IssueIdentifier == issueId).RunId;
-    }
-
-    /// <summary>
     /// Seeds a template/profile/issue and dispatches via the UI without connecting an agent, so
     /// the WorkItem stays Pending. Returns after the dispatch success indicator appears.
     /// </summary>
