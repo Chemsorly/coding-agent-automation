@@ -133,6 +133,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             var consolidationMock = new Mock<IConsolidationService>();
             ReplaceService<IConsolidationService>(services, consolidationMock.Object);
 
+            // Replace JobTemplateStore with an empty store so AgentChat.razor does not try to
+            // load /app/config/job-templates.yaml, which does not exist in the test environment.
+            services.RemoveAll<CodingAgent.Kubernetes.JobTemplateStore>();
+            services.AddSingleton(CodingAgent.Kubernetes.JobTemplateStore.CreateEmpty());
+
             // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
             // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.
             // Register a mock to satisfy DI validation in integration tests.
