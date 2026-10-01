@@ -822,8 +822,13 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        // Wait specifically for a System-role stall-warning message, not just any ChatHistory entry.
+        // Waiting on Count > 0 is insufficient: the analysis agent adds an Agent-role entry before the
+        // stall monitor fires, causing the agentTcs to be resolved before the System message is enqueued
+        // on slow CI runners. Filtering to ChatRole.System ensures we wait until the stall monitor has
+        // actually fired before unblocking the implementation agent.
         var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
+        while (!(_service.ActiveRun?.ChatHistory.Any(c => c.Role == ChatRole.System) ?? false) && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
