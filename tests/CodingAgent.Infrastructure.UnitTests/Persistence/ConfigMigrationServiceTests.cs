@@ -253,29 +253,6 @@ public class ConfigMigrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task MigrateIfNeeded_ImportsConsolidationRuns()
-    {
-        WritePipelineConfig(new PipelineConfiguration());
-
-        var runId = Guid.NewGuid().ToString();
-        WriteJsonFile("consolidation-runs", $"{runId}.json", new ConsolidationRun
-        {
-            RunId = runId,
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTime.UtcNow,
-            Status = ConsolidationRunStatus.Succeeded
-        });
-
-        var service = CreateService();
-        await service.MigrateIfNeededAsync(CancellationToken.None);
-
-        await using var db = _dbFactory.CreateDbContext();
-        var runs = await db.ConsolidationRuns.ToListAsync();
-        runs.Should().ContainSingle();
-        runs[0].Id.Should().Be(Guid.Parse(runId));
-    }
-
-    [Fact]
     public async Task MigrateIfNeeded_ImportsPipelineRuns()
     {
         WritePipelineConfig(new PipelineConfiguration());

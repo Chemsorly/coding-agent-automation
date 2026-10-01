@@ -16,7 +16,7 @@ namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 /// Both FileSystem-backed and Postgres-backed services must satisfy these behavioral contracts.
 /// Prevents behavioral drift between legacy (filesystem) and DB (Postgres) modes.
 ///
-/// Pattern follows <see cref="ConsolidationRunStoreContractTests"/>.
+/// Pattern follows the established contract test structure used across persistence services.
 /// Derived classes provide a concrete service instance via <see cref="CreateService"/>.
 /// </summary>
 public abstract class PipelineRunHistoryServiceContractTests : IDisposable

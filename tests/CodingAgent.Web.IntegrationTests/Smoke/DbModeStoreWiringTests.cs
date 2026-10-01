@@ -81,9 +81,11 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
 
     // ── API-backed (migrated in Spec 041-045) ────────────────────────────
 
-    // TODO: [WARNING] No assertion verifies that IConsolidationRunStore is NOT registered in the DI container
-    // after its removal in issue #3031. A future accidental re-registration would not be caught by this suite.
-    // Consider adding: var store = _factory.Services.GetService<IConsolidationRunStore>(); store.Should().BeNull(...)
+    // IConsolidationRunStore was removed in issue #3031 and is no longer registered.
+    // TODO [WARNING]: A negative assertion confirming IConsolidationRunStore is NOT registered is missing.
+    // A future accidental re-registration would be silently ignored. Add an assertion
+    // _factory.Services.GetService<IConsolidationRunStore>().Should().BeNull() in the
+    // "Removed services" section of this file, consistent with the suite's pattern for other removed types.
 
     [Fact]
     public void IHarnessSuggestionStore_IsApiBacked_PostSpec041()
