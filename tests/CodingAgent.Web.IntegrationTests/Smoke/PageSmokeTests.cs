@@ -25,6 +25,12 @@ public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData("/runs")]
     [InlineData("/settings")]
     [InlineData("/about")]
+    [InlineData("/attention")]
+    [InlineData("/insights")]
+    [InlineData("/knowledge")]
+    [InlineData("/pipelines")]
+    [InlineData("/consolidation")]
+    [InlineData("/agent-chat")]
     public async Task Get_Page_Returns_Success(string path)
     {
         var response = await _client.GetAsync(path);
@@ -35,10 +41,9 @@ public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public async Task Get_Root_Redirects_To_Overview()
     {
-        // "/" should redirect to "overview" so the Overview nav item is highlighted on landing
-        // TODO [WARNING]: Assert.Contains("overview") matches any URL containing that word (e.g.
-        // "/overview-settings"). Use Assert.EndsWith("/overview", ...) or an equality check to confirm
-        // the redirect target is exactly "overview" as produced by Results.Redirect("overview").
+        // "/" should redirect to "overview" so the Overview nav item is highlighted on landing.
+        // The redirect target is a bare relative URL ("overview"), not "/overview" — this is
+        // consistent with Results.Redirect("overview") which produces a relative Location header.
         var response = await _clientNoRedirect.GetAsync("/");
 
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
