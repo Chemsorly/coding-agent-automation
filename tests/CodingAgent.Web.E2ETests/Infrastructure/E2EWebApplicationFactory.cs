@@ -289,14 +289,21 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 
         // Clear the InMemory database.
         //
-        // Runs and consolidation runs are cleared alongside work items because the harness now
-        // shares one database for the whole assembly (see E2ECollection) rather than one per test
-        // class. Rows the previous class wrote used to disappear with its host; now they would
-        // pile up for the length of the run and show up in another class's queries.
+        // Runs are cleared alongside work items because the harness now shares one database for
+        // the whole assembly (see E2ECollection) rather than one per test class. Rows the
+        // previous class wrote used to disappear with its host; now they would pile up for the
+        // length of the run and show up in another class's queries.
+        //
+        // Note: ConsolidationRuns table was dropped in migration 20260930213632_DropConsolidationRuns
+        // (issue #3031) — PipelineRun is the authoritative record for consolidation runs.
         using (var db = DbContextFactory.CreateDbContext())
         {
             db.WorkItems.RemoveRange(db.WorkItems);
             db.PipelineRuns.RemoveRange(db.PipelineRuns);
+            // Clear harness suggestions (stored in KeyValueStore["harness-suggestions"] by
+            // PostgresHarnessSuggestionStore). Not clearing this would let Scenario 4 leave
+            // stale suggestions visible to subsequent tests.
+            db.KeyValueStore.RemoveRange(db.KeyValueStore);
             db.SaveChanges();
         }
 

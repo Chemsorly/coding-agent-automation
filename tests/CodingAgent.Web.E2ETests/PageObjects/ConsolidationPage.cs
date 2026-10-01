@@ -88,6 +88,18 @@ public sealed class ConsolidationPage
             $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Brain Consolidation')");
     }
 
+    /// <summary>
+    /// Clicks the Brain Consolidation trigger button for a template, bypassing Playwright's
+    /// enabled/stable check (Force=true). Use for the second click in double-click dedup
+    /// tests where the button may have been disabled by the first click before this fires.
+    /// </summary>
+    public async Task ClickBrainConsolidationForcedAsync(string templateName)
+    {
+        await _page.ClickAsync(
+            $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Brain Consolidation')",
+            new PageClickOptions { Force = true });
+    }
+
     /// <summary>Clicks the Refactoring Scan trigger button for a template (opens the pre-flight modal).</summary>
     public async Task ClickRefactoringScanAsync(string templateName)
     {
@@ -112,6 +124,28 @@ public sealed class ConsolidationPage
     {
         var modal = await _page.QuerySelectorAsync(".modal-overlay .modal-card h3#refactoring-modal-title");
         return modal is not null;
+    }
+
+    /// <summary>
+    /// Waits for the refactoring scan pre-flight modal to appear and returns true, or returns
+    /// false if it does not appear within the timeout. Use this instead of
+    /// <see cref="IsRefactoringModalVisibleAsync"/> immediately after a click, because Blazor
+    /// renders the modal asynchronously and <c>QuerySelectorAsync</c> can return null before the
+    /// DOM has updated.
+    /// </summary>
+    public async Task<bool> WaitForRefactoringModalAsync(int timeoutMs = 10_000)
+    {
+        try
+        {
+            await _page.WaitForSelectorAsync(
+                ".modal-overlay .modal-card h3#refactoring-modal-title",
+                new() { Timeout = timeoutMs, State = WaitForSelectorState.Visible });
+            return true;
+        }
+        catch (Microsoft.Playwright.PlaywrightException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Clicks the Generate Suggestions button.</summary>
@@ -224,5 +258,14 @@ public sealed class ConsolidationPage
             $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Refactoring Scan')");
         if (button is null) return false;
         return await button.IsDisabledAsync();
+    }
+
+    /// <summary>Clicks the Cancel button for a Pending run in the run history table by row index (0-based).</summary>
+    public async Task ClickCancelRunAsync(int rowIndex)
+    {
+        // The Cancel button uses class btn-cancel-run and is only rendered for Pending rows
+        // with a WorkItemId. Selector is scoped to the specific row by nth-child (1-based).
+        await _page.ClickAsync(
+            $".monitoring-table tbody tr:nth-child({rowIndex + 1}) button.btn-cancel-run");
     }
 }

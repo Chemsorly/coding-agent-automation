@@ -67,6 +67,7 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<ConsolidationBadgeService>(),
             sp.GetRequiredService<IChangeNotifier>(),
             sp.GetRequiredService<IRunLifecycleManager>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger));
 
         // AgentHubDependencies is scoped to match the Hub's per-connection lifetime.

@@ -659,6 +659,54 @@ public sealed class PipelineRunEndpointTests
         }
     }
 
+    /// <summary>
+    /// Regression test for issue #3088: a Pending consolidation WorkItem registered as an active run
+    /// MUST appear in the includeActive=true merge, even though it is Pending. The Consolidation page
+    /// needs to see Pending consolidation items to render the Cancel button.
+    /// Contrast with <see cref="GetRunHistory_IncludeActive_PendingWorkItem_IsExcludedFromMerge"/>
+    /// which asserts that Pending NON-consolidation items are still excluded.
+    /// </summary>
+    [Fact]
+    public async Task GetRunHistory_IncludeActive_PendingConsolidationWorkItem_IsIncluded()
+    {
+        // Create a consolidation work item via the API (inserts as Status=Pending + calls AddRun).
+        var pendingRequest = new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier($"consol-pending-{Guid.NewGuid():N}"),
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Consolidation,
+            RunType = PipelineRunType.Consolidation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600
+        };
+        var createResponse = await _client.PostAsJsonAsync("/api/work-items", pendingRequest,
+            PipelineJsonOptions.Default);
+        createResponse.StatusCode.Should().Be(HttpStatusCode.Created);
+        var pendingRunId = await createResponse.Content.ReadFromJsonAsync<Guid>(PipelineJsonOptions.Default);
+
+        var runService = _factory.Services.GetRequiredService<IOrchestratorRunService>();
+        try
+        {
+            // The Consolidation page queries with runType=Consolidation; the carve-out applies
+            // regardless of that filter (it is in the .Where predicate, not the runType filter).
+            var response = await _client.GetAsync(
+                "/api/pipeline-runs?includeActive=true&runType=Consolidation&pageSize=500");
+            response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+            var body = await response.Content.ReadFromJsonAsync<PagedResult<PipelineRunSummary>>(PipelineJsonOptions.Default);
+            body.Should().NotBeNull();
+            body!.Items.Should().Contain(r => r.RunId == pendingRunId.ToString(),
+                "a Pending consolidation WorkItem must appear in the includeActive merge so the " +
+                "Consolidation page can show the Cancel button (issue #3088)");
+        }
+        finally
+        {
+            runService.RemoveRun((RunId)pendingRunId.ToString());
+        }
+    }
+
     // ── GET /api/pipeline-runs?since= — Issue #3077 ───────────────────────
 
     /// <summary>
