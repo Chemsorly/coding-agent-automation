@@ -159,6 +159,21 @@ public class AgentProfileSectionComponentTests : BunitContext
     }
 
     [Fact]
+    public void McpHeadersPlaceholder_ShowsLineBreaks()
+    {
+        // An "&#10;" entity in an attribute of a rendered element is not decoded, so it would show as text.
+        var cut = Render<AgentProfileSection>(p =>
+            p.Add(s => s.ConfigClient, _mockClient.Object)
+             .Add(s => s.AgentProviders, _agentProviders));
+        cut.FindAll("button").First(b => b.TextContent.Contains("Add Agent Profile")).Click();
+        cut.FindAll("button").First(b => b.TextContent.Contains("+ Add MCP Server")).Click();
+
+        cut.FindAll("select").First(s => s.InnerHtml.Contains("HTTP (URL-based)")).Change("http");
+
+        Assert.Equal("Authorization=Bearer mytoken\nX-Org=myorg", cut.Find("textarea").GetAttribute("placeholder"));
+    }
+
+    [Fact]
     public void ClickCancel_HidesForm()
     {
         var cut = Render<AgentProfileSection>(p =>

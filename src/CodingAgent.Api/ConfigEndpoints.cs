@@ -180,8 +180,7 @@ public static class ConfigEndpoints
         IProviderConfigStore store,
         CancellationToken ct)
     {
-        await store.SaveProviderConfigAsync(config, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveProviderConfigAsync(config, ct));
     }
 
     internal static async Task<IResult> DeleteProviderConfig(
@@ -208,8 +207,7 @@ public static class ConfigEndpoints
         IAgentProfileStore store,
         CancellationToken ct)
     {
-        await store.SaveAgentProfileAsync(profile, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
     }
 
     internal static async Task<IResult> DeleteAgentProfile(
@@ -235,8 +233,7 @@ public static class ConfigEndpoints
         IQualityGateConfigStore store,
         CancellationToken ct)
     {
-        await store.SaveQualityGateConfigAsync(config, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveQualityGateConfigAsync(config, ct));
     }
 
     internal static async Task<IResult> DeleteQualityGateConfig(
@@ -262,8 +259,7 @@ public static class ConfigEndpoints
         IReviewerConfigStore store,
         CancellationToken ct)
     {
-        await store.SaveReviewerConfigAsync(config, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveReviewerConfigAsync(config, ct));
     }
 
     internal static async Task<IResult> DeleteReviewerConfig(
@@ -326,8 +322,7 @@ public static class ConfigEndpoints
         if (errors.Count > 0)
             return TypedResults.BadRequest(string.Join(" ", errors));
 
-        await store.SaveProjectAsync(project, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveProjectAsync(project, ct));
     }
 
     internal static async Task<IResult> DeleteProject(
@@ -404,8 +399,7 @@ public static class ConfigEndpoints
         if (conflict is not null)
             return TypedResults.BadRequest(conflict);
 
-        await store.SaveTemplateAsync(projectId, template, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveTemplateAsync(projectId, template, ct));
     }
 
     internal static async Task<IResult> DeleteTemplate(
@@ -762,6 +756,23 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
+    }
+
+    /// <summary>
+    /// Runs a configuration save. The stores refuse an argument they cannot store, such as an ID that is not a GUID, with
+    /// an ArgumentException: that is the caller's mistake, so it becomes a 400 with the store's message instead of a 500.
+    /// </summary>
+    private static async Task<IResult> SaveAsync(Func<Task> save)
+    {
+        try
+        {
+            await save();
+            return TypedResults.Ok();
+        }
+        catch (ArgumentException ex)
+        {
+            return TypedResults.BadRequest(ex.Message);
+        }
     }
 
     /// <summary>

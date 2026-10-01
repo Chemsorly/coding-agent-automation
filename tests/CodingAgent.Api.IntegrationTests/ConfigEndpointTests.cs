@@ -1172,4 +1172,28 @@ public sealed class ConfigEndpointTests
         var result = await response.Content.ReadFromJsonAsync<JsonElement>();
         result.GetProperty("message").GetString().Should().Contain("Project 'Imported': MaxDecompositionSubIssues must be between 1 and 20 (was 25).");
     }
+
+    // ── IDs that are not GUIDs ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SaveProviderConfig_IdThatIsNotAGuid_Returns400()
+    {
+        var config = new ProviderConfig { Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Web repo" };
+
+        var response = await _client.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid provider config ID: repo-web");
+    }
+
+    [Fact]
+    public async Task SaveProject_IdThatIsNotAGuid_Returns400()
+    {
+        var project = new PipelineProject { Id = "proj-platform", Name = "Platform" };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid project ID: proj-platform");
+    }
 }

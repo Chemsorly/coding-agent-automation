@@ -39,6 +39,14 @@
 </section>
 
 @code {
+    // Multi-line placeholders are C# strings: in an attribute of a rendered element, "&#10;" would show up as text.
+    private const string SteeringPlaceholder =
+        "## Code Style\n- Use descriptive variable names\n- Prefer composition over inheritance\n\n" +
+        "## Build & Test\n- Always run the build after changes\n- Run tests before considering work complete\n\n" +
+        "## Tool Preferences\n- Use context7 to look up library documentation before using unfamiliar APIs\n" +
+        "- Use sequential-thinking for complex multi-step reasoning";
+    private const string McpHeadersPlaceholder = "Authorization=Bearer mytoken\nX-Org=myorg";
+
     private const string TabOverview = "overview";
     private const string TabTemplates = "templates";
     private const string TabSecrets = "secrets";
@@ -340,7 +348,7 @@
             <div class="form-group">
                 <label>Steering Instructions</label>
                 <p class="form-hint">These instructions are provided to every agent working on issues in this project. Use them for cross-cutting rules like code style, build commands, tool preferences, or quality expectations.</p>
-                <textarea @bind="_steeringContent" rows="15" placeholder="## Code Style&#10;- Use descriptive variable names&#10;- Prefer composition over inheritance&#10;&#10;## Build &amp; Test&#10;- Always run the build after changes&#10;- Run tests before considering work complete&#10;&#10;## Tool Preferences&#10;- Use context7 to look up library documentation before using unfamiliar APIs&#10;- Use sequential-thinking for complex multi-step reasoning"></textarea>
+                <textarea @bind="_steeringContent" rows="15" placeholder="@SteeringPlaceholder"></textarea>
             </div>
 
             <h3>Commit Blacklist</h3>
@@ -861,7 +869,7 @@
                     </div>
                     <div class="form-group">
                         <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
-                        <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                        <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="@McpHeadersPlaceholder"></textarea>
                     </div>
                 }
                 else

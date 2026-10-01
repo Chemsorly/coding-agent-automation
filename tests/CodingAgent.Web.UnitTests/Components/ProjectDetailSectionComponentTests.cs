@@ -264,6 +264,25 @@ public class ProjectDetailSectionSettingsValidationTests : BunitContext
     }
 
     [Fact]
+    public void SettingsTab_SteeringPlaceholder_ShowsLineBreaks()
+    {
+        // An "&#10;" entity in an attribute of a rendered element is not decoded, so it would show as text.
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = "p1", Name = "Test" });
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigClient, _mockStore.Object));
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
+
+        var placeholder = cut.FindAll("textarea").Select(t => t.GetAttribute("placeholder") ?? "")
+            .Single(p => p.StartsWith("## Code Style", StringComparison.Ordinal));
+
+        Assert.Contains("\n- Use descriptive variable names\n", placeholder);
+        Assert.Contains("## Build & Test", placeholder);
+        Assert.DoesNotContain("&#", placeholder);
+    }
+
+    [Fact]
     public void SaveSettings_RefusedByTheApi_KeepsTheEditsWhenTheParentRerenders()
     {
         // Showing the status re-renders the parent, which sets this section's parameters again with the same project.
