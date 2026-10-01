@@ -1157,15 +1157,10 @@ public class ValidateWithServerSideReportingAsyncTests
 /// Covers the directory-cleanup exception catch branches in
 /// <see cref="QualityGateValidator.ValidateAsync"/> and
 /// <see cref="QualityGateValidator.ValidateWithServerSideReportingAsync"/>.
-/// When the TestResults or QualityGatesOutputDirectory path is a *file* instead of
-/// a directory, Directory.Delete(path, recursive) succeeds silently (it's a no-op
-/// because Directory.Exists returns false for a file path), so we instead create the
-/// path as a read-only directory containing a read-only file. On Linux the kernel
-/// prevents deletion of a file inside a directory that has the sticky bit or is owned
-/// by root — however the simplest portable approach is to subclass and intercept.
-///
+/// The happy-path tests pre-create the TestResults directory so <c>Directory.Exists</c>
+/// returns true and the deletion lines execute. The exception-path tests use <c>chmod 000</c>
+/// on a subdirectory (Linux only) so <c>Directory.Delete</c> throws and the catch block runs.
 /// The catch blocks log a Warning and continue; the gate result is not affected.
-/// These tests verify the overloads complete successfully even when cleanup fails.
 /// </summary>
 public class QualityGateValidatorCleanupExceptionTests
 {
@@ -1266,7 +1261,8 @@ public class QualityGateValidatorCleanupExceptionTests
 
             // Make the subdir non-traversable so Directory.Delete(testResultsRoot, true) throws
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                $"000 \"{subDir}\"") { UseShellExecute = false })!.WaitForExit();
+                $"000 \"{subDir}\"")
+            { UseShellExecute = false })!.WaitForExit();
 
             var validator = new NoOpProcessValidator();
             var qgc = new QualityGateConfiguration
@@ -1288,7 +1284,8 @@ public class QualityGateValidatorCleanupExceptionTests
             try
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                    $"-R 755 \"{testResultsDir}\"") { UseShellExecute = false })!.WaitForExit();
+                    $"-R 755 \"{testResultsDir}\"")
+                { UseShellExecute = false })!.WaitForExit();
             }
             catch { }
             try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
@@ -1312,7 +1309,8 @@ public class QualityGateValidatorCleanupExceptionTests
             var subDir = Path.Combine(testResultsDir, "protected");
             Directory.CreateDirectory(subDir);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                $"000 \"{subDir}\"") { UseShellExecute = false })!.WaitForExit();
+                $"000 \"{subDir}\"")
+            { UseShellExecute = false })!.WaitForExit();
 
             var reportedEvents = new List<PipelineRunEventReport>();
             var validator = new NoOpProcessValidator();
@@ -1334,7 +1332,8 @@ public class QualityGateValidatorCleanupExceptionTests
             try
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                    $"-R 755 \"{testResultsDir}\"") { UseShellExecute = false })!.WaitForExit();
+                    $"-R 755 \"{testResultsDir}\"")
+                { UseShellExecute = false })!.WaitForExit();
             }
             catch { }
             try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
