@@ -281,6 +281,29 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
+    public async Task AddTemplateAsync_WhenApiReturns404_ReturnsErrorMessage()
+    {
+        // EnsureAcceptedAsync throws InvalidOperationException for 404/400 responses —
+        // use that type specifically to confirm the catch block handles the production exception path.
+        _mockConfigClient
+            .Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Project xyz does not exist."));
+        var form = new TemplateTableSection.TemplateFormModel { Name = "Missing Project Template", IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
+
+        var (success, error, msg) = await _service.AddTemplateAsync(form);
+
+        Assert.False(success);
+        // TODO [WARNING]: This asserts the exact error string "Failed to save: Project xyz does not exist.",
+        // coupling the test to both the "Failed to save: " prefix format in AddTemplateAsync and the exact
+        // exception message string invented in the mock setup. If the error-formatting logic changes, this
+        // test fails for reasons unrelated to the behavior under test. Consider asserting only that success
+        // is false, error is non-null, and error contains the key phrase (e.g. "Project xyz") instead of
+        // matching the full formatted string.
+        Assert.Equal("Failed to save: Project xyz does not exist.", error);
+        Assert.Null(msg);
+    }
+
+    [Fact]
     public async Task RemoveTemplateAsync_RemovesAndReloadsProjects()
     {
         var template = MakeTemplate("t-1", "Removable");

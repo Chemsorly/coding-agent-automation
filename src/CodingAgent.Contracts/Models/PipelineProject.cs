@@ -3,7 +3,7 @@ namespace CodingAgent.Pipeline.Models;
 /// <summary>
 /// A named grouping entity that owns pipeline job templates and carries
 /// per-project behavioral settings that override global defaults.
-/// Persisted in the <c>Projects</c> table.
+/// Stored in the <c>Projects</c> table in PostgreSQL.
 /// </summary>
 public sealed record PipelineProject
 {

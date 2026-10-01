@@ -34,8 +34,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         Assert.Contains("Agent Timeout", markup);
         Assert.Contains("Stall Warning Interval", markup);
         Assert.Contains("Baseline Health Check", markup);
-        Assert.Contains("Workspace Base Directory", markup);
-        Assert.Contains("Issue Page Size", markup);
+        Assert.Contains("Feedback Timeout", markup);
         Assert.Contains("Blacklisted Paths", markup);
 
         // Click save
@@ -62,8 +61,9 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         Assert.Contains("Max Runs Per Cycle", markup);
         Assert.Contains("Max Pages to Fetch", markup);
         Assert.Contains("Max Consecutive Poll Failures", markup);
-        Assert.Contains("Max Backoff Interval", markup);
         Assert.Contains("Circuit Breaker Cooldown", markup);
+        Assert.Contains("Reserved Issue Slots Per Cycle", markup);
+        Assert.Contains("Orphaned Label Sweep Interval", markup);
 
         var saveBtn = Page.Locator("button:has-text('Save Pipeline Loop')");
         await saveBtn.ClickAsync();
@@ -85,13 +85,12 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         var markup = await Page.ContentAsync();
         Assert.Contains("Analysis Prompt", markup);
         Assert.Contains("Implementation Prompt", markup);
-        Assert.Contains("Acceptance Criteria", markup);
         Assert.Contains("Analysis Review", markup);
         Assert.Contains("Analysis Refinement Prompt", markup);
 
-        // Verify textareas rendered
+        // Verify textareas rendered (the acceptance criteria prompt is on the Code Review page)
         var textareas = await Page.Locator("textarea").CountAsync();
-        Assert.Equal(5, textareas);
+        Assert.Equal(4, textareas);
 
         var saveBtn = Page.Locator("button:has-text('Save Prompt')");
         await saveBtn.ClickAsync();
@@ -124,20 +123,21 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
     }
 
     [Fact]
-    public async Task Implementation_RendersAllFields_AndSavesSuccessfully()
+    public async Task ExternalCi_RendersAllFields_AndSavesSuccessfully()
     {
         var settingsPage = new SettingsPage(Page, BaseUrl);
         await settingsPage.NavigateAsync();
-        await settingsPage.SelectTreeNodeAsync("Implementation");
+        await settingsPage.SelectTreeNodeAsync("External CI");
 
-        await Page.WaitForSelectorAsync("text=Agent Code Review", new() { Timeout = 5_000 });
-        await settingsPage.ExpandAdvancedSectionsAsync();
+        await Page.WaitForSelectorAsync("text=CI Timeout", new() { Timeout = 5_000 });
         var markup = await Page.ContentAsync();
-        Assert.Contains("Agent Code Review Enabled", markup);
-        Assert.Contains("Max Review Iterations", markup);
-        Assert.Contains("Fix Prompt", markup);
+        Assert.Contains("CI Timeout", markup);
+        Assert.Contains("CI Poll Interval", markup);
+        Assert.Contains("CI Not Started Timeout", markup);
+        Assert.Contains("CI Not Started Max Retries", markup);
+        Assert.Contains("CI Re-Polls After Branch Moves", markup);
 
-        var saveBtn = Page.Locator("button:has-text('Save Implementation')");
+        var saveBtn = Page.Locator("button:has-text('Save External CI')");
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
@@ -146,22 +146,25 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
     }
 
     [Fact]
-    public async Task Review_RendersAllFields_AndSavesSuccessfully()
+    public async Task CodeReview_RendersAllFields_AndSavesSuccessfully()
     {
         var settingsPage = new SettingsPage(Page, BaseUrl);
         await settingsPage.NavigateAsync();
-        await settingsPage.SelectTreeNodeAsync("Review");
+        await settingsPage.SelectTreeNodeAsync("Code Review");
 
-        await Page.WaitForSelectorAsync("text=Enable Inline Review Comments", new() { Timeout = 5_000 });
+        await Page.WaitForSelectorAsync("text=Review Implementation Runs", new() { Timeout = 5_000 });
         await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
+        Assert.Contains("Max Review Iterations", markup);
+        Assert.Contains("Fix Prompt", markup);
         Assert.Contains("Enable Inline Review Comments", markup);
         Assert.Contains("Minimum Severity", markup);
         Assert.Contains("Maximum Inline Comments", markup);
         Assert.Contains("Prioritize by Severity", markup);
         Assert.Contains("Format Correction Retries", markup);
+        Assert.Contains("Enable Acceptance Criteria Check", markup);
 
-        var saveBtn = Page.Locator("button:has-text('Save Review')");
+        var saveBtn = Page.Locator("button:has-text('Save Code Review')");
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
@@ -207,11 +210,9 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         Assert.Contains("Default Required Agent Labels", markup);
         Assert.Contains("Brain Repository", markup);
         Assert.Contains("Brain Push Max Retries", markup);
-        Assert.Contains("Agent Health Monitoring", markup);
-        Assert.Contains("Agent Disconnect Grace Period", markup);
-        Assert.Contains("Heartbeat Sweep Interval", markup);
-        Assert.Contains("Buffer Capacities", markup);
-        Assert.Contains("Output Buffer Capacity", markup);
+        Assert.Contains("Issue Images", markup);
+        Assert.Contains("Data Retention", markup);
+        Assert.Contains("Comment Delivery", markup);
 
         var saveBtn = Page.Locator("button:has-text('Save Advanced')");
         await saveBtn.ClickAsync();

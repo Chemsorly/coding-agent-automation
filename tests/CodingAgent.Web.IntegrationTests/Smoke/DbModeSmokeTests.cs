@@ -51,7 +51,6 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
 
     [Theory]
     [InlineData(typeof(IWorkDistributor))]
-    [InlineData(typeof(IConsolidationRunStore))]
     [InlineData(typeof(IHarnessSuggestionStore))]
     [InlineData(typeof(IPipelineRunHistoryService))]
     [InlineData(typeof(IDbContextFactory<PipelineDbContext>))]
@@ -59,6 +58,11 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     // resolve to ApiConfigurationStore (Spec 045); IPipelineConfigStore → ApiPipelineConfigStore;
     // IProviderConfigStore → ApiProviderConfigStore; IProjectStore → ApiProjectStore.
     // IActiveRunQueryService and ILoopStateStore removed in Spec 045 Req 1.2.
+    // IConsolidationRunStore removed in issue #3031.
+    // TODO [WARNING]: A negative assertion confirming IConsolidationRunStore is NOT registered is missing.
+    // A future accidental re-registration would go undetected. Add a [Fact] asserting
+    // _factory.Services.GetService<IConsolidationRunStore>() returns null, consistent with the
+    // pattern used in DbModeStoreWiringTests for other removed types.
     public void DbMode_KeyService_Resolves(Type serviceType)
     {
         var service = _factory.Services.GetService(serviceType);
@@ -113,15 +117,6 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
         var distributor = _factory.Services.GetRequiredService<IWorkDistributor>();
         var result = await distributor.IsIssueDistributedAsync("org/repo#1", "provider-1", CancellationToken.None);
         result.Should().BeFalse();
-    }
-
-    // ── Consolidation Store Is API-Backed (Spec 041-045) ─────────────────
-
-    [Fact]
-    public void ConsolidationRunStore_IsApiBackedImplementation()
-    {
-        var store = _factory.Services.GetRequiredService<IConsolidationRunStore>();
-        store.GetType().Name.Should().Contain("ApiBacked");
     }
 
     // ── Blazor Pages Load Without Server Error ─────────────────────────

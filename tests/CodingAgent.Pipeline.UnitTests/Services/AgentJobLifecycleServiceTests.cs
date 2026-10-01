@@ -14,6 +14,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Covers: job accepted/rejected/completed lifecycle, step transitions, HighWaterMark,
 /// ApplyStepMetadata (internal static), orphaned run handling, and retry exhaustion.
 /// </summary>
+[Collection("Metrics")]
 public sealed class AgentJobLifecycleServiceTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
@@ -507,8 +508,8 @@ public sealed class AgentJobLifecycleServiceTests
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, It.IsAny<WorkItemStatus>(),
             It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync(true);
-        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync(jobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((string IssueIdentifier, string IssueProviderConfigId)?)null);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemRunRecord?)null);
 
         var payload = MakePayload();
 
@@ -646,8 +647,8 @@ public sealed class AgentJobLifecycleServiceTests
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, It.IsAny<WorkItemStatus>(),
             It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync(true);
-        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync(jobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((string IssueIdentifier, string IssueProviderConfigId)?)null);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemRunRecord?)null);
 
         var payload = MakePayload();
 
@@ -1285,14 +1286,18 @@ public sealed class AgentJobLifecycleServiceTests
         // HandleOrphanedRunCompletedAsync. After migration to TrySwapLabelAsync the helper swallows
         // non-OCE exceptions.
         var jobId = new JobId("job-orphan-1");
-        var metadata = ("org/repo#10", "github-provider");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, It.IsAny<WorkItemStatus>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync(true);
-        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync(jobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(metadata);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new WorkItemRunRecord
+            {
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#10",
+                IssueProviderConfigId = "github-provider"
+            });
 
         // Label swap throws — must be swallowed (cosmetic operation)
         _labelService
@@ -1302,27 +1307,28 @@ public sealed class AgentJobLifecycleServiceTests
             .ThrowsAsync(new InvalidOperationException("Provider down"));
 
         // Completed step triggers the label swap attempt
-        // TODO: [WARNING] This test may pass vacuously if PipelineStep.Completed with GetRun()==null
-        // does not actually reach TrySwapLabelAfterOrphanedRecoveryAsync. Add a Verify that
-        // SwapLabelAsync was called (and threw) to confirm the code path was exercised, not just
-        // that the outer NotThrowAsync is satisfied by the path never reaching the swap.
         var act = () => _sut.HandleJobCompletedAsync(jobId, agent: null,
             MakePayload(PipelineStep.Completed), CancellationToken.None);
         await act.Should().NotThrowAsync();
+
+        // Verify the swap was actually attempted (not vacuously swallowed by never reaching it)
+        _labelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
-    public async Task TrySwapLabelAfterOrphanedRecovery_WhenMetadataNull_NoSwapAttempted()
+    public async Task TrySwapLabelAfterOrphanedRecovery_WhenRunRecordNull_NoSwapAttempted()
     {
-        // When issue metadata is null (WorkItem has no linked issue), no label swap should be attempted.
+        // When the work item record is null (WorkItem was fully deleted), no label swap should be attempted.
         var jobId = new JobId("job-orphan-2");
 
         _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
         _facade.Setup(f => f.TransitionWorkItemAsync(jobId, It.IsAny<WorkItemStatus>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync(true);
-        _facade.Setup(f => f.GetWorkItemIssueMetadataAsync(jobId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((string IssueIdentifier, string IssueProviderConfigId)?)null);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(jobId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemRunRecord?)null);
 
         await _sut.HandleJobCompletedAsync(jobId, agent: null,
             MakePayload(PipelineStep.Completed), CancellationToken.None);
@@ -1330,7 +1336,7 @@ public sealed class AgentJobLifecycleServiceTests
         _labelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never,
-            "no label swap should be attempted when issue metadata is null");
+            "no label swap should be attempted when the work item run record is null");
     }
 
     // ── PostCompletionBookkeepingAsync — cancellation swallowing ─────────

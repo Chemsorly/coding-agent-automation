@@ -19,9 +19,17 @@ namespace CodingAgent.Pipeline.Models;
 /// and the run should remain <c>Queued</c> for a later retry.
 /// Only meaningful when <see cref="Success"/> is <c>false</c>.
 /// </param>
+/// <param name="AlreadyExists">
+/// When <c>true</c>, the distribution was rejected because a live WorkItem already exists for
+/// this issue (HTTP 409 from <c>POST /api/work-items</c> — partial unique index conflict).
+/// Callers must treat this as a skip: do not increment processed/budget counters, do not emit
+/// a <c>Dispatched</c> decision, and emit <c>SkippedAlreadyProcessing</c> instead.
+/// <see cref="Success"/> is <c>true</c> in this case because no label revert is needed.
+/// </param>
 public record DistributionResult(
     bool Success,
     string? WorkItemId,
     string? ErrorMessage,
     bool Queued = false,
-    bool IsPermanentFailure = false);
+    bool IsPermanentFailure = false,
+    bool AlreadyExists = false);

@@ -4,7 +4,7 @@ Internal reference for project system implementation specifics.
 
 ## Migration Behavior
 
-On first startup (or upgrade from pre-projects version):
+On first startup (or upgrade from a pre-projects version), the API startup seed step creates the Default project row if absent and calls `ClaimOrphanedTemplatesAsync` to reparent any orphaned templates:
 
 ```mermaid
 flowchart TD
@@ -16,7 +16,7 @@ flowchart TD
     F --> C
 ```
 
-The migration is idempotent — running it multiple times produces the same result. In DB mode, templates are stored in the PostgreSQL database; in legacy file-based mode, they were stored in `config/pipeline/` JSON files.
+The migration is idempotent — running it multiple times produces the same result. In DB mode, templates are stored in the PostgreSQL database; in legacy file-based mode, they were stored in `config/pipeline/` JSON files (historical only — file-based mode is no longer supported).
 
 ## Membership
 
@@ -33,7 +33,7 @@ Until the `RemoveProjectTemplateIds` migration, the project row also stored an o
 The pipeline loop iterates projects instead of reading templates directly from the global config:
 
 ```
-foreach project in enabled projects (ordered by name):
+foreach project in enabled projects (ordered alphabetically by name):
     foreach template in project.TemplateIds (ordered by name):
         if template.Enabled:
             apply project settings overrides

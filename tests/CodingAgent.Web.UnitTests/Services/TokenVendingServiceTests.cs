@@ -194,7 +194,6 @@ public class TokenVendingServiceTests
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    [ProviderSettingKeys.Model] = "auto"
                 }
             }
         };

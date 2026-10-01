@@ -21,7 +21,6 @@ public sealed class ConsolidationServiceDedupTests
 {
     private static readonly string[] SelectorLabels = ["dotnet", "kiro", "dotnet10"];
 
-    private readonly Mock<IConsolidationRunStore> _mockRunStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory = new();
     private readonly Mock<IConsolidationSelectorResolver> _mockSelectorResolver = new();
@@ -60,14 +59,6 @@ public sealed class ConsolidationServiceDedupTests
                 It.IsAny<PipelineConfiguration>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync((IReadOnlyList<string>)SelectorLabels);
-
-        // Default store operations succeed
-        _mockRunStore
-            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-        _mockRunStore
-            .Setup(s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
     }
 
     private ConsolidationService CreateSut(Mock<IWorkDistributor> mockDistributor)
@@ -82,8 +73,6 @@ public sealed class ConsolidationServiceDedupTests
             new LoggerConfiguration().CreateLogger(),
             cfg,
             _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            _mockRunStore.Object,
             new Mock<IHarnessSuggestionStore>().Object,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDistributor.Object,
@@ -96,15 +85,15 @@ public sealed class ConsolidationServiceDedupTests
     /// reports "already running" (returns null) and creates no second WorkItem.
     ///
     /// Mechanism: KubernetesWorkDistributor maps 409 Conflict →
-    ///   DistributionResult(Success=true, WorkItemId=null, Queued=true).
-    /// ConsolidationService.TriggerAsync detects WorkItemId==null as the duplicate-rejection
+    ///   DistributionResult(Success=true, WorkItemId=null, Queued=true, AlreadyExists=true).
+    /// ConsolidationService.TriggerAsync detects AlreadyExists=true as the duplicate-rejection
     /// signal, rolls back the second persisted run, and returns null.
     /// </summary>
     [Fact]
     public async Task TriggerAsync_SecondTrigger_WhileFirstNonTerminal_ReturnsNull_NoSecondWorkItem()
     {
         // Arrange: first trigger succeeds (WorkItem created, WorkItemId="wi-1");
-        // second trigger receives (Success=true, WorkItemId=null) simulating the 409 path.
+        // second trigger receives (Success=true, WorkItemId=null, AlreadyExists=true) simulating the 409 path.
         var mockDistributor = new Mock<IWorkDistributor>();
         mockDistributor
             .SetupSequence(d => d.DistributeAsync(
@@ -119,7 +108,8 @@ public sealed class ConsolidationServiceDedupTests
                 Success: true,
                 WorkItemId: null,       // 409 path — partial unique index rejected the duplicate
                 ErrorMessage: null,
-                Queued: true));
+                Queued: true,
+                AlreadyExists: true));  // explicit flag replaces the old null-WorkItemId sentinel
 
         var sut = CreateSut(mockDistributor);
 
@@ -136,8 +126,8 @@ public sealed class ConsolidationServiceDedupTests
 
         // Assert: first trigger succeeds, second is rejected as "already running"
         first.Should().NotBeNull("first trigger must succeed");
-        first!.Status.Should().Be(ConsolidationRunStatus.Pending);
-        first.WorkItemId.Should().Be("wi-dedup-first", "WorkItemId must be populated from DistributionResult");
+        // Status (ConsolidationRunStatus) was removed in issue #3032 — success is implied by non-null return.
+        first!.WorkItemId.Should().Be("wi-dedup-first", "WorkItemId must be populated from DistributionResult");
 
         second.Should().BeNull(
             "second trigger while first is non-terminal must be rejected (WorkItemId=null = 409 duplicate)");
@@ -149,23 +139,11 @@ public sealed class ConsolidationServiceDedupTests
                 It.IsAny<CancellationToken>()),
             Times.Exactly(2),
             "both triggers call DistributeAsync; dedup is enforced by the API-layer partial unique index");
-
-        // Issue #3028: TriggerAsync no longer persists to the ConsolidationRuns store.
-        // SaveRunAsync must NOT be called.
-        _mockRunStore.Verify(
-            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "TriggerAsync must not write to the ConsolidationRuns store (issue #3028)");
-
-        _mockRunStore.Verify(
-            s => s.DeleteRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>()),
-            Times.Never,
-            "no rollback needed since nothing was persisted");
     }
 
     /// <summary>
     /// A duplicate trigger for a global (null templateId) consolidation run must also be
-    /// rejected via the WorkItemId==null detection path.
+    /// rejected via the AlreadyExists flag detection path.
     /// IssueIdentifier for global runs is "{type}:global".
     /// </summary>
     [Fact]
@@ -185,7 +163,8 @@ public sealed class ConsolidationServiceDedupTests
                 Success: true,
                 WorkItemId: null,   // 409 duplicate
                 ErrorMessage: null,
-                Queued: true));
+                Queued: true,
+                AlreadyExists: true));  // explicit flag
 
         var sut = CreateSut(mockDistributor);
 

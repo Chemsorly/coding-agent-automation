@@ -649,6 +649,27 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Warning(
             "ChatJobDispatcher: grace period expired for {JobName} — force deleting job", entry.JobName);
 
+        // Deregister unconditionally before the CAS guard: the watcher's CleanupSession path can win
+        // the Cleaned CAS first (when WatcherCts cancellation fires and the watcher catches OCE before
+        // ForceDeleteAndCleanupAsync resumes), causing an early return below that would bypass
+        // Deregister entirely. Deregister is a TryRemove — calling it when the agent is already gone
+        // is safe (returns false). The registry must always be cleaned up when force-delete is triggered.
+        _registry.Deregister(agentId);
+
+        // Guard: CleanupSession uses entry.Cleaned for idempotency, but DeleteJobAsync is called
+        // before CleanupSession here and has no guard of its own. If a concurrent path (e.g. the
+        // watcher's idle-kill callback) already ran ForceDeleteAndCleanupAsync and set entry.Cleaned,
+        // skip the delete to prevent a double DeleteJobAsync call.
+        if (Interlocked.CompareExchange(ref entry.Cleaned, 1, 0) != 0)
+        {
+            _logger.Debug(
+                "ChatJobDispatcher: ForceDeleteAndCleanupAsync skipped for {JobName} — already cleaned by concurrent path",
+                entry.JobName);
+            return;
+        }
+
+        _activeWatchers.TryRemove(agentId.Value, out _);
+
         try
         {
             await _jobClient.DeleteJobAsync(entry.JobName, _options.Namespace, CancellationToken.None);
@@ -660,10 +681,29 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 entry.JobName, ex.Message);
         }
 
-        _registry.Deregister(agentId);
-
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
-        CleanupSession(agentId, entry, selectorEncoded, "force_deleted");
+        // Do not call CleanupSession here: we already took the Cleaned CAS above, so CleanupSession
+        // would be a no-op for _activeWatchers/Cleaned (already handled above) but we still need
+        // it to run telemetry and WatcherCts disposal.
+        var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
+        ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+        if (entry.ClaimedPvc is not null)
+            // TODO [WARNING]: "kiro" is hard-coded here and in CleanupSession. Both sites must be
+            // updated if additional PVC pool types are introduced. The pool tag should be derived
+            // from the entry (e.g. entry.ClaimedPvc.Pool) to avoid silent misattribution of
+            // PvcUtilization telemetry for non-Kiro agents.
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+        var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
+        ChatTelemetry.SessionDuration.Record(duration, selectorTag, new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
+        try { entry.WatcherCts.Dispose(); }
+        catch { /* already disposed */ }
+        if (_heartbeatTracker is not null)
+            // TODO [WARNING]: fire-and-forget — if DeleteRedisHeartbeatAsync faults (e.g. transient
+            // Redis connection error), the exception is silently swallowed (same pre-existing pattern
+            // as CleanupSession). A faulted task may leave a stale Redis heartbeat key after the job
+            // is deleted. Consider awaiting or logging the failure.
+            _ = _heartbeatTracker.DeleteRedisHeartbeatAsync(agentId);
+
         ChatTelemetry.PodForceTerminations.Add(1,
             new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded));
     }

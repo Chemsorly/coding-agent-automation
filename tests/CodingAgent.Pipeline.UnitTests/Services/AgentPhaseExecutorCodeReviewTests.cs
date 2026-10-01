@@ -72,8 +72,10 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     [Fact]
     public async Task CodeReview_MaxIterationsZero_EarlyReturn()
     {
+        // Explicitly test with Implementation run type — the guard should skip for non-Review runs only
         var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 0 } };
         var context = BuildContext(config);
+        // _run defaults to PipelineRunType.Implementation
 
         await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Agent1"));
 

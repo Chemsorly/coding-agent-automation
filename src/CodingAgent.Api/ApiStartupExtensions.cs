@@ -18,8 +18,9 @@ namespace CodingAgent.Api;
 internal static class ApiStartupExtensions
 {
     /// <summary>
-    /// Runs database migration verification before app.Run().
-    /// Calls <see cref="DatabaseStartupService.HandleMigrationsAsync"/> only —
+    /// Runs database migration verification and startup seeding before app.Run().
+    /// Calls <see cref="DatabaseStartupService.HandleMigrationsAsync"/> and
+    /// <see cref="DatabaseStartupService.RunStartupSeedingAsync"/> —
     /// NEVER <c>ImportJsonConfigIfNeededAsync</c> (legacy JSON migration).
     /// Honours <c>Database:SkipStartupInit</c> (Req 4.3) for integration tests.
     /// The API runs with <c>MigrateOnStartup=false</c> so this method VERIFIES and
@@ -27,7 +28,8 @@ internal static class ApiStartupExtensions
     /// </summary>
     public static async Task RunApiMigrationsAsync(
         this WebApplication app,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        DatabaseStartupService? startupServiceOverride = null)
     {
         if (configuration.GetValue<bool>("Database:SkipStartupInit"))
         {
@@ -44,13 +46,21 @@ internal static class ApiStartupExtensions
         var lockProvider = app.Services.GetRequiredService<IDistributedLockProvider>();
         var probe = app.Services.GetService<IDatabaseProbe>();
 
-        var startupService = new DatabaseStartupService(
-            dbFactory, lockProvider, configuration, Log.Logger, probe);
+        var startupService = startupServiceOverride
+            ?? new DatabaseStartupService(dbFactory, lockProvider, configuration, Log.Logger, probe);
 
-        // WaitForDatabaseConnectionAsync + HandleMigrationsAsync only.
-        // Do NOT call InitializeAsync — that also calls ImportJsonConfigIfNeededAsync.
+        // WaitForDatabaseConnectionAsync + HandleMigrationsAsync + RunStartupSeedingAsync.
+        // Do NOT call InitializeAsync — that also calls ImportJsonConfigIfNeededAsync (legacy JSON import).
+        // NOTE: All three calls use CancellationToken.None instead of app.Lifetime.ApplicationStopping.
+        // If the host begins shutting down while RunStartupSeedingAsync is waiting on the distributed lock
+        // (e.g. another replica holds it and is slow), the shutdown cannot interrupt the wait and the process
+        // will hang until the advisory lock times out (up to 60 s per acquire × 3 sequential acquires = ~180 s
+        // worst case). WaitForDatabaseConnectionAsync and HandleMigrationsAsync had this pre-existing issue;
+        // RunStartupSeedingAsync extends the non-cancellable window. Thread app.Lifetime.ApplicationStopping
+        // through all three calls to allow graceful shutdown during startup.
         await startupService.WaitForDatabaseConnectionAsync(CancellationToken.None);
         await startupService.HandleMigrationsAsync(CancellationToken.None);
+        await startupService.RunStartupSeedingAsync(CancellationToken.None);
     }
 
     /// <summary>

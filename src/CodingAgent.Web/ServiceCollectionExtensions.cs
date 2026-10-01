@@ -81,7 +81,7 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers consolidation services: job preparation, feedback cache, selector resolver, service, and badge service.
+    /// Registers consolidation services: job preparation, selector resolver, service, and badge service.
     /// </summary>
     public static IServiceCollection AddConsolidationServices(
         this IServiceCollection services,
@@ -92,12 +92,6 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ITokenVendingService>(),
             Log.Logger));
-
-        services.AddSingleton<IConsolidationFeedbackCache>(sp =>
-            new ConsolidationFeedbackCache(
-                Log.Logger,
-                sp.GetRequiredService<IConsolidationRunStore>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         // Resolves agent selector labels for consolidation dispatch.
         // Implemented in CodingAgent.Web so IAgentProfileStore and IPipelineConfigStore
@@ -115,17 +109,11 @@ public static partial class ServiceCollectionExtensions
                 Log.Logger,
                 pipelineConfig,
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>(),
-                sp.GetRequiredService<IConsolidationFeedbackCache>(),
                 WorkDistributor: sp.GetRequiredService<IWorkDistributor>(),
                 SelectorResolver: sp.GetRequiredService<IConsolidationSelectorResolver>(),
                 PipelineConfigStore: sp.GetRequiredService<IPipelineConfigStore>())));
-
-        services.AddSingleton<IConsolidationRunTracker>(sp =>
-            (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());
 
         services.AddSingleton<ConsolidationBadgeService>();
 

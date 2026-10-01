@@ -46,26 +46,6 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                     b.ToTable("AgentProfiles");
                 });
 
-            modelBuilder.Entity("CodingAgent.Infrastructure.Persistence.Entities.ConsolidationRunEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<string>("Data")
-                        .HasColumnType("jsonb");
-
-                    b.Property<uint>("RowVersion")
-                        .IsConcurrencyToken()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("xid")
-                        .HasColumnName("xmin");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("ConsolidationRuns");
-                });
-
             modelBuilder.Entity("CodingAgent.Infrastructure.Persistence.Entities.FeedbackCommentOutboxEntity", b =>
                 {
                     b.Property<Guid>("Id")

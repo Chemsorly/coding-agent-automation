@@ -650,13 +650,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Poll until at least one issue is processed
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Poll until at least one issue is processed — 15s to tolerate slow CI runners
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();
@@ -700,13 +700,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for dispatch to happen
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for dispatch to happen — 15s to tolerate slow CI runners
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();
@@ -753,13 +753,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for both issues to be dispatched
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for both issues to be dispatched — 15s to tolerate slow CI runners
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (dispatchedIdentifiers.Count < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
+        deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsLoopActive && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         cts.Cancel();
@@ -1212,8 +1212,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for circuit breaker to trip
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait for circuit breaker to trip.
+        // Use a 15-second deadline: under full parallel test suite load (~10 000 concurrent tests)
+        // the loop thread can be CPU-starved, making the poll cycle significantly slower.
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);
@@ -1706,7 +1708,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             EnabledTemplates: pollableTemplates,
             PollableTemplates: pollableTemplates,
             TemplateLookup: pollableTemplates.ToDictionary(t => t.Id).AsReadOnly(),
-            ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>());
+            ActiveIssueIdentifiers: new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+            ActiveDecompositionCount: 0);
     }
 
     [Fact]

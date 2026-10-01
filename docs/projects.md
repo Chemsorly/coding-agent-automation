@@ -38,7 +38,7 @@ flowchart LR
 
 ## Project Storage
 
-Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — JSON files are only used for first-boot migration (`DatabaseStartupService.ImportJsonConfigIfNeededAsync` reads from `/app/config/pipeline/` on an empty database). In normal operation there is no file-based runtime storage.
+Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — on first startup against an empty database, the API seed step creates the Default project and seeds the default reviewer configurations. In normal operation there is no file-based runtime storage.
 
 The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
@@ -212,7 +212,7 @@ flowchart TD
 
 ### Project Context File
 
-When decomposing a project epic (an epic in the project's `EpicIssueProviderId` tracker), the system generates `.agent/project-context.md` in the workspace. Repo epics get no project context, so their sub-issues stay in their own tracker:
+The system generates `.agent/project-context.md` in the workspace for every decomposition run where the epic lives in a project's `EpicIssueProviderId` tracker (a project epic). This applies to any project — including the Default project — that has `EpicIssueProviderId` configured and at least one enabled template. Repo epics (epics in a template's own tracker) do not receive a project context file; their sub-issues stay in that tracker.
 
 ```markdown
 # Project Context
@@ -226,17 +226,14 @@ repository using the `targetRepository` field. Values must EXACTLY match
 a repository name below (case-sensitive).
 
 ### frontend-app
-- **Description:** React frontend application
 - **Decomposition enabled:** True
 - **Status:** ✓
 
 ### backend-api
-- **Description:** .NET 10 REST API
 - **Decomposition enabled:** True
 - **Status:** ✓
 
 ### shared-libs
-- **Description:** Shared utility libraries
 - **Decomposition enabled:** False
 - **Status:** ✓
 

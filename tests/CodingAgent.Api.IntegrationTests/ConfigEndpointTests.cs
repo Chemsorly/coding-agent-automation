@@ -7,6 +7,7 @@ using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -811,9 +812,15 @@ public sealed class ConfigEndpointTests
     [Fact]
     public async Task SaveTemplate_UnknownProject_Returns404()
     {
-        var response = await PutTemplateAsync(Guid.NewGuid().ToString(), NewTemplate("Lost", $"repo-{Guid.NewGuid():N}"));
+        var template = NewTemplate("Lost", $"repo-{Guid.NewGuid():N}");
+        var response = await PutTemplateAsync(Guid.NewGuid().ToString(), template);
 
         response.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+        // Verify the specific template was not written to the database (acceptance criterion: "writes nothing")
+        await using var db = _factory.CreateDbContext();
+        var templateInDb = await db.PipelineJobTemplates.FindAsync(Guid.Parse(template.Id));
+        templateInDb.Should().BeNull("no template row should be written when the project does not exist");
     }
 
     [Fact]
@@ -963,10 +970,8 @@ public sealed class ConfigEndpointTests
         result.Should().BeAssignableTo<Microsoft.AspNetCore.Http.IResult>("a sub-60s AgentTimeout must be rejected");
         var badRequest = result as Microsoft.AspNetCore.Http.HttpResults.BadRequest<string>;
         badRequest.Should().NotBeNull("result must be a typed BadRequest<string>");
-        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
-        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
-        // will silently pass even though the error message no longer references the correct minimum.
-        badRequest!.Value.Should().Contain("60", "the error message must reference the 60s minimum");
+        // AgentTimeoutMinimum_IsTheReconciliationCanaryMinimum ties this minimum to PipelineConstants.TimeoutCanaryMinAgeSeconds.
+        badRequest!.Value.Should().Contain("AgentTimeout must be between 00:01:00", "the error message names the setting and its minimum");
 
         // Store must never have been called
         mockStore.Verify(s => s.SavePipelineConfigAsync(

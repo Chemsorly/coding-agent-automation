@@ -101,7 +101,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 },
                 request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
                 line => callbacks.EmitOutputLine(line),
-                stallMetrics: request.StallMetrics);
+                stallMetrics: request.StallMetrics,
+                phase: request.Phase);
 
             request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
 
@@ -161,7 +162,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
             },
             request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
             request.OnOutputLine,
-            stallMetrics: request.StallMetrics);
+            stallMetrics: request.StallMetrics,
+            phase: request.Phase);
 
         request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
         return agentResult;

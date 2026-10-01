@@ -1,4 +1,3 @@
-#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 // Feature: 021-consolidation-loops
 // Property 3: Template Filtering by Provider Configuration
 // Property 5: Concurrency Guard Rejects Duplicate Running
@@ -98,8 +97,6 @@ public class ConsolidationServicePropertyTests : IDisposable
             WorkspaceBaseDirectory = _tempDir,
             DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10"
         };
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -119,12 +116,11 @@ public class ConsolidationServicePropertyTests : IDisposable
         mockDist2
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-2", ErrorMessage: null))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true))
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true, AlreadyExists: true))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-prop-3", ErrorMessage: null));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
-            Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
-            new FileSystemConsolidationRunStore(runsDir),
+            Serilog.Log.Logger, config, mockProjectStore.Object,
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockDist2.Object));

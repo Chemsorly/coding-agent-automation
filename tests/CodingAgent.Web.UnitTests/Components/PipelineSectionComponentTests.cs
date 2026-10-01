@@ -165,7 +165,7 @@ public class PipelineSectionComponentTests : BunitContext
     {
         var cut = Render<PipelineLoopSection>(p => p.Add(s => s.ConfigClient, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(3, hints.Count); // Poll Interval, Max Runs Per Cycle, Queue Sweep (advanced fields hidden by default)
+        Assert.Equal(4, hints.Count); // Poll Interval, Max Runs Per Cycle, Reserved Issue Slots, Queue Sweep (advanced fields hidden by default)
     }
 
     // ═══ PipelinePromptsSection ═══

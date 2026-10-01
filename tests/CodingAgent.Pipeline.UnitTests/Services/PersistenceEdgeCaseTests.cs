@@ -32,54 +32,15 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         }
     }
 
-    // ── Corrupt file resilience ─────────────────────────────────────────
-
-    /// <summary>
-    /// LoadAllRunsAsync skips corrupt JSON files and returns the valid ones.
-    /// A single corrupt file must not take down the entire history.
-    /// </summary>
-    [Fact]
-    public async Task ConsolidationRunStore_LoadAll_SkipsCorruptFiles_ReturnsValid()
-    {
-        var runsDir = Path.Combine(_tempDir, "runs");
-        var store = new FileSystemConsolidationRunStore(runsDir);
-
-        // Write one valid run
-        var validRun = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = ConsolidationRunType.BrainConsolidation,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Succeeded
-        };
-        await store.SaveRunAsync(validRun, CancellationToken.None);
-
-        // Write a corrupt file directly
-        await File.WriteAllTextAsync(
-            Path.Combine(runsDir, $"{Guid.NewGuid()}.json"),
-            "{{{{ not valid JSON at all !!!!!");
-
-        // Write an empty file
-        await File.WriteAllTextAsync(
-            Path.Combine(runsDir, $"{Guid.NewGuid()}.json"), "");
-
-        var all = await store.LoadAllRunsAsync(CancellationToken.None);
-
-        // Only the valid run should be returned
-        all.Should().ContainSingle();
-        all[0].RunId.Should().Be(validRun.RunId);
-    }
-
     // ── Concurrency guard still works ───────────────────────────────────
 
     /// <summary>
     /// Two concurrent TriggerAsync for the same type+template — second must be rejected.
-    /// Ensures the ConcurrentDictionary guard still works after constructor refactoring.
+    /// Ensures the DB-layer dedup path still works after constructor refactoring.
     /// </summary>
     [Fact]
     public async Task ConsolidationService_ConcurrencyGuard_RejectsDuplicateTrigger()
     {
-        var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
         var harnessStore = new InMemoryHarnessSuggestionStore();
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -92,21 +53,16 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             {
                 new() { Id = "t1", Name = "T", IssueProviderId = "i", RepoProviderId = "r", Enabled = true }
             });
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
-
         var mockWorkDistributor = new Mock<IWorkDistributor>();
         mockWorkDistributor
             .SetupSequence(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: "wi-persist-edge", ErrorMessage: null))
-            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true));
+            .ReturnsAsync(new DistributionResult(Success: true, WorkItemId: null, ErrorMessage: null, Queued: true, AlreadyExists: true));
 
         var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            mockHistory.Object,
-            store,
             harnessStore,
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
@@ -116,28 +72,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
 
         first.Should().NotBeNull();
         second.Should().BeNull("rejected by DB-layer dedup (WorkItemId=null = 409 duplicate)");
-    }
-
-    // ── GetLastSuccessfulHarnessRunTimestampAsync ────────────────────────
-
-    /// <summary>
-    /// With no runs in the store, returns DateTimeOffset.MinValue (not crash).
-    /// </summary>
-    [Fact]
-    public async Task GetLastSuccessfulHarnessRunTimestamp_EmptyStore_ReturnsMinValue()
-    {
-        var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
-
-        var feedbackCache = new ConsolidationFeedbackCache(
-            new LoggerConfiguration().CreateLogger(),
-            store,
-            mockHistory.Object);
-
-        var result = await feedbackCache.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
-
-        result.Should().Be(DateTimeOffset.MinValue);
     }
 
     // ── PipelineRunSummary backward-compat deserialization ──────────────

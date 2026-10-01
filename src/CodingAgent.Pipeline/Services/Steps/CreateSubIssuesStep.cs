@@ -112,10 +112,30 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             var result = await CreateSingleIssueAsync(proposal, resolver, context, _retryDelayOverride, creationCt);
             results.Add(result);
 
-            // Register successful creations for dependency resolution
-            if (result.Success && result.Identifier is not null)
+            // Register successful creations for dependency resolution.
+            // The resolved provider ID (either the targetProviderId from cross-repo routing or the
+            // run's own issue tracker) must be recorded alongside the URL so that Resolve() can
+            // distinguish same-tracker deps (#N form) from cross-tracker deps (full URL form).
+            //
+            // TODO: Registration is gated on result.Url being non-null. Providers that return
+            // Success=true and a non-null Identifier but a null Url (which is permitted by
+            // CreatedIssueResult) will be silently skipped here. Any downstream sub-issue that
+            // lists this issue as a dependency will have the dependency line omitted with only a
+            // warning log — no error, no failure. Before this change, a null Url did not block
+            // registration. Consider falling back to a synthetic URL (e.g. constructed from a
+            // known base URL pattern) or relaxing the null guard and handling the null-Url case
+            // in DependencyResolver by always emitting the #N short form when Url is absent.
+            //
+            // TODO: ResolvedProviderId on SubIssueCreationResult stores null when the issue was
+            // created via the run's own tracker (no cross-repo routing). The fallback
+            // `?? context.Run.IssueProviderConfigId` below is correct, but a reader of
+            // SubIssueCreationResult.ResolvedProviderId cannot distinguish "default provider"
+            // from "not set". Consider normalising to the actual provider ID before storing, or
+            // documenting the nullable convention explicitly on the property.
+            if (result.Success && result.Identifier is not null && result.Url is not null)
             {
-                resolver.Register(proposal.Title, result.Identifier);
+                var resolvedProviderId = result.ResolvedProviderId ?? context.Run.IssueProviderConfigId;
+                resolver.Register(proposal.Title, result.Identifier, result.Url, resolvedProviderId);
             }
         }
 
@@ -169,26 +189,8 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         var sanitizedTitle = TextSanitizer.SanitizeTitle(proposal.Title);
         var sanitizedBody = TextSanitizer.SanitizeMarkdown(proposal.Body);
 
-        // 7. Resolve dependencies and prepend to body
-        var dependencyLines = resolver.Resolve(proposal.Dependencies, context.Logger);
-        if (dependencyLines.Count > 0)
-        {
-            var depSection = string.Join("\n", dependencyLines);
-            sanitizedBody = $"{depSection}\n\n{sanitizedBody}";
-        }
-
-        // 8. Apply labels: agent:next + agent:generated + custom labels from proposal
-        var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
-        foreach (var label in proposal.Labels)
-        {
-            if (!string.IsNullOrWhiteSpace(label) &&
-                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
-            {
-                labels.Add(label);
-            }
-        }
-
-        // Resolve target issue provider for cross-repo routing
+        // Resolve target issue provider for cross-repo routing (needed before dependency resolution
+        // so we can decide #N vs full URL based on whether the dependency is in the same tracker).
         var targetProviderId = ResolveTargetIssueProviderId(proposal, context);
         if (targetProviderId is null && context.ProjectContext is not null)
         {
@@ -205,6 +207,44 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                 Success = false,
                 FailureReason = "no target tracker: the executor template is not in the project's repository list"
             };
+        }
+
+        // 7. Resolve dependencies and prepend to body.
+        // The effective provider ID determines whether each dependency is in the same tracker (#N)
+        // or a different one (full URL). For a repo epic with no project context, targetProviderId
+        // is null and the run's own tracker is used for all sub-issues.
+        var effectiveProviderId = targetProviderId ?? context.Run.IssueProviderConfigId;
+        var dependencyLines = resolver.Resolve(proposal.Dependencies, effectiveProviderId, context.Logger);
+        if (dependencyLines.Count > 0)
+        {
+            var depSection = string.Join("\n", dependencyLines);
+            sanitizedBody = $"{depSection}\n\n{sanitizedBody}";
+        }
+
+        // 8. Apply labels: agent:next + agent:generated + allowed custom labels from proposal.
+        // Agent-supplied labels are filtered through AgentLabels.FilterForIssueCreation:
+        // non-agent labels and agent:next / agent:generated are kept; all other agent:* labels
+        // (e.g. agent:epic-approved, agent:done) are dropped to prevent bypassing hub validation.
+        var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
+        foreach (var label in proposal.Labels)
+        {
+            if (!string.IsNullOrWhiteSpace(label) &&
+                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
+            {
+                // TODO: AgentLabels.All uses StringComparer.Ordinal (HashSet default), so a mixed-case
+                // agent label (e.g. "Agent:Epic-Approved") would not be found here and would bypass the
+                // filter, being forwarded to the provider as a non-agent label. The deduplication guard
+                // above already uses OrdinalIgnoreCase. Consider constructing All / AllowedOnCreation
+                // with OrdinalIgnoreCase and updating FilterForIssueCreation to match so that the gate
+                // is robust against non-canonical casing from agent-authored JSON files.
+                // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
+                if (!AgentLabels.All.Contains(label))
+                    labels.Add(label);
+                else
+                    context.Logger.Warning(
+                        "CreateSubIssues: dropping disallowed agent label '{Label}' from sub-issue '{Title}'",
+                        label, proposal.Title);
+            }
         }
 
         // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
@@ -268,7 +308,15 @@ public sealed class CreateSubIssuesStep : IPipelineStep
                 Title = proposal.Title,
                 Success = true,
                 Identifier = created.Identifier,
-                Url = created.Url
+                Url = created.Url,
+                // TODO: ResolvedProviderId stores the template's IssueProviderId (targetProviderId),
+                // which is the provider we *intended* to route to. If a future change adds fallback
+                // behaviour inside CreateIssueForProviderAsync (e.g., retrying on a different
+                // provider), the ID stored here would be stale. If this assumption breaks, the
+                // cross-tracker dependency URL/short-form selection in DependencyResolver will
+                // emit the wrong form for affected sub-issues. Consider asserting or logging when
+                // created.Url does not start with the expected provider base URL.
+                ResolvedProviderId = targetProviderId
             };
         }
         catch (OperationCanceledException)

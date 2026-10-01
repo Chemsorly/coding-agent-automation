@@ -22,7 +22,7 @@ namespace CodingAgent.Web.IntegrationTests.Smoke;
 ///   - IProjectStore        → ApiProjectStore
 ///   - ILoopStateStore      → REMOVED (Option B: ClosedLoopAutoStart in PipelineConfiguration)
 ///   - IActiveRunQueryService → REMOVED (active runs via IPipelineApiRunHistoryClient)
-///   - IConsolidationRunStore → ApiBackedConsolidationRunStore (migrated in Spec 041-045)
+///   - IConsolidationRunStore → REMOVED (issue #3031)
 ///   - IPipelineRunHistoryService → PostgresPipelineRunHistoryService (still DB-backed)
 ///   - IHarnessSuggestionStore   → ApiBackedHarnessSuggestionStore (migrated in Spec 041-045)
 /// </summary>
@@ -81,13 +81,11 @@ public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
 
     // ── API-backed (migrated in Spec 041-045) ────────────────────────────
 
-    [Fact]
-    public void IConsolidationRunStore_IsApiBacked_PostSpec041()
-    {
-        var store = _factory.Services.GetRequiredService<IConsolidationRunStore>();
-        store.Should().BeOfType<ApiBackedConsolidationRunStore>(
-            "IConsolidationRunStore was migrated to API-backed in Spec 041-045 to eliminate dual-write race conditions");
-    }
+    // IConsolidationRunStore was removed in issue #3031 and is no longer registered.
+    // TODO [WARNING]: A negative assertion confirming IConsolidationRunStore is NOT registered is missing.
+    // A future accidental re-registration would be silently ignored. Add an assertion
+    // _factory.Services.GetService<IConsolidationRunStore>().Should().BeNull() in the
+    // "Removed services" section of this file, consistent with the suite's pattern for other removed types.
 
     [Fact]
     public void IHarnessSuggestionStore_IsApiBacked_PostSpec041()

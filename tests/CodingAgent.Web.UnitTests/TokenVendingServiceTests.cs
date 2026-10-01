@@ -219,7 +219,6 @@ public class TokenVendingServiceTests
                 {
                     [ProviderSettingKeys.Model] = "claude-sonnet-4",
                     [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
-                    [ProviderSettingKeys.AgentName] = "reviewer"
                 }
             }
         };
@@ -228,7 +227,6 @@ public class TokenVendingServiceTests
 
         result[0].Settings[ProviderSettingKeys.Model].Should().Be("claude-sonnet-4");
         result[0].Settings[ProviderSettingKeys.ExecutablePath].Should().Be("/usr/bin/kiro-cli");
-        result[0].Settings[ProviderSettingKeys.AgentName].Should().Be("reviewer");
     }
 
     [Fact]

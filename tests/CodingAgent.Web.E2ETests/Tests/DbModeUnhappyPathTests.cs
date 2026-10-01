@@ -321,8 +321,9 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // Disconnect (simulating network blip)
         await agent.DisposeAsync();
 
-        // Wait for heartbeat timeout to trigger Disconnected transition
-        await Task.Delay(TimeSpan.FromSeconds(8));
+        // Wait briefly for the hub to register the disconnect (OnDisconnectedAsync). The 30-second grace
+        // period set above keeps the agent entry until the agent reconnects.
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
 
         // Verify agent is marked Disconnected (not yet removed — within grace period)
         var registry = Fixture.AgentRegistry;

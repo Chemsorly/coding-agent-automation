@@ -99,7 +99,6 @@ public class IssueDetailAndConfigMessagePackRoundtripPropertyTests
             from failedRetentionDays in Gen.Choose(0, 30)
             from analysisEnabled in Gen.Elements(true, false)
             from closedLoopAutoStart in Gen.Elements(true, false)
-            from heartbeatSweep in Gen.Choose(30, 120)
             select new PipelineConfiguration
             {
                 MaxRetries = maxRetries,

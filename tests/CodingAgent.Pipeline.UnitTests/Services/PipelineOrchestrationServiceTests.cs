@@ -1373,9 +1373,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         // On successful completion, agent:done label should be applied
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
-        // All other agent labels should be removed (SwapAgentLabelAsync removes all before adding the new one)
-        foreach (var label in AgentLabels.All)
+        // All status labels (SwapTargets) should be removed — agent:generated is a provenance label
+        // excluded from SwapTargets and must NOT be removed during status swaps.
+        foreach (var label in AgentLabels.SwapTargets)
             _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", AgentLabels.Generated, It.IsAny<CancellationToken>()), Times.Never,
+            "agent:generated is a provenance label and must survive status swaps");
     }
 
     [Fact]
@@ -2369,8 +2372,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
             It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
 
         ctx.MockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.Never);
-        foreach (var label in AgentLabels.All)
+        // All status labels (SwapTargets) should be removed during swaps.
+        // agent:generated is a provenance label excluded from SwapTargets and must NOT be removed.
+        foreach (var label in AgentLabels.SwapTargets)
             ctx.MockIssueProvider.Verify(p => p.RemoveLabelAsync("42", label, It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        ctx.MockIssueProvider.Verify(p => p.RemoveLabelAsync("42", AgentLabels.Generated, It.IsAny<CancellationToken>()), Times.Never,
+            "agent:generated is a provenance label and must survive status swaps");
     }
 
     [Fact]

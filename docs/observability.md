@@ -58,8 +58,10 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
 | `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
-| `agent.tokens.used` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Agent tokens consumed |
-| `agent.cost.usd` | Counter | USD | `run_type`, `pipeline.project_id`, `pipeline.project_name` | LLM cost in USD |
+| `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider` | LLM tokens consumed per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
+| `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost in USD per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
+| `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per run, per phase — recorded **API-side** at terminal status time. Pre-initialized with `model=unknown` for all `run_type × phase × provider` combinations. |
+| `pipeline.run.agent_time` | Counter | `s` | `run_type`, `phase`, `provider` | Agent execution time (seconds) per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
 | `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
 | `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
@@ -98,6 +100,9 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `failure_reason` | `none`, `timeout`, `infrastructure_failure`, `agent_error`, `token_refresh_failure`, `exit_code_failure`, `quality_gate_exhausted`, `gate_rejected` | Failure classification in snake_case. `none` for all non-failure outcomes including `needs_refinement` and `wont_do`. |
 | `step` | PipelineStep enum name (e.g., `Created`, `GeneratingCode`, `RunningQualityGates`) | Pipeline step name in PascalCase — only present on `pipeline.run.step.duration`. Matches `PipelineStep` C# enum member names. |
 | `result` | `created` / `failed` (for `pipeline.run.sub_issues`); `pushed` / `none` (for `pipeline.run.brain_updates`) | Sub-issue creation or brain update result — only present on the respective counters. |
+| `phase` | `analysis`, `analysis_review`, `codegen`, `review`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | Normalized pipeline phase for LLM usage counters. Per-reviewer names (e.g. `review_correctness`) collapse into `review`. |
+| `provider` | `kiro`, `opencode`, `unknown` | Agent provider for LLM usage counters. |
+| `model` | provider-specific model name (e.g. `claude-sonnet-4-5`) | Model name for `pipeline.run.agent_sessions`. Value `unknown` is used in pre-initialization and when the provider doesn't report a model. |
 | `result` | `success`, `failure` | Poll cycle outcome (for loop metrics) |
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
@@ -135,10 +140,11 @@ All counters with closed tag sets are pre-initialized to `0` at API process star
 - `workdistribution.workitems_terminated` is pre-initialized with **24 series**: 3 statuses × (1 none + 7 failure_reasons).
 - `pipeline.run.sub_issues` is pre-initialized with **2 series**: `result=created`, `result=failed`.
 - `pipeline.run.brain_updates` is pre-initialized with **2 series**: `result=pushed`, `result=none`.
+- `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_sessions`, and `pipeline.run.agent_time` are pre-initialized with **135 series each** (5 run_types × 9 phases × 3 providers). `model` is excluded from pre-init (unbounded cardinality).
 
 ### Prompt Cache and Per-Phase Token Data
 
-Each `PipelineRun` accumulates token and cost data beyond the simple totals exposed by `agent.tokens.used` and `agent.cost.usd`. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
+Each `PipelineRun` accumulates token and cost data beyond the simple totals. This richer data is available on `PipelineRunSummary` objects returned by `GET /api/pipeline-runs` and `GET /api/export/runs.json`, and is visible in the UI sidebars.
 
 #### Cache Token Fields
 
@@ -162,7 +168,65 @@ The breakdown is rendered on the Run page (`/runs/{id}`), in the pipeline-progre
 
 **API exposure:** `PhaseBreakdown` is included in the `GET /api/export/runs.json` export. Fields will be absent (`null`) for runs that pre-date the phase breakdown feature.
 
-### Histogram Bucket Boundaries
+### Kiro CLI Usage Data Investigation
+
+**Investigation result (2026-09-29): Kiro CLI does not expose token or cost data.**
+
+During a code audit of `KiroCliAgentProvider` and `KiroCliLib`, the following was verified:
+
+- `KiroCliOrchestrator` and `KiroCliLib.Core.OutputParser` parse CLI output line-by-line to extract test results (via `TestResults` property) and session IDs (via `kiro chat --list-sessions`), but do not parse any token count or credit data.
+- `kiro-cli` output does not contain token counts, credit usage, or cost information in any format (JSON blocks, text lines, or metadata).
+- `KiroCliAgentProvider.ExecuteAsync` returns `AgentResult.Usage = null` and `AgentResult.Cost = null`. This is correct and expected.
+- As a result, `pipeline.run.tokens` and `pipeline.run.cost_usd` will be zero for all phases on Kiro-powered runs. `pipeline.run.agent_sessions` and `pipeline.run.agent_time` **will** be populated for Kiro runs (these are tracked by the agent harness, not the CLI).
+
+**What to watch for:** If a future Kiro CLI version exposes usage data (e.g., in a structured JSON output line like `{"tokens": {"input": ..., "output": ...}}`), `KiroCliOrchestrator` will need to be updated to parse it and populate `AgentResult.Usage`. At that point, the `TokenUsage` fields would flow through to `PhaseBreakdown` automatically via `AccumulateTokenUsage`.
+
+### LLM Usage Telemetry Architecture
+
+The four `pipeline.run.*` usage counters (`tokens`, `cost_usd`, `agent_sessions`, `agent_time`) follow the API-at-terminal-time pattern introduced in issue #2967:
+
+1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-session OTel span with GenAI semantic convention attributes (see "Session Spans" below) and accumulates session data into `PipelineRun.Metrics.PhaseBreakdown` via `AccumulateAgentSession`.
+2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` (`IReadOnlyDictionary<string, PhaseUsagePayload>`) for transmission to the orchestrator.
+3. **API side** — `WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync` reads `PhaseBreakdown` from the deserialized payload and calls `RecordRunUsageMetrics`, which emits the 4 counters with normalized phase tags.
+
+**Phase normalization** is performed by `PipelineTelemetry.NormalizeRunPhase(string?)`, which maps the raw phase keys (e.g., `"review_correctness"`, `"codegen"`, `"code generation"`) to a closed set:
+
+| Raw phase key pattern | Normalized tag |
+|-----------------------|---------------|
+| `analysis` | `analysis` |
+| `analysis_review` / `analysisreview` | `analysis_review` |
+| `codegen` / `code_gen` / `code generation` | `codegen` |
+| `review` | `review` |
+| `review_*` / `review *` | `review` (per-reviewer names collapse) |
+| `acceptance_criteria` / `acceptancecriteria` | `acceptance_criteria` |
+| `pr_description` / `prdescription` | `pr_description` |
+| `reflection` | `reflection` |
+| `decomposition` / `decomposition_review` | `decomposition` |
+| anything else / empty / null | `other` |
+
+### Session Spans (GenAI Semantic Conventions)
+
+Every agent CLI invocation creates a child span under the current `ExecutePipeline` span:
+
+| Span name | `invoke_agent {phase}` (e.g. `invoke_agent analysis`) |
+|-----------|------------------------------------------------------|
+| `gen_ai.operation.name` | `invoke_agent` |
+| `gen_ai.provider.name` | `kiro` or `opencode` |
+| `gen_ai.request.model` | model name if configured, omitted otherwise |
+| `pipeline.phase` | normalized phase tag (same as metric `phase` tag) |
+| `agent.session.resumed` | `true` if `UseResume=true` or `ResumeSessionId` is set |
+| `agent.exit_code` | integer exit code from the CLI process |
+| `gen_ai.usage.input_tokens` | input tokens (OpenCode only; Kiro always omitted) |
+| `gen_ai.usage.output_tokens` | output tokens (OpenCode only; Kiro always omitted) |
+| `gen_ai.usage.total_tokens` | total tokens when > 0 (OpenCode only; Kiro always omitted) |
+
+Stall events are recorded as span events:
+
+| Event name | When | Tags |
+|------------|------|------|
+| `agent.stall_warning` | agent silence exceeds `stallWarningInterval` | `silence_minutes` |
+| `agent.stall_kill` | agent killed due to silence timeout | `silence_minutes`, `kill_timeout_minutes` |
+| `agent.process_death` | agent process died unexpectedly | `pid` |
 
 Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instrument creation time:
 
@@ -230,13 +294,19 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 
 ## Traces
 
-<!-- TODO: [WARNING] The "Span Noise Filters" section (covering OtelNoiseFilter wiring for AspNetCore
-     request filtering, Kubernetes API server filtering, outbound span name enrichment, and
-     OtelNoiseSpanDropProcessor) was removed in issue #2967. None of the OtelNoiseFilter source code
-     was changed — the section was removed as unrelated cleanup. The section documented production code
-     that reduces ~70% of raw daily span volume. Operators configuring OTLP or debugging high span
-     volumes will no longer find this guidance. Restore the section (see git history of this file
-     before the #2967 merge) or move it to a separate observability-internals doc. -->
+### Span Noise Filters
+
+Three high-volume span categories are filtered out before export to avoid overwhelming the OTLP backend with low-signal data (~70% of raw daily span volume). The filters are wired in the **Scheduler** and **Job Controller** processes via `OtelNoiseFilter` (`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`):
+
+| Filter | Mechanism | What is dropped |
+|--------|-----------|-----------------|
+| Health-probe and polling endpoints | `AspNetCoreTraceInstrumentationOptions.Filter` | Exact paths `/healthz`, `/readyz`, `/loop/status` — sub-paths like `/healthz/detail` are kept |
+| Kubernetes API server lease calls | `HttpClientTraceInstrumentationOptions.FilterHttpRequestMessage` | Outbound requests to `KUBERNETES_SERVICE_HOST` (in-cluster) or `kubernetes.default.svc` |
+| Chatty SignalR / Blazor circuit spans | `OtelNoiseSpanDropProcessor` (added via `.AddProcessor(new OtelNoiseSpanDropProcessor())`) | Hub methods ending in `/Heartbeat`, `/ReportOutputLines`, `/OnRenderCompleted`; spans starting with `"Circuit "` (Blazor circuit lifecycle); event callbacks starting with `"Event "` and containing `" -> "` |
+
+The K8s API server filter alone eliminates ~387k leader-election lease spans per day. Additionally, outbound HTTP span names are enriched to `"{METHOD} {host}"` (e.g., `"GET api.github.com"`) by `EnrichWithHttpRequestMessage` to keep cardinality bounded while still making host-level tracing useful.
+
+These filters are applied at the tracer-provider level — dropped spans are marked `IsAllDataRequested = false` at start, so no attributes are collected and nothing is exported.
 
 All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).
 
@@ -247,12 +317,40 @@ Each agent run's spans are connected to the API request that created the WorkIte
 ```
 POST /api/work-items (API request span)
 └── WorkItemAgent.Execute (K8s agent pod)
-    ├── CloneRepository
-    ├── AnalyzeIssue
-    ├── GenerateCode
-    ├── RunQualityGates
-    └── CreatePullRequest
+    └── ExecutePipeline
+        ├── Step CloneRepository
+        │   └── CloneRepository
+        ├── Step VerifyBaseline
+        │   └── VerifyBaseline
+        ├── Step AnalyzeCode
+        │   └── AnalyzeIssue
+        ├── Step GenerateCode
+        │   └── GenerateCode
+        ├── Step RunQualityGates
+        │   └── RunQualityGates
+        │       ├── QualityGate.Compilation
+        │       ├── QualityGate.Tests
+        │       └── WaitForCi  (pre-PR external CI)
+        ├── Step CreatePullRequest
+        │   └── CreatePullRequest
+        │       └── WaitForCi  (post-PR external CI, inside FinalizePullRequest)
+        └── PrePrCleanup
 ```
+
+**Span structure rules:**
+
+- `PipelineStepRunner` creates one `Step {StepName}` span per step with `pipeline.step` and `pipeline.run_id` tags.
+- Steps that start their own inner span (e.g. `CloneRepository`, `AnalyzeIssue`) nest that inner span inside the runner-created `Step` span — giving two span levels per step.
+- Steps without an inner span (`VerifyBaseline`, `FetchIssue`, etc.) have only the runner-created span.
+- `VerifyBaseline` is a named inner span with `pipeline.run_id` and `pipeline.issue` tags.
+- `WaitForCi` is emitted for both the pre-PR CI path (`QualityGateExecutor.RunExternalCiPollAsync`) and the post-PR CI path (`CiPollingCoordinator.WaitForPostPrCiAsync`). Tags: `pipeline.run_id`, `pipeline.run_type`, `pipeline.ci_path` (`pre_pr` or `post_pr`), `pipeline.ci_status`, `pipeline.ci_infra_retries`.
+- `PrePrCleanup` is emitted by `PipelineCleanup.RunAsync` as a child of `ExecutePipeline`.
+
+**Error status rules:**
+
+- A step span (`Step X`) has Error status only when that step operation failed (unhandled exception from `ExecuteAsync`, or `TryCriticalAsync` failure).
+- Non-critical failures (`TryNonCriticalAsync`) add an `exception` event with `pipeline.non_critical=true` to the current step span. The span status remains Unset — no Error.
+- `ExecutePipeline` has Error status only when the run ends `PipelineStep.Failed`. All other terminal states (`Completed`, `ConflictRestart`, `PrMerged`, `PrClosed`, `Cancelled`) leave it Ok or Unset.
 
 This is achieved by capturing the W3C `traceparent` from the API request span at WorkItem creation time (`WorkItemDispatchEndpoints.cs`, `DispatchWorkItemService.cs`), storing it in `WorkItemEntity.TraceParent`, and injecting it as the `TRACEPARENT` environment variable in the K8s Job (`DispatchLifecycleService.CreateK8sJobAsync` → `JobSpecBuilder.Build`). The agent process restores this context in `WorkItemAgentService.ExecuteAsync` and starts `WorkItemAgent.Execute` as a child.
 
@@ -283,8 +381,10 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution |
-| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace |
+| `ExecutePipeline` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.final_step`, `pipeline.agent_id`* | Top-level span wrapping the full pipeline execution. Error status set only when run ends `Failed`. |
+| `Step {StepName}` | `pipeline.step`, `pipeline.run_id` | Runner-created span per step (emitted by `PipelineStepRunner`). Error status set on unhandled exception. Non-critical failures add exception event, no Error. |
+| `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace (child of `Step CloneRepository`) |
+| `VerifyBaseline` | `pipeline.run_id`, `pipeline.issue` | Agent health check + workspace baseline verification (child of `Step VerifyBaseline`). Error status set on fatal health-check failure only. |
 | `CreateBranch` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.branch_name` | Branch creation or checkout |
 | `SyncBrainPreRun` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.brain_sync.skipped` | Brain repository sync (pre-run) |
 | `RunEnvironmentSetup` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Environment setup commands |
@@ -294,6 +394,7 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 | `RunQualityGates` | `pipeline.run_id`, `pipeline.issue` | Quality gate execution |
 | `QualityGate.Compilation` | `gate_name` | Compilation command execution (child of RunQualityGates) |
 | `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
+| `WaitForCi` | `pipeline.run_id`, `pipeline.run_type`, `pipeline.ci_path`, `pipeline.ci_status`, `pipeline.ci_infra_retries` | External CI polling span. `pipeline.ci_path` is `pre_pr` (inside `RunExternalCiPollAsync`) or `post_pr` (inside `WaitForPostPrCiAsync`). |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
 | `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `pipeline.review_agent`, `pipeline.isolated` | Individual review agent execution (child of CodeReview.Iteration) |
@@ -311,6 +412,7 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 | `Reflection` | `pipeline.run_id` | Post-PR reflection prompt (child of FinalizePullRequest) |
 | `BrainSyncPostRun` | `pipeline.run_id` | Brain repository sync after run (child of FinalizePullRequest) |
 | `FeedbackCollection` | `pipeline.run_id` | Structured feedback collection (child of FinalizePullRequest) |
+| `PrePrCleanup` | `pipeline.run_id` | Workspace deletion + reporter disposal (child of ExecutePipeline, emitted by `PipelineCleanup.RunAsync`) |
 | `Hub.ReportJobCompleted` | `job_id`, `success` | Hub business logic for job completion |
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
@@ -376,29 +478,17 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 Agent pods emit telemetry with `service.name` derived from the agent image and labels.
 
-<!-- TODO: [WARNING] The coding-agent-worker row was removed from this table in issue #2967.
-     Agent pods (K8s Jobs) still emit ExecutePipeline spans via PipelineRunInstrumentation.
-     Operators querying Tempo for agent-pod spans by service.name or service.instance.id (set to the
-     K8s Job name) will find the documented guidance gone. Re-add the row:
-     | coding-agent-worker | Agent pods (K8s Jobs) | — | Set unconditionally by JobSpecBuilder; per-run identity in service.instance.id (= Job name) in OTEL_RESOURCE_ATTRIBUTES |
-     Also restore the "Run identity in service.instance.id" callout that was removed. -->
-
-<!-- TODO: [WARNING] The API service.name default was changed from coding-agent-api to coding-agent-web in this
-     table without a breaking-change notice for operators who followed the earlier migration (issue pre-#2969)
-     and updated their dashboards from coding-agent-web to coding-agent-api. Those operators will now get wrong
-     results if they kept the coding-agent-api filter. Add a breaking-change callout here analogous to the one
-     that was removed: "⚠️ Breaking change: the API's default service.name reverted from coding-agent-api to
-     coding-agent-web. If you updated Grafana dashboards/alerts to coding-agent-api based on the previous
-     notice, update them back to coding-agent-web (or use a regex that matches both)." -->
-
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
 | `coding-agent-web` | Web service (Blazor UI) | — | Hardcoded at compile time in `OpenTelemetryRegistration.cs`; not overridable via `OTEL_SERVICE_NAME` |
 | `coding-agent-web` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-web`). Override to `coding-agent-api` to separate API spans from Blazor spans in Tempo — then also update Grafana panel queries. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
+| `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder` via `OTEL_SERVICE_NAME` on each Job pod. Per-run identity exposed via `service.instance.id` = K8s Job name (e.g., `caa-agent-7f3a9b2e1c4`), set in `OTEL_RESOURCE_ATTRIBUTES` |
 
 > **Why API defaults to `coding-agent-web`:** The Grafana "Recent Pipeline Traces" panel queries `rootServiceName="coding-agent-web"`. With the API emitting under the same service name, `ExecutePipeline` spans (started by the API when a WorkItem is created) appear in that panel automatically. Override `otel.apiServiceName` to `coding-agent-api` if you want to distinguish API-origin spans from Blazor UI spans; then update the panel query to `rootServiceName=~"coding-agent-web|coding-agent-api"`. See issue #2255.
+
+> **⚠️ Breaking change notice (API service name):** The API's default `service.name` reverted from `coding-agent-api` back to `coding-agent-web`. If you previously updated Grafana dashboards or alerts to filter on `service.name="coding-agent-api"` based on an earlier migration notice, update those filters back to `coding-agent-web` (or use a regex: `service.name=~"coding-agent-web|coding-agent-api"`). Dashboards that never changed the filter are unaffected.
 
 ### Example: Grafana Cloud
 
@@ -444,38 +534,53 @@ Expected span hierarchy for an implementation run:
 
 ```
 ExecutePipeline
-├── AnalyzeIssue
-├── GenerateCode
-├── ReviewCode
-│   ├── CodeReview.Iteration
-│   │   ├── CodeReview.Agent (per agent)
-│   │   └── ...
-│   └── ...
-├── RunQualityGates
-│   ├── QualityGate.Compilation
-│   └── QualityGate.Tests
-├── CreatePullRequest
-├── GeneratePrDescription
-└── FinalizePullRequest
-    ├── Reflection
-    ├── BrainSyncPostRun
-    └── FeedbackCollection
+├── Step CloneRepository
+│   └── CloneRepository
+├── Step VerifyBaseline
+│   └── VerifyBaseline
+├── Step AnalyzeCode
+│   └── AnalyzeIssue
+├── Step GenerateCode
+│   └── GenerateCode
+├── Step ReviewCode
+│   └── ReviewCode
+│       ├── CodeReview.Iteration
+│       │   ├── CodeReview.Agent (per agent)
+│       │   └── ...
+│       └── ...
+├── Step RunQualityGates
+│   └── RunQualityGates
+│       ├── QualityGate.Compilation
+│       ├── QualityGate.Tests
+│       └── WaitForCi  (pre-PR external CI, pipeline.ci_path=pre_pr)
+├── Step CreatePullRequest
+│   └── CreatePullRequest
+│       ├── GeneratePrDescription
+│       └── FinalizePullRequest
+│           ├── WaitForCi  (post-PR external CI, pipeline.ci_path=post_pr)
+│           ├── Reflection
+│           ├── BrainSyncPostRun
+│           └── FeedbackCollection
+└── PrePrCleanup
 ```
 
 For a review run:
 
 ```
 ExecutePipeline
-├── ExtractLinkedIssues
-├── ReviewCode
-└── PostReviewFindings
+├── Step ExtractLinkedIssues
+├── Step ReviewCode
+│   └── ReviewCode
+├── Step PostReviewFindings
+│   └── PostReviewFindings
+└── PrePrCleanup
 ```
 
 For a decomposition run (Phase 1):
 
 ```
 ExecutePipeline
-└── DecompositionAnalysis
+└── Step DecompositionAnalysis
     └── PostDecompositionPlan
 ```
 

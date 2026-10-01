@@ -497,8 +497,6 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
     private static void MockConsolidationService(IServiceCollection services)
     {
         var mock = new Mock<IConsolidationService>();
-        mock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
         ReplaceService<IConsolidationService>(services, mock.Object);
 
         // Spec 045: mock IPipelineApiConfigClient to prevent AutoStartPipelineLoopAsync

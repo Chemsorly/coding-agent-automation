@@ -86,7 +86,7 @@ Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversa
 
 ### Harness Suggestions (global)
 
-Analyzes accumulated `RunFeedback` from all pipeline runs to identify recurring patterns. Produces a JSON file (`config/pipeline/harness-suggestions.json`) with the top 3-5 improvement opportunities ranked by frequency and impact.
+Analyzes accumulated `RunFeedback` from all pipeline runs to identify recurring patterns. Produces top 3-5 improvement opportunities ranked by frequency and impact, persisted to the database via `IHarnessSuggestionStore`.
 
 Each suggestion includes:
 - Concrete, actionable text (what to change)
@@ -100,16 +100,17 @@ Each suggestion includes:
 4. Execute agent to generate suggestions
 5. **Write-to-file step** — a follow-up agent call serializes suggestions to `.agent/harness-suggestions-output.json` (enables stable file for review)
 6. **Adversarial review** — evaluates suggestions against original feedback data. Checks for ungrounded suggestions, implausible frequency counts, and non-actionable advice.
-7. Parse final suggestions and persist to `config/pipeline/harness-suggestions.json`
+7. Parse final suggestions and persist to the database via `IHarnessSuggestionStore` (Postgres)
 
 Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the adversarial review step.
 
 ### Consolidation Dispatch
 
-Consolidation jobs are dispatched via `IConsolidationDispatchService`. In K8s mode, dispatch originates from the Orchestrator (Web) via `ConsolidationJobPreparationService` and routes through the Pipeline API's synchronous dispatch endpoint, using the `caa-{release}-dispatch-lock` lease for deduplication. (`ConsolidationDispatchService`, a standalone background loop that previously ran in the Job Controller, was removed in #2323.) The job naming format `caa-cons-{12 hex chars}` is preserved for compatibility with any in-flight Jobs created before that change. The service enforces:
+Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. `IConsolidationDispatchService` was removed in #2323; there is no separate synchronous dispatch endpoint or distributed lease for consolidation. The Job Controller dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). The job naming format `caa-cons-{12 hex chars}` is preserved for compatibility with any in-flight Jobs created before that change.
 
-- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. While a work item with that key is live, another trigger is rejected as already running.
+- **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
+- **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Job Controller fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
 
 ### Consolidation Page
 
@@ -124,4 +125,5 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
 
 - **PipelineRun records (backfilled consolidation history):** Consolidation run history is migrated into `PipelineRuns` by `BackfillConsolidationRunsAsync` and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps.
+  <!-- TODO [WARNING]: This bullet is stale after issue #3032. BackfillConsolidationRunsAsync and the ConsolidationRuns table no longer exist. Consolidation runs are now recorded directly as PipelineRuns at dispatch time (PipelineRunFactory.CreateFromWorkItem), so no backfill step is involved. Update to remove the BackfillConsolidationRunsAsync reference. -->
 - **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).

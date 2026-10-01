@@ -31,6 +31,15 @@ public static class WorkItemQueryEndpoints
         // ── Metrics feed for the Scheduler's WorkItemCountsService ─────────────
         group.MapGet("/counts-by-status", GetCountsByStatus).RequireAuthorization(ApiAuthPolicies.Operator);
         group.MapGet("/{id:guid}/status", GetWorkItemStatus).RequireAuthorization(ApiAuthPolicies.Operator);
+
+        // ── Decomposition concurrency enforcement (cross-cycle) ─────────────
+        // TODO [WARNING]: This endpoint is protected by ApiAuthPolicies.Operator, consistent with all
+        // other endpoints in this group. If a misconfiguration causes authorization middleware to be
+        // skipped (e.g. accidental re-registration without .RequireAuthorization, or an integration-test
+        // host that disables auth globally), the active decomposition count would be readable by
+        // unauthenticated callers. The count itself carries no secret data (low-severity information
+        // disclosure), but ensure the existing authorization policy tests cover this new route.
+        group.MapGet("/active-decomposition-count", GetActiveDecompositionCount).RequireAuthorization(ApiAuthPolicies.Operator);
     }
 
     // ── GET /pending ──────────────────────────────────────────────────────
@@ -336,5 +345,36 @@ public static class WorkItemQueryEndpoints
             return TypedResults.NotFound();
 
         return TypedResults.Ok(new { status });
+    }
+
+    // ── GET /active-decomposition-count ──────────────────────────────────
+
+    /// <summary>
+    /// GET /api/work-items/active-decomposition-count
+    /// Returns the count of Decomposition and DecompositionAnalysis WorkItems that are currently
+    /// active (Pending, Dispatched, or Running). Used by the Scheduler to enforce
+    /// <c>MaxConcurrentDecompositions</c> across poll cycles.
+    /// 200 with { count: int }.
+    /// </summary>
+    internal static async Task<IResult> GetActiveDecompositionCount(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        CancellationToken ct)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+        // TODO [WARNING]: The doc comment above mentions "Decomposition and DecompositionAnalysis WorkItems",
+        // but this query filters on WorkItemTaskType.Decomposition only. At runtime this is correct because
+        // both the analysis and decomposition phases are stored as WorkItemTaskType.Decomposition (confirmed
+        // by WorkItemTaskTypeExtensions.ToDefaultRunType). If a separate WorkItemTaskType.DecompositionAnalysis
+        // enum value is added in future, this query must be updated to include it — otherwise active analysis-
+        // phase items will be undercounted and MaxConcurrentDecompositions enforcement will break silently.
+        var count = await db.WorkItems
+            .AsNoTracking()
+            .CountAsync(w =>
+                (w.TaskType == WorkItemTaskType.Decomposition) &&
+                (w.Status == WorkItemStatus.Pending ||
+                 w.Status == WorkItemStatus.Dispatched ||
+                 w.Status == WorkItemStatus.Running),
+                ct);
+        return TypedResults.Ok(new { count });
     }
 }

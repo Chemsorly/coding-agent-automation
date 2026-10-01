@@ -273,12 +273,13 @@ public sealed class FakeJobController : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _goneSince = new();
 
     /// <summary>
-    /// How long an in-flight item's agent may be gone before its pod counts as dead. Tests that exercise
-    /// a pod dying set it short; <see cref="ForgetAllInFlight"/> restores the default between tests.
+    /// How long an in-flight item's agent may be gone before its pod counts as dead: 2 seconds unless a test
+    /// sets it, for example longer so an agent can reconnect. <see cref="ForgetAllInFlight"/> restores the
+    /// default between tests.
     /// </summary>
     public TimeSpan DisconnectGracePeriod { get; set; } = DefaultDisconnectGracePeriod;
 
-    private static readonly TimeSpan DefaultDisconnectGracePeriod = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan DefaultDisconnectGracePeriod = TimeSpan.FromSeconds(2);
 
     /// <summary>Stops tracking a work item, so a completed job is not reconciled as a dead pod.</summary>
     internal void ForgetInFlight(Guid workItemId)

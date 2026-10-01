@@ -17,8 +17,9 @@ Human-authored intent behind non-obvious design choices. This file is the author
 <!-- Session: 22 | Last run: 2026-09-21 | Decisions added: 6 (catch(Exception) MarkCompleted gap #2851, DirectoryNotFoundException fallback no-opinion, ProviderConfigId Phase 2 no-opinion, AgentWorkspacePaths → Contracts #2852, ReconcileOrphanedPipelineRuns load-all no-opinion, OCE swallowing no-opinion); issues created: #2851/#2852 -->
 <!-- Session: 23 | Last run: 2026-09-21 | Decisions added: 6 (StallMonitor kill=AgentTimeout intentional, StallPollInterval not overridable, flat warnings intentional, OpenCode session-status polling, AgentCodingPageService 460 lines stable no-opinion, EnsureSessionAsync coverage complete); no bugs found; Q3 corrected (OpenCode DOES have polling health) -->
 <!-- Session: 24 | Last run: 2026-09-21 | Decisions added: 5 (conflict rework re-queues agent:done intentional, StaleBranchCleaner double-scan #2880, HousekeepingMaxSlotAgeMinutes dead config #2881, DispatchWorkItemService sanitizedSelector no-opinion, HousekeepingActiveLabels set intentional); issues created: #2880/#2881 -->
-<!-- Session: 25 | Last run: 2026-09-22 | Decisions added: 5 (ChatSessionWatcher idle-kill deadlock no-opinion, RequestGetIssue double-retry intentional, zero-context=InfrastructureFailure intentional, dispatch 503 = next poll cycle, IssueReworkService fail-closed intentional); no bugs found -->
+<!-- Session: 27 | Audit: 2026-09-30 | Stale-status sweep — 11 decisions updated from "currently broken"/"open issue" to "fixed": #2178 EmitOutputLine, #2161 PR description, #2171 WorkItems.Payload, #2400 SecurityScan, #2401 CoberturaParser/JacocoParser, #2881 HousekeepingMaxSlotAgeMinutes, #2404 HousekeepingTriggerCooldownMinutes, #2403 FeedbackTimeoutSeconds stale log, #2880 StaleBranchCleaner double-scan, dispatch priority TODO (#2563 deployed), #2405 zero-sentinel (resolved via loop removal). #2852 AgentWorkspacePaths updated to partial (4/5 done, ProcessWrapper.cs literal remains). -->
 <!-- Session: 26 | Last run: 2026-09-22 | Decisions added: 3 (PvcPoolExhaustions KISS/DRY no-opinion, advisory lock asymmetry no-opinion, ChatHeartbeatTracker null-tracker no-opinion); issues created: #2883 -->
+<!-- Session: 27 | Last run: 2026-09-30 | Decisions added: 5 (agent:done ordering full pipeline+CI, 1:1:1 template binding intentional, epic scope tracker-of-record intentional, Kiro token gap = provider limitation, MaxConcurrentDecompositions global-only); no issues created; queued closed: RequestGetIssue double-retry verified (CiNotStartedRetries config covers CI loop) -->
 <!-- Manual correction 2026-09-25 (not an intent-extraction session): session-25 entries "Zero open-issue context" and "RequestGetIssue double-retry tier" had wrong causes and implementation facts, found in the #2927 RCA; both decisions kept, facts corrected -->
 <!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
 
@@ -41,6 +42,21 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Verification (2026-08-22):** `.github/workflows/ci.yml` `docker-build` job includes all agent image Dockerfiles (`dockerfiles/kiro/agent-kiro-*.Dockerfile`, `dockerfiles/opencode/agent-opencode-*.Dockerfile`) alongside control-plane Dockerfiles, all with `needs: [build-and-test]`. They are built from `${{ github.sha }}` — the same commit.
 
 **Reassess when:** If agent images are pinned separately (e.g., a `capability` tag that CI does NOT overwrite on every release commit). At that point add a `[Key(n)]` snapshot test as described in the architecture audit.
+
+### agent:done ordering: full pipeline + post-PR CI before label is set
+
+**Date:** 2026-09-30
+**Category:** architecture
+
+**Decision:** `agent:done` is set only after ALL pipeline steps finish — including post-PR enrichment (brain sync, PR description upload) — AND post-PR CI passes on the PR HEAD commit. A PR can exist in ready-for-review state while post-PR enrichment steps are still running; this window is normal. `agent:done` = full pipeline completion, not PR creation. A CI failure on the PR HEAD commit after promotion to ready-for-review is treated as a run error (`agent:error`), not success. Before #3139, post-PR CI was not checked — the pipeline declared success at PR creation regardless.
+
+**Context:** Comparable systems (Devin, OpenHands, Copilot CCA) declare success at PR creation. This system is stricter: it waits for CI and enrichment before signaling completion, reflecting that a reviewer seeing `agent:done` on a PR should be able to trust that CI is green.
+
+**Alternatives considered:** agent:done at PR creation (old behavior — incorrect; leaves failing PRs marked done); agent:done after CI but before enrichment (partial — brain sync is also part of a complete run).
+
+**Reassess when:** Post-PR enrichment becomes so slow that the agent:done delay creates operational confusion, or if post-PR CI is intentionally expected to fail (e.g., feature flags CI doesn't know about).
+
+---
 
 ### AgentHub consolidation cluster extracted into IHubConsolidationOperations (T10)
 
@@ -420,6 +436,36 @@ The practical impact is low: draft PRs are rare (require retry exhaustion), and 
 
 ---
 
+### Kiro token/cost telemetry: provider subscription limitation, not a permanent design choice
+
+**Date:** 2026-09-30
+**Category:** architecture
+
+**Decision:** Kiro token and cost data are absent because the Amazon Developer Q subscription does not currently expose token usage through the Kiro CLI. This is a provider subscription limitation, not a deliberate policy. If Amazon Q (or any Kiro-supported provider) exposes token usage via the CLI, it should be captured. Until confirmed otherwise, Kiro runs record session count and elapsed time only; token/cost fields remain zero. The UI conditionally hides token/cost tiles and columns when no token data is present. `KiroCliAgentProvider.ExecuteAsync` returns `AgentResult` with no `Usage` field; `AccumulateTokenUsage` early-returns on null `Usage`. `AccumulateAgentSession` still records session count and elapsed time for Kiro runs.
+
+**Context:** OpenCode reports tokens via `GET /session/:id` (HTTP polling against a local server). Kiro CLI is a subprocess with text-only stdout — no token API is currently consumed. A follow-up investigation should confirm whether Amazon Q exposes metrics in any parseable form.
+
+**Alternatives considered:** Estimate tokens from output line count or elapsed time (rejected — misleading; show nothing rather than a rough proxy). Always show token/cost columns with N/A (rejected — clutters the UI with no actionable value for Kiro-only operators).
+
+**Reassess when:** Amazon Q or Kiro CLI exposes token usage in any parseable form (stdout JSON, workspace metadata file, etc.). At that point, populate `AgentResult.Usage` in `KiroCliAgentProvider` and the telemetry pipeline flows automatically.
+
+---
+
+### 1:1:1 template binding: one repo, one tracker per enabled template — intentional constraint
+
+**Date:** 2026-09-30
+**Category:** architecture
+
+**Decision:** Each enabled template is permanently bound to exactly one repository and one issue tracker. Two enabled templates cannot share a repo or tracker. This is an intentional architectural invariant, not a current technical limitation. The constraint ensures a 1:1:1 mapping between issue → template → PR: each issue in a tracker is owned by exactly one template, which produces exactly one PR in that repo. Without this, an agent receiving a shared repo/tracker would need to decide what to implement where — that is out of scope. Multi-repo work is handled via project epics dispatching to multiple single-repo templates. Disabled templates are exempt so two conflicting templates can coexist with one disabled.
+
+**Context:** `TemplateBindingRules.Validate` enforces the constraint at save time. GitHub Actions allows matrix builds across multiple repos; this system's 1:1:1 is intentionally stricter. Same rationale as the epic scope boundary decision: keep routing ownership unambiguous.
+
+**Alternatives considered:** Multi-repo templates where the agent decides per-issue what to implement where (out of scope), shared tracker with multiplexing (ambiguous ownership), no binding enforcement (would silently allow duplicate dispatch).
+
+**Reassess when:** A concrete multi-repo use case arises that cannot be served by project epics. A new "multi-repo template" concept is needed — not a relaxation of the 1:1:1 rule.
+
+---
+
 ### GitHub mergeability mapping: correctness-driven, conservative null for unknown states
 
 **Date:** 2026-08-14
@@ -565,25 +611,20 @@ Both providers give the stall monitor actionable signal via `AgentHealthStatus` 
 
 ---
 
-### AgentWorkspacePaths: belongs in CodingAgent.Contracts — #2852 tracks move
+### AgentWorkspacePaths: moved to CodingAgent.Contracts — mostly resolved (#2852)
 
-**Date:** 2026-09-21
+**Date:** 2026-09-21 · **Updated:** 2026-09-30
 **Category:** architecture
 
-**Decision:** `AgentWorkspacePaths` must live in `CodingAgent.Contracts` (not `CodingAgent.Pipeline`) so that all assemblies — including `CodingAgent.Infrastructure.Providers`, `CodingAgent.Contracts` itself, and `KiroCliLib` — can reference workspace path constants without an upward dependency on `CodingAgent.Pipeline`. Five hardcoded `.agent`/`.brain` string literals remain across lower-layer assemblies because they currently cannot reference `AgentWorkspacePaths`. Once moved, all five must be replaced with the centralized constants. No new path constants are in scope; only the namespace/assembly changes.
+**Decision:** `AgentWorkspacePaths` must live in `CodingAgent.Contracts` (not `CodingAgent.Pipeline`) so all assemblies can reference workspace path constants without an upward dependency on `CodingAgent.Pipeline`.
 
-**Currently broken** — five remaining literals:
-- `KiroCliLib/Core/ProcessWrapper.cs` ~L62 — `.agent` for prompt temp files
-- `CodingAgent.Agent/Executors/RefactoringExecutor.cs` ~L93 — `.brain` for brain clone path
-- `CodingAgent.Pipeline/Services/Steps/EnsureAgentGitignoreStep.cs` ~L25 — `.agent/` in gitignore entry
-- `CodingAgent.Infrastructure.Providers/Git/RepositoryGitOperations.cs` ~L132 — `new[] { ".agent", ".brain" }` git unstage blacklist
-- `CodingAgent.Contracts/Models/PipelineConfiguration.cs` ~L294 — `new[] { ".agent", ".brain" }` default `BlacklistedPaths`
+**Status (2026-09-30 audit):** Largely resolved (#2852). `AgentWorkspacePaths` exists in `src/CodingAgent.Contracts/Models/AgentWorkspacePaths.cs`. Four of five hardcoded literals are fixed — those assemblies now use `AgentWorkspacePaths.MetadataDirectory`/`BrainDirectory`. One literal remains:
 
-**Context:** `AgentWorkspacePaths` was placed in `CodingAgent.Pipeline` (#2797) because that was the first assembly requiring centralization. The assembly boundary prevents lower-layer assemblies from consuming it. `CodingAgent.Contracts` has no layer-boundary restrictions and is already referenced by all assemblies in the dependency graph.
+- `KiroCliLib/Core/ProcessWrapper.cs` — `internal const string AgentMetadataDirectory = ".agent"` still uses its own local copy rather than `AgentWorkspacePaths`. This is the only remaining divergence.
 
-**Alternatives considered:** Duplicate constants in each assembly (rejected — defeats the purpose of centralization), leave literals as-is (rejected — operator confirmed all path constants should have a single global home).
+**Alternatives considered:** Duplicate constants in each assembly (rejected), leave literals as-is (rejected).
 
-**Reassess when:** Never for the principle. If a new workspace path constant is needed, it goes in `AgentWorkspacePaths` in `CodingAgent.Contracts` — not as a literal at the call site.
+**Reassess when:** Never for the principle. Replace the remaining `ProcessWrapper.cs` literal on next touch of that file.
 
 ---
 
@@ -668,54 +709,50 @@ Both providers give the stall monitor actionable signal via `AgentHealthStatus` 
 **Date:** 2026-09-06
 **Category:** architecture
 
-**Decision:** `QualityGateExecutor.RetryLoop.cs` line ~402 logs the feedback timeout duration using `FeedbackConstraints.FailureFeedbackTimeoutSeconds` (hardcoded 60) instead of `context.Config.FeedbackTimeoutSeconds` (the actual configured value). The CTS is correctly created with `context.Config.FeedbackTimeoutSeconds` — only the log message is wrong. #2403 tracks the one-line fix.
+**Decision:** `QualityGateExecutor.RetryLoop.cs` log of the feedback timeout duration should use `context.Config.FeedbackTimeoutSeconds` (the actual configured value), not `FeedbackConstraints.FailureFeedbackTimeoutSeconds` (hardcoded 60). The CTS was always correct; only the log message was wrong.
 
-**Impact:** Operators who configure non-default `FeedbackTimeoutSeconds` see misleading "timed out after 60s" logs when the actual timeout was different. Low severity but directly misleads incident responders.
+**Status (2026-09-30 audit):** Fixed. Log now uses `context.Config.FeedbackTimeoutSeconds`. Unit test in `QualityGateExecutorFeedbackTests.cs` guards against regression to the hardcoded const.
 
-**Reassess when:** Never once #2403 is fixed.
+**Reassess when:** Never — stable.
 
 ---
 
-### WorkItemEntity.TimeoutSeconds zero-sentinel: keep fallback until DB migration — #2405
+### WorkItemEntity.TimeoutSeconds zero-sentinel: resolved via loop removal (#2405)
+
+**Date:** 2026-09-06 · **Closed:** 2026-09-30
+**Category:** architecture
+
+**Decision:** The `item.TimeoutSeconds > 0 ? ... : DefaultAgentTimeout` ternary fallback existed in `DispatchLoop`, `ConsolidationDispatchLoop`, and `ReconciliationLoop` to guard against legacy zero-TimeoutSeconds rows created before #2179.
+
+**Status (2026-09-30 audit):** Resolved, but differently than planned. `DispatchLoop` and `ConsolidationDispatchLoop` were removed entirely in #2322/#2323 — no sentinel to remove there. `ReconciliationLoop` uses `if (item.TimeoutSeconds <= 0) continue` (skip the item) rather than the ternary fallback. `DefaultAgentTimeout` is not used in `JobController`. The original three-step removal plan (DB migration + guard removal) is moot for the two removed loops; the ReconciliationLoop behavior (skip zero-TimeoutSeconds items) is its own design choice and does not need the DB migration.
+
+**Reassess when:** Never — the original fallback concern is resolved by the loop removal and the skip-behavior in ReconciliationLoop.
+
+---
 
 **Date:** 2026-09-06
 **Category:** architecture
 
-**Decision:** The `item.TimeoutSeconds > 0 ? ... : DefaultAgentTimeout` fallback in `DispatchLoop`, `ConsolidationDispatchLoop`, and `ReconciliationLoop` MUST NOT be removed until a DB migration back-fills all zero rows to `DefaultAgentTimeout` (1800s). All rows created after #2179 (Aug 29 2026) have positive values — the zero rows are purely historical. The removal is a three-step operation: (1) DB migration, (2) add `ArgumentOutOfRangeException` guard to `PipelineConfiguration.AgentTimeout` setter to reject `TimeSpan.Zero`, (3) remove the three sentinel guards.
+**Decision:** `QualityGateConfiguration.Key(8)` (`SecurityScanEnabled`) was tombstoned in #2249 (coverage-threshold removal). The corresponding result field `QualityGateReport.SecurityScan` (Key 4) and all downstream executor checks were dead code — nothing populated `SecurityScan` with a non-null value.
 
-**Context:** #2179 established the correct flow but did not back-fill existing rows. No new zero rows can be created by the current code. The zero-sentinel guards are the only thing preventing legacy rows from getting a 0-second `activeDeadlineSeconds` on the K8s Job.
+**Status (2026-09-30 audit):** Fixed (#2400 resolved). Keys 4 and 8 are tombstoned in `QualityGateReport.cs`, `QualityGateConfiguration.cs`, and `QgcExecutionResult.cs`. No live SecurityScan properties or callers remain in `src/`.
 
-**Reassess when:** #2405 is implemented and confirmed deployed. At that point the guards are dead code.
+**MessagePack invariant:** Key(4) is tombstoned (`// Key(4) is retired`) rather than deleted, following the same pattern used for Keys 1/7/8/11/12/13. Do not reuse the slot.
 
----
-
-**Date:** 2026-09-06
-**Category:** architecture
-
-**Decision:** `QualityGateConfiguration.Key(8)` (`SecurityScanEnabled`) was tombstoned in #2249 (coverage-threshold removal). The corresponding result field `QualityGateReport.SecurityScan` (Key 4) and all downstream executor checks are dead code — nothing currently populates `SecurityScan` with a non-null value. Both the result field and all callers (`QualityGateExecutor`, `QualityGateExecutor.ExternalCi`, `PipelineFormatting`, `FeedbackPromptBuilder`) must be removed. #2400 tracks the cleanup.
-
-**MessagePack invariant:** Key(4) must be tombstoned (`// Key(4) is retired`) rather than deleted, following the same pattern used for Keys 1/7/8/11/12/13. Do not reuse the slot.
-
-**Context:** The coverage removal commit tombstoned config keys correctly but left the result-side infrastructure intact, creating an asymmetry where the gate can never be configured but the executor still checks its result. Confirmed by grepping: zero callers set `SecurityScan` to non-null.
-
-**Alternatives considered:** Preserve as a future placeholder — rejected because undocumented placeholder fields are agent traps; if security scanning returns, the field can be re-introduced with a new key.
-
-**Reassess when:** Security scanning is re-introduced as a feature. At that point, add a new `Key(N)` field (after the current highest key), not a resurrection of Key(4).
+**Reassess when:** Security scanning is re-introduced as a feature. Add a new `Key(N)` field (after the current highest key), not a resurrection of Key(4).
 
 ---
 
-### CoberturaParser / JacocoParser: dead code after coverage removal — #2401 tracks deletion
+### CoberturaParser / JacocoParser: deleted after coverage removal — resolved (#2401)
 
-**Date:** 2026-09-06
+**Date:** 2026-09-06 · **Closed:** 2026-09-30
 **Category:** architecture
 
-**Decision:** `CoberturaParser` and `JacocoParser` have zero callers after #2249 removed the `CoverageThreshold` config field. Both classes and their associated test files (`CoberturaParserTests`, `JacocoParserTests`) must be deleted. If coverage scanning is re-introduced, the parsers can be recreated from git history.
+**Decision:** `CoberturaParser` and `JacocoParser` had zero callers after #2249 removed the `CoverageThreshold` config field. Both classes and their associated test files have been deleted. If coverage scanning is re-introduced, the parsers can be recreated from git history.
 
-**Context:** The coverage removal commit modified the parsers but did not delete them, leaving dead test suites that always pass. Dead-code tests that always pass are noise — they inflate the test count without providing safety net value and mislead agents into thinking the parsers are active.
+**Status (2026-09-30 audit):** Fixed. Neither `CoberturaParser.cs` nor `JacocoParser.cs` exist in `src/` — confirmed deleted.
 
-**Alternatives considered:** Keep with explicit `// Preserved for future use` comment — rejected because zero-caller classes with no caller path are agent traps regardless of comments; deletion + git history is cleaner.
-
-**Reassess when:** Never for this cleanup. If coverage returns, start fresh.
+**Reassess when:** Coverage scanning is re-introduced. Start fresh.
 
 ---
 
@@ -875,7 +912,7 @@ The budget is a soft prompt constraint (not mechanically enforced). Agents may e
 **Category:** configuration
 
 **Decision:** Four rules for `PipelineConfiguration`:
-1. Every setting is read by code; a setting nothing reads is removed, not wired up. Sixteen were removed, with their MessagePack keys retired.
+1. Every setting is read by code; a setting nothing reads is removed, not wired up. Sixteen were removed (seven of them in #3149), with their MessagePack keys retired.
 2. Every setting has a field on a settings page and a row in `docs/configuration.md`, except four internal fields that are not settings (`ClosedLoopAutoStart`, `PipelineInjectedPaths`, `TransientRetryDelay`, `WorkspaceBaseDirectory`). Tests enforce both.
 3. A value outside its range is refused when global settings, a project or an import is saved. A project override stored outside its range is skipped with a warning, so it affects only its own setting.
 4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit), the repository provider (labels, secrets, setup, steering, blacklist) and the label catalogs. The record is not split, and system settings are not moved to Helm.
@@ -887,6 +924,8 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 **Alternatives considered:** A settings registry that generates both settings pages and the docs table (less page code, but a large UI rewrite that loses the hand-tuned layouts); moving system settings such as loop timing and retention to Helm (more restarts to change them, and no problem it would solve); project-level label routing (labels also select the agent profile, so it would need project context in every place labels are resolved).
 
 **Reassess when:** The guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
+
+---
 
 ### Project overrides: deep-merge semantics implemented (#1044 resolved)
 
@@ -968,8 +1007,8 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 **Date:** 2026-08-14 (supersedes 2026-07-04 "equal round-robin" entry) · **Updated:** 2026-09-13 (#2561 — consolidation moves from a separate synchronous path to the unified Pending queue, dispatched last by RunType tier ordering in DispatchStateBuilder)
 **Category:** configuration
 
-<!-- TODO (#2563/#2564): The body text below still describes the pre-unification mechanism ("dispatched via separate path", "hardcoded DispatchTurn[] array in DispatchScheduler"). Once #2563 adds RunType tier ordering to DispatchStateBuilder and #2564 enqueues consolidation as a Pending WorkItem, update this sentence to reflect that the tier is enforced at dispatch level in DispatchStateBuilder, not only enqueue-side in DispatchScheduler. -->
-**Decision:** Dispatch uses a static priority ordering: Review (PRs) first, then Decomposition, then Implementation (Issues), then Consolidation (lowest, dispatched via separate path). Within each tier, FIFO order is preserved. The ordering is a hardcoded `DispatchTurn[]` array in `DispatchScheduler` and a priority-bucket scan in `JobDeduplicationGuardService` — not configurable at runtime. Starvation prevention is explicitly out of scope.
+<!-- TODO (#2563/#2564) resolved 2026-09-30: DispatchStateBuilder now has RunType tier ordering (Review→Decomp→Impl→Consolidation) via WorkItemDispatchOrderExtensions.ApplyDispatchOrder(). Consolidation is enqueued as a normal Pending WorkItem. The body text below and the Update 2026-09-13 section are both accurate; the pre-unification references in the original decision body are superseded by the Update. -->
+**Decision:** Dispatch uses a static priority ordering: Review (PRs) first, then Decomposition, then Implementation (Issues), then Consolidation (lowest). Within each tier, FIFO order is preserved. The tier is enforced at the dispatch level in `WorkItemDispatchOrderExtensions.ApplyDispatchOrder()` — not configurable at runtime. Starvation prevention is explicitly out of scope.
 
 **Update 2026-09-13 (#2561 — consolidation dispatch unification):** The "Consolidation … dispatched via separate path" clause is superseded, and the tier ordering above is now enforced at the **dispatch** level — previously it shaped only the provider-backlog *enqueue* loop (`DispatchScheduler`), never the WorkItem `Pending` drain. The Pending dispatch was **flat**: `DispatchStateBuilder.BuildStateAsync` sorted `PriorityWeight DESC, CreatedAt ASC` with no RunType tier (`DispatchStateBuilder.cs:64-65`), and `PriorityWeight` is only `IsManual ? 100 : 0` (`WorkItemEndpoints.cs:565`), so Review/Decomposition/Implementation `Pending` items drained purely by creation time. As part of unifying consolidation onto the Pending queue (epic #2561, dispatch-only), a **RunType tier becomes the primary dispatch sort key** in the shared dispatch query: `tier(TaskType)` [Review > Decomposition > Implementation > Consolidation], then `PriorityWeight DESC`, then `CreatedAt ASC`. This makes the documented tier a real property of the poller (not just the enqueue side) and places consolidation lowest by construction — no separate path, no two-pass, no negative `PriorityWeight`. Consolidation enqueues as a normal `Pending` WorkItem at default weight 0. Cross-tier starvation remains explicitly out of scope. Decision recorded in #2562; implemented by #2563 (tier ordering in the shared `DispatchStateBuilder`) + #2564 (enqueue). The tier ordering lands in the shared query, so the consolidation-exclusion is lifted only for #2541's leader-elected CAS poller — the pre-cutover flat per-replica loop never claims consolidation.
 
@@ -996,29 +1035,29 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 
 ---
 
-### StaleBranchCleaner double-scan: should reuse housekeeping input — #2880 tracks fix
+### StaleBranchCleaner double-scan: fixed — single data source (#2880 resolved)
 
-**Date:** 2026-09-21
+**Date:** 2026-09-21 · **Closed:** 2026-09-30
 **Category:** architecture
 
-**Decision:** `StaleBranchCleaner.RunBranchCleanupAsync` currently ignores the `agentDonePrs` input passed by `HousekeepingService` and independently re-fetches all open agent PRs via `FetchAllOpenAgentPrBranchesAsync`. This violates KISS/DRY. The double-fetch was introduced because `agentDonePrs` is capped by `ClosedLoopMaxPagesToFetch` (default 10 pages) and a truncated input could miss a PR, causing deletion of a branch that has an open PR. The correct fix is to use a single data source: either pass a `wasInputTruncated` signal and skip cleanup gracefully when truncated, or raise the page cap for the cleanup call path. The independent scan is a pragmatic workaround, not the intended design.
+**Decision:** `StaleBranchCleaner.RunBranchCleanupAsync` previously re-fetched all open agent PRs independently via `FetchAllOpenAgentPrBranchesAsync`, ignoring the `agentDonePrs` input from `HousekeepingService`. This violated KISS/DRY.
 
-**Status:** Currently in place — #2880 tracks the KISS/DRY fix.
+**Status (2026-09-30 audit):** Fixed (#2880 resolved). `RunBranchCleanupAsync` now uses the `agentDonePrs` pre-fetched parameter directly. Code comment confirms: "This is the sole branch-protection guard — no independent API scan is needed." `FetchAllOpenAgentPrBranchesAsync` has been removed.
 
-**Reassess when:** #2880 is implemented. Once a single data source is used, `FetchAllOpenAgentPrBranchesAsync` should be removed.
+**Reassess when:** Never — single data source is the stable form.
 
 ---
 
-### HousekeepingMaxSlotAgeMinutes: dead config — never enabled, remove it — #2881 tracks deletion
+### HousekeepingMaxSlotAgeMinutes: dead config — deleted (#2881 resolved)
 
-**Date:** 2026-09-21
+**Date:** 2026-09-21 · **Closed:** 2026-09-30
 **Category:** configuration
 
-**Decision:** `PipelineConfiguration.HousekeepingMaxSlotAgeMinutes` (Key 84, default `0` = disabled) was added preemptively to handle potential slot starvation (one PR holding the sole housekeeping concurrency slot indefinitely). The feature has never been enabled in production — DB confirms the default `0` everywhere. Per KISS, dead config should be removed rather than carried indefinitely. Key 84 must be tombstoned following the MessagePack vacancy pattern. No behavior change for existing deployments (default was disabled).
+**Decision:** `PipelineConfiguration.HousekeepingMaxSlotAgeMinutes` (Key 84, default `0` = disabled) was added preemptively for slot starvation handling. Never enabled in production — DB confirmed default `0` everywhere.
 
-**Status:** Currently present — #2881 tracks deletion.
+**Status (2026-09-30 audit):** Fixed (#2881 resolved). Field deleted, Key 84 tombstoned in `PipelineConfiguration.cs` (`// Key(84) retired — HousekeepingMaxSlotAgeMinutes removed`). No behavior change for existing deployments.
 
-**Reassess when:** Never for this config. If slot starvation is actually observed in production, introduce a new mechanism with a clearer design and a non-zero recommended default.
+**Reassess when:** Never for this config. If slot starvation is observed in production, introduce a new mechanism with a non-zero recommended default.
 
 ---
 
@@ -1046,22 +1085,16 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 
 ---
 
-### HousekeepingTriggerCooldownMinutes: must be a PipelineConfiguration field — #2404 tracks promotion
+### HousekeepingTriggerCooldownMinutes: promoted to PipelineConfiguration — resolved (#2404)
 
-**Date:** 2026-09-06 · **Updated:** 2026-09-06 (session 21 — added implementation direction)
+**Date:** 2026-09-06 · **Updated:** 2026-09-06 (session 21 — added implementation direction) · **Closed:** 2026-09-30
 **Category:** configuration
 
-**Decision:** `HousekeepingService.TriggerCooldown = TimeSpan.FromMinutes(25)` is a hardcoded `internal` property. It must be promoted to a `PipelineConfiguration` field (`HousekeepingTriggerCooldownMinutes`, default 25, hidden-advanced section). The 25-minute default is "comfortably exceeds a typical CI run (~20 min)" but different deployments have CI durations ranging from 2 minutes (unit-test-only) to 45+ minutes (integration suites). Operators cannot tune this without a recompile.
+**Decision:** `HousekeepingService.TriggerCooldown = TimeSpan.FromMinutes(25)` was a hardcoded `internal` property. It was promoted to `PipelineConfiguration.HousekeepingTriggerCooldownMinutes` (default 25). Operators with fast CI (2-min runs) can lower it; those with long CI (45+ min) should raise it.
 
-**Implementation direction (session 21):** Add as a **method parameter** to `ExecuteAsync`, consistent with how `effectiveConcurrencyLimit` and `cleanupIntervalMinutes` are already passed per-call from the config snapshot. This is preferable to constructor injection because the value comes from a per-template config snapshot at call time, not from a singleton config object. The `internal` setter remains for test overrides — do not remove it.
+**Status (2026-09-30 audit):** Fixed (#2404 resolved). `PipelineConfiguration.cs` has `[Key(82)] public int HousekeepingTriggerCooldownMinutes { get; init; } = 25`. Read as `snapshot.Config.HousekeepingTriggerCooldownMinutes` in `PipelineLoopService.MultiTemplateLoop.cs`. Internal setter retained for test overrides.
 
-The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can remain for test overrides — it is the test injection point and should not be removed.
-
-**Context:** The cooldown was introduced in #2304 as a fairness mechanism: a recently-triggered PR backs off while CI runs so other PRs get a turn at the single housekeeping concurrency slot. It follows the same pattern as `FeedbackTimeoutSeconds` (promoted session 18) and the `AgentJobTimeoutSeconds` removal (session 17/18) — no hardcoded timeout constants should exist in the system.
-
-**Alternatives considered:** Keep hardcoded (simpler, and 25 min is a reasonable universal heuristic) — rejected because `ProcessTimeoutSeconds = 600` in QGC, `FeedbackTimeoutSeconds`, and every other timeout in the system are configurable; consistency requires this one be too. Constructor injection — rejected because the value is a per-call config snapshot value, not a startup singleton dependency.
-
-**Reassess when:** Never once promoted. The advanced-section placement keeps it out of the default configuration view.
+**Reassess when:** Never once promoted. Advanced-section placement keeps it out of the default config view.
 
 ---
 
@@ -1108,7 +1141,7 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 **Reassess when:** Never for the single-source principle. If a "maximum agent lifetime cap" independent of `AgentTimeout` is needed (safety floor), add an explicit `MaxAgentTimeoutCap` with a clear name — do not re-introduce a shadow of the same field.
 
-**Status (2026-09-29):** Implemented; #2171 and #2179 are closed. `AgentTimeout`, with the project's override, sets each work item's `TimeoutSeconds` and the Kubernetes job deadline.
+**Status:** Resolved — `AgentJobTimeoutSeconds` removed in #2179 (closed 2026-08-29); `PipelineConfiguration.AgentTimeout` is now the single source of truth.
 
 ---
 
@@ -1341,16 +1374,31 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 ---
 
-### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025, superseded 2026-09-29
+### MaxConcurrentDecompositions and MinIssueSlots: global-only — per-project overrides removed by #3150
 
-**Date:** 2026-08-14 · **Closed:** 2026-08-22
+**Date:** 2026-09-30
 **Category:** configuration
 
-**Decision:** `MaxConsolidationDispatchRetries` is now a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value is 5. #2025 complete. No behavioral change.
+**Decision:** `MaxConcurrentDecompositions` and `MinIssueSlots` are intentionally global-only caps. They govern dispatch slot allocation across ALL projects simultaneously in the single dispatcher loop — per-project values are meaningless because the loop has no per-project concurrency domains. The per-project override fields in `PipelineProject` were dead code (scheduler always reads the global config snapshot); #3150 removes them along with `HarnessSuggestionsReviewEnabled` (harness suggestions are global, no template, project config never applied). Keep it simple for now. Per-project quotas would require a different dispatch architecture with per-project sub-queues.
 
-**Superseded (2026-09-29):** The setting and its project override are removed and Key(74) is retired: its drain service was removed in #2323, and nothing read the setting since.
+**Context:** `MaxConcurrentDecompositions` enforcement uses `GetActiveDecompositionCountAsync` (DB-backed, cross-cycle) since #3154. The global-only intent was confirmed while auditing the dead per-project overrides in session 27.
 
-**Reassess when:** Never — once fixed, this decision is stable.
+**Alternatives considered:** Fix plumbing to apply per-project overrides to the global cap (incorrect semantics — the cap is total active jobs, not per-project allocation). Per-project soft throttles as courtesy limits (deferred — requires per-project dispatch state tracking).
+
+**Reassess when:** Multiple teams on shared infrastructure report a single project consuming all decomposition slots is a measurable productivity problem. At that point, a per-project quota system with sub-queues is the correct path.
+
+---
+
+### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025 — **superseded by #3149**
+
+**Date:** 2026-08-14 · **Closed:** 2026-08-22 · **Superseded:** 2026-09-30
+**Category:** configuration
+
+**Decision (original):** `MaxConsolidationDispatchRetries` was promoted to a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value was 5.
+
+**Superseded by #3149:** The consolidation drain service that read this setting was removed in #2323. The property was never read by any production code. It was removed from `PipelineConfiguration` in #3149. Keys 23, 45, 74, and 84 are all retired — their indices are reserved and must not be reused. Existing stored data with these fields loads without error (STJ ignores unknown properties; MessagePack ignores unused array slots).
+
+**Reassess when:** Never — retired settings are tombstoned permanently.
 
 ---
 
@@ -1483,17 +1531,15 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 **Date:** 2026-07-04
 **Category:** scope
 
-**Decision:** `BrainReadOnly=true` means the brain is synced pre-run (agent reads knowledge) but NOT written post-run (no reflection, no `.brain/` artifacts committed). Use case: when a template wants brain context but doesn't trust its own runs to contribute quality knowledge — either because it's new, experimental, or a secondary consumer of shared knowledge. The setting should ideally live on the `PipelineJobTemplate` (per-template granularity) rather than only at project/global level — this allows "template A writes to the brain, template B only reads" within the same project.
+**Decision:** `BrainReadOnly=true` means the brain is synced pre-run (agent reads knowledge) but NOT written post-run (no reflection, no `.brain/` artifacts committed). Use case: when a template wants brain context but doesn't trust its own runs to contribute quality knowledge — either because it's new, experimental, or a secondary consumer of shared knowledge. Template-level `BrainReadOnly` is now implemented on `PipelineJobTemplate` — this allows "template A writes to the brain, template B only reads" within the same project. The setting is one-directional at the template level: it can only switch read-only on (never off), so a template with `BrainReadOnly: true` overrides any project-level `BrainReadOnly: false`.
 
-**Context:** Currently `BrainReadOnly` is on `PipelineConfiguration` (global) with a per-project nullable override. Moving to template-level would give proper granularity for shared brain scenarios. The general pattern is: primary/trusted templates write, secondary/experimental templates read-only.
+**Context:** `BrainReadOnly` is on `PipelineConfiguration` (global) with a per-project nullable override and a per-template boolean (`PipelineJobTemplate.BrainReadOnly`). Template-level overrides are applied by `PipelineConfigurationResolver.ApplyTemplateOverrides` after project overrides. The general pattern is: primary/trusted templates write, secondary/experimental templates read-only.
 
 **Alternatives considered:** Brain access as a provider-level setting (too coarse), per-run override (too granular, no UI for it).
 
-**Reassess when:** Template-level `BrainReadOnly` is implemented. Note: the current project-level override still serves the "all templates in this project are read-only" case.
+**Reassess when:** N/A — template-level `BrainReadOnly` is implemented. The current project-level override still serves the "all templates in this project are read-only" case.
 
 **Status (2026-09-29):** Template-level `BrainReadOnly` exists: a template can turn read-only on (never off) and can be edited in place on the Pipelines page. A read-only brain is also not consolidated. The global setting (Settings → Global Defaults → Advanced) and the project override remain.
-
-**Status (2026-09-29):** Template-level `BrainReadOnly` exists: a template can turn read-only on (never off), editable in place on the Pipelines page. A read-only brain is also not consolidated. The global setting (Settings → Global Defaults → Advanced) and the project override remain.
 
 ---
 
@@ -1769,6 +1815,7 @@ The internal setter (`internal TimeSpan TriggerCooldown { get; set; }`) can rema
 
 **Date:** 2026-08-28
 **Category:** configuration
+**Superseded by:** session "AgentJobTimeoutSeconds: removed — #2179" (2026-08-29)
 
 **Superseded (2026-08-29):** `AgentJobTimeoutSeconds` was removed by #2179; see "AgentJobTimeoutSeconds: removed" above. Work-item and consolidation jobs take their deadline from `AgentTimeout`; chat pods use `workDistribution.dispatch.chatJobMaxDurationSeconds`.
 
@@ -1799,6 +1846,21 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 ---
 
+### Epic scope: tracker-of-record determines sub-issue routing — intentional, same rationale as 1:1:1
+
+**Date:** 2026-09-30
+**Category:** architecture
+
+**Decision:** An epic's sub-issue routing scope is determined entirely by which tracker the epic lives in. Project-tracker epics (in `project.EpicIssueProviderId`) receive full project context and can route sub-issues to any repo in the project. Template-tracker epics (in a template's own `IssueProviderId`) are single-repo only — sub-issues land in that template's tracker only. There is no flag to grant a template-tracker epic cross-repo routing; the epic must be moved to the project's epic tracker. This is intentional — same rationale as 1:1:1: keep it simple. Scope is re-derived from live config at claim time, not from the WorkItem payload, so config changes take effect on the next dispatch.
+
+**Context:** `AssignmentEnricher.EnrichCoreAsync` applies `project.IsEpicTracker(identity.IssueProviderConfigId)` at claim time. If neither condition matches (neither project epic tracker nor any template tracker), the assignment is dropped with an error. This handles WorkItems queued before a config change that removes the epic's tracker.
+
+**Alternatives considered:** Allow template-tracker epics to opt into cross-repo via a flag (adds routing complexity). Use the dispatcher template's scope regardless of where the epic lives (old behavior — ambiguous for project epics).
+
+**Reassess when:** A use case emerges where a repo-tracker epic needs cross-repo routing without the project epic tracker overhead. Introduce an explicit mechanism — do not silently relax the tracker check.
+
+---
+
 ### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
 
 **Date:** 2026-08-28
@@ -1814,7 +1876,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 ---
 
-### WorkItems.Payload: config snapshot must be at dispatch time, not enqueue time — currently broken (#2171)
+### WorkItems.Payload: config snapshot must be at dispatch time, not enqueue time — fixed (#2171)
 
 **Date:** 2026-08-29
 **Category:** architecture
@@ -1829,11 +1891,11 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 **Reassess when:** Never for the principle. If `GetAssignment` performance becomes a bottleneck (due to provider API latency), add a server-side cache with a short TTL (e.g., 30s) — but the freshness contract must hold.
 
-**Status:** Currently broken. #2171 tracks the fix.
+**Status (2026-09-30 audit):** Fixed. `WorkItemDispatchEndpoints.cs` stores only identity fields. `AssignmentEnricher.cs` fetches all mutable config fresh at assignment time with explicit code comment: "This fixes the stale-config problem described in issue #2171."
 
 ---
 
-### EmitOutputLine must route through Serilog — currently bypasses it (#2178)
+### EmitOutputLine must route through Serilog — fixed (#2178)
 
 **Date:** 2026-08-29
 **Category:** architecture
@@ -1848,7 +1910,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 **Reassess when:** If output line volume causes Serilog/Loki ingestion cost issues, add a sampling filter for high-frequency lines. The `run_id` tag enables targeted filtering per run.
 
-**Status:** Currently broken. #2178 tracks the fix.
+**Status (2026-09-30 audit):** Fixed. `PipelineRunLifecycleService.EmitOutputLine` uses `LogContext.PushProperty("PipelineRunId", runId)` + `_logger.Information("[Pipeline] {Line}", message)` — routed through Serilog. A minor edge case for the null-runId path remains but the core Serilog routing is complete.
 
 ---
 
@@ -1867,7 +1929,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 **Reassess when:** Never for the file-based output principle. If `.agent/pr-description.md` is absent after execution (agent failed to write it), fall back gracefully (log warning, skip description — do not corrupt the PR body with raw stdout).
 
-**Status:** Currently broken (#2161). Fix: change prompt to instruct file write; change `GeneratePrDescriptionAsync` to read file instead of joining `OutputLines`.
+**Status (2026-09-30 audit):** Fixed. `GeneratePrDescriptionAsync` in `PullRequestFinalizationService.cs` reads from `.agent/pr-description.md` via `File.ReadAllTextAsync`. Falls back to `OutputLines` only on `FileNotFoundException`. Prompt instructs file write.
 
 ---
 
@@ -2083,7 +2145,6 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "DispatchGatedLabels: extensible set for human-approval-required transitions" scoped by "Label lifecycle needs formalization (#1046)" (gated labels are one axis of the label state machine)
 - "DispatchGatedLabels: extensible" correlates with "Epic decomposition: two-phase with human gate" (EpicApproved is currently the only gated label, but the set is designed for future approval gates)
 - "MaxDecompositionSubIssueFiles=12: research-based low-confidence" scoped by "Epic decomposition: two-phase with human gate" (sub-issue scope constraint operationalizes 'achievable in one agent run')
-- "MaxConsolidationDispatchRetries → #2025" constrains "Dispatch priority: static ordering" (consolidation is lowest priority; its retry mechanism must be consistent with other priority-tier retry config)
 
 - "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (all deployments are K8s; the loop runs unconditionally only in test environments without leader election)
 - "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)
@@ -2097,13 +2158,22 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "LoopStatePersistenceService: no leader guard needed" scoped by "PipelineLoopService: full loop leader-gated" (the loop gate makes eager activation on all replicas safe — all sit in leader-wait until promoted)
 - "LoopStatePersistenceService: no leader guard needed" correlates with "Agent lifetime: pull→push evolution" (90s delay is a rolling-deploy drain guard, not a multi-replica coordination mechanism)
 
+- "1:1:1 template binding: intentional constraint" enables "Epic scope: tracker-of-record determines routing" (both express the same keep-it-simple ownership principle — unambiguous dispatch at every layer)
+- "1:1:1 template binding: intentional constraint" scoped by "Agent provider abstraction supports N backends" (the binding constraint applies per-template regardless of which agent provider handles it)
+- "Epic scope: tracker-of-record determines routing" scoped by "1:1:1 template binding: intentional constraint" (project-epic cross-repo routing is the escape valve that makes 1:1:1 sufficient)
+- "agent:done ordering: full pipeline + post-PR CI" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (post-PR CI is critical path; enrichment like brain sync is non-fatal but still runs before agent:done)
+- "agent:done ordering: full pipeline + post-PR CI" enables "ExternalCiDuration vs PostPrCiDuration" (separate histogram justified by the fact that post-PR CI is a distinct tracked phase that gates agent:done)
+- "Kiro token/cost: provider subscription limitation" scoped by "Agent provider abstraction supports N backends" (per-backend telemetry asymmetry is the natural consequence of heterogeneous backends)
+- "Kiro token/cost: provider subscription limitation" contradicts "Telemetry philosophy: instrument every decision point" (Kiro runs have zero token/cost telemetry — acknowledged gap until provider exposes metrics)
+- "MaxConcurrentDecompositions global-only (#3150)" scoped by "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" (global cap is a single pool shared by all tiers; per-project quotas would require sub-pools)
+
 - "Pod anti-affinity: soft spreading" scoped by "Monolithic orchestrator is intentional" (stateless services; co-location reduces HA but doesn't corrupt state)
 - "AgentJobTimeoutSeconds: unified backstop" scoped by "Agent lifetime: pull→push evolution" (K8s-only; both work-item and chat pods are ephemeral K8s Jobs)
 - "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
 - "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
 - "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
 - "PostPrCiDuration: separate histogram" scoped by "ExternalCiDuration vs PostPrCiDuration" (the new histogram is the actionable consequence of the separation decision); #2220 implemented; Grafana panel update still pending
-- "WorkItems.Payload dispatch-time snapshot" scoped by "Dual JSON options (Default/Lenient)" (fresh fetch at assignment uses Lenient deserialization for backward compat); currently broken — #2171 tracks the fix
+- "WorkItems.Payload dispatch-time snapshot" scoped by "Dual JSON options (Default/Lenient)" (fresh fetch at assignment uses Lenient deserialization for backward compat); fixed — #2171 resolved
 - "WorkItems.Payload null-discriminator: no strong opinion" scoped by "WorkItems.Payload dispatch-time snapshot" (discriminator is the schema boundary guard for the snapshot feature); #2221 tracks
 - "AssignmentEnricher: 503 on enrichment failure" scoped by "WorkItems.Payload dispatch-time snapshot" (enrichment failure must not produce a partial assignment — 503 preserves the freshness contract)
 - "AssignmentEnricher: 503 on enrichment failure" scoped by "Partial failure contract: enrichment steps non-fatal, critical path fatal" (enrichment IS on the critical path — a configless job spec degrades quality; 503 is the correct contract)
@@ -2113,7 +2183,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 - "Live K8s dual ListJobsAsync: correctness requirement" constrains "Live K8s dual ListJobsAsync: optimization deferred" (optimization is blocked until K8s informer or TTL cache is introduced)
 - "DistributedAgentRegistry _allAgentsCache staleness: no strong opinion" scoped by "Chat keepalive Redis required for multi-replica" (both are multi-replica correctness concerns; cache staleness is low-risk because dispatch reads Redis directly)
 - "WorkItems.Payload dispatch-time snapshot" enables "Token vending: private keys never leave orchestrator" (tokens vended fresh at assignment time, not expired from enqueue snapshot)
-- "EmitOutputLine → Serilog routing" scoped by "Telemetry philosophy: instrument every decision point" (full run traceability requires every observable event to be Serilog-queryable); currently broken — #2178 tracks the fix
+- "EmitOutputLine → Serilog routing" scoped by "Telemetry philosophy: instrument every decision point" (full run traceability requires every observable event to be Serilog-queryable); fixed — #2178 resolved
 - "AgentJobTimeoutSeconds: removed — single AgentTimeout" supersedes "AgentJobTimeoutSeconds: Helm default + per-project override" (session 17 entry); #2179 tracks the removal
 - "PriorityWeight: secondary sort within RunType tier" scoped by "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" (tier ordering is primary; weight is secondary within tier)
 - "FeedbackTimeoutSeconds: must be PipelineConfiguration field" scoped by "AgentJobTimeoutSeconds: removed" (part of the same timeout simplification arc — no more hardcoded timeouts)
@@ -2245,7 +2315,7 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 **Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgent.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
 
-**Rationale:** Two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`) had byte-identical logic that had already co-changed 4 times. Divergence in sort order or separator would cause agent selection to silently return `null` — the `AgentSelector` field on `WorkItemEntity` and `JobDistributionRequest` uses the same serialization for candidate matching. A difference causes a silent no-match rather than a compile error. Centralising makes the invariant visible.
+**Rationale:** The original two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`, both since deleted in #3030/#3204) had byte-identical label-to-selector logic that had already co-changed 4 times. Centralising in `AgentSelectorKey.From()` makes the invariant impossible to violate silently — divergence in sort order or separator would cause agent selection to return `null` (no match) rather than a compile error. Current callers: `ConsolidationService.cs`, `ConsolidationJobPreparationService.cs`, `ConsolidationSelectorResolver.cs`.
 
 **Reassess when:** A third call site appears, or the separator changes (both must move together).
 
@@ -2269,7 +2339,6 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 
 - **Work-item mode** (one-shot batch): pod owns a durable `WorkItem` row; must drive it to a terminal status; uses `AgentConnectionManager`, `WorkItemAgentService`, and `IJobCompletionReporter`.
 - **Chat mode** (long-lived interactive): pod owns no durable row; product is streamed output; uses `AgentConnectionLifecycle`, `AgentWorkerService`, `ChatJobExecutor`, and `CriticalMessageBuffer`.
-<!-- TODO [WARNING]: `ChatJobHandler` was renamed to `ChatJobExecutor` in issue #2783. Updated above to match. If any other stale references to `ChatJobHandler` or `ConsolidationJobHandler` exist in docs, update them similarly. -->
 
 **The split is deliberate and should not be re-unified.** Registration overlap between the two files is 0% — not one registration line is shared. Three of ~10 slots fill the same abstraction with a genuinely different implementation (e.g., `IJobCompletionReporter` vs `SignalRCompletionReporter`). Merging them behind an `if` would be strictly worse.
 
@@ -2364,3 +2433,22 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 **Alternatives considered:** `AddHttpClientInstrumentation()` (auto-propagates on all `HttpClient` calls, including provider API calls — undesirable), tag-based correlation only (sufficient for debugging but not for end-to-end trace visualization).
 
 **Reassess when:** Never for the bidirectional principle once implemented. Chat pods (`AgentWorkerService`) use a persistent SignalR connection — traceparent for chat sessions is a separate concern, out of scope for `#2223`.
+
+---
+
+### ConsolidationRuns table dropped; ConsolidationRun and ConsolidationRunStatus types deleted (issue #3032)
+
+**Date:** 2026-09-30
+**Category:** data-model, cleanup
+
+**Decision:** The `ConsolidationRuns` DB table has been dropped and the `ConsolidationRun` model class plus `ConsolidationRunStatus` enum have been permanently deleted from the codebase. `ConsolidationRunType` is retained because it is still used by the dispatch system, UI, and run history tracking.
+
+**Context:** Prior issues (#3027–#3031) removed all consumers of `ConsolidationRun` and `ConsolidationRunStatus`. Consolidation runs are now tracked exclusively as `PipelineRuns` with `RunType = PipelineRunType.Consolidation`. The `ConsolidationRuns` table was a historical artefact from the pre-unification architecture where consolidation had its own separate persistence path. The backfill sweep (`DatabaseMaintenanceService.BackfillConsolidationRunsAsync`) that migrated legacy rows into `PipelineRuns` has also been removed since there is no source table to read from. `ConfigMigrationService.MigrateConsolidationRunsAsync` (the JSON-to-DB importer) and `ConfigExportService.ExportConsolidationRunsAsync` have been removed for the same reason.
+
+**Return type change:** `IConsolidationService.TriggerAsync` previously returned `Task<ConsolidationRun?>`. With `ConsolidationRun` deleted, a new `ConsolidationTriggerResult` sealed record was introduced carrying only the fields callers actually consume (`RunId`, `Type`, `TemplateId`, `TemplateName`, `ProjectId`, `ProjectName`, `StartedAtUtc`, `WorkItemId`). The `Status` field (always `Pending` on a successful trigger) was dropped as it carried no meaningful information. All callers updated accordingly.
+
+**Stale entries corrected:** Any prior decisions or documentation describing consolidation as a "separate dispatch path" or "separate history store" are superseded by this entry. Consolidation runs are tracked via `PipelineRuns` with `RunType = Consolidation` and dispatched via the unified `WorkItem` queue.
+
+**EF migration:** `DropConsolidationRuns` migration drops the table in `Up()` and recreates it in `Down()` for rollback safety.
+
+**Reassess when:** Never — the `ConsolidationRuns` table no longer exists and `ConsolidationRun`/`ConsolidationRunStatus` are no longer part of the type system.

@@ -7,7 +7,7 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are dispatched via `IConsolidationDispatchService` — in K8s mode the dispatch call originates from the Orchestrator (Web) and runs through the Pipeline API, using the same `caa-{release}-dispatch-lock` lease — and do not go through the label loop.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are created as `WorkItem` rows by `ConsolidationService.TriggerAsync` and dispatched by the Job Controller in the lowest-priority tier (after Review, Decomposition, and Implementation). `ConsolidationDispatchService` was removed in #2323; dispatch now flows through `DispatchLifecycleService`. Consolidation jobs do not go through the label loop.
 
 ## Dispatch Mode
 
@@ -269,7 +269,7 @@ The `OrphanedLabelRecoveryService` (in `CodingAgent.Scheduler`) is a background 
 
 - The orchestrator crashes mid-run and restarts
 - A run is cleaned up from memory but the label swap to a terminal state fails
-- An agent pod dies and the reconciler fails its run, but label cleanup didn't complete
+- An agent pod exits unexpectedly and the orchestrator's disconnect handler completes before the run label is swapped to a terminal value
 
 ### Behavior
 
@@ -457,7 +457,7 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are handled separately via `IConsolidationDispatchService` and do not participate in this scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (4th, after Review, Decomposition, and Implementation) by the Job Controller. They do not participate in the closed-loop scheduler.
 
 ### Dispatch Budget Sharing
 
@@ -576,7 +576,7 @@ The epic decomposition pipeline is a two-phase workflow that transforms high-lev
 
 ### Project Context in Decomposition
 
-When a project has an `EpicIssueProviderId` configured, epics from that provider are project epics and are decomposed with **cross-repository routing**. Sub-issues can specify a `targetRepository` to route creation to a different template's issue provider, and the other project repositories are cloned into the workspace. Epics in a template's own tracker are repo epics: their sub-issues stay in that tracker. Both kinds are queued in one round-robin, and each run is bound to the tracker its epic lives in.
+When a project has an `EpicIssueProviderId` configured, epics from that provider are project epics and are decomposed with **cross-repository routing**. Sub-issues can specify a `targetRepository` to route creation to a different template's issue provider, and the other project repositories are cloned into the workspace. Epics in a template's own tracker are repo epics: their sub-issues stay in that tracker. Both kinds are dispatched in the same decomposition priority tier, and each run is bound to the tracker its epic lives in.
 
 See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) and [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decomposition) for the full workflow and configuration details.
 

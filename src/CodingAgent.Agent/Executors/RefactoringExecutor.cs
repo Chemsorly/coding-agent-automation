@@ -19,6 +19,13 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 {
     protected override string ExecutorName => "Refactoring detection";
 
+    /// <summary>
+    /// Sentinel provider ID used by DependencyResolver within CreateIssuesAsync.
+    /// All refactoring proposals go to the same single issue provider, so there are no
+    /// cross-tracker dependencies — every dependency always emits the short #N form.
+    /// </summary>
+    private const string SingleTrackerProviderId = "__refactoring_single_tracker__";
+
     public RefactoringExecutor(Serilog.ILogger logger) : base(logger)
     {
     }
@@ -565,7 +572,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 // Register() uses proposal.Title (raw, not sanitized) so that DependsOn references
                 // from other proposals — which also use the raw agent-generated title — can resolve.
                 var body = FormatIssueBody(proposal);
-                var dependencyLines = resolver.Resolve(proposal.DependsOn ?? [], Logger);
+                var dependencyLines = resolver.Resolve(proposal.DependsOn ?? [], SingleTrackerProviderId, Logger);
                 if (dependencyLines.Count > 0)
                 {
                     var depSection = string.Join("\n", dependencyLines);
@@ -579,7 +586,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                     labels,
                     ct);
 
-                resolver.Register(proposal.Title, result.Identifier);
+                resolver.Register(proposal.Title, result.Identifier, result.Url, SingleTrackerProviderId);
 
                 // TODO: resolver.Register uses the raw proposal.Title while CreateIssueAsync is
                 // called with sanitizedTitle — the issue in the tracker is created under the

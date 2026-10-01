@@ -15,7 +15,7 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// <summary>
 /// Tests for API-backed service adapters:
 /// ApiPipelineConfigStore, ApiProviderConfigStore, ProviderConfigCache, ApiProjectStore,
-/// ApiConfigurationStore, ApiBackedConsolidationRunStore, ApiBackedHarnessSuggestionStore,
+/// ApiConfigurationStore, ApiBackedHarnessSuggestionStore,
 /// ApiBackedPendingWorkQuery, ApiBackedPipelineRunHistoryService,
 /// ApiBackedWorkItemFallbackTransitionService, ApiChatJobDispatcher.
 /// </summary>
@@ -479,50 +479,6 @@ public sealed class ApiBackedServicesTests
         await store.LoadReviewerConfigsAsync(CancellationToken.None);
 
         client.Verify(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // ApiBackedConsolidationRunStore
-    // ─────────────────────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task ConsolidationRunStore_SaveRunAsync_DelegatesToClient()
-    {
-        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConsolidationRunClient>();
-        mockClient.Setup(c => c.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var store = new ApiBackedConsolidationRunStore(mockClient.Object);
-        var run = new ConsolidationRun { RunId = Guid.NewGuid().ToString(), Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
-        await store.SaveRunAsync(run, CancellationToken.None);
-
-        mockClient.Verify(c => c.SaveRunAsync(run, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task ConsolidationRunStore_GetByIdAsync_DelegatesToClient()
-    {
-        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConsolidationRunClient>();
-        mockClient.Setup(c => c.GetByIdAsync("run-1", It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationRun?)null);
-
-        var store = new ApiBackedConsolidationRunStore(mockClient.Object);
-        var result = await store.GetByIdAsync(new RunId("run-1"), CancellationToken.None);
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task ConsolidationRunStore_DeleteRunAsync_DelegatesToClient()
-    {
-        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConsolidationRunClient>();
-        mockClient.Setup(c => c.DeleteRunAsync("run-1", It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var store = new ApiBackedConsolidationRunStore(mockClient.Object);
-        await store.DeleteRunAsync(new RunId("run-1"), CancellationToken.None);
-
-        mockClient.Verify(c => c.DeleteRunAsync("run-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ─────────────────────────────────────────────────────────────────────

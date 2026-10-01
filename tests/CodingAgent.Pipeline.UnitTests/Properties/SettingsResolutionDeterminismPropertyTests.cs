@@ -48,12 +48,10 @@ public class SettingsResolutionDeterminismPropertyTests
         result1.MaxInfrastructureRetries.Should().Be(result2.MaxInfrastructureRetries);
         result1.StallWarningInterval.Should().Be(result2.StallWarningInterval);
         result1.MaxDecompositionSubIssues.Should().Be(result2.MaxDecompositionSubIssues);
-        result1.MaxConcurrentDecompositions.Should().Be(result2.MaxConcurrentDecompositions);
         result1.MaxOpenIssuesForContext.Should().Be(result2.MaxOpenIssuesForContext);
         result1.MaxRefactoringProposals.Should().Be(result2.MaxRefactoringProposals);
         result1.RefactoringReviewEnabled.Should().Be(result2.RefactoringReviewEnabled);
         result1.BrainConsolidationReviewEnabled.Should().Be(result2.BrainConsolidationReviewEnabled);
-        result1.HarnessSuggestionsReviewEnabled.Should().Be(result2.HarnessSuggestionsReviewEnabled);
         result1.BlacklistedPaths.Should().BeEquivalentTo(result2.BlacklistedPaths);
         result1.BrainReadOnly.Should().Be(result2.BrainReadOnly);
     }
@@ -85,12 +83,10 @@ public class SettingsResolutionDeterminismPropertyTests
         result.MaxInfrastructureRetries.Should().Be(input.Config.MaxInfrastructureRetries);
         result.StallWarningInterval.Should().Be(input.Config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(input.Config.MaxDecompositionSubIssues);
-        result.MaxConcurrentDecompositions.Should().Be(input.Config.MaxConcurrentDecompositions);
         result.MaxOpenIssuesForContext.Should().Be(input.Config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(input.Config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(input.Config.RefactoringReviewEnabled);
         result.BrainConsolidationReviewEnabled.Should().Be(input.Config.BrainConsolidationReviewEnabled);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(input.Config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeEquivalentTo(input.Config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(input.Config.BrainReadOnly);
     }
@@ -129,12 +125,10 @@ public class SettingsResolutionDeterminismPropertyTests
         result.MaxInfrastructureRetries.Should().Be(input.Config.MaxInfrastructureRetries);
         result.StallWarningInterval.Should().Be(input.Config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(input.Config.MaxDecompositionSubIssues);
-        result.MaxConcurrentDecompositions.Should().Be(input.Config.MaxConcurrentDecompositions);
         result.MaxOpenIssuesForContext.Should().Be(input.Config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(input.Config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(input.Config.RefactoringReviewEnabled);
         result.BrainConsolidationReviewEnabled.Should().Be(input.Config.BrainConsolidationReviewEnabled);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(input.Config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeEquivalentTo(input.Config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(input.Config.BrainReadOnly);
     }

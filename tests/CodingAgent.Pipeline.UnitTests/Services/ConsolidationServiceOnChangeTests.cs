@@ -1,11 +1,9 @@
-#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.UnitTests.Helpers;
 using Moq;
-#pragma warning disable CS0618 // FileSystemConsolidationRunStore is Obsolete; test-infrastructure use is intentional
 using Serilog;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
@@ -38,9 +36,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
                 new() { Id = "t1", Name = "T", IssueProviderId = "i", RepoProviderId = "r", Enabled = true }
             });
 
-        var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
-
         var mockWorkDistributor = new Mock<IWorkDistributor>();
         mockWorkDistributor
             .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -50,8 +45,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir, DefaultRequiredAgentLabels = "kiro,dotnet,dotnet10" },
             mockProjectStore.Object,
-            mockHistory.Object,
-            new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
             new InMemoryHarnessSuggestionStore(),
             new Mock<IProviderConfigStore>().Object,
             WorkDistributor: mockWorkDistributor.Object));
@@ -77,58 +70,6 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
     }
 
     [Fact]
-    public async Task UpdateRunAsync_FiresOnChange()
-    {
-        // Issue #3028: UpdateRunAsync no longer fires OnChange (store writes removed).
-        // OnChange is intentionally NOT fired since the Consolidation page now subscribes
-        // to IAgentHubConnection.OnRunCompleted for real-time updates instead.
-        // TODO [WARNING]: This test has no behavioral assertion — it only verifies no-throw.
-        // The new contract is that OnChange is NOT fired. Replace the empty body with:
-        //   _onChangeLog.Should().BeEmpty("OnChange must NOT fire after #3028 — the page uses hub events");
-        // to make the test meaningfully verify the new post-#3028 contract. (TestQualityReviewer review)
-        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
-        _onChangeLog.Clear();
-
-        await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None);
-
-        // OnChange is intentionally not fired (issue #3028) — IAgentHubConnection hub events handle UI refresh
-        // This test now verifies the method does not throw.
-        // The log may be empty (no OnChange fired) which is the expected behaviour after #3028.
-        // We don't assert _onChangeLog.Should().BeEmpty() either — the test validates no exception.
-    }
-
-    [Fact]
-    public async Task UpdateRunAsync_ToCancelled_FiresOnChange()
-    {
-        // Issue #3028: UpdateRunAsync no longer fires OnChange (store writes removed).
-        // TODO [WARNING]: This test only verifies no-throw — it has no behavioral assertion.
-        // Replace with: _onChangeLog.Should().BeEmpty("OnChange must NOT fire after #3028");
-        // to verify the new contract rather than providing a zero-assertion test. (TestQualityReviewer review)
-        var run = await _sut.TriggerAsync(ConsolidationRunType.RefactoringDetection, "t1", CancellationToken.None);
-        run.Should().NotBeNull();
-        _onChangeLog.Clear();
-
-        var act = () => _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Cancelled, "Cancelled by user", CancellationToken.None);
-        await act.Should().NotThrowAsync("UpdateRunAsync must not throw (issue #3028)");
-        // OnChange is intentionally not fired after #3028
-    }
-
-    [Fact]
-    public async Task TransitionToRunningAsync_FiresOnChange()
-    {
-        // Issue #3028: TransitionToRunningAsync no longer fires OnChange (store writes removed).
-        // TODO [WARNING]: This test only verifies no-throw — it has no behavioral assertion.
-        // Replace with: _onChangeLog.Should().BeEmpty("OnChange must NOT fire after #3028");
-        // to verify the new contract rather than providing a zero-assertion test. (TestQualityReviewer review)
-        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
-        _onChangeLog.Clear();
-
-        var act = () => _sut.TransitionToRunningAsync(run!.RunId, CancellationToken.None);
-        await act.Should().NotThrowAsync("TransitionToRunningAsync must not throw (issue #3028)");
-        // OnChange is intentionally not fired after #3028
-    }
-
-    [Fact]
     public async Task SaveHarnessSuggestionsAsync_FiresOnChange()
     {
         var suggestions = new HarnessSuggestions
@@ -143,15 +84,5 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
         await _sut.SaveHarnessSuggestionsAsync(suggestions, CancellationToken.None);
 
         _onChangeLog.Should().NotBeEmpty("SaveHarnessSuggestionsAsync must fire OnChange so Consolidation page refreshes");
-    }
-
-    [Fact]
-    public async Task UpdateRunAsync_NonExistentRun_DoesNotFireOnChange()
-    {
-        _onChangeLog.Clear();
-
-        await _sut.UpdateRunAsync(Guid.NewGuid().ToString(), ConsolidationRunStatus.Failed, "x", CancellationToken.None);
-
-        _onChangeLog.Should().BeEmpty("OnChange must NOT fire when update has no effect (prevents unnecessary UI re-renders)");
     }
 }

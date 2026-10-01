@@ -445,6 +445,31 @@ public sealed class PipelineApiWorkItemClientTests
         result[0].IssueIdentifier.Should().Be("GH-1");
     }
 
+    // ── GetActiveDecompositionCountAsync ──────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveDecompositionCountAsync_ReturnsCount()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => JsonResponse(new { count = 3 });
+
+        var result = await client.GetActiveDecompositionCountAsync();
+
+        result.Should().Be(3);
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be("/api/work-items/active-decomposition-count");
+    }
+
+    [Fact]
+    public async Task GetActiveDecompositionCountAsync_WhenNull_ReturnsZero()
+    {
+        var (client, handler) = Create();
+        handler.Respond = _ => NullJson();
+
+        var result = await client.GetActiveDecompositionCountAsync();
+
+        result.Should().Be(0, "null deserialization result must fall back to 0");
+    }
+
     // ── Stub ──────────────────────────────────────────────────────────────
 
     internal sealed class StubHandler : HttpMessageHandler

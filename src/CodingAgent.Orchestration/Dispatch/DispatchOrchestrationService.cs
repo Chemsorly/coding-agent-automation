@@ -557,7 +557,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             // dispatch mode that is AgentHub.RegisterAgent (the agent connecting with an ActiveJob).
             // Dedup is unaffected: a Pending WorkItem already counts as active
             // (PipelineConstants.ActiveWorkItemStatuses), so the loop will not re-dispatch the issue.
-            return new DispatchOutcome(true, true, null);
+            //
+            // AlreadyExists: propagate the flag so callers (DispatchScheduler) can distinguish a
+            // 409 duplicate-skip from a genuine Pending enqueue and handle budget/telemetry correctly.
+            return new DispatchOutcome(true, true, null) { AlreadyExists = result.AlreadyExists };
         }
 
         // Synchronous dispatch path (non-Pending): item is already Dispatched (K8s Job running).
@@ -607,14 +610,25 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     public Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)
     {
-        // Revert label from agent:in-progress back to agent:next (best-effort).
+        // Revert the label back to the queue label that was on the issue before dispatch.
+        // The correct label depends on the run type:
+        //   DecompositionAnalysis → agent:epic  (Phase 1 epic queue label)
+        //   Decomposition         → agent:epic-approved  (Phase 2 epic queue label)
+        //   everything else       → agent:next
         // Note: OCE propagates (swallowCancellation defaults false) — if the dispatch token is
         // cancelled the revert should stop, not silently succeed.
-        _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
-            request.IssueIdentifier);
+        var revertLabel = request.RunType switch
+        {
+            PipelineRunType.DecompositionAnalysis => AgentLabels.Epic,
+            PipelineRunType.Decomposition => AgentLabels.EpicApproved,
+            _ => AgentLabels.Next
+        };
+        _logger.Warning(
+            "Reverting failed distribution for issue {IssueIdentifier}: swapping label back to {RevertLabel} (runType={RunType})",
+            request.IssueIdentifier, revertLabel, request.RunType);
         var (providerConfigId, targetKind) = LabelTarget(request);
         return _infra.LabelService.TrySwapLabelAsync(
-            providerConfigId, request.IssueIdentifier, AgentLabels.Next,
+            providerConfigId, request.IssueIdentifier, revertLabel,
             targetKind, _logger,
             "DispatchOrchestrationService.RevertFailedDistributionAsync", ct);
         // Note: in-memory run cleanup is no longer done here. The run is owned by the API's

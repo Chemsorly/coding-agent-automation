@@ -7,7 +7,7 @@
 
 <section class="settings-section">
     <h2>Agent Provider Configs (referenced by Agent Profiles)</h2>
-    <p class="section-description">These configurations define how agents execute. They are linked from Agent Profiles — each profile references one provider config to determine the executable path, timeout, and model settings for matched agents.</p>
+    <p class="section-description">These configurations define how agents execute. They are linked from Agent Profiles — each profile references one provider config to determine the executable path and model settings for matched agents.</p>
     <div class="provider-list">
         @foreach (var p in Providers)
         {
@@ -292,6 +292,11 @@
             return;
         }
 
+        // NOTE: The legacy "timeout" key (ProviderSettingKeys.Timeout) in an agent provider's Settings
+        // dictionary is intentionally dropped when the operator opens and saves this form. The Timeout
+        // field was removed from the agent provider form in #3149 because no code reads it at dispatch
+        // time (per-call timeouts come from PipelineConfiguration.AgentTimeout). Existing DB rows that
+        // still have Settings["timeout"] are self-healing: the key is dropped on next save.
         var settings = new Dictionary<string, string>
         {
             [ProviderSettingKeys.Model] = model

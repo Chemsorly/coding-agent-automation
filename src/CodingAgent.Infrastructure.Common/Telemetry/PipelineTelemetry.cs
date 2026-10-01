@@ -84,10 +84,118 @@ public static class PipelineTelemetry
     // intentional per the requirements table. See review findings [WARNING] DotNetSpecialist L87.
     public static readonly Counter<long> RunBrainUpdates = Meter.CreateCounter<long>(
         "pipeline.run.brain_updates", UnitRun, "Brain update results at run completion");
-    public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(
-        "agent.tokens.used", "{token}", "Agent tokens consumed");
-    public static readonly Counter<double> CostUsd = Meter.CreateCounter<double>(
-        "agent.cost.usd", "USD", "LLM cost in USD");
+
+    // ── LLM usage counters (API-side, recorded at terminal time) ────────────────────────────────
+    // All four counters are tagged: run_type, phase, provider.
+    // pipeline.run.agent_sessions also includes: model.
+    // Phase is a closed set — see NormalizeRunPhase().
+
+    /// <summary>
+    /// Counter: total tokens consumed per run, broken down by phase and provider.
+    /// Recorded once per run at terminal status time by the API.
+    /// Tags: run_type, phase, provider.
+    /// Pre-initialized at process start for run_type × phase × provider combinations.
+    /// </summary>
+    public static readonly Counter<long> RunTokens = Meter.CreateCounter<long>(
+        "pipeline.run.tokens", "{token}", "LLM tokens consumed per pipeline run phase");
+
+    /// <summary>
+    /// Counter: total LLM cost in USD per run, broken down by phase and provider.
+    /// Recorded once per run at terminal status time by the API.
+    /// Tags: run_type, phase, provider.
+    /// Pre-initialized at process start for run_type × phase × provider combinations.
+    /// </summary>
+    public static readonly Counter<double> RunCostUsd = Meter.CreateCounter<double>(
+        "pipeline.run.cost_usd", "{usd}", "LLM cost in USD per pipeline run phase");
+
+    /// <summary>
+    /// Counter: number of agent CLI sessions (invocations) per run, broken down by phase, provider, and model.
+    /// Recorded once per run at terminal status time by the API.
+    /// Tags: run_type, phase, provider, model.
+    /// Pre-initialized at process start for run_type × phase × provider (model excluded per Req 7).
+    /// </summary>
+    public static readonly Counter<long> RunAgentSessions = Meter.CreateCounter<long>(
+        "pipeline.run.agent_sessions", "{session}", "Agent CLI sessions per pipeline run phase");
+
+    /// <summary>
+    /// Counter: total agent execution time in seconds per run, broken down by phase and provider.
+    /// Recorded once per run at terminal status time by the API.
+    /// Tags: run_type, phase, provider.
+    /// Pre-initialized at process start for run_type × phase × provider combinations.
+    /// </summary>
+    public static readonly Counter<double> RunAgentTime = Meter.CreateCounter<double>(
+        "pipeline.run.agent_time", "s", "Agent execution time in seconds per pipeline run phase");
+
+    /// <summary>
+    /// Normalizes a raw phase name (from <see cref="RunMetrics.PhaseBreakdown"/> or phase description)
+    /// to a closed set of phase tag values for metrics. Per-reviewer names (e.g. "review_correctness")
+    /// collapse into "review". Unknown phases map to "other".
+    /// </summary>
+    /// <remarks>
+    /// Closed set: analysis, analysis_review, codegen, review, acceptance_criteria,
+    /// pr_description, reflection, decomposition, other.
+    /// </remarks>
+    public static string NormalizeRunPhase(string? phase)
+    {
+        if (string.IsNullOrEmpty(phase))
+            return "other";
+
+        // TODO: Several real phase keys produced in the codebase fall through to "other" and lose
+        // per-phase attribution. Known gaps: "decomposition_analysis" and "decomposition_refinement"
+        // (DecompositionAnalysisStep.cs) should map to "decomposition"; "follow_up_{DisplayName}"
+        // (AgentPhaseExecutor.CodeReview.cs) should map to "review"; "fix" (CodeReviewOrchestrator.cs)
+        // should likely map to "codegen". Add the missing arms when those phases are confirmed stable.
+        // TODO: The two `_ when` guard clauses below reference the original `phase` variable (not the
+        // already-lowercased local). This is safe because OrdinalIgnoreCase is passed, but it is
+        // asymmetric with the literal arms above. If adding new StartsWith guards, use the lowercased
+        // local or always pass OrdinalIgnoreCase to avoid silent case-sensitivity bugs.
+        return phase.ToLowerInvariant() switch
+        {
+            "analysis" => "analysis",
+            "analysis_review" or "analysisreview" => "analysis_review",
+            "codegen" or "code_gen" or "code generation" => "codegen",
+            "review" => "review",
+            "acceptance_criteria" or "acceptancecriteria" => "acceptance_criteria",
+            "pr_description" or "prdescription" => "pr_description",
+            "reflection" => "reflection",
+            "decomposition" or "decomposition_review" or "decompositionreview" => "decomposition",
+            _ when phase.StartsWith("review_", StringComparison.OrdinalIgnoreCase) => "review",
+            _ when phase.StartsWith("review ", StringComparison.OrdinalIgnoreCase) => "review",
+            _ => "other"
+        };
+    }
+
+    /// <summary>Normalized phase tag values for pipeline.run.* LLM usage counters.</summary>
+    public static class RunPhases
+    {
+        public const string Analysis = "analysis";
+        public const string AnalysisReview = "analysis_review";
+        public const string CodeGen = "codegen";
+        public const string Review = "review";
+        public const string AcceptanceCriteria = "acceptance_criteria";
+        public const string PrDescription = "pr_description";
+        public const string Reflection = "reflection";
+        public const string Decomposition = "decomposition";
+        public const string Other = "other";
+
+        /// <summary>All closed-set phase values for pre-initialization.</summary>
+        public static readonly string[] All =
+        [
+            Analysis, AnalysisReview, CodeGen, Review, AcceptanceCriteria,
+            PrDescription, Reflection, Decomposition, Other
+        ];
+    }
+
+    /// <summary>Normalized provider tag values for pipeline.run.* LLM usage counters.</summary>
+    public static class RunProviders
+    {
+        public const string Kiro = "kiro";
+        public const string OpenCode = "opencode";
+        public const string Unknown = "unknown";
+
+        /// <summary>All closed-set provider values for pre-initialization.</summary>
+        public static readonly string[] All = [Kiro, OpenCode, Unknown];
+    }
 
     public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
         "quality_gate.retries", UnitRetry, "Quality gate retry attempts");

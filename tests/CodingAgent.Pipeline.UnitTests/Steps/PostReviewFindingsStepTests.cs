@@ -48,6 +48,7 @@ public class PostReviewFindingsStepTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_NoReviewerMatch_PostsNoApplicableReviewersComment()
     {
+        // Fallback path: CodeReviewSkipReason is null → static NoReviewerMessage is used
         var run = new PipelineRun
         {
             RunId = "test-run",
@@ -57,7 +58,7 @@ public class PostReviewFindingsStepTests : IDisposable
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
             RunType = PipelineRunType.Review,
-            CodeReviewAgentsRun = Array.Empty<string>() // No reviewers matched
+            CodeReviewAgentsRun = Array.Empty<string>() // No reviewers matched, no skip reason set
         };
 
         _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(42, It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -68,7 +69,7 @@ public class PostReviewFindingsStepTests : IDisposable
 
         await step.ExecuteAsync(context, CancellationToken.None);
 
-        // Should post a comment indicating no applicable reviewers
+        // Fallback: CodeReviewSkipReason is null → falls back to static NoReviewerMessage
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
             42,
             It.Is<string>(body => body.Contains("No applicable reviewers found")),

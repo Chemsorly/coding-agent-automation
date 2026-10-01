@@ -127,13 +127,16 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // Replace IQualityGateValidator with a mock (prevents real dotnet build/test)
             ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
 
-            // Replace IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
-            // during startup, which hits the database directly (not via a hosted service),
-            // so RemoveAll<IHostedService> doesn't prevent it.
+            // Replace IConsolidationService with a mock to prevent real consolidation dispatch
+            // during startup. CleanupOrphanedRunsAsync was removed from IConsolidationService in
+            // issue #3030 (ConsolidationRehydrationExtensions deleted; Program.cs no longer calls it).
             var consolidationMock = new Mock<IConsolidationService>();
-            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
-                .Returns(Task.CompletedTask);
             ReplaceService<IConsolidationService>(services, consolidationMock.Object);
+
+            // Replace JobTemplateStore with an empty store so AgentChat.razor does not try to
+            // load /app/config/job-templates.yaml, which does not exist in the test environment.
+            services.RemoveAll<CodingAgent.Kubernetes.JobTemplateStore>();
+            services.AddSingleton(CodingAgent.Kubernetes.JobTemplateStore.CreateEmpty());
 
             // Spec 045: IDispatchOrchestrationService was removed from monolith DI (Task 8), but
             // IssueDrawerService, PrReviewDrawerService, and EpicDrawerService still depend on it.

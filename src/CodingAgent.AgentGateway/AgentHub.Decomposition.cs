@@ -12,6 +12,9 @@ public sealed partial class AgentHub
     /// <summary>
     /// Creates a new issue via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueAsync</c>.
+    /// Agent-supplied labels are filtered through <see cref="AgentLabels.FilterForIssueCreation"/>:
+    /// only <c>agent:next</c>, <c>agent:generated</c>, and non-agent labels are forwarded.
+    /// All other <c>agent:*</c> labels (including <c>agent:epic-approved</c>) are dropped.
     /// </summary>
     [RequiresActiveJob]
     public Task<CreatedIssueResult> RequestCreateIssue(JobId jobId, string title, string body, IReadOnlyList<string> labels)
@@ -20,14 +23,18 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
+        var filteredLabels = FilterLabelsForIssueCreation(labels, jobId.Value);
         return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId.Value, "create issue",
-            (provider, ct) => provider.CreateIssueAsync(title, body, labels, ct));
+            (provider, ct) => provider.CreateIssueAsync(title, body, filteredLabels, ct));
     }
 
     /// <summary>
     /// Creates a new issue via a specific issue provider (for cross-repo decomposition routing).
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueForProviderAsync</c> when the
     /// decomposed issue's <c>targetRepository</c> resolves to a different template's issue provider.
+    /// Agent-supplied labels are filtered through <see cref="AgentLabels.FilterForIssueCreation"/>:
+    /// only <c>agent:next</c>, <c>agent:generated</c>, and non-agent labels are forwarded.
+    /// All other <c>agent:*</c> labels (including <c>agent:epic-approved</c>) are dropped.
     /// </summary>
     [RequiresActiveJob]
     public async Task<CreatedIssueResult> RequestCreateIssueForProvider(
@@ -38,35 +45,15 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
-        var run = _facade.GetRun(jobId);
-        if (run is null)
-            throw new HubException($"No active run found for job {jobId.Value}");
+        var (_, issueConfig) = await LoadProviderForCrossRepoAsync(jobId, issueProviderConfigId, "routing");
 
-        // TODO: Thread a SignalR connection-lifetime CancellationToken through the async I/O calls
-        // below (LoadProviderConfigsAsync and the scope check's project and template loads) instead of
-        // using CancellationToken.None. If the agent disconnects during the scope-check phase, these awaits
-        // will run to completion against a now-dead connection context. This method is the only
-        // location in the decomposition file with multiple uncancellable async I/O calls.
-        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
-        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
-        if (issueConfig is null)
-            throw new HubException($"Issue provider config '{SanitizeForLog(issueProviderConfigId)}' not found for cross-repo routing in job {jobId.Value}");
-
-        // Scope check: the run's own tracker is always in scope. Any other tracker is in scope only for
-        // a project epic (see IsInProjectEpicScopeAsync); a repo epic, or a run without a project, may
-        // create issues only in its own tracker.
-        if (issueProviderConfigId != run.IssueProviderConfigId
-            && !await IsInProjectEpicScopeAsync(run, issueProviderConfigId))
-        {
-            throw new HubException($"Provider '{SanitizeForLog(issueProviderConfigId)}' is not in the scope of job {jobId.Value}: only a project epic may create issues in the trackers of its project's templates");
-        }
-
+        var filteredLabels = FilterLabelsForIssueCreation(labels, jobId.Value);
         await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
         try
         {
-            // TODO: CreateIssueAsync also uses CancellationToken.None — extend the fix above to cover
-            // this call as well when threading a SignalR connection-lifetime token through this method.
-            return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
+            // TODO: Thread a SignalR connection-lifetime CancellationToken here instead of CancellationToken.None.
+            // A SignalR disconnect will not be observed until this await completes. Tracked in LoadProviderForCrossRepoAsync.
+            return await issueProvider.CreateIssueAsync(title, body, filteredLabels, CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -77,11 +64,132 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
-    /// Whether <paramref name="run"/> may create an issue in <paramref name="issueProviderConfigId"/>, a tracker
-    /// other than its own. Only a project epic's decomposition may: a <see cref="PipelineRunType.Decomposition"/>
-    /// run bound to its project's epic tracker, creating the issue in the tracker of an enabled template of
-    /// that project. Other runs bound to the same tracker (for example when it is also a template's tracker)
-    /// may not.
+    /// Lists open issues via a specific issue provider (for cross-repo deduplication in project epic reruns).
+    /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesForProviderAsync</c> when
+    /// <c>DecompositionStep</c> reads already-created sub-issues from template trackers.
+    /// Applies the same scope check as <see cref="RequestCreateIssueForProvider"/>: the run's own
+    /// tracker is always permitted; a different tracker requires a project epic in scope.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<PagedResult<IssueSummary>> RequestListOpenIssuesForProvider(
+        JobId jobId, string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+
+        var (_, issueConfig) = await LoadProviderForCrossRepoAsync(jobId, issueProviderConfigId, "listing");
+
+        await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
+        try
+        {
+            return await issueProvider.ListOpenIssuesAsync(page, pageSize, labels, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "RequestListOpenIssuesForProvider failed for job {JobId}, provider {ProviderId}",
+                jobId.Value, issueProviderConfigId);
+            throw new HubException($"Failed to list open issues for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Lists closed issues via a specific issue provider (for cross-repo deduplication in project epic reruns).
+    /// Called by the agent's <c>OrchestratorProxy.ListClosedIssuesForProviderAsync</c>.
+    /// Applies the same scope check as <see cref="RequestCreateIssueForProvider"/>.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<PagedResult<IssueSummary>> RequestListClosedIssuesForProvider(
+        JobId jobId, string issueProviderConfigId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    {
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+
+        var (_, issueConfig) = await LoadProviderForCrossRepoAsync(jobId, issueProviderConfigId, "listing");
+
+        await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
+        try
+        {
+            return await issueProvider.ListClosedIssuesAsync(page, pageSize, labels, since, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "RequestListClosedIssuesForProvider failed for job {JobId}, provider {ProviderId}",
+                jobId.Value, issueProviderConfigId);
+            throw new HubException($"Failed to list closed issues for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Filters agent-supplied labels for issue creation. Keeps <c>agent:next</c>,
+    /// <c>agent:generated</c>, and non-agent labels. Drops all other <c>agent:*</c> labels
+    /// (including <c>agent:epic-approved</c>, <c>agent:epic</c>, and status labels such as
+    /// <c>agent:done</c> and <c>agent:in-progress</c>) and logs a warning for each dropped label.
+    /// </summary>
+    private IReadOnlyList<string> FilterLabelsForIssueCreation(IReadOnlyList<string> labels, string jobId)
+    {
+        var filtered = AgentLabels.FilterForIssueCreation(labels);
+
+        // Log a warning for every label that was removed.
+        // TODO: The warning loop below duplicates the classification logic of FilterForIssueCreation
+        // (re-checking All.Contains / AllowedOnCreation.Contains independently). If FilterForIssueCreation
+        // changes its rules the logged warnings will silently drift from the set of actually-dropped labels.
+        // A simpler and more maintainable approach is to log labels.Except(filtered) which is guaranteed to
+        // stay in sync: foreach (var dropped in labels.Except(filtered)) _logger.Warning(...).
+        foreach (var label in labels)
+        {
+            if (!string.IsNullOrEmpty(label)
+                && AgentLabels.All.Contains(label)
+                && !AgentLabels.AllowedOnCreation.Contains(label))
+            {
+                _logger.Warning(
+                    "RequestCreateIssue: dropping disallowed agent label '{Label}' from issue creation (job {JobId})",
+                    label, jobId);
+            }
+        }
+
+        return filtered;
+    }
+
+    /// <summary>
+    /// Resolves the active run and the named issue provider config, then verifies that the provider
+    /// is in scope for the job (own tracker is always allowed; a different tracker requires a project
+    /// epic — see <see cref="IsInProjectEpicScopeAsync"/>).
+    /// </summary>
+    /// <param name="operationDescription">Short label used in error messages, e.g. "routing" or "listing".</param>
+    /// <returns>The active run and the resolved provider config.</returns>
+    /// <exception cref="HubException">Thrown when the run is not found, the provider config is missing,
+    /// or the provider is outside the job's project-epic scope.</exception>
+    private async Task<(PipelineRun Run, ProviderConfig IssueConfig)> LoadProviderForCrossRepoAsync(
+        JobId jobId, string issueProviderConfigId, string operationDescription)
+    {
+        var run = _facade.GetRun(jobId);
+        if (run is null)
+            throw new HubException($"No active run found for job {jobId.Value}");
+
+        // TODO: Thread a SignalR connection-lifetime CancellationToken through these async I/O calls
+        // instead of CancellationToken.None. A disconnect during scope-check will not be observed
+        // until the awaits complete. Applies to LoadProviderConfigsAsync, GetProjectByIdAsync, and
+        // LoadTemplatesForProjectAsync (via IsInProjectEpicScopeAsync).
+        var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        var issueConfig = issueConfigs.TryGetProviderConfig(issueProviderConfigId);
+        if (issueConfig is null)
+            throw new HubException($"Issue provider config '{SanitizeForLog(issueProviderConfigId)}' not found for cross-repo {operationDescription} in job {jobId.Value}");
+
+        // Scope check: the run's own tracker is always in scope. Any other tracker is in scope only for
+        // a project epic (see IsInProjectEpicScopeAsync); a repo epic, or a run without a project, may
+        // only use its own tracker.
+        if (issueProviderConfigId != run.IssueProviderConfigId
+            && !await IsInProjectEpicScopeAsync(run, issueProviderConfigId))
+        {
+            throw new HubException($"Provider '{SanitizeForLog(issueProviderConfigId)}' is not in the scope of job {jobId.Value}: only a project epic may access the trackers of its project's templates");
+        }
+
+        return (run, issueConfig);
+    }
+
+    /// <summary>
+    /// Whether <paramref name="run"/> may access a tracker other than its own. Only a project epic's
+    /// decomposition may: a <see cref="PipelineRunType.Decomposition"/> run bound to its project's
+    /// epic tracker, operating in the tracker of an enabled template of that project.
+    /// Other runs bound to the same tracker may not.
     /// </summary>
     private async Task<bool> IsInProjectEpicScopeAsync(PipelineRun run, string issueProviderConfigId)
     {

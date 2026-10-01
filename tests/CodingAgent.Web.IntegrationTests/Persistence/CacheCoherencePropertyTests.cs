@@ -49,7 +49,7 @@ public class CacheCoherencePropertyTests : IDisposable
     /// <summary>
     /// Property 14: Cache Coherence.
     /// For any random PipelineConfiguration, saving via the store and loading it back
-    /// yields semantically equivalent values (MaxRetries, AgentTimeout, IssuePageSize).
+    /// yields semantically equivalent values (MaxRetries, AgentTimeout).
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
     public async Task<bool> SaveThenLoad_ProducesSameValues(PipelineConfiguration config)
@@ -123,7 +123,7 @@ public class CacheCoherencePropertyTests : IDisposable
 
 /// <summary>
 /// FsCheck arbitrary generators for PipelineConfiguration (Property 14).
-/// Generates configs with randomized MaxRetries, AgentTimeout, IssuePageSize, and boolean flags.
+/// Generates configs with randomized MaxRetries, AgentTimeout, MaxIssueImages, and boolean flags.
 /// </summary>
 public class PipelineConfigArbitraries
 {
@@ -131,7 +131,7 @@ public class PipelineConfigArbitraries
     {
         var gen = from maxRetries in Gen.Choose(0, 10)
                   from timeoutMinutes in Gen.Choose(1, 120)
-                  from pageSize in Gen.Choose(1, 100)
+                  from maxIssueImages in Gen.Choose(0, 50)
                   from analysisReview in Gen.Elements(true, false)
                   from acceptanceCriteria in Gen.Elements(true, false)
                   from baselineHealth in Gen.Elements(true, false)
@@ -139,7 +139,7 @@ public class PipelineConfigArbitraries
                   {
                       MaxRetries = maxRetries,
                       AgentTimeout = TimeSpan.FromMinutes(timeoutMinutes),
-                      MaxIssueImages = pageSize,
+                      MaxIssueImages = maxIssueImages,
                       AnalysisReviewEnabled = analysisReview,
                       AcceptanceCriteriaEnabled = acceptanceCriteria,
                       BaselineHealthCheckEnabled = baselineHealth

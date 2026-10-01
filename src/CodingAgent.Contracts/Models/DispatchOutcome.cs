@@ -15,4 +15,12 @@ namespace CodingAgent.Pipeline.Models;
 /// neither caller uses it after the distribute+confirm/revert flow. If a future caller
 /// needs it, extend this record rather than returning the full <see cref="DistributionResult"/>.
 /// </remarks>
-public record DispatchOutcome(bool Success, bool Queued, string? ErrorMessage);
+public record DispatchOutcome(bool Success, bool Queued, string? ErrorMessage)
+{
+    /// <summary>
+    /// When <c>true</c>, the distribution was rejected because a live WorkItem already exists
+    /// for this issue (HTTP 409 — <see cref="DistributionResult.AlreadyExists"/> was set).
+    /// Callers must not count this as a processed dispatch or consume budget.
+    /// </summary>
+    public bool AlreadyExists { get; init; } = false;
+}

@@ -33,7 +33,9 @@ public sealed class OrchestratorProxyWireContractTests : IAsyncLifetime
         .Returns(HubMethodNames.RequestCreateIssueForProvider,
             new CreatedIssueResult { Identifier = "2931", Url = "https://github.test/issues/2931" })
         .Returns(HubMethodNames.RequestListOpenIssues, EmptyPage)
-        .Returns(HubMethodNames.RequestListClosedIssues, EmptyPage);
+        .Returns(HubMethodNames.RequestListClosedIssues, EmptyPage)
+        .Returns(HubMethodNames.RequestListOpenIssuesForProvider, EmptyPage)
+        .Returns(HubMethodNames.RequestListClosedIssuesForProvider, EmptyPage);
 
     private HubConnection _connection = null!;
     private OrchestratorProxy _proxy = null!;
@@ -105,6 +107,10 @@ public sealed class OrchestratorProxyWireContractTests : IAsyncLifetime
             p => p.ListOpenIssuesAsync(1, 25, new List<string> { AgentLabels.Generated }, CancellationToken.None)),
         ["ListClosedIssuesAsync"] = (HubMethodNames.RequestListClosedIssues,
             p => p.ListClosedIssuesAsync(1, 25, null, new DateTime(2026, 8, 23, 0, 0, 0, DateTimeKind.Utc), CancellationToken.None)),
+        ["ListOpenIssuesForProviderAsync"] = (HubMethodNames.RequestListOpenIssuesForProvider,
+            p => p.ListOpenIssuesForProviderAsync("provider-1", 1, 25, new List<string> { AgentLabels.Generated }, CancellationToken.None)),
+        ["ListClosedIssuesForProviderAsync"] = (HubMethodNames.RequestListClosedIssuesForProvider,
+            p => p.ListClosedIssuesForProviderAsync("provider-1", 1, 25, null, new DateTime(2026, 8, 23, 0, 0, 0, DateTimeKind.Utc), CancellationToken.None)),
     };
 
     public static IEnumerable<object[]> OtherProxyCallNames => OtherProxyCalls.Keys.Select(name => new object[] { name });

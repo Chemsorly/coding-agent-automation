@@ -196,7 +196,6 @@ Set the dispatch priority weight for a pending work item. Operators call this to
 ### GET /api/work-items/active
 
 List all currently non-terminal work items (status: `Pending`, `Dispatched`, or `Running`). Used by the Job Controller's `ReconciliationService` and the Scheduler's `WorkItemCountsService`.
-<!-- TODO: [WARNING] Stale class name — WorkItemCountsPoller was renamed to WorkItemCountsService (issue #2844). -->
 
 **Authentication:** OperatorApiKey
 
@@ -242,7 +241,7 @@ curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
 
 ```json
 {
-  "pipelineConfig": "{\"maxRetries\":3,\"agentTimeout\":\"00:30:00\",\"minIssueSlots\":1}",
+  "pipelineConfig": "{\"maxRetries\":3,\"agentTimeout\":\"00:30:00\",\"brainReadOnly\":false}",
   "providerConfigs": [
     {
       "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",

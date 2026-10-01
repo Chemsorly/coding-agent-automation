@@ -273,6 +273,10 @@ public sealed class PipelineStepContext
     /// fails the run, and returns <see cref="StepResult.Stop"/>.
     /// Returns <see cref="StepResult.Continue"/> on success.
     /// </summary>
+    /// <remarks>
+    /// Error is recorded on <see cref="Activity.Current"/> — after <see cref="PipelineStepRunner"/>
+    /// adds a per-step span, this is the step span, not <c>ExecutePipeline</c>.
+    /// </remarks>
     public async Task<StepResult> TryCriticalAsync(Func<Task> action, string actionDescription, CancellationToken ct = default)
     {
         try { await action(); }
@@ -287,7 +291,8 @@ public sealed class PipelineStepContext
     }
 
     /// <summary>
-    /// Executes a non-critical async action. On failure (non-cancellation), logs a warning
+    /// Executes a non-critical async action. On failure (non-cancellation), logs a warning,
+    /// adds an exception event with <c>pipeline.non_critical=true</c> to the current span (no Error status),
     /// and invokes the optional <paramref name="onFailure"/> callback.
     /// Always returns <see cref="StepResult.Continue"/>.
     /// </summary>
@@ -296,7 +301,16 @@ public sealed class PipelineStepContext
         try { await action(); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex, ct);
+            // Add an exception event without setting Error status — this is a recovered failure.
+            // The span (which is the step span after PipelineStepRunner wraps each step) should
+            // not be marked Error because the pipeline continues normally after this failure.
+            Activity.Current?.AddEvent(new ActivityEvent("exception", tags: new ActivityTagsCollection
+            {
+                { "exception.type", ex.GetType().FullName ?? "<unknown>" },
+                { "exception.message", ex.Message },
+                { "exception.stacktrace", ex.StackTrace ?? "" },
+                { "pipeline.non_critical", true }
+            }));
             Logger.Warning(ex, "Pipeline {RunId} {ActionDescription} failed, continuing", Run.RunId, actionDescription);
             onFailure?.Invoke();
         }

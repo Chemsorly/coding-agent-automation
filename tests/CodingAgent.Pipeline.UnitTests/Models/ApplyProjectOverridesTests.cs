@@ -35,34 +35,6 @@ public class ApplyProjectOverridesTests
         result.Should().BeSameAs(config);
     }
 
-    // TODO: This test is a strict subset of PipelineConfigurationTests.ApplyProjectOverrides_ArgumentOutOfRange_ReturnsOriginalConfig
-    // (same setup, same project values). The PipelineConfigurationTests version also asserts property values, making this redundant.
-    // Consider removing this test or consolidating into a single location.
-    // TODO: This test only asserts BeSameAs (referential identity) but does not assert that valid override values
-    // (e.g., MaxRetries=7) did NOT leak through. Add assertions like `result.MaxRetries.Should().Be(3)` to confirm
-    // no valid overrides were partially applied before the failure, unlike the PipelineConfigurationTests version which does.
-    [Fact]
-    public void ArgumentOutOfRange_ReturnsOriginalConfigReference()
-    {
-        var config = TestPipelineConfig.Default() with
-        {
-            MaxRetries = 3,
-            MaxDecompositionSubIssues = 10,
-        };
-
-        // MaxDecompositionSubIssues=25 is out of range (1-20) — triggers ArgumentOutOfRangeException.
-        // On error, the original config is returned unchanged (no partial overrides applied).
-        var project = TestPipelineConfig.WithProject() with
-        {
-            MaxRetries = 7,
-            MaxDecompositionSubIssues = 25,
-        };
-
-        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
-
-        result.Should().BeSameAs(config);
-    }
-
     // ── Null fields → inherit from global ──────────────────────────────────────
 
     [Fact]
@@ -88,17 +60,28 @@ public class ApplyProjectOverridesTests
         result.MaxInfrastructureRetries.Should().Be(config.MaxInfrastructureRetries);
         result.StallWarningInterval.Should().Be(config.StallWarningInterval);
         result.MaxDecompositionSubIssues.Should().Be(config.MaxDecompositionSubIssues);
-        result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
         result.MaxOpenIssuesForContext.Should().Be(config.MaxOpenIssuesForContext);
         result.MaxRefactoringProposals.Should().Be(config.MaxRefactoringProposals);
         result.RefactoringReviewEnabled.Should().Be(config.RefactoringReviewEnabled);
         result.BrainConsolidationReviewEnabled.Should().Be(config.BrainConsolidationReviewEnabled);
-        result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
         result.BlacklistedPaths.Should().BeSameAs(config.BlacklistedPaths);
         result.BrainReadOnly.Should().Be(config.BrainReadOnly);
         result.CiCancelledMoveMaxRetries.Should().Be(config.CiCancelledMoveMaxRetries);
         result.FeedbackTimeoutSeconds.Should().Be(config.FeedbackTimeoutSeconds);
+        // MinIssueSlots, MaxConcurrentDecompositions, and HarnessSuggestionsReviewEnabled were
+        // removed from PipelineProject (issue #3150) and their [ProjectOverridable] attributes were
+        // stripped from PipelineConfiguration. The reflection-based merge no longer touches these
+        // fields. Assert that the global values still pass through unchanged — i.e. the attribute
+        // removal did not accidentally reset them to their type defaults (0 / false).
+        // TODO: TestPipelineConfig.Default() uses the property-level defaults for these three
+        // fields (MinIssueSlots=1, MaxConcurrentDecompositions=2, HarnessSuggestionsReviewEnabled=true).
+        // The assertions below are valid because those defaults are non-zero/non-false, but they
+        // would be stronger with explicit non-default values (e.g. config with { MinIssueSlots = 5,
+        // MaxConcurrentDecompositions = 7, HarnessSuggestionsReviewEnabled = false }) to make it
+        // impossible to confuse "correctly passed through" with "reset to type default".
         result.MinIssueSlots.Should().Be(config.MinIssueSlots);
+        result.MaxConcurrentDecompositions.Should().Be(config.MaxConcurrentDecompositions);
+        result.HarnessSuggestionsReviewEnabled.Should().Be(config.HarnessSuggestionsReviewEnabled);
     }
 
     // ── Non-null fields → override global values ───────────────────────────────

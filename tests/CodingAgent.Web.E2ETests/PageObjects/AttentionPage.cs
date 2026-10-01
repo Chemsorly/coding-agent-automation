@@ -43,18 +43,23 @@ public sealed class AttentionPage
     /// <summary>Waits until the loading card is gone and section content is visible.</summary>
     public async Task WaitForLoadCompleteAsync()
     {
-        // Wait until the "Loading…" empty card disappears
-        // TODO [WARNING]: If the Attention page renders with no .cockpit-empty elements at all (because all
-        // sections have rows and the blocked-issues section loaded immediately), the condition
-        // !document.querySelector('.cockpit-empty') evaluates to true immediately and this method returns
-        // before Blazor Server has finished its data round-trip, causing subsequent assertions to read stale
-        // page state. A more robust guard would wait for a known stable element (e.g. a section card's
-        // data-testid, or the blocked-count badge) rather than relying solely on the absence of a loading
-        // placeholder.
-        await _page.WaitForFunctionAsync(
-            "() => !document.querySelector('.cockpit-empty') || " +
-            "      ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.includes('Loading'))",
-            null,
+        // Wait until the main data round-trip is done: Blazor's OnInitializedAsync completes,
+        // _loading is set to false, and the page re-renders with either attention-section cards
+        // or the "nothing needs attention" empty state.
+        //
+        // The previous guard (!cockpit-empty || !any-contains-Loading) was insufficient:
+        // the blocked-issues section renders a cockpit-empty with "Checking…" (not "Loading"),
+        // which caused the old condition to fire as soon as _loading became false — but before
+        // the attention-section data-testid elements landed in the DOM, producing false negatives
+        // on IsSectionVisibleAsync calls immediately after this method returned.
+        //
+        // The new guard waits for the blocked-count badge (data-testid="attention-blocked-count"),
+        // which is always rendered in the else branch (after _loading = false) regardless of
+        // whether any attention sections have rows. This is the most stable sentinel: it is
+        // absent during prerender and the "Loading…" state, and always present once Blazor has
+        // finished its data round-trip and re-rendered the page.
+        await _page.WaitForSelectorAsync(
+            "[data-testid='attention-blocked-count']",
             new() { Timeout = DefaultTimeout });
     }
 

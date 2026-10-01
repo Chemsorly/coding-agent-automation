@@ -467,5 +467,5 @@ MCP servers can be configured at the **agent profile level** (global) or at the 
 
 This allows projects to selectively override or augment the profile's MCP configuration without having to redefine the entire list.
 
-**Chat sessions**: when a project is selected for an interactive chat session, the session gets the project's MCP servers (merged with the agent profile's, as above), and its first prompt carries the project's secrets and steering. Repository-level secrets and steering are not passed to chat sessions.
+**Chat session isolation**: When a project is selected, its MCP servers (merged with the profile's), secrets, steering content, and project identity are sent on the first prompt of the chat session. Subsequent prompts do not re-send secrets or steering content. Repository-level steering and repo secrets are not sent to chat sessions.
 

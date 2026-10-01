@@ -12,11 +12,8 @@ public sealed record ConsolidationServiceDependencies(
     Serilog.ILogger Logger,
     PipelineConfiguration Config,
     IProjectStore ProjectStore,
-    IPipelineRunHistoryService RunHistoryService,
-    IConsolidationRunStore RunStore,
     IHarnessSuggestionStore HarnessSuggestionStore,
     IProviderConfigStore ProviderConfigStore,
-    IConsolidationFeedbackCache? FeedbackCache = null,
     IWorkDistributor? WorkDistributor = null,
     IConsolidationSelectorResolver? SelectorResolver = null,
     IPipelineConfigStore? PipelineConfigStore = null);

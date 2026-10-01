@@ -3,37 +3,21 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
-/// Manages consolidation loop execution: triggering runs, tracking history,
-/// and persisting harness suggestions.
+/// Manages consolidation loop execution: triggering runs and persisting harness suggestions.
 /// </summary>
 public interface IConsolidationService
 {
     /// <summary>
-    /// Triggers a consolidation run of the specified type. Returns the created run,
-    /// or <c>null</c> if rejected (e.g., duplicate already running, no idle agent available).
+    /// Triggers a consolidation run of the specified type. Returns a result record describing
+    /// the created run, or <c>null</c> if rejected (e.g., duplicate already running, no idle
+    /// agent available).
     /// </summary>
     /// <param name="type">The type of consolidation loop to execute.</param>
     /// <param name="templateId">The Pipeline Job Template ID (null for harness suggestions which are global).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
-    /// <returns>The created <see cref="ConsolidationRun"/>, or <c>null</c> if the trigger was rejected.</returns>
-    Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
-
-    /// <summary>
-    /// Returns all consolidation runs, ordered by <see cref="ConsolidationRun.StartedAtUtc"/> descending.
-    /// </summary>
-    /// <param name="ct">Cancellation token.</param>
-    Task<IReadOnlyList<ConsolidationRun>> GetRunHistoryAsync(CancellationToken ct);
-
-    /// <summary>
-    /// Updates a run's status and summary after completion.
-    /// </summary>
-    /// <param name="runId">The unique identifier of the run to update.</param>
-    /// <param name="status">The new status for the run.</param>
-    /// <param name="summary">Optional summary text describing the outcome.</param>
-    /// <param name="ct">Cancellation token.</param>
-    /// <param name="totalTokens">Total token count from review/refinement/diff summary calls.</param>
-    Task UpdateRunAsync(RunId runId, ConsolidationRunStatus status, string? summary, CancellationToken ct, long totalTokens = 0);
+    /// <returns>A <see cref="ConsolidationTriggerResult"/> describing the dispatched run, or <c>null</c> if the trigger was rejected.</returns>
+    Task<ConsolidationTriggerResult?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
 
     /// <summary>
     /// Returns the current harness suggestions from the persisted file
@@ -51,47 +35,7 @@ public interface IConsolidationService
     Task SaveHarnessSuggestionsAsync(HarnessSuggestions suggestions, CancellationToken ct);
 
     /// <summary>
-    /// Scans persisted consolidation runs and marks any with Status == Running as Failed.
-    /// Called at application startup to clean up orphaned runs from previous sessions.
-    /// </summary>
-    /// <summary>
-    /// Cleans up orphaned consolidation runs from previous sessions.
-    /// Only marks runs as Failed if their RunId is not in <paramref name="activeAgentJobIds"/>
-    /// — i.e., no agent is currently working on them.
-    /// </summary>
-    Task CleanupOrphanedRunsAsync(IReadOnlyCollection<string> activeAgentJobIds, CancellationToken ct);
-
-    /// <summary>
-    /// Transitions a queued run to Running status. Called by the drain service when
-    /// a queued consolidation job is dispatched to an agent.
-    /// </summary>
-    /// <param name="runId">The run ID to transition.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task TransitionToRunningAsync(RunId runId, CancellationToken ct);
-
-    /// <summary>
     /// Fired when any consolidation run changes state (created, completed, or failed).
     /// </summary>
     event Action? OnChange;
-
-    /// <summary>
-    /// Returns true if the specified run ID is currently tracked as an active (Running or Queued) consolidation run.
-    /// Used by ReconciliationService (JobController) to avoid resetting agents working on consolidation jobs.
-    /// </summary>
-    bool IsRunActive(RunId runId);
-
-    /// <summary>
-    /// Returns the <see cref="ConsolidationRun.StartedAtUtc"/> for the specified active run,
-    /// or <c>null</c> if the run is not tracked as active.
-    /// Used by ReconciliationService (JobController) to detect stuck consolidation runs that exceed the progress timeout.
-    /// </summary>
-    DateTimeOffset? GetActiveRunStartedAt(RunId runId);
-
-    /// <summary>
-    /// Deletes a consolidation run by ID. Invalidates the run history cache.
-    /// Used by retention cleanup services.
-    /// </summary>
-    /// <param name="runId">The run ID to delete.</param>
-    /// <param name="ct">Cancellation token.</param>
-    Task DeleteRunAsync(RunId runId, CancellationToken ct);
 }

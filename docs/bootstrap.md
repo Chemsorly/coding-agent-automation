@@ -28,6 +28,8 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
 
 3. Open the web UI. A first-run banner will appear linking to the Pipelines page where you configure job templates.
 
+   > **First-startup seeding:** On first boot against an empty database, the API automatically creates the Default project and seeds the default reviewer configurations. No manual action is required.
+
 4. Configure the two areas:
    - Go to **Settings** and configure: Providers (Issue, Repository, Agent, optionally Pipeline/CI), Agent Profiles, Quality Gate Configs, Reviewer Configs
    - Go to **Pipelines** and configure: Pipeline Job Templates (use the **+ Add** button)
@@ -88,19 +90,21 @@ See [HTTP API Reference](api-reference.md) for full endpoint details.
 
 ---
 
-## Scenario C — File-Based Auto-Import (First-Boot Migration)
+---
 
-On first startup against an empty Postgres database, `DatabaseStartupService.ImportJsonConfigIfNeededAsync` checks for JSON config files under `ConfigBaseDirectory` (default: `/app/config/pipeline`). If files are present, they are imported automatically without any manual action.
+## Scenario C — Legacy: File-Based Import (historical — not triggered automatically)
 
-This is a zero-effort migration path for operators upgrading from a docker-compose deployment that stored configuration in JSON files.
+> ⚠️ **This scenario no longer applies.** The API startup path does not call
+> `DatabaseStartupService.ImportJsonConfigIfNeededAsync` and never reads JSON files from disk automatically.
+> The file-based import was removed from the production startup path in the Spec 041–045 split.
 
-**How to use it:**
+To migrate configuration from JSON files to a fresh instance, use the HTTP export/import flow described in
+[Scenario B](#scenario-b--migrate-from-an-existing-instance-http-exportimport) instead:
 
-1. Mount your existing JSON config directory at `/app/config/pipeline` in the orchestrator pod (e.g., via a PVC or ConfigMap volume).
-2. Start the orchestrator. On first boot it detects the files and imports them.
-3. After import succeeds, the volume mount is no longer needed — configuration lives in Postgres.
+1. Export the JSON config bundle from your old instance (or construct one manually).
+2. POST it to `POST /api/config/import` on the new instance.
 
-On a fresh install with no JSON files present, this is a no-op.
+The JSON config directory (`/app/config/pipeline`) is no longer read at startup.
 
 ---
 

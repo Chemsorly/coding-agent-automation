@@ -46,7 +46,6 @@ public static class ProviderSettingKeys
     /// <summary>Base URL for HTTP-based agent providers (e.g., OpenCode).</summary>
     public const string BaseUrl = "baseUrl";
 
-
     /// <summary>Agent name identifier (e.g., "default").</summary>
     public const string AgentName = "agentName";
 

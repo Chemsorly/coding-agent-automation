@@ -111,10 +111,6 @@ public static class ApiServiceCollectionExtensions
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
                 Log.Logger));
 
-        // ── IConsolidationRunStore ──────────────────────────────────────────
-        services.AddSingleton<IConsolidationRunStore>(sp =>
-            new PostgresConsolidationRunStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-
         // ── ILoopStateStore ─────────────────────────────────────────────────
         services.AddSingleton<ILoopStateStore>(sp =>
             new PostgresLoopStateStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
@@ -417,10 +413,13 @@ public static class ApiServiceCollectionExtensions
     /// <summary>
     /// Registers lifecycle, consolidation, agent communication, and run management services.
     ///
-    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 7 required
+    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 6 required
     /// arguments only (no <c>IConsolidationFeedbackCache</c>, <c>IWorkDistributor</c>, selector resolver
     /// or settings store). The Web host's <c>AddConsolidationServices</c> passes those too. These are
     /// intentionally different — do NOT unify them.
+    // TODO [WARNING]: The required-argument count in this comment was "7" before IPipelineRunHistoryService
+    // and IConsolidationFeedbackCache were removed from ConsolidationServiceDependencies in issue #3030.
+    // Update this count if ConsolidationServiceDependencies gains or loses required parameters in future.
     /// </summary>
     private static void AddLifecycleAndConsolidation(IServiceCollection services)
     {
@@ -434,14 +433,12 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<IChatNotifier>(sp => sp.GetRequiredService<PipelineRunLifecycleService>());
 
         // ── IConsolidationService ────────────────────────────────────────────
-        // IMPORTANT: intentionally the 7-argument form — not the Web host's full form.
+        // IMPORTANT: intentionally the minimal-argument form — not the Web host's full form.
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             new ConsolidationServiceDependencies(
                 Log.Logger,
                 new PipelineConfiguration(),
                 sp.GetRequiredService<IProjectStore>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<IConsolidationRunStore>(),
                 sp.GetRequiredService<IHarnessSuggestionStore>(),
                 sp.GetRequiredService<IProviderConfigStore>())));
 

@@ -1,0 +1,224 @@
+using System.Diagnostics;
+using AwesomeAssertions;
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.Services.Steps;
+using CodingAgent.Pipeline.Telemetry;
+using Moq;
+
+namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
+
+/// <summary>
+/// Tests the telemetry spans emitted by <see cref="VerifyBaselineStep"/>:
+/// - A VerifyBaseline span is always emitted when the step runs.
+/// - Fatal health-check failure sets Error on the VerifyBaseline span.
+/// - Non-critical workspace baseline failure adds exception event WITHOUT setting Error.
+/// </summary>
+public class VerifyBaselineStepSpanTests : IDisposable
+{
+    private readonly ActivityListener _listener;
+    // ConcurrentBag<Activity> is required: ActivityListener.ActivityStopped is invoked on whatever thread
+    // stops the Activity (potentially a thread-pool continuation), so List<Activity> would race with
+    // test-thread reads in assertions.
+    private readonly System.Collections.Concurrent.ConcurrentBag<Activity> _activities = [];
+
+    // Unique per test instance so parallel runs don't pick up each other's spans.
+    private readonly string _runId = $"test-run-{Guid.NewGuid():N}";
+
+    private readonly Mock<IQualityGateValidator> _validator = new();
+    private readonly Mock<IPipelineCallbacks> _callbacks = new();
+    private readonly Mock<IConfigurationStore> _configStore = new();
+    private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
+
+    public VerifyBaselineStepSpanTests()
+    {
+        _listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == PipelineTelemetry.SourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => _activities.Add(activity)
+        };
+        ActivitySource.AddActivityListener(_listener);
+
+        _callbacks.Setup(c => c.EmitOutputLine(It.IsAny<string>()));
+        _callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()));
+        _callbacks.Setup(c => c.SwapAgentLabel(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+    }
+
+    public void Dispose() => _listener.Dispose();
+
+    [Fact]
+    public async Task ExecuteAsync_AlwaysEmitsVerifyBaselineSpan()
+    {
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreatePassingReport());
+
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+            "VerifyBaselineStep must emit a VerifyBaseline span");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SpanHasPipelineRunIdTag()
+    {
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreatePassingReport());
+
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        var span = GetMySpan();
+        span.GetTagItem("pipeline.run_id").Should().Be(_runId);
+        span.GetTagItem("pipeline.issue").Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HealthCheckFails_SetsErrorOnVerifyBaselineSpan()
+    {
+        // Fatal failure: agent health check throws → span must have Error status.
+        var agentProviderMock = new Mock<IAgentProvider>();
+        agentProviderMock.Setup(a => a.ValidateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("agent binary not found"));
+
+        var context = BuildContext(agentProviderMock: agentProviderMock, preResolvedQgcs: [CreateQgc()]);
+
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        var span = GetMySpan();
+        span.Status.Should().Be(ActivityStatusCode.Error,
+            "a fatal agent health-check failure must set Error on the VerifyBaseline span");
+        span.StatusDescription.Should().Contain("agent binary not found");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WorkspaceBaselineThrows_NoErrorOnVerifyBaselineSpan()
+    {
+        // Non-fatal failure: workspace baseline check throws → span must NOT have Error status.
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("build tool not found"));
+
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        var span = GetMySpan();
+        span.Status.Should().NotBe(ActivityStatusCode.Error,
+            "a non-critical workspace baseline failure must NOT set Error on the span");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WorkspaceBaselineThrows_AddsNonCriticalExceptionEvent()
+    {
+        // Non-fatal failure: workspace baseline check throws → exception event with pipeline.non_critical=true.
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("compilation failed"));
+
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        var span = GetMySpan();
+        var evt = span.Events.Should().ContainSingle(e => e.Name == "exception").Which;
+        evt.Tags.Should().Contain(t => t.Key == "pipeline.non_critical" && true.Equals(t.Value));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_HealthCheckSucceeds_SpanHasNoErrorStatus()
+    {
+        var context = BuildContext(preResolvedQgcs: [CreateQgc()]);
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreatePassingReport());
+
+        await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
+
+        var span = GetMySpan();
+        span.Status.Should().NotBe(ActivityStatusCode.Error,
+            "a healthy baseline must not set Error on the span");
+        span.Events.Should().BeEmpty();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the single VerifyBaseline span produced by this test instance.
+    /// Filtering by <see cref="_runId"/> prevents picking up spans from other tests
+    /// running in parallel that also start a "VerifyBaseline" activity.
+    /// Uses ContainSingle so that a missing span produces a clear assertion-failure message
+    /// instead of an uninformative InvalidOperationException.
+    /// </summary>
+    private Activity GetMySpan() =>
+        _activities.Should()
+            .ContainSingle(
+                a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+                $"VerifyBaselineStep must emit a VerifyBaseline span with pipeline.run_id={_runId}")
+            .Which;
+
+    private PipelineStepContext BuildContext(
+        Mock<IAgentProvider>? agentProviderMock = null,
+        IReadOnlyList<QualityGateConfiguration>? preResolvedQgcs = null)
+    {
+        var run = new PipelineRun
+        {
+            RunId = _runId,
+            IssueIdentifier = "42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.CreatingBranch,
+            WorkspacePath = "/tmp/workspace",
+            RepositoryName = "owner/repo"
+        };
+
+        var agentProvider = agentProviderMock?.Object ?? Mock.Of<IAgentProvider>();
+        // By default, health check succeeds.
+        if (agentProviderMock == null)
+        {
+            var defaultAgent = new Mock<IAgentProvider>();
+            defaultAgent.Setup(a => a.ValidateAsync(It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            agentProvider = defaultAgent.Object;
+        }
+
+        return new PipelineStepContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = "/tmp",
+                BaselineHealthCheckEnabled = true
+            },
+            RepoProvider = Mock.Of<IRepositoryProvider>(),
+            AgentProvider = agentProvider,
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = new CancellationTokenSource(),
+            ConfigStore = _configStore.Object,
+            Callbacks = _callbacks.Object,
+            IssueOps = Mock.Of<IAgentIssueOperations>(),
+            AgentExecution = Mock.Of<IAgentPhaseExecutor>(),
+            QualityGates = Mock.Of<IQualityGateExecutor>(),
+            BrainSync = null,
+            PrOrchestrator = new PullRequestOrchestrator(_logger),
+            Logger = _logger,
+            QualityGateValidator = _validator.Object,
+            PreResolvedQualityGateConfigs = preResolvedQgcs
+        };
+    }
+
+    private static QualityGateConfiguration CreateQgc() => new()
+    {
+        Id = "qgc-1",
+        DisplayName = "TestQgc",
+        CompilationCommand = "dotnet build",
+        TestCommand = "dotnet test"
+    };
+
+    private static QualityGateReport CreatePassingReport() => new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
+        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "ok" }
+    };
+}
