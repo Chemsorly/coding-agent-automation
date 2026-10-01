@@ -399,6 +399,25 @@ public class DispatchInfrastructure
         var (existingAnalysis, forceRefreshAnalysis, stalenessSignal) =
             await DetectAnalysisStalenessAsync(issueComments, issueIdentifier, issueProviderId, ct);
 
+        // Body-hash staleness check (body_changed signal).
+        // AnalysisBodyHash.Extract returns null for legacy comments without an embedded hash,
+        // so this is silently skipped for those — no false positives.
+        // The !forceRefreshAnalysis guard ensures body_changed does not override a higher-priority
+        // signal (gate_rejection, gate_wont_do, agent_error_since).
+        if (!forceRefreshAnalysis && existingAnalysis is not null)
+        {
+            var embeddedHash = AnalysisBodyHash.Extract(existingAnalysis);
+            if (embeddedHash is not null)
+            {
+                var currentHash = AnalysisBodyHash.Compute(issueDetail.Description);
+                if (embeddedHash != currentHash)
+                {
+                    forceRefreshAnalysis = true;
+                    stalenessSignal = "body_changed";
+                }
+            }
+        }
+
         return new IssueContextResult(
             issueDetail, parsedIssue, issueComments,
             existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);

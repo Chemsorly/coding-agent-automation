@@ -320,6 +320,147 @@ public class IssueContextBuilderTests
         result.IssueDetail.Images[1].Url.Should().Be("https://github.com/user-attachments/assets/def456.png");
         result.IssueDetail.Images[1].SourceType.Should().Be(ImageSourceType.Comment);
     }
+
+    [Fact]
+    public async Task BuildIssueContextAsync_BodyChangedSinceAnalysis_SetsBodyChangedStaleness()
+    {
+        // The analysis comment embeds a hash of the *original* description.
+        // The issue provider returns the *current* (changed) description.
+        // BuildIssueContextAsync should detect the mismatch and set ForceRefreshAnalysis=true,
+        // StalenessSignal="body_changed".
+        const string originalDescription = "Original description before edit";
+        const string changedDescription  = "Changed description after the user edited the issue";
+
+        var originalHash = AnalysisBodyHash.Compute(originalDescription);
+        var analysisBody = $"{CommentMarkers.AnalysisHeader}\n## Prior analysis content\n" +
+                           $"<!-- agent:analysis-body-hash:{originalHash} -->";
+
+        var comments = new List<IssueComment>
+        {
+            new()
+            {
+                Id = "c-analysis",
+                Body = analysisBody,
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-30)
+            }
+        };
+        // Mock returns the *changed* description — hash won't match the one embedded in the comment.
+        SetupIssueProvider(comments, issueDescription: changedDescription);
+
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        // TODO [WARNING]: Asserts only that ExistingAnalysis contains the AnalysisHeader marker,
+        // not the specific body text seeded in the comment ("## Prior analysis content"). Because
+        // this test is primarily verifying ForceRefreshAnalysis/StalenessSignal for the body-changed
+        // path, the ExistingAnalysis check is incidental. Either strengthen it with
+        // .Contain("## Prior analysis content") to confirm the correct comment body was carried
+        // forward, or drop it if no discriminating value is intended here.
+        result!.ExistingAnalysis.Should().Contain(CommentMarkers.AnalysisHeader);
+        result.ForceRefreshAnalysis.Should().BeTrue("body changed since analysis was written");
+        result.StalenessSignal.Should().Be("body_changed");
+    }
+
+    [Fact]
+    public async Task BuildIssueContextAsync_BodyUnchangedSinceAnalysis_NoForceRefresh()
+    {
+        // The analysis comment embeds a hash of the description.
+        // The issue provider returns the same description — hashes match, no refresh needed.
+        const string description = "Description that has not changed";
+
+        var hash = AnalysisBodyHash.Compute(description);
+        var analysisBody = $"{CommentMarkers.AnalysisHeader}\n## Analysis\n" +
+                           $"<!-- agent:analysis-body-hash:{hash} -->";
+
+        var comments = new List<IssueComment>
+        {
+            new()
+            {
+                Id = "c-analysis",
+                Body = analysisBody,
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-30)
+            }
+        };
+        SetupIssueProvider(comments, issueDescription: description);
+
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ForceRefreshAnalysis.Should().BeFalse("body has not changed since analysis");
+        result.StalenessSignal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task BuildIssueContextAsync_AnalysisWithNoHashMarker_BodyChangedIgnored()
+    {
+        // Legacy analysis comments without the hash marker: body-changed check must be
+        // silently skipped — no false positives for pre-hash comments.
+        var analysisBody = $"{CommentMarkers.AnalysisHeader}\n## Legacy analysis without hash marker";
+
+        var comments = new List<IssueComment>
+        {
+            new()
+            {
+                Id = "c-analysis",
+                Body = analysisBody,
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-30)
+            }
+        };
+        // Description is totally different, but since there is no hash marker we must not refresh.
+        SetupIssueProvider(comments, issueDescription: "Completely different description");
+
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ForceRefreshAnalysis.Should().BeFalse("no hash marker means body-changed check is skipped");
+        result.StalenessSignal.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task BuildIssueContextAsync_GateRejectionTakesPrecedenceOverBodyChanged()
+    {
+        // When both a newer gate-rejection comment AND a changed body are present,
+        // gate_rejection must win (higher-priority signal). body_changed must NOT override it.
+        const string originalDescription = "Original description";
+        const string changedDescription  = "Changed description";
+
+        var originalHash = AnalysisBodyHash.Compute(originalDescription);
+        var analysisBody = $"{CommentMarkers.AnalysisHeader}\n## Analysis\n" +
+                           $"<!-- agent:analysis-body-hash:{originalHash} -->";
+
+        var comments = new List<IssueComment>
+        {
+            new()
+            {
+                Id = "c-analysis",
+                Body = analysisBody,
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-30)
+            },
+            new()
+            {
+                Id = "c-rejection",
+                Body = $"{CommentMarkers.GateRejection}\nRejection reason",
+                Author = "bot",
+                CreatedAt = DateTime.UtcNow.AddMinutes(-10) // newer than analysis
+            }
+        };
+        SetupIssueProvider(comments, issueDescription: changedDescription);
+
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ForceRefreshAnalysis.Should().BeTrue();
+        result.StalenessSignal.Should().Be("gate_rejection",
+            "gate_rejection has higher priority than body_changed");
+    }
 }
 
 // ── Image extraction failure tests ───────────────────────────────────────────
