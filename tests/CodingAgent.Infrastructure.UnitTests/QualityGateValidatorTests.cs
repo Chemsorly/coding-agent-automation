@@ -1026,3 +1026,129 @@ public class QualityGateValidatorInfraKillTests
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
 }
+
+/// <summary>
+/// Tests for <see cref="QualityGateValidator.ValidateWithServerSideReportingAsync"/> —
+/// the overload that fires a server-side process_timeout agent-stall event via a
+/// <c>reportEvent</c> delegate (issue #2979).
+///
+/// Without these tests, removing or misplacing the ctx.ReportPipelineRunEvent?.Invoke(...)
+/// call in QualityGateValidator.RunQgcProcessAsync would silently break process_timeout
+/// observability. The existing Compilation_Timeout / Tests_Timeout tests call ValidateAsync
+/// (the non-reporting overload) and would not catch that regression.
+/// </summary>
+public class ValidateWithServerSideReportingAsyncTests
+{
+    [Fact]
+    public async Task Tests_Timeout_FiresProcessTimeoutStallEvent()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-sside-timeout-{Guid.NewGuid():N}");
+        try
+        {
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 1
+            };
+
+            // Use the server-side reporting overload with a non-null delegate
+            var report = await validator.ValidateWithServerSideReportingAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportedEvents.Add);
+
+            // Gate must still fail (timeout is a gate failure)
+            report.Tests!.Passed.Should().BeFalse("a process timeout must produce a failed Tests gate");
+            report.QgcResults[0].Tests!.Details.Should().Contain("timed out");
+
+            // Exactly one AgentStall event with kind=process_timeout must have been reported
+            var stallEvents = reportedEvents
+                .Where(e => e.Kind == PipelineRunEventKind.AgentStall)
+                .ToList();
+
+            stallEvents.Should().ContainSingle(
+                "one process_timeout AgentStall event must be fired per QGC process timeout");
+            stallEvents[0].Result.Should().Be(PipelineTelemetry.AgentStallKinds.ProcessTimeout,
+                "the stall kind must be process_timeout");
+            stallEvents[0].Stage.Should().Be(PipelineTelemetry.StallPhases.QgcRetryAgent,
+                "the phase must be qgc_retry_agent for QGC process timeouts");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    [Fact]
+    public async Task Compilation_Timeout_FiresProcessTimeoutStallEvent()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-sside-comp-{Guid.NewGuid():N}");
+        try
+        {
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Build",
+                CompilationCommand = "dotnet",
+                CompilationArguments = ["build"],
+                ProcessTimeoutSeconds = 1
+            };
+
+            var report = await validator.ValidateWithServerSideReportingAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportedEvents.Add);
+
+            report.Compilation.Passed.Should().BeFalse("compilation timeout must fail the gate");
+
+            var stallEvents = reportedEvents
+                .Where(e => e.Kind == PipelineRunEventKind.AgentStall)
+                .ToList();
+
+            stallEvents.Should().ContainSingle(
+                "one process_timeout AgentStall event must be fired for a compilation timeout");
+            stallEvents[0].Result.Should().Be(PipelineTelemetry.AgentStallKinds.ProcessTimeout);
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    [Fact]
+    public async Task WhenNoTimeout_NoStallEventIsReported()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-sside-ok-{Guid.NewGuid():N}");
+        try
+        {
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: false);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 60
+            };
+
+            await validator.ValidateWithServerSideReportingAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportedEvents.Add);
+
+            reportedEvents.Should().BeEmpty(
+                "no stall events should be reported when the process completes within the timeout");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    // Reuse the TimeoutSimulatingValidator from the parent class (same namespace, same file)
+    private sealed class TimeoutSimulatingValidator : QualityGateValidator
+    {
+        private readonly bool _simulateTimeout;
+
+        public TimeoutSimulatingValidator(bool simulateTimeout)
+            : base(Serilog.Log.Logger) => _simulateTimeout = simulateTimeout;
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+        {
+            if (_simulateTimeout)
+                throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
+            return Task.FromResult((0, "Passed: 3\nTest summary: total: 3; failed: 0; succeeded: 3; skipped: 0; duration: 0.1s", ""));
+        }
+    }
+}

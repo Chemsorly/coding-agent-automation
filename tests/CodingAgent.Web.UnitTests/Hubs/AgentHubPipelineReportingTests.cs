@@ -630,3 +630,378 @@ public sealed class AgentHubPipelineReportingTests
             "A Warning must be logged when a gated label is rejected");
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hub-dispatch metric tests (issue #2979)
+//
+// These tests exercise the PRODUCTION hub dispatch path — they call
+// hub.ReportQualityGateResult / hub.ReportPipelineRunEvent directly and verify
+// that PipelineTelemetry instruments are incremented, catching bugs in the
+// switch/branch logic that purely tautological instrument-level tests would miss.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// <summary>
+/// Tests that <see cref="AgentHub.ReportQualityGateResult"/> records
+/// <c>pipeline.run.quality_gate.results</c> via the production
+/// <c>RecordQualityGateResultMetrics</c> path (issue #2979).
+/// Uses a MeterListener to observe the static shared instruments.
+/// </summary>
+public sealed class AgentHubReportQualityGateResultMetricsTests
+{
+    private readonly Mock<IAgentHubFacade> _mockFacade = new();
+
+    private AgentHub CreateHub()
+    {
+        var hub = new AgentHub(new AgentHubDependencies(
+            _mockFacade.Object,
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            Mock.Of<Serilog.ILogger>(),
+            Mock.Of<IAgentOrphanRecoveryService>(),
+            HubTestHelpers.CreateNoOpHubContext()));
+
+        var mockContext = new Mock<HubCallerContext>();
+        mockContext.Setup(c => c.ConnectionId).Returns("conn-metric-1");
+        hub.Context = mockContext.Object;
+        return hub;
+    }
+
+    [Fact]
+    public async Task ReportQualityGateResult_FlatFieldPassedReport_RecordsPassTagOnStaticInstrument()
+    {
+        // Arrange: use a MeterListener to observe the shared static instrument.
+        var observed = new List<(string gate, string result, string infraFailure)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.quality_gate.results")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string gate = "", result = "", infra = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "gate") gate = tag.Value?.ToString() ?? "";
+                if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+                if (tag.Key == "infrastructure_failure") infra = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((gate, result, infra));
+        });
+        listener.Start();
+
+        var run = new PipelineRun
+        {
+            RunId = "hub-metric-dispatch-test",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = CodingAgent.Pipeline.Models.PipelineRunType.Implementation
+        };
+        _mockFacade.Setup(f => f.GetRun("job-metric-1")).Returns(run);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true }
+        };
+
+        var hub = CreateHub();
+
+        // Act: call the actual hub method — exercises RecordQualityGateResultMetrics
+        await hub.ReportQualityGateResult("job-metric-1", report);
+
+        // Force the listener to collect
+        listener.RecordObservableInstruments();
+
+        // Assert: compilation and tests gates were both recorded with result=pass
+        observed.Should().Contain(t => t.gate == "compilation" && t.result == "pass" && t.infraFailure == "false",
+            "a passing compilation gate must emit gate=compilation, result=pass, infrastructure_failure=false");
+        observed.Should().Contain(t => t.gate == "tests" && t.result == "pass" && t.infraFailure == "false",
+            "a passing tests gate must emit gate=tests, result=pass, infrastructure_failure=false");
+    }
+
+    [Fact]
+    public async Task ReportQualityGateResult_FailedTestsGate_RecordsFailTag()
+    {
+        var observed = new List<(string gate, string result)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.quality_gate.results")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string gate = "", result = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "gate") gate = tag.Value?.ToString() ?? "";
+                if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((gate, result));
+        });
+        listener.Start();
+
+        var run = new PipelineRun
+        {
+            RunId = "hub-fail-test",
+            IssueIdentifier = "org/repo#2",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = CodingAgent.Pipeline.Models.PipelineRunType.Implementation
+        };
+        _mockFacade.Setup(f => f.GetRun("job-fail-1")).Returns(run);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = false }
+        };
+
+        var hub = CreateHub();
+        await hub.ReportQualityGateResult("job-fail-1", report);
+        listener.RecordObservableInstruments();
+
+        observed.Should().Contain(t => t.gate == "tests" && t.result == "fail",
+            "a failing tests gate must emit gate=tests, result=fail");
+        observed.Should().Contain(t => t.gate == "compilation" && t.result == "pass",
+            "a passing compilation gate must emit gate=compilation, result=pass");
+    }
+}
+
+/// <summary>
+/// Tests that <see cref="AgentHub.ReportPipelineRunEvent"/> dispatches to the correct
+/// metric instrument for each <see cref="PipelineRunEventKind"/> (issue #2979).
+/// Uses a MeterListener to observe the static shared instruments, exercising the
+/// production switch-dispatch in <c>AgentHub.Lifecycle.cs</c>.
+/// </summary>
+public sealed class AgentHubReportPipelineRunEventDispatchTests
+{
+    private readonly Mock<IAgentHubFacade> _mockFacade = new();
+
+    private AgentHub CreateHub()
+    {
+        var hub = new AgentHub(new AgentHubDependencies(
+            _mockFacade.Object,
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            Mock.Of<Serilog.ILogger>(),
+            Mock.Of<IAgentOrphanRecoveryService>(),
+            HubTestHelpers.CreateNoOpHubContext()));
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-dispatch-1");
+        hub.Context = mockCtx.Object;
+        return hub;
+    }
+
+    private PipelineRun CreateRun(string jobId, CodingAgent.Pipeline.Models.PipelineRunType runType
+        = CodingAgent.Pipeline.Models.PipelineRunType.Implementation)
+        => new()
+        {
+            RunId = jobId,
+            IssueIdentifier = "org/repo#99",
+            IssueTitle = "Dispatch test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = runType
+        };
+
+    [Fact]
+    public async Task CiNotStartedRetrigger_DispatchesTo_RunCiNotStartedRetriggers_Counter()
+    {
+        // Arrange: observe pipeline.run.ci.not_started_retriggers on the static instrument.
+        var counterHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.ci.not_started_retriggers")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => counterHit = true);
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-retriger-1")).Returns(CreateRun("job-retriger-1"));
+        var hub = CreateHub();
+
+        // Act: call hub with a CiNotStartedRetrigger event
+        await hub.ReportPipelineRunEvent("job-retriger-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiNotStartedRetrigger
+        });
+        listener.RecordObservableInstruments();
+
+        // Assert: the counter was incremented through the hub dispatch path
+        counterHit.Should().BeTrue(
+            "ReportPipelineRunEvent with Kind=CiNotStartedRetrigger must increment " +
+            "pipeline.run.ci.not_started_retriggers via the hub switch dispatch");
+    }
+
+    [Fact]
+    public async Task CiWait_WithAllRequiredFields_DispatchesTo_RunCiWait_Histogram()
+    {
+        // Arrange: observe pipeline.run.ci.wait
+        var recorded = new List<(double value, string stage, string result)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.ci.wait")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, value, tags, _) =>
+        {
+            string stage = "", result = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "stage") stage = tag.Value?.ToString() ?? "";
+                if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+            }
+            recorded.Add((value, stage, result));
+        });
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-ciwait-1")).Returns(CreateRun("job-ciwait-1"));
+        var hub = CreateHub();
+
+        // Act
+        await hub.ReportPipelineRunEvent("job-ciwait-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiWait,
+            DurationSeconds = 450.0,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.CiWaitStages.PrePr,
+            Result = "pass"
+        });
+        listener.RecordObservableInstruments();
+
+        // Assert: histogram was recorded with the correct value and tags
+        recorded.Should().HaveCount(1,
+            "exactly one CiWait observation must be recorded for a valid CiWait event");
+        recorded[0].value.Should().Be(450.0, "DurationSeconds must be forwarded to the histogram");
+        recorded[0].stage.Should().Be("pre_pr", "Stage=pre_pr must be forwarded to the stage tag");
+        recorded[0].result.Should().Be("pass", "Result=pass must be forwarded to the result tag");
+    }
+
+    [Fact]
+    public async Task CiWait_WhenKindSwitchedToWrongCase_WouldNotRecord_Demonstrating_HubIsActuallyExercised()
+    {
+        // This test verifies that the CiNotStartedRetrigger kind does NOT record to ci.wait.
+        // If the hub's switch dispatch were wrong (e.g. CiNotStartedRetrigger → ci.wait branch),
+        // this test would fail — proving the hub is actually tested here, not just the instrument.
+        var ciWaitHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.ci.wait")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) => ciWaitHit = true);
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-wrong-kind-1")).Returns(CreateRun("job-wrong-kind-1"));
+        var hub = CreateHub();
+
+        // Send a CiNotStartedRetrigger event — must NOT record into ci.wait histogram
+        await hub.ReportPipelineRunEvent("job-wrong-kind-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiNotStartedRetrigger
+        });
+        listener.RecordObservableInstruments();
+
+        ciWaitHit.Should().BeFalse(
+            "CiNotStartedRetrigger events must not record into pipeline.run.ci.wait");
+    }
+
+    [Fact]
+    public async Task AgentStall_WithPhaseAndKind_DispatchesTo_RunAgentStalls_Counter()
+    {
+        // Arrange
+        var recorded = new List<(string phase, string kind)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.agent_stalls")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string phase = "", kind = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "phase") phase = tag.Value?.ToString() ?? "";
+                if (tag.Key == "kind") kind = tag.Value?.ToString() ?? "";
+            }
+            recorded.Add((phase, kind));
+        });
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-stall-1")).Returns(CreateRun("job-stall-1"));
+        var hub = CreateHub();
+
+        // Act: send an AgentStall event with stall_kill kind
+        await hub.ReportPipelineRunEvent("job-stall-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.AgentStall,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.StallPhases.CodeGen,
+            Result = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.AgentStallKinds.StallKill
+        });
+        listener.RecordObservableInstruments();
+
+        // Assert: counter was incremented with correct phase and kind tags
+        recorded.Should().HaveCount(1,
+            "exactly one agent_stalls observation must be recorded for a valid AgentStall event");
+        recorded[0].phase.Should().Be("codegen",
+            "Stage=codegen must be forwarded to the phase tag");
+        recorded[0].kind.Should().Be("stall_kill",
+            "Result=stall_kill must be forwarded to the kind tag");
+    }
+
+    [Fact]
+    public async Task AgentStall_MissingStage_DoesNotRecord()
+    {
+        // Arrange: AgentStall without Stage should be silently skipped (logged as warning)
+        var stallHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.agent_stalls")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => stallHit = true);
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-stall-missing-1")).Returns(CreateRun("job-stall-missing-1"));
+        var hub = CreateHub();
+
+        // Send AgentStall with missing Stage (null) — hub must skip, not throw
+        var act = () => hub.ReportPipelineRunEvent("job-stall-missing-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.AgentStall,
+            Stage = null,
+            Result = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.AgentStallKinds.StallKill
+        });
+
+        await act.Should().NotThrowAsync("missing Stage must be silently skipped, not throw");
+        listener.RecordObservableInstruments();
+        stallHit.Should().BeFalse("an AgentStall event with null Stage must not record any metric");
+    }
+}
