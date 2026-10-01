@@ -206,31 +206,6 @@ public class ConfigExportServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task ExportAsync_ExportsConsolidationRuns()
-    {
-        // Arrange
-        var runId = Guid.NewGuid();
-        var run = new ConsolidationRun { RunId = runId.ToString(), Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
-
-        await using var db = _dbFactory.CreateDbContext();
-        db.ConsolidationRuns.Add(new ConsolidationRunEntity
-        {
-            Id = runId,
-            Data = SerializeToDocument(run)
-        });
-        await db.SaveChangesAsync();
-
-        var service = new ConfigExportService(_dbFactory);
-
-        // Act
-        await service.ExportAsync(_outputDir, CancellationToken.None);
-
-        // Assert
-        var path = Path.Combine(_outputDir, "consolidation-runs", $"{runId}.json");
-        File.Exists(path).Should().BeTrue();
-    }
-
-    [Fact]
     public async Task ExportAsync_ExportsPipelineRuns()
     {
         // Arrange

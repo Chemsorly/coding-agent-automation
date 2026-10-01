@@ -122,8 +122,8 @@ public sealed class ConsolidationServiceTests
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
         run.Should().NotBeNull();
-        run!.Status.Should().Be(ConsolidationRunStatus.Pending);
-        run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
+        // Status (ConsolidationRunStatus) was removed in issue #3032 — success is implied by non-null return.
+        run!.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
         run.RunId.Should().NotBeNullOrEmpty();
@@ -171,7 +171,10 @@ public sealed class ConsolidationServiceTests
         run.Should().NotBeNull("TriggerAsync must return a run even without store persistence");
         run!.RunId.Should().NotBeNullOrEmpty();
         run.Type.Should().Be(ConsolidationRunType.BrainConsolidation);
-        run.Status.Should().Be(ConsolidationRunStatus.Pending, "new runs start as Pending");
+        // Status (ConsolidationRunStatus) was removed in issue #3032 — success is implied by non-null return.
+        // TODO [WARNING]: WorkItemId (populated from the mocked distributor result) is not asserted here.
+        // A ConsolidationTriggerResult with a null WorkItemId would still pass this test after the return-type
+        // change. Add run!.WorkItemId.Should().NotBeNullOrEmpty() to confirm the field is correctly wired.
     }
 
     [Fact]
