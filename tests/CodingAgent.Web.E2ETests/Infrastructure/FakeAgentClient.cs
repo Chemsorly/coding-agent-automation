@@ -585,6 +585,73 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Gets full issue details via the hub's RequestGetIssue method (requires an active job).
+    /// The <paramref name="identifier"/> parameter is typed as <see cref="IssueIdentifier"/> (not
+    /// <c>string</c>) so that <see cref="AgentHubMessagePack.SerializerOptions"/> applies the
+    /// <see cref="IssueIdentifierFormatter"/> and serializes it as a bare string on the wire.
+    /// This is the acceptance-criterion-2 guard: if the formatter is removed from
+    /// <see cref="AgentHubMessagePack.SerializerOptions"/>, this call fails because the struct
+    /// would serialize as <c>{"Value":"..."}</c> which the hub cannot bind to its <c>string</c> parameter.
+    /// </summary>
+    public async Task<IssueDetail> RequestGetIssueAsync(string jobId, IssueIdentifier identifier)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        return await _connection.InvokeAsync<IssueDetail>(HubMethodNames.RequestGetIssue, jobId, identifier);
+    }
+
+    /// <summary>
+    /// Lists all comments on an issue via the hub's RequestListComments method (requires an active job).
+    /// The <paramref name="identifier"/> parameter must be typed as <see cref="IssueIdentifier"/>
+    /// (not <c>string</c>) to exercise <see cref="IssueIdentifierFormatter"/> on the wire.
+    /// </summary>
+    public async Task<IReadOnlyList<IssueComment>> RequestListCommentsAsync(string jobId, IssueIdentifier identifier)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        return await _connection.InvokeAsync<IReadOnlyList<IssueComment>>(HubMethodNames.RequestListComments, jobId, identifier);
+    }
+
+    /// <summary>
+    /// Updates an existing comment via the hub's RequestUpdateComment method (requires an active job).
+    /// <paramref name="issueIdentifier"/> is typed as <see cref="IssueIdentifier"/> to exercise the
+    /// formatter. <paramref name="commentId"/> is passed as its string representation because the
+    /// hub parameter is <c>string commentId</c> (parsed via <c>long.TryParse</c> to support 64-bit ids).
+    /// </summary>
+    // TODO: [WARNING] The IssueIdentifierFormatter guard here is not as fail-fast as Scenario 1.
+    // The hub's issueId parameter is typed string, so MessagePack accepts any string-like value
+    // including a JSON-serialized struct {"Value":"42"}. If IssueIdentifierFormatter is removed,
+    // the struct would serialize as {"Value":"42"} and MessagePack binding would still succeed;
+    // only the downstream provider lookup would fail (wrong identifier value). Scenario 2 therefore
+    // does not provide the same hard compile-time/wire-rejection guard for the formatter as
+    // Scenario 1 does. Consider adding an explicit assert in Scenario 2 that verifies the round-
+    // tripped comment's issue identifier equals "42" (not a JSON blob) to catch this silently.
+    public async Task RequestUpdateCommentAsync(string jobId, IssueIdentifier issueIdentifier, long commentId, string body)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync(HubMethodNames.RequestUpdateComment, jobId, issueIdentifier, commentId.ToString(), body);
+    }
+
+    /// <summary>
+    /// Changes the issue label via the hub's RequestLabelChange method (requires an active job).
+    /// <paramref name="targetKind"/> defaults to 0 (Issue), matching the production agent.
+    /// </summary>
+    public async Task RequestLabelChangeAsync(string jobId, string newLabel, int targetKind = 0)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync(HubMethodNames.RequestLabelChange, jobId, newLabel, targetKind);
+    }
+
+    /// <summary>
+    /// Posts a comment on the issue via the hub's RequestPostComment method (requires an active job).
+    /// For <see cref="CommentType.Analysis"/>, populate <see cref="CommentPayload.AnalysisMarkdown"/>
+    /// with a non-empty string — the hub routes that comment type to that field.
+    /// </summary>
+    public async Task RequestPostCommentAsync(string jobId, CommentType commentType, CommentPayload payload)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync(HubMethodNames.RequestPostComment, jobId, commentType, payload);
+    }
+
+    /// <summary>
     /// Connects and registers with an ActiveJob — simulates K8s-mode agent that already has a work item.
     /// This is the pattern used by WorkItemAgentService after our fix (RegisterAgent with ActiveJobState).
     /// </summary>
