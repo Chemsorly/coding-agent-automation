@@ -1152,6 +1152,27 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
+        // Inject a stalled-watcher mock so the test is deterministic: the mock blocks until its
+        // CancellationToken fires and never calls cleanupCallback. Using the real ChatSessionWatcher
+        // is non-deterministic because its cancellation handler calls cleanupCallback, which wins
+        // the entry.Cleaned CAS before ForceDeleteAndCleanupAsync can, causing Deregister to be
+        // skipped (the guard reads entry.Cleaned != 0 → return early).
+        var stalledWatcher = new Mock<IChatSessionWatcher>();
+        stalledWatcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, _, _, _, ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(
+                    _ => Task.CompletedTask, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnCanceled, TaskScheduler.Default).Unwrap());
+
         // Very short grace period → force-delete path triggers fast
         var options = new DispatchServiceOptions
         {
@@ -1166,13 +1187,18 @@ public class ChatJobDispatcherTests
             ChatTerminationGracePeriodSeconds = 1
         };
 
+        // Use the internal constructor to inject the stalled watcher mock so the test is
+        // deterministic: the mock never calls cleanupCallback, ensuring ForceDeleteAndCleanupAsync
+        // always wins the entry.Cleaned CAS and calls Deregister.
         var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
             registryMock.Object,
             options,
-            Mock.Of<ILogger>());
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: stalledWatcher.Object);
 
         await dispatcher.StartAsync(CancellationToken.None);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
