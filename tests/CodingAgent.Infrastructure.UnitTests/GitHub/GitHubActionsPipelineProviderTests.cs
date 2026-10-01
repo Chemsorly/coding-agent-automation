@@ -147,6 +147,10 @@ public class GitHubActionsPipelineProviderTests
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Success, PipelineRunState.Passed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Failure, PipelineRunState.Failed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Cancelled, PipelineRunState.Cancelled)]
+    // Skipped jobs (if: false condition) must not be treated as failures
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped, PipelineRunState.Passed)]
+    // Null conclusion on a completed job (run cancelled before job started) must not be treated as failed
+    [InlineData(WorkflowJobStatus.Completed, null, PipelineRunState.Cancelled)]
     public void MapJobState_MapsCorrectly(WorkflowJobStatus status, WorkflowJobConclusion? conclusion, PipelineRunState expected)
     {
         GitHubActionsPipelineProvider.MapJobState(status, conclusion).Should().Be(expected);

@@ -180,6 +180,14 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             WorkflowJobConclusion.Success => PipelineRunState.Passed,
             WorkflowJobConclusion.Failure => PipelineRunState.Failed,
             WorkflowJobConclusion.Cancelled => PipelineRunState.Cancelled,
+            // Skipped jobs (if: false condition) are not failures — treat as passed so they
+            // don't appear in the "failed jobs" list and don't elevate the aggregate state.
+            WorkflowJobConclusion.Skipped => PipelineRunState.Passed,
+            // null conclusion occurs when a workflow run is cancelled externally before the
+            // job's if-condition is evaluated: the job never ran and has no outcome. Treat as
+            // cancelled rather than failed — the run cancellation is the meaningful signal.
+            null => PipelineRunState.Cancelled,
+            // Any other unknown conclusion (e.g. timed_out, action_required) is a real failure.
             _ => PipelineRunState.Failed
         };
     }
