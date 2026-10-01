@@ -241,9 +241,20 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             // Compute expected post-toggle value from whatever the current state is.
             var expectedAfterToggle = initialTheme == "dark" ? "light" : "dark";
 
-            // Click the theme toggle button
+            // Wait for the toggle button text to reflect the current DOM theme before clicking.
+            // CockpitLayout._theme is initialised to "dark" and synced from JS in OnAfterRenderAsync
+            // (async interop). Until that completes, the button text still says "Light mode" even
+            // when the page is already showing data-theme="light". Clicking before the sync races:
+            // _theme="dark" → toggle produces "light" → data-theme stays "light" → timeout below.
+            // The button text is: "Light mode" when _theme="dark", "Dark mode" when _theme="light".
+            // So if initialTheme="light", we must see "Dark mode" before clicking; if "dark", "Light mode".
+            var expectedButtonText = initialTheme == "dark" ? "Light mode" : "Dark mode";
             var toggleBtn = Page.Locator("button.cockpit-theme-toggle");
             await toggleBtn.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+            await Page.WaitForFunctionAsync(
+                $"() => document.querySelector('button.cockpit-theme-toggle span')?.textContent?.trim() === '{expectedButtonText}'",
+                null,
+                new() { Timeout = 10_000 });
             await toggleBtn.ClickAsync();
 
             // Assert data-theme changed to the opposite value
