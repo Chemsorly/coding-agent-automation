@@ -34,21 +34,21 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         int brainKnowledgeFileCount = 0,
         bool brainUpdatesPushed = false,
         DateTimeOffset? startedAt = null) => new PipelineRunSummary
-    {
-        RunId = Guid.NewGuid().ToString(),
-        IssueIdentifier = new IssueIdentifier(issueId),
-        IssueTitle = $"Issue {issueId}",
-        FinalStep = finalStep,
-        RunType = PipelineRunType.Implementation,
-        StartedAtOffset = startedAt ?? DateTimeOffset.UtcNow.AddHours(-1),
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = new IssueIdentifier(issueId),
+            IssueTitle = $"Issue {issueId}",
+            FinalStep = finalStep,
+            RunType = PipelineRunType.Implementation,
+            StartedAtOffset = startedAt ?? DateTimeOffset.UtcNow.AddHours(-1),
 #pragma warning disable CS0618
-        StartedAt = (startedAt ?? DateTimeOffset.UtcNow.AddHours(-1)).DateTime,
+            StartedAt = (startedAt ?? DateTimeOffset.UtcNow.AddHours(-1)).DateTime,
 #pragma warning restore CS0618
-        BrainRepoUsed = brainRepoUsed,
-        BrainContextLoaded = brainContextLoaded,
-        BrainKnowledgeFileCount = brainKnowledgeFileCount,
-        BrainUpdatesPushed = brainUpdatesPushed,
-    };
+            BrainRepoUsed = brainRepoUsed,
+            BrainContextLoaded = brainContextLoaded,
+            BrainKnowledgeFileCount = brainKnowledgeFileCount,
+            BrainUpdatesPushed = brainUpdatesPushed,
+        };
 
     // ── Scenario 1: Prompt reset ──────────────────────────────────────────
 
@@ -426,9 +426,9 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         await Fixture.HistoryService.AddRunSummaryAsync(
             MakeRun(PipelineStep.Completed, "3112-c", startedAt: now.AddHours(-4)));
         await Fixture.HistoryService.AddRunSummaryAsync(
-            MakeRun(PipelineStep.Failed,    "3112-d", startedAt: now.AddHours(-3)));
+            MakeRun(PipelineStep.Failed, "3112-d", startedAt: now.AddHours(-3)));
         await Fixture.HistoryService.AddRunSummaryAsync(
-            MakeRun(PipelineStep.Failed,    "3112-e", startedAt: now.AddHours(-2)));
+            MakeRun(PipelineStep.Failed, "3112-e", startedAt: now.AddHours(-2)));
         await Fixture.HistoryService.AddRunSummaryAsync(
             MakeRun(PipelineStep.Cancelled, "3112-f", startedAt: now.AddHours(-1)));
 
