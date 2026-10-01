@@ -2406,3 +2406,22 @@ A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_red
 **Alternatives considered:** `AddHttpClientInstrumentation()` (auto-propagates on all `HttpClient` calls, including provider API calls — undesirable), tag-based correlation only (sufficient for debugging but not for end-to-end trace visualization).
 
 **Reassess when:** Never for the bidirectional principle once implemented. Chat pods (`AgentWorkerService`) use a persistent SignalR connection — traceparent for chat sessions is a separate concern, out of scope for `#2223`.
+
+---
+
+### ConsolidationRuns table dropped; ConsolidationRun and ConsolidationRunStatus types deleted (issue #3032)
+
+**Date:** 2026-09-30
+**Category:** data-model, cleanup
+
+**Decision:** The `ConsolidationRuns` DB table has been dropped and the `ConsolidationRun` model class plus `ConsolidationRunStatus` enum have been permanently deleted from the codebase. `ConsolidationRunType` is retained because it is still used by the dispatch system, UI, and run history tracking.
+
+**Context:** Prior issues (#3027–#3031) removed all consumers of `ConsolidationRun` and `ConsolidationRunStatus`. Consolidation runs are now tracked exclusively as `PipelineRuns` with `RunType = PipelineRunType.Consolidation`. The `ConsolidationRuns` table was a historical artefact from the pre-unification architecture where consolidation had its own separate persistence path. The backfill sweep (`DatabaseMaintenanceService.BackfillConsolidationRunsAsync`) that migrated legacy rows into `PipelineRuns` has also been removed since there is no source table to read from. `ConfigMigrationService.MigrateConsolidationRunsAsync` (the JSON-to-DB importer) and `ConfigExportService.ExportConsolidationRunsAsync` have been removed for the same reason.
+
+**Return type change:** `IConsolidationService.TriggerAsync` previously returned `Task<ConsolidationRun?>`. With `ConsolidationRun` deleted, a new `ConsolidationTriggerResult` sealed record was introduced carrying only the fields callers actually consume (`RunId`, `Type`, `TemplateId`, `TemplateName`, `ProjectId`, `ProjectName`, `StartedAtUtc`, `WorkItemId`). The `Status` field (always `Pending` on a successful trigger) was dropped as it carried no meaningful information. All callers updated accordingly.
+
+**Stale entries corrected:** Any prior decisions or documentation describing consolidation as a "separate dispatch path" or "separate history store" are superseded by this entry. Consolidation runs are tracked via `PipelineRuns` with `RunType = Consolidation` and dispatched via the unified `WorkItem` queue.
+
+**EF migration:** `DropConsolidationRuns` migration drops the table in `Up()` and recreates it in `Down()` for rollback safety.
+
+**Reassess when:** Never — the `ConsolidationRuns` table no longer exists and `ConsolidationRun`/`ConsolidationRunStatus` are no longer part of the type system.

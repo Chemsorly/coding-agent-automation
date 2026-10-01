@@ -126,8 +126,8 @@ public sealed class ConsolidationServiceDedupTests
 
         // Assert: first trigger succeeds, second is rejected as "already running"
         first.Should().NotBeNull("first trigger must succeed");
-        first!.Status.Should().Be(ConsolidationRunStatus.Pending);
-        first.WorkItemId.Should().Be("wi-dedup-first", "WorkItemId must be populated from DistributionResult");
+        // Status (ConsolidationRunStatus) was removed in issue #3032 — success is implied by non-null return.
+        first!.WorkItemId.Should().Be("wi-dedup-first", "WorkItemId must be populated from DistributionResult");
 
         second.Should().BeNull(
             "second trigger while first is non-terminal must be rejected (WorkItemId=null = 409 duplicate)");

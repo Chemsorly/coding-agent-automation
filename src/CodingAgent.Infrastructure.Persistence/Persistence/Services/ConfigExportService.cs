@@ -54,10 +54,7 @@ public sealed class ConfigExportService
         // 6. Projects + templates
         await ExportProjectsAsync(db, outputDir, counts, ct);
 
-        // 7. Consolidation runs
-        await ExportConsolidationRunsAsync(db, outputDir, counts, ct);
-
-        // 8. Pipeline runs
+        // 7. Pipeline runs
         await ExportPipelineRunsAsync(db, outputDir, counts, ct);
 
         Logger.Information(
@@ -65,12 +62,11 @@ public sealed class ConfigExportService
             "PipelineConfig: {PipelineConfig}, ProviderConfigs: {Providers}, " +
             "AgentProfiles: {Profiles}, QualityGates: {QualityGates}, " +
             "Reviewers: {Reviewers}, Projects: {Projects}, " +
-            "Templates: {Templates}, ConsolidationRuns: {ConsolidationRuns}, " +
-            "PipelineRuns: {PipelineRuns}",
+            "Templates: {Templates}, PipelineRuns: {PipelineRuns}",
             counts.PipelineConfig, counts.ProviderConfigs,
             counts.AgentProfiles, counts.QualityGates,
             counts.Reviewers, counts.Projects,
-            counts.Templates, counts.ConsolidationRuns,
+            counts.Templates,
             counts.PipelineRuns);
     }
 
@@ -233,28 +229,6 @@ public sealed class ConfigExportService
         }
     }
 
-    private static async Task ExportConsolidationRunsAsync(
-        PipelineDbContext db, string outputDir, ExportCounts counts, CancellationToken ct)
-    {
-        var entities = await db.ConsolidationRuns.AsNoTracking().ToListAsync(ct);
-        if (entities.Count == 0)
-            return;
-
-        var dir = Path.Combine(outputDir, "consolidation-runs");
-        Directory.CreateDirectory(dir);
-
-        foreach (var entity in entities)
-        {
-            if (entity.Data is null)
-                continue;
-
-            var json = FormatJsonString(entity.Data);
-            var filePath = Path.Combine(dir, $"{entity.Id}.json");
-            await File.WriteAllTextAsync(filePath, json, ct);
-            counts.ConsolidationRuns++;
-        }
-    }
-
     private static async Task ExportPipelineRunsAsync(
         PipelineDbContext db, string outputDir, ExportCounts counts, CancellationToken ct)
     {
@@ -321,7 +295,6 @@ public sealed class ConfigExportService
         public int Reviewers;
         public int Projects;
         public int Templates;
-        public int ConsolidationRuns;
         public int PipelineRuns;
     }
 }

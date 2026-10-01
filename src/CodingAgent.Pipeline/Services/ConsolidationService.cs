@@ -48,7 +48,7 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     /// <inheritdoc />
-    public async Task<ConsolidationRun?> TriggerAsync(
+    public async Task<ConsolidationTriggerResult?> TriggerAsync(
         ConsolidationRunType type,
         TemplateId? templateId,
         CancellationToken ct,
@@ -138,14 +138,12 @@ public sealed class ConsolidationService : IConsolidationService
             selectorLabels = LabelResolver.ResolveRequiredLabels(repoConfig, config);
         }
 
-        // ── 4. Build the ConsolidationRun (no longer persisted) ──────────────
-        // ConsolidationRuns writes stopped (issue #3028). The PipelineRun is the authoritative
-        // record; it is created by PipelineRunFactory.CreateFromWorkItem at dispatch time.
-        // The ConsolidationRun object is still built here for its RunId and trace context,
-        // but it is NOT written to the store.
+        // ── 4. Capture run identity fields ────────────────────────────────────
+        // ConsolidationRun was deleted in issue #3032. The run identity fields are
+        // captured as local variables; the caller receives a ConsolidationTriggerResult.
+        var runId = Guid.NewGuid().ToString();
+        var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
-        var run = BuildNewRun(type, templateIdValue, templateName, projectName, projectId, autoDispatch);
-        run.TraceParent = traceContext?.GetValueOrDefault("traceparent");
 
         // ── 5. Build and submit the JobDistributionRequest ───────────────────
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
@@ -232,15 +230,22 @@ public sealed class ConsolidationService : IConsolidationService
             return null;
         }
 
-        // ── 7. Record WorkItemId on the in-memory run object ─────────────────
-        // ConsolidationRun store writes have been stopped (issue #3028); the PipelineRun is the
-        // authoritative record.
-        run.WorkItemId = result.WorkItemId;
+        // ── 7. Build and return the ConsolidationTriggerResult ───────────────
+        // ConsolidationRun was deleted in issue #3032; return a minimal result record instead.
+        var triggerResult = new ConsolidationTriggerResult(
+            RunId: runId,
+            Type: type,
+            TemplateId: templateIdValue,
+            TemplateName: templateName,
+            ProjectId: projectId,
+            ProjectName: projectName,
+            StartedAtUtc: startedAtUtc,
+            WorkItemId: result.WorkItemId);
 
         _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem {WorkItemId} created as Pending)",
-            run.RunId, type, templateName, result.WorkItemId);
+            runId, type, templateName, result.WorkItemId);
         OnChange?.Invoke();
-        return run;
+        return triggerResult;
     }
 
     /// <inheritdoc />
@@ -273,26 +278,4 @@ public sealed class ConsolidationService : IConsolidationService
     /// no-op to avoid breaking call sites in E2E infrastructure until they are updated.
     /// </remarks>
     internal void Reset() { /* no-op: _runningRuns removed in issue #3027 */ }
-
-    private static ConsolidationRun BuildNewRun(
-        ConsolidationRunType type,
-        string? templateIdValue,
-        string templateName,
-        string? projectName,
-        string? projectId,
-        bool autoDispatch) => new()
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = type,
-            TemplateId = templateIdValue,
-            TemplateName = templateName,
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            // New runs start as Pending — the WorkItem has been successfully submitted to the
-            // unified dispatch queue. The Scheduler's WorkItemDispatchLoop will create the K8s Job.
-            Status = ConsolidationRunStatus.Pending,
-            AutoDispatch = autoDispatch,
-            ProjectName = projectName,
-            ProjectId = projectId,
-            // TraceParent is populated after BuildNewRun returns (set from the request TraceContext).
-        };
 }
