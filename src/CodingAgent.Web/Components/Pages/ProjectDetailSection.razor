@@ -91,13 +91,15 @@
     private int _editingMcpIndex = -1;
     private McpServerFormModel _mcpForm = new();
 
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadDataAsync();
-    }
+    // The project the tabs were loaded for. The parent re-renders this section whenever it shows a status, so reloading
+    // on every parameter set would discard the unsaved edits after a refused save; only another project is loaded.
+    private string? _loadedProjectId;
 
     protected override async Task OnParametersSetAsync()
     {
+        if (ProjectId == _loadedProjectId)
+            return;
+        _loadedProjectId = ProjectId;
         await LoadDataAsync();
     }
 

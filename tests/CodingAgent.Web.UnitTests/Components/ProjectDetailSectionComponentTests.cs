@@ -264,6 +264,21 @@ public class ProjectDetailSectionSettingsValidationTests : BunitContext
     }
 
     [Fact]
+    public void SaveSettings_RefusedByTheApi_KeepsTheEditsWhenTheParentRerenders()
+    {
+        // Showing the status re-renders the parent, which sets this section's parameters again with the same project.
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("MaxDecompositionSubIssues must be between 1 and 20 (was 999)."));
+        var (cut, _) = RenderWithOutOfRangeMaxDecompositionSubIssues();
+        cut.Find(".btn-save").Click();
+
+        cut.Render(p => p.Add(s => s.ProjectId, "p1"));
+
+        Assert.Equal("999", cut.Find("[data-setting='MaxDecompositionSubIssues'] input").GetAttribute("value"));
+        _mockStore.Verify(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public void SaveSettings_WithValidOverrides_SavesSuccessfully()
     {
         // Project with valid MaxDecompositionSubIssues already set
