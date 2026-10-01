@@ -780,7 +780,161 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
 }
 
 /// <summary>
-/// Tests that <see cref="AgentHub.ReportPipelineRunEvent"/> dispatches to the correct
+/// Covers the multi-QGC path (QgcResults.Count > 0) and the ExternalCi gate path
+/// in RecordQualityGateResultMetrics (AgentHub.Lifecycle.cs lines 204-215, 226-227).
+/// These paths are not exercised by the existing flat-field tests.
+/// </summary>
+public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
+{
+    private readonly Mock<IAgentHubFacade> _mockFacade = new();
+
+    private AgentHub CreateHub()
+    {
+        var hub = new AgentHub(new AgentHubDependencies(
+            _mockFacade.Object,
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
+            Mock.Of<IHubConsolidationOperations>(),
+            Mock.Of<IHubIssueOperations>(),
+            Mock.Of<IAgentJobLifecycleService>(),
+            Mock.Of<IAgentTokenRefreshService>(),
+            Mock.Of<IGateCommentFormatter>(),
+            Mock.Of<Serilog.ILogger>(),
+            Mock.Of<IAgentOrphanRecoveryService>(),
+            HubTestHelpers.CreateNoOpHubContext()));
+
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns("conn-multiqgc-1");
+        hub.Context = mockCtx.Object;
+        return hub;
+    }
+
+    private PipelineRun CreateRun(string jobId)
+        => new()
+        {
+            RunId = jobId,
+            IssueIdentifier = "org/repo#50",
+            IssueTitle = "MultiQgc test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = CodingAgent.Pipeline.Models.PipelineRunType.Implementation
+        };
+
+    /// <summary>
+    /// When QgcResults is populated (multi-QGC mode), RecordQualityGateResultMetrics
+    /// must record per-QGC compilation and tests gates instead of the flat-field fallback.
+    /// Covers AgentHub.Lifecycle.cs lines 204-215 (the foreach branch).
+    /// </summary>
+    [Fact]
+    public async Task ReportQualityGateResult_WithQgcResults_RecordsPerQgcGates()
+    {
+        var observed = new List<(string gate, string result)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.quality_gate.results")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string gate = "", result = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "gate") gate = tag.Value?.ToString() ?? "";
+                if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((gate, result));
+        });
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-multiqgc-1")).Returns(CreateRun("job-multiqgc-1"));
+        var hub = CreateHub();
+
+        // Build a report with two QGC entries (multi-QGC mode)
+        var report = new QualityGateReport
+        {
+            // Flat fields are present but should NOT be used when QgcResults is populated
+            Compilation = new GateResult { GateName = "Compilation", Passed = false },
+            Tests = new GateResult { GateName = "Tests", Passed = false },
+            QgcResults =
+            [
+                new QgcExecutionResult
+                {
+                    QgcId = "qgc-1",
+                    DisplayName = "dotnet",
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                    Tests = new GateResult { GateName = "Tests", Passed = true }
+                },
+                new QgcExecutionResult
+                {
+                    QgcId = "qgc-2",
+                    DisplayName = "dotnet-integration",
+                    Compilation = new GateResult { GateName = "Compilation", Passed = true },
+                    Tests = new GateResult { GateName = "Tests", Passed = false }
+                }
+            ]
+        };
+
+        await hub.ReportQualityGateResult("job-multiqgc-1", report);
+        listener.RecordObservableInstruments();
+
+        // Two QGC entries → 4 gate records (compilation+tests per QGC)
+        observed.Should().HaveCount(4,
+            "multi-QGC mode must record one compilation and one tests gate per QGC entry (2 QGCs × 2 gates = 4 records)");
+
+        // The second QGC has a failing tests gate — verify it's recorded correctly
+        observed.Should().Contain(t => t.gate == "tests" && t.result == "fail",
+            "a failing tests gate from QgcResults must emit result=fail");
+        observed.Should().Contain(t => t.gate == "compilation" && t.result == "pass",
+            "a passing compilation gate from QgcResults must emit result=pass");
+    }
+
+    /// <summary>
+    /// When the report includes a non-null ExternalCi gate, RecordQualityGateResultMetrics
+    /// must record an external_ci gate metric.
+    /// Covers AgentHub.Lifecycle.cs lines 225-227 (the ExternalCi recording branch).
+    /// </summary>
+    [Fact]
+    public async Task ReportQualityGateResult_WithExternalCiGate_RecordsExternalCiMetric()
+    {
+        var observed = new List<(string gate, string result)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.quality_gate.results")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string gate = "", result = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "gate") gate = tag.Value?.ToString() ?? "";
+                if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+            }
+            observed.Add((gate, result));
+        });
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-extci-1")).Returns(CreateRun("job-extci-1"));
+        var hub = CreateHub();
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true },
+            ExternalCi = new GateResult { GateName = "External CI", Passed = true }
+        };
+
+        await hub.ReportQualityGateResult("job-extci-1", report);
+        listener.RecordObservableInstruments();
+
+        observed.Should().Contain(t => t.gate == "external_ci" && t.result == "pass",
+            "a passing ExternalCi gate must emit gate=external_ci, result=pass");
+    }
+}
 /// metric instrument for each <see cref="PipelineRunEventKind"/> (issue #2979).
 /// Uses a MeterListener to observe the static shared instruments, exercising the
 /// production switch-dispatch in <c>AgentHub.Lifecycle.cs</c>.

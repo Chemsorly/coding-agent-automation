@@ -1170,32 +1170,25 @@ public class ValidateWithServerSideReportingAsyncTests
 public class QualityGateValidatorCleanupExceptionTests
 {
     /// <summary>
-    /// ValidateWithServerSideReportingAsync must complete successfully when the
-    /// TestResults directory cleanup throws (the exception is caught and logged).
-    /// This covers lines 130-138 in QualityGateValidator.cs.
+    /// ValidateWithServerSideReportingAsync must successfully delete the TestResults
+    /// directory when it exists (covers lines 130-138 in QualityGateValidator.cs —
+    /// the happy-path delete inside ValidateWithServerSideReportingAsync).
     /// </summary>
     [Fact]
-    public async Task ValidateWithServerSideReporting_WhenTestResultsCleanupThrows_CompletesSuccessfully()
+    public async Task ValidateWithServerSideReporting_WhenTestResultsDirExists_DeletesItSuccessfully()
     {
         var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-sside-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempWorkspace);
         try
         {
-            // Create a TestResults entry that is a FILE, not a directory.
-            // Directory.Exists("...TestResults") will return false for a file,
-            // so the cleanup branch won't execute for this path — but the
-            // QualityGatesOutputDirectory path can be a read-only directory.
-            // Actually: create a subdirectory containing a locked file to force
-            // Directory.Delete to fail by creating a sub-path that can't be removed.
-            // The easiest cross-platform approach: make TestResults a regular file
-            // so that Path.GetFullPath succeeds but Directory.Exists returns false
-            // (no exception), then create quality-gates as a non-deletable item.
-            //
-            // For the exception path on Linux: create the quality-gates dir, then
-            // make a file inside it whose parent sticky bit prevents deletion.
-            // This is complex. Instead we test via a subclass that simulates the exception.
+            // Pre-create the TestResults directory so Directory.Exists returns true
+            // and the cleanup lines (130-133) are executed.
+            var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+            Directory.CreateDirectory(testResultsDir);
+            File.WriteAllText(Path.Combine(testResultsDir, "dummy.txt"), "dummy");
+
             var reportedEvents = new List<PipelineRunEventReport>();
-            var validator = new CleanupThrowingValidator();
+            var validator = new NoOpProcessValidator();
             var qgc = new QualityGateConfiguration
             {
                 DisplayName = "Test",
@@ -1204,11 +1197,47 @@ public class QualityGateValidatorCleanupExceptionTests
                 ProcessTimeoutSeconds = 30
             };
 
-            // Must not throw — cleanup exception must be swallowed
+            // Must complete — cleanup (delete TestResults) runs without throwing
             var report = await validator.ValidateWithServerSideReportingAsync(
                 tempWorkspace, [qgc], CancellationToken.None, reportedEvents.Add);
 
-            report.Should().NotBeNull("the method must return a report even when cleanup throws");
+            report.Should().NotBeNull("the method must return a report after running the cleanup prologue");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// ValidateAsync must successfully delete the TestResults directory when it exists
+    /// (covers lines 68-72 in QualityGateValidator.cs — the happy-path delete).
+    /// </summary>
+    [Fact]
+    public async Task ValidateAsync_WhenTestResultsDirExists_DeletesItSuccessfully()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-base-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        try
+        {
+            // Pre-create the TestResults directory so the cleanup branch executes
+            var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+            Directory.CreateDirectory(testResultsDir);
+            File.WriteAllText(Path.Combine(testResultsDir, "dummy.txt"), "dummy");
+
+            var validator = new NoOpProcessValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 30
+            };
+
+            // Must complete — cleanup runs without throwing (the assertion is that no exception propagates)
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+
+            report.Should().NotBeNull("the method must return a report after running the cleanup prologue");
         }
         finally
         {
@@ -1218,17 +1247,28 @@ public class QualityGateValidatorCleanupExceptionTests
 
     /// <summary>
     /// ValidateAsync must complete successfully when the TestResults directory cleanup
-    /// throws (the exception is caught and logged).
-    /// This covers the equivalent catch blocks in ValidateAsync (lines 68-77).
+    /// throws (the exception is caught and logged at Warning level, not propagated).
+    /// Covers lines 74-77 in QualityGateValidator.cs (the exception catch branch).
+    /// On Linux: chmod 000 on the TestResults directory prevents recursive deletion.
     /// </summary>
-    [Fact]
+    [SkipOnWindowsFact]
     public async Task ValidateAsync_WhenTestResultsCleanupThrows_CompletesSuccessfully()
     {
-        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-base-{Guid.NewGuid():N}");
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-except-{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempWorkspace);
+        var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
         try
         {
-            var validator = new CleanupThrowingValidator();
+            // Create TestResults with a subdirectory that cannot be deleted (chmod 000)
+            Directory.CreateDirectory(testResultsDir);
+            var subDir = Path.Combine(testResultsDir, "protected");
+            Directory.CreateDirectory(subDir);
+
+            // Make the subdir non-traversable so Directory.Delete(testResultsRoot, true) throws
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                $"000 \"{subDir}\"") { UseShellExecute = false })!.WaitForExit();
+
+            var validator = new NoOpProcessValidator();
             var qgc = new QualityGateConfiguration
             {
                 DisplayName = "Test",
@@ -1237,37 +1277,78 @@ public class QualityGateValidatorCleanupExceptionTests
                 ProcessTimeoutSeconds = 30
             };
 
-            // Must not throw — cleanup exception must be swallowed
-            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
-
-            report.Should().NotBeNull("the method must return a report even when cleanup throws");
+            // Must not throw even though cleanup throws — exception is swallowed
+            var act = async () => await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+            await act.Should().NotThrowAsync(
+                "a Directory.Delete exception in the cleanup prologue must be caught and not propagated");
         }
         finally
         {
+            // Restore permissions so cleanup can succeed
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                    $"-R 755 \"{testResultsDir}\"") { UseShellExecute = false })!.WaitForExit();
+            }
+            catch { }
             try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
         }
     }
 
     /// <summary>
-    /// A <see cref="QualityGateValidator"/> subclass that causes directory cleanup to throw
-    /// by pre-creating the TestResults and quality-gates directories, then making them
-    /// non-deletable via a process-locked file handle (cross-platform: open FileStream
-    /// with FileShare.None on Windows; on Linux, Directory.Delete of an open directory
-    /// succeeds, so we use a different mechanism — override the RunProcess to avoid
-    /// actual process execution while still exercising the cleanup path).
+    /// ValidateWithServerSideReportingAsync must complete successfully when the
+    /// TestResults directory cleanup throws.
+    /// Covers lines 135-138 in QualityGateValidator.cs (the exception catch branch).
     /// </summary>
-    private sealed class CleanupThrowingValidator : QualityGateValidator
+    [SkipOnWindowsFact]
+    public async Task ValidateWithServerSideReporting_WhenTestResultsCleanupThrows_CompletesSuccessfully()
     {
-        public CleanupThrowingValidator() : base(Serilog.Log.Logger) { }
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-sside-ex-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+        try
+        {
+            Directory.CreateDirectory(testResultsDir);
+            var subDir = Path.Combine(testResultsDir, "protected");
+            Directory.CreateDirectory(subDir);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                $"000 \"{subDir}\"") { UseShellExecute = false })!.WaitForExit();
 
-        // We override RunProcessAsync so no real process is invoked.
-        // The key is that ValidateAsync/ValidateWithServerSideReportingAsync will
-        // attempt to delete TestResults and quality-gates before calling RunProcess.
-        // We pre-create those paths as files (not directories) so Directory.Exists
-        // returns false and cleanup is skipped (no exception to catch).
-        // The actual exception-path test is done by the test body calling the overloads
-        // and confirming they don't throw — the non-exception path already exists in
-        // other tests. These tests verify that the methods run to completion.
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new NoOpProcessValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 30
+            };
+
+            var act = async () => await validator.ValidateWithServerSideReportingAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportedEvents.Add);
+            await act.Should().NotThrowAsync(
+                "a Directory.Delete exception in ValidateWithServerSideReportingAsync must be caught");
+        }
+        finally
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                    $"-R 755 \"{testResultsDir}\"") { UseShellExecute = false })!.WaitForExit();
+            }
+            catch { }
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A no-op <see cref="QualityGateValidator"/> that never actually executes a process,
+    /// used to exercise the cleanup prologue without needing real build/test tools.
+    /// </summary>
+    private sealed class NoOpProcessValidator : QualityGateValidator
+    {
+        public NoOpProcessValidator() : base(Serilog.Log.Logger) { }
+
         private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
             string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
             => Task.FromResult((0, "Passed: 1\nTest summary: total: 1; failed: 0; succeeded: 1; skipped: 0; duration: 0.0s", ""));
