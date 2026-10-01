@@ -66,7 +66,14 @@ public static class CiFailureClassifier
 
         var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
         if (failedJobs.Count == 0)
-            return CiFailureCategory.Unknown;
+        {
+            // If all jobs were cancelled (no failed jobs), this is an infrastructure event:
+            // GitHub Actions' concurrency cancel-in-progress superseded the run. This is never
+            // a code failure — treat as Infrastructure so the auto-retry loop handles it
+            // without consuming agent retry budget.
+            var hasCancelledJobs = status.Jobs.Any(j => j.State == PipelineRunState.Cancelled);
+            return hasCancelledJobs ? CiFailureCategory.Infrastructure : CiFailureCategory.Unknown;
+        }
 
         var hasInfrastructure = false;
         var hasCodeFailure = false;

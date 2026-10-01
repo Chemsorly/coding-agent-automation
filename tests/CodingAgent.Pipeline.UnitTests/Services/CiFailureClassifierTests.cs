@@ -91,6 +91,42 @@ public class CiFailureClassifierTests
     }
 
     [Fact]
+    public void Classify_AllJobsCancelled_ReturnsInfrastructure()
+    {
+        // When the CI run is cancelled by GitHub's concurrency group (cancel-in-progress: true),
+        // all jobs report State == Cancelled. This is an infrastructure event (a newer push
+        // superseded the run), never a code failure. It must classify as Infrastructure so the
+        // auto-retry loop handles it without consuming agent retry budget.
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "docker-push",   State = PipelineRunState.Cancelled },
+                new PipelineJobResult { Name = "publish-chart", State = PipelineRunState.Cancelled }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
+    }
+
+    [Fact]
+    public void Classify_MixedCancelledAndFailed_ReturnsUnknown()
+    {
+        // Some jobs cancelled (infra), one job actually failed (code issue unknown).
+        // Without log content we can't tell, so fall through to Unknown (conservative).
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "build",       State = PipelineRunState.Failed,    LogContent = "Some completely unrecognized failure output" },
+                new PipelineJobResult { Name = "docker-push", State = PipelineRunState.Cancelled }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Unknown);
+    }
+
+    [Fact]
     public void Classify_UnrecognizedLogContent_ReturnsUnknown()
     {
         var status = CreateStatus("Some completely unrecognized failure output");
