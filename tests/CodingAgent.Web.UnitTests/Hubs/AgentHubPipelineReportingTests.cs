@@ -1004,4 +1004,134 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
         listener.RecordObservableInstruments();
         stallHit.Should().BeFalse("an AgentStall event with null Stage must not record any metric");
     }
+
+    /// <summary>
+    /// When <see cref="IAgentHubFacade.GetRun"/> returns null (run evicted between
+    /// [RequiresActiveJob] and the hub body), the runType must default to Implementation
+    /// and the counter must still be incremented without throwing.
+    /// Covers the null-run fallback path (AgentHub.Lifecycle.cs lines 203-215).
+    /// </summary>
+    [Fact]
+    public async Task WhenRunIsNull_DefaultsToImplementationRunType_AndStillRecordsMetric()
+    {
+        var counterHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.ci.not_started_retriggers")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            // run_type must be "implementation" — the fallback when run is null
+            foreach (var tag in tags)
+                if (tag.Key == "run_type" && tag.Value?.ToString() == "implementation")
+                    counterHit = true;
+        });
+        listener.Start();
+
+        // GetRun returns null to exercise the fallback path
+        _mockFacade.Setup(f => f.GetRun("job-null-run-1")).Returns((PipelineRun?)null);
+        var hub = CreateHub();
+
+        await hub.ReportPipelineRunEvent("job-null-run-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiNotStartedRetrigger
+        });
+        listener.RecordObservableInstruments();
+
+        counterHit.Should().BeTrue(
+            "when GetRun returns null, the metric must still be recorded with run_type=implementation");
+    }
+
+    /// <summary>
+    /// CiWait events missing DurationSeconds must be silently skipped — no metric, no throw.
+    /// Covers the warning path in the CiWait branch (AgentHub.Lifecycle.cs line 226-227).
+    /// </summary>
+    [Fact]
+    public async Task CiWait_MissingDurationSeconds_DoesNotRecordAndDoesNotThrow()
+    {
+        var ciWaitHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.ci.wait")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<double>((_, _, _, _) => ciWaitHit = true);
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-ciwait-missing-1")).Returns(CreateRun("job-ciwait-missing-1"));
+        var hub = CreateHub();
+
+        // CiWait without DurationSeconds must be skipped
+        var act = () => hub.ReportPipelineRunEvent("job-ciwait-missing-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.CiWait,
+            DurationSeconds = null,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.CiWaitStages.PrePr,
+            Result = "pass"
+        });
+
+        await act.Should().NotThrowAsync("missing DurationSeconds must be silently skipped, not throw");
+        listener.RecordObservableInstruments();
+        ciWaitHit.Should().BeFalse("a CiWait event with null DurationSeconds must not record any metric");
+    }
+
+    /// <summary>
+    /// AgentStall events missing Result must be silently skipped — no metric, no throw.
+    /// Covers the warning path in the AgentStall branch (AgentHub.Lifecycle.cs lines 281-284).
+    /// </summary>
+    [Fact]
+    public async Task AgentStall_MissingResult_DoesNotRecordAndDoesNotThrow()
+    {
+        var stallHit = false;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.agent_stalls")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, _, _) => stallHit = true);
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-stall-noResult-1")).Returns(CreateRun("job-stall-noResult-1"));
+        var hub = CreateHub();
+
+        // AgentStall with null Result — must be silently skipped
+        var act = () => hub.ReportPipelineRunEvent("job-stall-noResult-1", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.AgentStall,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.StallPhases.CodeGen,
+            Result = null
+        });
+
+        await act.Should().NotThrowAsync("missing Result must be silently skipped, not throw");
+        listener.RecordObservableInstruments();
+        stallHit.Should().BeFalse("an AgentStall event with null Result must not record any metric");
+    }
+
+    /// <summary>
+    /// Unknown PipelineRunEventKind values must be silently ignored — no throw.
+    /// Covers the default branch in the ReportPipelineRunEvent switch
+    /// (AgentHub.Lifecycle.cs lines 308-310).
+    /// </summary>
+    [Fact]
+    public async Task UnknownKind_IsIgnoredWithoutThrowing()
+    {
+        _mockFacade.Setup(f => f.GetRun("job-unknown-kind-1")).Returns(CreateRun("job-unknown-kind-1"));
+        var hub = CreateHub();
+
+        // Cast an out-of-range value to the enum to simulate an unknown kind
+        var unknownKind = (PipelineRunEventKind)999;
+        var act = () => hub.ReportPipelineRunEvent("job-unknown-kind-1", new PipelineRunEventReport
+        {
+            Kind = unknownKind
+        });
+
+        await act.Should().NotThrowAsync("unknown PipelineRunEventKind values must be silently ignored");
+    }
 }
