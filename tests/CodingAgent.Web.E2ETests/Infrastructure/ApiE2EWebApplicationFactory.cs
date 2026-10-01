@@ -55,6 +55,15 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
     /// </summary>
     private readonly FakeRedisStore? _sharedRedisStore;
 
+    /// <summary>
+    /// Counting decorator wrapping <see cref="IRunLifecycleManager"/> registered in DI.
+    /// Tests can read <see cref="CountingRunLifecycleManagerDecorator.CancelRunCallCount"/>
+    /// to verify server-side idempotency guards (e.g. the double-click cancel scenario).
+    /// Lazily initialised on first <see cref="Services"/> access (i.e., after host build).
+    /// </summary>
+    public CountingRunLifecycleManagerDecorator LifecycleManagerDecorator =>
+        Services.GetRequiredService<CountingRunLifecycleManagerDecorator>();
+
     public ApiE2EWebApplicationFactory(
         string dbName,
         InMemoryConfigurationStore configStore,
@@ -196,6 +205,30 @@ public sealed class ApiE2EWebApplicationFactory : WebApplicationFactory<ApiHostM
                         store,
                         (_, _, _) => Task.FromResult(false),
                         Serilog.Log.Logger));
+            }
+
+            // ── Counting decorator for IRunLifecycleManager ──────────────────────────
+            // Wraps the real RunLifecycleManager so E2E tests can assert on how many times
+            // CancelRunAsync (and other mutating methods) were invoked at the server level.
+            // The strategy below captures the existing ServiceDescriptor for IRunLifecycleManager
+            // (registered by AddApiOrchestration above via a factory) and re-registers a new
+            // descriptor whose factory first builds the real instance, then wraps it.
+            // Both CountingRunLifecycleManagerDecorator (concrete, for test assertions) and
+            // IRunLifecycleManager (interface, for production DI consumers) are registered to
+            // the same singleton instance.
+            var existingDescriptor = services.LastOrDefault(
+                d => d.ServiceType == typeof(IRunLifecycleManager));
+
+            if (existingDescriptor?.ImplementationFactory is { } innerFactory)
+            {
+                services.Remove(existingDescriptor);
+                services.AddSingleton<CountingRunLifecycleManagerDecorator>(sp =>
+                {
+                    var inner = (IRunLifecycleManager)innerFactory(sp);
+                    return new CountingRunLifecycleManagerDecorator(inner);
+                });
+                services.AddSingleton<IRunLifecycleManager>(sp =>
+                    sp.GetRequiredService<CountingRunLifecycleManagerDecorator>());
             }
         });
     }

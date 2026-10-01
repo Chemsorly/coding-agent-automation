@@ -127,6 +127,16 @@ public sealed class E2EFixture : IAsyncLifetime
         ?? throw new InvalidOperationException("API host not started");
 
     /// <summary>
+    /// Counting decorator wrapping the API host's <see cref="IRunLifecycleManager"/>.
+    /// Use <see cref="CountingRunLifecycleManagerDecorator.CancelRunCallCount"/> to assert
+    /// on the server-side double-click guard (Scenario 2 of cancel E2E tests).
+    /// Counters are reset by <see cref="ResetAll"/> between tests.
+    /// </summary>
+    public CountingRunLifecycleManagerDecorator LifecycleManagerDecorator =>
+        _apiFactory?.LifecycleManagerDecorator
+        ?? throw new InvalidOperationException("API host not started");
+
+    /// <summary>
     /// The monolith's work-item client, pointed at the API host — the same one the Job Controller
     /// uses. Lets a test read queue state (pending, claimed, status) over the real endpoints
     /// instead of reaching into the database behind them.
@@ -228,6 +238,7 @@ public sealed class E2EFixture : IAsyncLifetime
     {
         Factory.ResetAll();
         _apiFactory?.ResetAll();
+        _apiFactory?.LifecycleManagerDecorator.ResetCounters();
         _schedulerFactory?.ResetAll();
         _jobController?.ForgetAllInFlight();
         _jobController?.ClearClaimed();
