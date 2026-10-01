@@ -91,6 +91,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         public readonly CancellationTokenSource WatcherCts; // disposed in CleanupSession
         public int Cleaned; // 0 = not yet cleaned; 1 = cleanup done. Used with Interlocked.
 
+        // Separate guard for Deregister so it fires exactly once regardless of which cleanup
+        // path (CleanupSession or ForceDeleteAndCleanupAsync) executes. Using Cleaned for this
+        // is insufficient because ForceDeleteAndCleanupAsync has its own inline cleanup that
+        // sets Cleaned before CleanupSession can, leaving the registry entry as a ghost (issue #2109).
+        public int Deregistered; // 0 = not yet deregistered; 1 = deregister done. Used with Interlocked.
+
         // Circuit-based lifecycle: tracks last client keepalive. Initialised to StartedAt so the
         // idle clock starts from dispatch, not from an arbitrary epoch.
         public long LastClientHeartbeatTicks; // written/read with Interlocked for thread safety
@@ -504,13 +510,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         _activeWatchers.TryRemove(agentId.Value, out _);
 
-        // Always deregister the chat agent from the registry regardless of which cleanup path wins
-        // the CAS above (watcher shutdown or ForceDeleteAndCleanupAsync). Without this call, a race
-        // where the watcher's cancellation-catch fires and calls CleanupSession before
-        // ForceDeleteAndCleanupAsync runs would leave the agent as a ghost in the registry (issue #2109).
-        // Deregister is idempotent — the second call from ForceDeleteAndCleanupAsync (if it runs after
-        // this path) is a safe no-op that returns false.
-        _registry.Deregister(agentId);
+        // Use a separate Deregistered CAS so Deregister fires exactly once regardless of whether
+        // CleanupSession or ForceDeleteAndCleanupAsync runs first (issue #2109). The Cleaned CAS
+        // above gates the rest of CleanupSession, but ForceDeleteAndCleanupAsync has its own
+        // Cleaned CAS and also calls Deregister — using a dedicated guard prevents double-calls
+        // when both paths race.
+        if (Interlocked.CompareExchange(ref entry.Deregistered, 1, 0) == 0)
+            _registry.Deregister(agentId);
 
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
@@ -682,7 +688,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 entry.JobName, ex.Message);
         }
 
-        _registry.Deregister(agentId);
+        // Use the Deregistered CAS so Deregister fires exactly once regardless of which cleanup
+        // path (CleanupSession or ForceDeleteAndCleanupAsync) runs first (issue #2109).
+        if (Interlocked.CompareExchange(ref entry.Deregistered, 1, 0) == 0)
+            _registry.Deregister(agentId);
 
         var selectorEncoded = entry.NormalizedSelector.Replace(',', '_');
         // Do not call CleanupSession here: we already took the Cleaned CAS above, so CleanupSession
