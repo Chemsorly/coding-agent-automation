@@ -34,7 +34,7 @@ public abstract class E2ETestBase : IAsyncLifetime
 
         // Fresh browser context per test (isolated cookies, storage)
         var browser = await Fixture.GetBrowserAsync();
-        _context = await browser.NewContextAsync();
+        _context = await browser.NewContextAsync(new BrowserNewContextOptions { AcceptDownloads = true });
         await StubExternalFontsAsync(_context);
         Page = await _context.NewPageAsync();
 
