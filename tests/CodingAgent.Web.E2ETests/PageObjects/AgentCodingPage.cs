@@ -159,6 +159,21 @@ public sealed class AgentCodingPage
         await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
     }
 
+    /// <summary>Clicks the "Browse Epics" button to open the epic drawer.</summary>
+    public async Task ClickBrowseEpicsAsync()
+    {
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const btn = document.querySelector('[data-testid=""browse-epics-btn""]');
+                return btn && !btn.disabled;
+            }",
+            null,
+            new() { Timeout = 10_000 });
+
+        await _page.ClickAsync("[data-testid='browse-epics-btn']");
+        await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
+    }
+
     /// <summary>Selects a PR from the drawer by its identifier.</summary>
     public async Task SelectPrAsync(string identifier)
     {
