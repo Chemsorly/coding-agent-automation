@@ -56,13 +56,13 @@ public class DispatchDrawerBaseTests : BunitContext
         }
     }
 
-    private TestDrawer CreateDrawer(IReadOnlyList<TestItem> items, bool isOpen = true)
+    private static TestDrawer CreateDrawer(IReadOnlyList<TestItem> items, bool isOpen = true)
     {
         var drawer = new TestDrawer();
         drawer.SetItems(items);
         drawer.ConfigureCallbacks();
         // Simulate parameter set
-        typeof(DispatchDrawerBase<TestItem>).GetProperty(nameof(DispatchDrawerBase<TestItem>.IsOpen))!
+        typeof(DispatchDrawerBase<TestItem>).GetProperty(nameof(DispatchDrawerBase<>.IsOpen))!
             .SetValue(drawer, isOpen);
         drawer.InvokeApplyFilter();
         return drawer;

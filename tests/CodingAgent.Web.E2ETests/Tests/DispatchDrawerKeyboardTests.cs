@@ -31,9 +31,8 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
-public sealed class DispatchDrawerKeyboardTests : E2ETestBase
+public sealed class DispatchDrawerKeyboardTests(E2EFixture fixture) : E2ETestBase(fixture)
 {
-    public DispatchDrawerKeyboardTests(E2EFixture fixture) : base(fixture) { }
 
     // ── Scenario 1: Arrow keys ──────────────────────────────────────────────
 
@@ -52,9 +51,9 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.AddRange(
         [
-            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = new[] { "enhancement" } }
+            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = ["enhancement"] }
         ]);
 
         // TODO [WARNING]: FakeAgentClient is intentionally not instantiated here because ArrowKeys navigation
@@ -124,16 +123,16 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = ["e2e"],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.AddRange(
         [
-            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = new[] { "enhancement" } }
+            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = ["enhancement"] }
         ]);
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
@@ -203,16 +202,16 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = ["e2e"],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.AddRange(
         [
-            new IssueDetail { Identifier = "70", Title = "Blocked issue", Description = "Blocked by #100", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = new[] { "enhancement" } }
+            new IssueDetail { Identifier = "70", Title = "Blocked issue", Description = "Blocked by #100", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = ["enhancement"] }
         ]);
         // #100 is NOT added to ClosedIssueIdentifiers → issue 70 remains blocked
 
@@ -275,9 +274,9 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
 
         Fixture.IssueProvider.Issues.AddRange(
         [
-            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = new[] { "enhancement" } },
-            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = new[] { "enhancement" } }
+            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "71", Title = "Issue 71", Description = "Test", Labels = ["enhancement"] },
+            new IssueDetail { Identifier = "72", Title = "Issue 72", Description = "Test", Labels = ["enhancement"] }
         ]);
 
         // TODO [WARNING]: FakeAgentClient is intentionally not instantiated here because Escape closes the
@@ -335,7 +334,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.Add(
-            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = new[] { "enhancement" } });
+            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = ["enhancement"] });
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -403,7 +402,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
         }, CancellationToken.None);
 
         Fixture.IssueProvider.Issues.Add(
-            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = new[] { "enhancement" } });
+            new IssueDetail { Identifier = "70", Title = "Issue 70", Description = "Test", Labels = ["enhancement"] });
 
         var codingPage = new AgentCodingPage(Page, BaseUrl);
         await codingPage.NavigateAsync();
@@ -458,7 +457,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = ["e2e"],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -469,7 +468,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
             Identifier = "90",
             Title = "Fix null reference in handler",
             Description = "Resolves #42",
-            Labels = new[] { "agent:next" },
+            Labels = ["agent:next"],
             BranchName = "fix/null-ref",
             TargetBranch = "main",
             Url = "https://github.com/e2e-org/e2e-repo/pull/90",
@@ -481,7 +480,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
             Identifier = "90",
             Title = "Fix null reference in handler",
             Description = "Resolves #42",
-            Labels = new[] { "agent:next" }
+            Labels = ["agent:next"]
         });
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");
@@ -539,7 +538,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
         {
             Id = "profile-e2e",
             DisplayName = "E2E Agent Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = ["e2e"],
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -549,7 +548,7 @@ public sealed class DispatchDrawerKeyboardTests : E2ETestBase
             Identifier = "80",
             Title = "Epic: Implement big feature",
             Description = "## Goal\nBuild the thing",
-            Labels = new[] { "agent:epic" }   // required: without this the drawer shows "No epics found."
+            Labels = ["agent:epic"]   // required: without this the drawer shows "No epics found."
         });
 
         await using var fakeAgent = new FakeAgentClient("fake-agent-1", "e2e");

@@ -13,16 +13,10 @@ namespace CodingAgent.Web.E2ETests.PageObjects;
 /// - WaitForInteractiveAsync: confirms event handlers are attached to DOM elements
 /// See: https://github.com/dotnet/aspnetcore/blob/main/src/Components/Testing/src/Infrastructure/PlaywrightExtensions.cs
 /// </summary>
-public sealed class AgentCodingPage
+public sealed class AgentCodingPage(IPage page, string baseUrl)
 {
-    private readonly IPage _page;
-    private readonly string _baseUrl;
-
-    public AgentCodingPage(IPage page, string baseUrl)
-    {
-        _page = page;
-        _baseUrl = baseUrl;
-    }
+    private readonly IPage _page = page;
+    private readonly string _baseUrl = baseUrl;
 
     public async Task NavigateAsync()
     {

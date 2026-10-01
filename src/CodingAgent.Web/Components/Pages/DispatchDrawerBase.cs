@@ -50,12 +50,12 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
 
         if (string.IsNullOrWhiteSpace(_filter))
         {
-            FilteredItems = Items.ToList();
+            FilteredItems = [.. Items];
         }
         else
         {
             var f = _filter.Trim();
-            FilteredItems = Items.Where(i => MatchesFilter(i, f)).ToList();
+            FilteredItems = [.. Items.Where(i => MatchesFilter(i, f))];
         }
         // Reset highlight only when the filter text actually changes.
         // Parent re-renders triggered by background tasks (e.g. dependency checks) call
@@ -108,11 +108,11 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
                     _highlightedIndex = -1;
                 }
                 break;
-            // Escape is intentionally not handled here.
-            // CockpitLayout.HandleGlobalKey (via the JS document-level keydown handler) owns Escape
-            // with correct priority: shortcut-help overlay → active drawer. Handling Escape here
-            // would race against the global handler and close the drawer even when the shortcut
-            // overlay should be closed first.
+                // Escape is intentionally not handled here.
+                // CockpitLayout.HandleGlobalKey (via the JS document-level keydown handler) owns Escape
+                // with correct priority: shortcut-help overlay → active drawer. Handling Escape here
+                // would race against the global handler and close the drawer even when the shortcut
+                // overlay should be closed first.
         }
     }
 
