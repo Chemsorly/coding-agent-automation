@@ -130,6 +130,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase
         await settingsPage.SelectTreeNodeAsync("External CI");
 
         await Page.WaitForSelectorAsync("text=CI Timeout", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("CI Timeout", markup);
         Assert.Contains("CI Poll Interval", markup);

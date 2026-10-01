@@ -1173,6 +1173,31 @@ public sealed class ConfigEndpointTests
         result.GetProperty("message").GetString().Should().Contain("Project 'Imported': MaxDecompositionSubIssues must be between 1 and 20 (was 25).");
     }
 
+    [Fact]
+    public async Task Import_WithInRangeProjectOverrides_StoresThem()
+    {
+        var projectId = Guid.NewGuid();
+        var settingsJson = JsonSerializer.Serialize(
+            new PipelineProject { Id = projectId.ToString(), Name = "Imported", MaxRetries = 5, MaxDecompositionSubIssues = 12 },
+            PipelineJsonOptions.Default);
+        var bundle = new ConfigBundle
+        {
+            Projects = [new ProjectDto { Id = projectId, Name = "Imported", Enabled = true, Settings = settingsJson }],
+        };
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(bundle, CamelCaseEnumOptions)));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Add(file, "file", "config.json");
+
+        var response = await _client.PostAsync("/api/config/import", content);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var project = await _client.GetFromJsonAsync<PipelineProject>($"/api/config/projects/{projectId}", PipelineJsonOptions.Default);
+        project.Should().NotBeNull();
+        project!.MaxRetries.Should().Be(5);
+        project.MaxDecompositionSubIssues.Should().Be(12);
+    }
+
     // ── IDs that are not GUIDs ────────────────────────────────────────────────────
 
     [Fact]

@@ -107,8 +107,12 @@ public class PipelineSettingsValidatorTests
     [Fact]
     public void RangeOf_FindsTopLevelAndNestedSettings()
     {
-        PipelineSettingsValidator.RangeOf(nameof(PipelineConfiguration.MaxRetries))!.Maximum.Should().Be(10);
-        PipelineSettingsValidator.RangeOf("CodeReview.InlineComments.MaxInlineComments")!.Maximum.Should().Be(50);
+        var maxRetries = PipelineSettingsValidator.RangeOf(nameof(PipelineConfiguration.MaxRetries))!;
+        maxRetries.Minimum.Should().Be(0);
+        maxRetries.Maximum.Should().Be(10);
+        var maxInlineComments = PipelineSettingsValidator.RangeOf("CodeReview.InlineComments.MaxInlineComments")!;
+        maxInlineComments.Minimum.Should().Be(1);
+        maxInlineComments.Maximum.Should().Be(50);
         PipelineSettingsValidator.RangeOf(nameof(PipelineConfiguration.BrainReadOnly)).Should().BeNull();
 
         var act = () => PipelineSettingsValidator.RangeOf("NoSuchSetting");

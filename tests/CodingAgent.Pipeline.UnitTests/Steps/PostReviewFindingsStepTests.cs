@@ -100,7 +100,8 @@ public class PostReviewFindingsStepTests : IDisposable
 
         _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
             42,
-            It.Is<string>(body => body.Contains(reason) && !body.Contains("No applicable reviewers found")),
+            // The marker lets the next run find and collapse this comment.
+            It.Is<string>(body => body.StartsWith(CommentMarkers.PrReview, StringComparison.Ordinal) && body.Contains(reason) && !body.Contains("No applicable reviewers found")),
             PullRequestReviewType.Comment,
             It.IsAny<CancellationToken>()), Times.Once);
     }
