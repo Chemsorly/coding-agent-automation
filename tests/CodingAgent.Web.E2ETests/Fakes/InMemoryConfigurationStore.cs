@@ -29,6 +29,9 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
 
     public void Reset()
     {
+        // TODO [WARNING]: This block duplicates the field-reset logic in ClearWithoutSeed().
+        // Consider implementing Reset() as ClearWithoutSeed(); SeedDefaults(); to remove the
+        // duplication and guarantee the two code paths stay in sync when new fields are added.
         _pipelineConfig = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
@@ -44,6 +47,29 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         _templates.Clear();
         _templateProjects.Clear();
         SeedDefaults();
+    }
+
+    /// <summary>
+    /// Clears all configuration without reseeding defaults.
+    /// Use before loading an imported bundle to avoid mixing seeded data with bundle contents.
+    /// Unlike <see cref="Reset"/>, this does NOT call <see cref="SeedDefaults"/>.
+    /// </summary>
+    public void ClearWithoutSeed()
+    {
+        _pipelineConfig = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = Path.Combine(Path.GetTempPath(), "e2e-workspaces"),
+            MaxRetries = 3,
+            AgentTimeout = TimeSpan.FromMinutes(2),
+            CodeReview = new CodeReviewConfiguration { }
+        };
+        _providerConfigs.Clear();
+        _agentProfiles.Clear();
+        _qualityGateConfigs.Clear();
+        _reviewerConfigs.Clear();
+        _projects.Clear();
+        _templates.Clear();
+        _templateProjects.Clear();
     }
 
     public void SeedDefaults()
@@ -77,6 +103,19 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             Enabled = true,
             TemplateIds = new List<string>()
         });
+
+        // Seed one template so that the exported bundle contains a non-empty jobTemplates array.
+        // This satisfies the issue requirement that the exported bundle contains "the seeded template".
+        var seededTemplate = new PipelineJobTemplate
+        {
+            Id = "template-e2e",
+            Name = "E2E Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        };
+        _templates.Add(seededTemplate);
+        _templateProjects[seededTemplate.Id] = WellKnownIds.DefaultProjectId;
     }
 
     // Pipeline config
