@@ -145,11 +145,38 @@ public class GitHubActionsPipelineProviderTests
     [InlineData(WorkflowJobStatus.Queued, null, PipelineRunState.Pending)]
     [InlineData(WorkflowJobStatus.InProgress, null, PipelineRunState.Running)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Success, PipelineRunState.Passed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped, PipelineRunState.Passed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Failure, PipelineRunState.Failed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Cancelled, PipelineRunState.Cancelled)]
     public void MapJobState_MapsCorrectly(WorkflowJobStatus status, WorkflowJobConclusion? conclusion, PipelineRunState expected)
     {
         GitHubActionsPipelineProvider.MapJobState(status, conclusion).Should().Be(expected);
+    }
+
+    [Fact]
+    public async Task GetRunStatus_SkippedJobsFromConditionalIf_AreNotReportedAsFailed()
+    {
+        // Regression: docker-push / publish-chart use `if: github.ref == 'refs/heads/main'`
+        // and are skipped on PR branches. GitHub reports them with conclusion=Skipped.
+        // They must NOT be classified as Failed — otherwise CI Cancelled is reported as
+        // "N job(s) failed" and wastes agent retry budget on a non-code problem.
+        var run = CreateWorkflowRun(1, "abc123", WorkflowRunStatus.Completed, WorkflowRunConclusion.Success);
+        SetupWorkflowRuns(new[] { run });
+        SetupJobs(1, new[]
+        {
+            CreateJob("build-and-test",  WorkflowJobStatus.Completed, WorkflowJobConclusion.Success),
+            CreateJob("docker-push",     WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped),
+            CreateJob("publish-chart",   WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped),
+        });
+
+        var result = await _provider.GetRunStatusAsync("main", "abc123", CancellationToken.None);
+
+        result.State.Should().Be(PipelineRunState.Passed);
+        result.Jobs.Should().HaveCount(3);
+        result.Jobs.Where(j => j.Name is "docker-push" or "publish-chart")
+              .Should().AllSatisfy(j => j.State.Should().Be(PipelineRunState.Passed));
+        result.Jobs.Where(j => j.Name is "docker-push" or "publish-chart")
+              .Should().AllSatisfy(j => j.FailureReason.Should().BeNull());
     }
 
     // --- GetJobLogsAsync Tests (REQ-4.1) ---
