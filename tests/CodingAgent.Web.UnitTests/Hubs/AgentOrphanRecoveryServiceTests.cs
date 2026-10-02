@@ -1625,6 +1625,37 @@ public sealed class AgentOrphanRecoveryServiceTests
             "Rebuilt review run must carry RunType=Review and LabelTargetKind=PullRequest");
     }
 
+    [Fact]
+    public async Task NoActiveJob_RegistryHasActiveJobId_CrashRecovery_PropagatesOperationCanceledException()
+    {
+        // When GetWorkItemRunRecordAsync throws OperationCanceledException, it must propagate
+        // out of TryReconstructRunFromDbAsync rather than being swallowed and returning null.
+        // This is the prerequisite characterization test for the OCE filter fix (issue #3238).
+        // TODO: [WARNING] The mock throws OperationCanceledException regardless of token value, and
+        // CancellationToken.None is hardcoded in the production call (AgentOrphanRecoveryService.cs:692).
+        // This means the test verifies that any OCE thrown by the dependency propagates, rather than
+        // demonstrating the token-cancellation causal chain stated in AC#2 ("a cancelled CancellationToken
+        // causes OCE to propagate"). The test remains an effective regression guard for the catch-filter
+        // change, but does not verify the causal relationship between a cancelled token and the exception.
+        const string agentId = "agent-crash-oce";
+        const string existingJobId = "00000000-0000-0000-0000-000000000006"; // valid GUID required
+
+        var entry = CreateEntry(agentId);
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _mockFacade
+            .Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var message = CreateMessage(agentId, activeJob: null);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _service.RecoverOrphanedStateAsync(message, agentId));
+    }
+
     // ── HandleCrashRecovery: hash gone → AddRun NOT called ────────────────────────
 
     // TODO: [WARNING] AC#3 (RequestCreateIssueForProvider on a run without a project rejects any
