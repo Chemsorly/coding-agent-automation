@@ -14,6 +14,10 @@
         <button class="tab-btn @(IsTab(TabSecrets))" @onclick="() => SetTab(TabSecrets)">Secrets</button>
         <button class="tab-btn @(IsTab(TabSettings))" @onclick="() => SetTab(TabSettings)">Settings</button>
         <button class="tab-btn @(IsTab(TabMcp))" @onclick="() => SetTab(TabMcp)">MCP Servers</button>
+        @if (!IsDefaultProject)
+        {
+            <button class="tab-btn @(IsTab(TabReview))" @onclick="() => SetTab(TabReview)">Project Review</button>
+        }
     </div>
 
     @if (_activeTab == TabOverview)
@@ -36,6 +40,10 @@
     {
         @RenderMcpTab()
     }
+    else if (_activeTab == TabReview && !IsDefaultProject)
+    {
+        @RenderReviewTab()
+    }
 </section>
 
 @code {
@@ -52,6 +60,7 @@
     private const string TabSecrets = "secrets";
     private const string TabSettings = "settings";
     private const string TabMcp = "mcp";
+    private const string TabReview = "review";
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
     [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
@@ -76,6 +85,13 @@
 
     // Steering
     private string? _steeringContent;
+
+    // Project review. The page edits the first reviewer; others, set through the API, are kept as they are.
+    private bool _projectReviewEnabled;
+    private string _projectReviewPrompt = PipelineConfigurationDefaults.DefaultProjectReviewPrompt;
+
+    // The Default project holds templates that belong to no product, so it has no project review.
+    private bool IsDefaultProject => _project.Id == WellKnownIds.DefaultProjectId;
 
     // The Settings tab edits the overrides on this copy of the project; saving takes them over (see SaveSettingsAsync).
     private PipelineProject _draft = new() { Id = "", Name = "" };
@@ -148,6 +164,12 @@
         _draft = _project;
         _blacklistedPathsText = _project.BlacklistedPaths != null ? string.Join(",", _project.BlacklistedPaths) : null;
         _steeringContent = _project.SteeringContent;
+
+        // Populate the project review; an empty prompt shows the default one
+        _projectReviewEnabled = _project.ProjectReviewEnabled;
+        _projectReviewPrompt = _project.ProjectReviewers.FirstOrDefault()?.Prompt is { } prompt && !string.IsNullOrWhiteSpace(prompt)
+            ? prompt
+            : PipelineConfigurationDefaults.DefaultProjectReviewPrompt;
 
         // Populate MCP Servers
         _mcpServers = _project.McpServers?.Select(s => new McpServerFormModel
@@ -291,6 +313,47 @@
             </div>
         </div>
     };
+
+    private RenderFragment RenderReviewTab() => __builder =>
+    {
+        var repositories = ProjectRepositoryNames();
+        <div class="provider-form project-review">
+            <h3>Project Review</h3>
+            <p class="form-hint">A project reviewer joins every code review in this project's repositories, in implementation runs and PR review runs, and runs alongside the reviewers the repository's labels pick. It reads the project's other repositories and the connected MCP servers, and checks the change against the whole project: the contracts between the repositories, the project's decisions and its documentation.</p>
+            <div class="form-group form-checkbox">
+                <input type="checkbox" id="project-review-enabled" @bind="_projectReviewEnabled" />
+                <label for="project-review-enabled">Enable project review</label>
+            </div>
+            <p class="form-hint">
+                @if (repositories.Count > 1)
+                {
+                    @($"Each review clones the other repositories of this project, read-only and without push access: {string.Join(", ", repositories)}.")
+                }
+                else
+                {
+                    @("This project has one repository, so the project reviewer checks a change against the project's decisions and documentation only.")
+                }
+            </p>
+            <div class="form-group">
+                <label for="project-review-prompt">Reviewer Instructions</label>
+                <textarea id="project-review-prompt" @bind="_projectReviewPrompt" rows="20"></textarea>
+                <button type="button" class="btn-revert" disabled="@IsDefaultReviewPrompt" @onclick="() => _projectReviewPrompt = PipelineConfigurationDefaults.DefaultProjectReviewPrompt">Reset to default</button>
+                <p class="form-hint">Each run adds the list of the cloned repositories to these instructions.</p>
+            </div>
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveProjectReviewAsync">Save Project Review</button>
+            </div>
+        </div>
+    };
+
+    private bool IsDefaultReviewPrompt =>
+        string.Equals(_projectReviewPrompt.Trim(), PipelineConfigurationDefaults.DefaultProjectReviewPrompt.Trim(), StringComparison.Ordinal);
+
+    /// <summary>The names of the project's enabled templates, one per repository.</summary>
+    private List<string> ProjectRepositoryNames() => _allTemplates
+        .Where(t => t.Enabled && _project.TemplateIds.Contains(t.Id))
+        .Select(t => t.Name)
+        .ToList();
 
     private RenderFragment RenderSettingsTab() => __builder =>
     {
@@ -613,6 +676,33 @@
         }
     }
 
+    private async Task SaveProjectReviewAsync()
+    {
+        try
+        {
+            // The default instructions are stored as empty, so a project follows later changes to them
+            var prompt = IsDefaultReviewPrompt ? "" : _projectReviewPrompt.Trim();
+            var name = _project.ProjectReviewers.FirstOrDefault()?.Name is { } existing && !string.IsNullOrWhiteSpace(existing)
+                ? existing
+                : PipelineConfigurationDefaults.DefaultProjectReviewerName;
+            var updated = _project with
+            {
+                ProjectReviewEnabled = _projectReviewEnabled,
+                ProjectReviewers = [new ReviewAgent { Name = name, Prompt = prompt }, .. _project.ProjectReviewers.Skip(1)]
+            };
+
+            await ConfigClient.SaveProjectAsync(updated, CancellationToken.None);
+            _project = updated;
+            _draft = _draft with { ProjectReviewEnabled = updated.ProjectReviewEnabled, ProjectReviewers = updated.ProjectReviewers };
+            await OnProjectSaved.InvokeAsync();
+            await OnShowStatus.InvokeAsync(("Project review saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
     private async Task SaveSettingsAsync()
     {
         try
@@ -629,6 +719,8 @@
                 EpicIssueProviderId = _project.EpicIssueProviderId,
                 Secrets = _project.Secrets,
                 McpServers = _project.McpServers,
+                ProjectReviewEnabled = _project.ProjectReviewEnabled,
+                ProjectReviewers = _project.ProjectReviewers,
                 TemplateIds = _project.TemplateIds,
                 BlacklistedPaths = ParseBlacklistedPaths(_blacklistedPathsText),
                 SteeringContent = string.IsNullOrWhiteSpace(_steeringContent) ? null : _steeringContent.Trim()

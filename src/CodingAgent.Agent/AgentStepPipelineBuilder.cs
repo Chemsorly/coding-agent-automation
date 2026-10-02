@@ -58,7 +58,8 @@ internal static class AgentStepPipelineBuilder
 
     /// <summary>
     /// Builds the ordered step pipeline for PR review runs.
-    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → DownloadIssueImages → ExtractLinkedIssues → ReviewCode → PostFindings.
+    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → DownloadIssueImages → ExtractLinkedIssues →
+    /// CloneProjectReviewRepositories → ReviewCode → PostFindings.
     /// Skips analysis, code generation, quality gates, and rework detection.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(
@@ -72,6 +73,7 @@ internal static class AgentStepPipelineBuilder
                 ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
                 repoConfig),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
+            new CloneProjectReviewRepositoriesStep(),
             new ReviewCodeStep(),
             new PostReviewFindingsStep()
         ]);

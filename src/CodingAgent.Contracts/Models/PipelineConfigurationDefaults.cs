@@ -49,4 +49,10 @@ public static class PipelineConfigurationDefaults
     public const string DefaultAnalysisReviewPrompt = DefaultPrompts.AnalysisReview;
     public const string DefaultAnalysisRefinementPrompt = DefaultPrompts.AnalysisRefinement;
     public const string DefaultImplementationPrompt = DefaultPrompts.Implementation;
+
+    /// <summary>The instructions of a project reviewer whose prompt is empty (see <see cref="PipelineProject.ProjectReviewers"/>).</summary>
+    public const string DefaultProjectReviewPrompt = DefaultPrompts.ProjectReview;
+
+    /// <summary>The name of a project reviewer whose name is empty.</summary>
+    public const string DefaultProjectReviewerName = "ProjectReviewer";
 }

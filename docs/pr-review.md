@@ -192,3 +192,13 @@ When no custom reviewers are configured, the system uses four built-in agents:
 
 Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset collection to defaults" (asks for confirmation).
 
+### Project Review
+
+Labels describe a repository's tech stack, so they cannot pick a reviewer that knows the product. A project with the project review on (Settings → Projects → *project* → Project Review, see [Projects — Project Review](projects.md#project-review)) adds its own reviewer to every code review of its repositories:
+
+- **When:** in implementation runs (subject to `CodeReview.MaxIterations`, like the other reviewers) and in PR review runs. It is added after the label-matched reviewers and runs concurrently with them; its findings go through the same inline comments, retries and fix rounds. A project reviewer whose name another reviewer already has gets a number, as each reviewer writes its findings to a file named after it.
+- **What it reads:** right before the review, the agent clones the project's other repositories (the enabled templates other than the run's own) into `.agent/project-repos/<template name>/`. The pipeline appends their list to the project reviewer's instructions, under "Project repositories". The other reviewers and the coding agent are not told about them.
+- **What it is told:** the default instructions check the change against the rest of the project: contracts between the repositories (endpoints, schemas, events, configuration keys), breaking changes, duplicated rules that now disagree, the project's decisions and its documentation. It explores the connected MCP servers (for example the ticketing system or the wiki with the architecture decision records) and checks how current each source is before relying on it, as documentation is often outdated. A break this change can avoid is `[CRITICAL]`; a fix that belongs in another repository is `[WARNING]`, naming the repository and file, so fix rounds do not chase it.
+- **Read-only clones:** the clones are inside the agent's metadata directory, which is in the workspace's `.gitignore`, so they never show up in the diff or a commit. A GitHub App repository is cloned with a read-only token. A GitLab or personal-access-token repository is cloned with its own token, as tokens of those kinds cannot be narrowed; after the clone, the agent removes the token from the remote URL, `FETCH_HEAD` and the reflogs, and sets a push URL that is no repository, so a push fails. A clone that cannot be made read-only is removed.
+- **Cost:** with the project review on, each code review clones the project's other repositories and runs one more reviewer per round.
+

@@ -459,13 +459,20 @@ public sealed partial class TokenVendingService : ITokenVendingService
 
         foreach (var config in configs)
         {
-            // Only GitHub App credentials can be narrowed to a read-only token. Anything else (a GitLab
-            // access token, a personal access token) would give the agent write access, so it is left out.
+            // Only GitHub App credentials can be narrowed to a read-only token. Anything else (a GitLab access token,
+            // a personal access token) keeps its own token, as the job's own repository does; the agent removes it
+            // from the clone and turns pushing off there, so nothing is committed or pushed to that repository.
             if (!config.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
             {
-                _logger.Information(
-                    "Repository config {ConfigId} ({DisplayName}) is not cloned for the project epic: only GitHub App repositories can get a read-only token",
-                    config.Id, config.DisplayName);
+                var ownSettings = new Dictionary<string, string>(config.Settings);
+                if (ownSettings.TryGetValue(ProviderSettingKeys.AccessToken, out var accessToken)
+                    && !string.IsNullOrWhiteSpace(accessToken))
+                {
+                    ownSettings[ProviderSettingKeys.Token] = accessToken;
+                    ownSettings.Remove(ProviderSettingKeys.AccessToken);
+                }
+
+                result.Add(CloneWithSettings(config, ownSettings, cloneOnly: true));
                 continue;
             }
 

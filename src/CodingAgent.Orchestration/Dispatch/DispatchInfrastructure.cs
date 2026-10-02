@@ -263,6 +263,41 @@ public class DispatchInfrastructure
     }
 
     /// <summary>
+    /// The project's other repositories for the project review: the project's enabled templates (see
+    /// <see cref="BuildRepositoryTargets"/>) without the run's own repository, each repository once. Empty when the
+    /// project has no other repository or its templates cannot be loaded; the project reviewers then review without
+    /// clones.
+    /// </summary>
+    internal virtual async Task<IReadOnlyList<RepositoryTarget>> BuildProjectReviewRepositoriesAsync(
+        PipelineProject project, string ownRepoProviderId, ILogger logger, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(project.Id) || project.TemplateIds is not { Count: > 0 })
+            return [];
+
+        try
+        {
+            var allTemplates = await Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+            return OtherRepositories(project, allTemplates, ownRepoProviderId, logger);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.Warning(ex,
+                "DispatchInfrastructure: failed to list project {ProjectId}'s repositories for the project review; it runs without clones",
+                project.Id);
+            return [];
+        }
+    }
+
+    /// <summary>The repositories of the project's enabled templates other than <paramref name="ownRepoProviderId"/>, each once.</summary>
+    internal static List<RepositoryTarget> OtherRepositories(
+        PipelineProject project, IReadOnlyList<PipelineJobTemplate> allTemplates, string ownRepoProviderId, ILogger logger) =>
+        BuildRepositoryTargets(project, allTemplates, logger)
+            .Where(r => !string.IsNullOrEmpty(r.RepoProviderId)
+                && !string.Equals(r.RepoProviderId, ownRepoProviderId, StringComparison.Ordinal))
+            .DistinctBy(r => r.RepoProviderId)
+            .ToList();
+
+    /// <summary>
     /// Lists the project's enabled templates as routing targets, in project order (by name). A template's name is
     /// the routing key the agent writes (<c>targetRepository</c>), so a template is left out when its name
     /// is empty or an earlier template in the project already uses it (possible only for templates saved before
@@ -283,7 +318,7 @@ public class DispatchInfrastructure
             if (string.IsNullOrWhiteSpace(template.Name) || !names.Add(template.Name))
             {
                 logger.Warning(
-                    "DispatchInfrastructure: template {TemplateId} is left out of project {ProjectId}'s decomposition targets: its name '{TemplateName}' is empty or already used by an earlier template",
+                    "DispatchInfrastructure: template {TemplateId} is left out of project {ProjectId}'s repository list: its name '{TemplateName}' is empty or already used by an earlier template",
                     template.Id, project.Id, LogSanitizer.SanitizeForLog(template.Name));
                 continue;
             }

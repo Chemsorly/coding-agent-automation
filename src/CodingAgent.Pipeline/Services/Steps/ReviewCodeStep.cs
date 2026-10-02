@@ -36,6 +36,10 @@ public sealed class ReviewCodeStep : IPipelineStep
             resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
         }
 
+        // The project's reviewers join the others, so they run concurrently with them
+        resolvedReviewers = ProjectReview.AddReviewers(
+            resolvedReviewers, context.ProjectReviewers, context.ProjectReviewRepositories);
+
         // Store resolved reviewers so PostReviewFindingsStep can access them for per-agent retry
         context.ResolvedReviewerConfigs = resolvedReviewers;
 

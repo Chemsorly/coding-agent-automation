@@ -222,6 +222,67 @@ public class AgentProviderResolverTests
         jobFactory.Verify(f => f.CreateRepositoryProvider(webConfig), Times.Never);
     }
 
+    [Theory]
+    [InlineData(PipelineRunType.Implementation, true, true)]
+    [InlineData(PipelineRunType.Review, true, true)]
+    [InlineData(PipelineRunType.Implementation, false, false)]
+    public async Task ResolveAsync_ProjectReview_CreatesTheOtherProjectReposOnlyWithProjectReviewers(
+        PipelineRunType runType, bool withProjectReviewers, bool expectClone)
+    {
+        var resolver = new AgentProviderResolver(_mockLogger.Object);
+        var primaryRepoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var webRepoProvider = new Mock<IRepositoryProvider>();
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-api", Kind = ProviderKind.Repository, ProviderType = "GitLab",
+            DisplayName = "api", Settings = new Dictionary<string, string>()
+        };
+        var webConfig = new ProviderConfig
+        {
+            Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitLab",
+            DisplayName = "web", Settings = new Dictionary<string, string> { ["token"] = "glpat-web" }
+        };
+        var agentConfig = new ProviderConfig
+        {
+            Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli",
+            DisplayName = "Agent", Settings = new Dictionary<string, string>()
+        };
+        var jobFactory = new Mock<IProviderFactory>();
+        jobFactory.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(primaryRepoProvider.Object);
+        jobFactory.Setup(f => f.CreateAgentProvider(agentConfig)).Returns(agentProvider.Object);
+        var projectRepoFactory = new Mock<IProviderFactory>();
+        projectRepoFactory.Setup(f => f.CreateRepositoryProvider(webConfig)).Returns(webRepoProvider.Object);
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-project-review",
+            IssueIdentifier = "12",
+            IssueDetail = new IssueDetail { Identifier = "12", Title = "Add the order endpoint", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RunType = runType,
+            RepoProviderConfigId = "repo-api",
+            AgentProviderConfigId = "agent-1",
+            BrainProviderConfigId = "",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = [repoConfig, webConfig, agentConfig],
+            ProjectReviewers = withProjectReviewers ? [new ReviewAgent { Name = "ProjectReviewer", Prompt = "Check it." }] : [],
+            ProjectReviewRepositories = [new RepositoryTarget { TemplateName = "web", Description = "", RepoProviderId = "repo-web" }],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        var result = await resolver.ResolveAsync(
+            job, jobFactory.Object, projectRepoFactory.Object, repoConfig, agentConfig, CancellationToken.None);
+
+        if (expectClone)
+            result.AdditionalRepoProviders.Should().ContainSingle().Which.TemplateName.Should().Be("web");
+        else
+            result.AdditionalRepoProviders.Should().BeNull();
+    }
+
     // ── ResolveBrainProviderAsync null/skip paths ─────────────────────────
 
     [Fact]
