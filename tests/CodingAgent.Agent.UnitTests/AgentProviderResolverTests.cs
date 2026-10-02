@@ -241,7 +241,7 @@ public class AgentProviderResolverTests
         var webConfig = new ProviderConfig
         {
             Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitLab",
-            DisplayName = "web", Settings = new Dictionary<string, string> { ["token"] = "glpat-web" }
+            DisplayName = "web", Settings = new Dictionary<string, string>()
         };
         var agentConfig = new ProviderConfig
         {
@@ -267,7 +267,14 @@ public class AgentProviderResolverTests
             PipelineConfiguration = new PipelineConfiguration(),
             ProviderConfigs = [repoConfig, webConfig, agentConfig],
             ProjectReviewers = withProjectReviewers ? [new ReviewAgent { Name = "ProjectReviewer", Prompt = "Check it." }] : [],
-            ProjectReviewRepositories = [new RepositoryTarget { TemplateName = "web", Description = "", RepoProviderId = "repo-web" }],
+            // The run's own repository is the workspace, and a repository without a config in the assignment cannot be
+            // cloned: neither gets a provider
+            ProjectReviewRepositories =
+            [
+                new RepositoryTarget { TemplateName = "api", Description = "", RepoProviderId = "repo-api" },
+                new RepositoryTarget { TemplateName = "web", Description = "", RepoProviderId = "repo-web" },
+                new RepositoryTarget { TemplateName = "docs", Description = "", RepoProviderId = "repo-docs" }
+            ],
             ReviewerConfigs = [],
             QualityGateConfigs = [],
             IssueComments = [],

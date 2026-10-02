@@ -78,6 +78,8 @@ public class CloneProjectReviewRepositoriesStepTests : IDisposable
         result.Should().Be(StepResult.Continue);
         provider.Verify(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Never);
         api.LocalPath.Should().BeNull();
+        Directory.Exists(Path.Combine(_workspacePath, ".agent", "project-repos")).Should().BeFalse(
+            "the cloner, which creates the folder first, never ran");
     }
 
     private PipelineStepContext BuildContext(

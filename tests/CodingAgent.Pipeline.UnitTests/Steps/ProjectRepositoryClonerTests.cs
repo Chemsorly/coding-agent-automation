@@ -22,8 +22,12 @@ public class ProjectRepositoryClonerTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_workspacePath))
-            Directory.Delete(_workspacePath, recursive: true);
+        if (!Directory.Exists(_workspacePath))
+            return;
+        // Git object files are read-only on Windows.
+        foreach (var file in Directory.EnumerateFiles(_workspacePath, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        Directory.Delete(_workspacePath, recursive: true);
     }
 
     /// <summary>A repository the way a token clone leaves it: the token in the remote URL, FETCH_HEAD and the reflog.</summary>
@@ -43,7 +47,7 @@ public class ProjectRepositoryClonerTests : IDisposable
             .Select(File.ReadAllText));
 
     [Fact]
-    public async Task SealAsync_TokenClone_KeepsNoTokenAndCannotPush()
+    public async Task SealAsync_TokenClone_KeepsNoToken()
     {
         var dir = Path.Combine(_workspacePath, "shop-api");
         await CreateTokenCloneAsync(dir);
@@ -52,9 +56,24 @@ public class ProjectRepositoryClonerTests : IDisposable
 
         (await GitProcessRunner.RunAsync(dir, "remote get-url origin", CancellationToken.None)).Trim()
             .Should().Be("https://gitlab.example.com/acme/shop-api.git");
-        (await GitProcessRunner.RunAsync(dir, "remote get-url --push origin", CancellationToken.None)).Trim()
-            .Should().Be(ProjectRepositoryCloner.DisabledPushUrl);
         AllGitFiles(dir).Should().NotContain("glpat-secret-token");
+    }
+
+    [Fact]
+    public async Task SealAsync_CloneOfAWritableRepository_CannotPushToIt()
+    {
+        // The origin is a local repository that accepts pushes, so only the seal can make the push fail
+        await GitProcessRunner.RunAsync(_workspacePath, "init --bare --quiet origin.git", CancellationToken.None);
+        await GitProcessRunner.RunAsync(_workspacePath, "clone --quiet origin.git shop-api", CancellationToken.None);
+        var dir = Path.Combine(_workspacePath, "shop-api");
+        await GitProcessRunner.RunAsync(dir, "-c user.name=Agent -c user.email=agent@example.com -c commit.gpgsign=false commit --allow-empty --quiet -m change", CancellationToken.None);
+
+        await ProjectRepositoryCloner.SealAsync(dir, CancellationToken.None);
+
+        await FluentActions.Awaiting(() => GitProcessRunner.RunAsync(dir, "push origin HEAD:refs/heads/agent-change", CancellationToken.None))
+            .Should().ThrowAsync<InvalidOperationException>();
+        (await GitProcessRunner.RunAsync(Path.Combine(_workspacePath, "origin.git"), "for-each-ref refs/heads", CancellationToken.None))
+            .Should().BeEmpty("nothing reached the origin");
     }
 
     [Fact]
@@ -118,6 +137,7 @@ public class ProjectRepositoryClonerTests : IDisposable
     [Theory]
     [InlineData(TokenUrl, "https://gitlab.example.com/acme/shop-api.git")]
     [InlineData("https://x-access-token:ghs_abc@github.com/acme/web.git", "https://github.com/acme/web.git")]
+    [InlineData("https://oauth2:glpat-x@gitlab.example.com/acme/shop \"api\".git", "https://gitlab.example.com/acme/shop%20%22api%22.git")]
     [InlineData("https://github.com/acme/web.git", "https://github.com/acme/web.git")]
     [InlineData("git@github.com:acme/web.git", "git@github.com:acme/web.git")]
     public void WithoutCredentials_RemovesOnlyTheUserInfo(string url, string expected)

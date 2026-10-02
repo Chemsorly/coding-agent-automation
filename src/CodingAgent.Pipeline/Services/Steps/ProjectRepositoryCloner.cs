@@ -139,6 +139,8 @@ internal static class ProjectRepositoryCloner
     /// <c>FETCH_HEAD</c> and the reflogs go, as git records the clone URL there, credentials included.
     /// </summary>
     /// <remarks>
+    /// The providers clone with LibGit2Sharp, which takes the credentials from a callback, so a token reaches the
+    /// disk only inside a clone URL that carries it (GitLab's), in the places above.
     /// Every git command names the clone's own git directory. The clone lies inside the workspace's repository, so
     /// with a broken clone git would otherwise find that repository instead and change its remote.
     /// </remarks>
@@ -146,6 +148,7 @@ internal static class ProjectRepositoryCloner
     {
         var originUrl = (await GitProcessRunner.RunAsync(cloneDir, $"{OwnGitDir} remote get-url origin", ct)).Trim();
         var cleanUrl = WithoutCredentials(originUrl);
+        // A changed URL is an escaped AbsoluteUri, so it has no spaces or quotes that would split the arguments
         if (!string.Equals(cleanUrl, originUrl, StringComparison.Ordinal))
             await GitProcessRunner.RunAsync(cloneDir, $"{OwnGitDir} remote set-url origin {cleanUrl}", ct);
 

@@ -938,7 +938,7 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 - A fix that belongs in another repository is a `[WARNING]`, so fix rounds do not chase it.
 - The settings page edits one reviewer. The project stores a list, so more can follow without a model change.
 
-**Clone tokens.** A GitHub App repository gets a read-only token. A GitLab or personal-access-token repository keeps its own token; the agent removes it from the clone (remote URL, `FETCH_HEAD`, reflogs), sets a push URL that is no repository, and deletes a clone it cannot make read-only. Project epics' clones use the same mechanism, so they now include GitLab repositories.
+**Clone tokens.** A GitHub App repository gets a read-only token. A GitLab or personal-access-token repository keeps its own token; the agent removes it from the clone (remote URL, `FETCH_HEAD`, reflogs), sets a push URL that is no repository, and deletes a clone it cannot make read-only. The token still reaches the agent pod, so a run then holds the tokens of the project's other GitLab repositories too; the advice of "Token vending: private keys never leave orchestrator or API containers" (short-lived project access tokens) applies to them. Project epics' clones use the same mechanism, so they now include GitLab repositories.
 
 **Context:** This is topic 6.4 of the 2026-09-27 settings review. Reviewers are chosen by repository labels, which describe the tech stack: the same labels pick the agent image and the quality gates. A reviewer that knows the product did not fit them. The same review found that the seeded default reviewer set ran the .NET specialist on every stack; it is split by stack in #3230.
 

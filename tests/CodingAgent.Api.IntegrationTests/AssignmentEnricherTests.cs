@@ -655,6 +655,7 @@ public sealed class AssignmentEnricherTests
 
         result!.ProjectReviewers.Should().BeEmpty();
         infra.ProjectReviewRepositoriesCalls.Should().Be(0);
+        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull("a repo epic clones no other repository");
     }
 
     // ── PrepareDispatchCoreAsync returns null ─────────────────────────────────────
