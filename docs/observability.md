@@ -62,16 +62,20 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost in USD per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
 | `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per run, per phase — recorded **API-side** at terminal status time. Pre-initialized with `model=unknown` for all `run_type × phase × provider` combinations. |
 | `pipeline.run.agent_time` | Counter | `s` | `run_type`, `phase`, `provider` | Agent execution time (seconds) per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
-| `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
-| `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
-| `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
-| `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI |
-| `quality_gate.post_pr_ci.duration` | Histogram | seconds | — | Time waiting for post-PR CI to complete |
+| `pipeline.run.quality_gate.results` | Counter | `{evaluation}` | `run_type`, `gate`, `result`, `infrastructure_failure` | Quality gate evaluation outcomes — recorded **API-side** in `ReportQualityGateResult` when the agent reports a gate result. `gate`: `compilation`, `tests`, `external_ci`. `result`: `pass`, `fail`. `infrastructure_failure`: `true`, `false`. Pre-initialized for all combinations (excluding `infrastructure_failure=true` for `compilation`). |
+| `pipeline.run.ci.not_started_retriggers` | Counter | `{retrigger}` | `run_type` | CI re-trigger commits (empty push to restart CI that never started) — recorded **API-side** in `ReportPipelineRunEvent` each time the agent re-pushes an empty commit. Pre-initialized for all run types. |
+| `pipeline.run.ci.wait` | Histogram | `s` | `run_type`, `stage`, `result` | Time from push to CI conclusion — recorded **API-side** in `ReportPipelineRunEvent` when CI polling concludes. `stage`: `pre_pr`, `post_pr`. `result`: `pass`, `fail`. Buckets: 60, 300, 600, 900, 1800, 3600, 7200, 14400. Not pre-initialized (histograms cannot be pre-initialized). |
+| `pipeline.run.agent_stalls` | Counter | `{stall}` | `run_type`, `phase`, `kind` | Agent stall events — recorded **API-side** in `ReportPipelineRunEvent` when the agent detects a stall. `kind`: `stall_kill`, `process_death`, `process_timeout`. `phase`: see `quality_gate.stall.*` phases. Pre-initialized for all `run_type × phase × kind` combinations. |
+| `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts — recorded agent-side |
+| `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase — recorded agent-side |
+| `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events — recorded agent-side |
+| `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI — **deprecated**: use `pipeline.run.ci.wait` with `stage=pre_pr`. Recorded agent-side; replaced by server-side recording in issue #2979 |
+| `quality_gate.post_pr_ci.duration` | Histogram | seconds | — | Time waiting for post-PR CI — **deprecated**: use `pipeline.run.ci.wait` with `stage=post_pr`. Recorded agent-side; replaced by server-side recording in issue #2979 |
 | `quality_gate.process.timeout` | Counter | — | `gate_name`, `qgc_name` | QGC process timeouts (compilation or test command exceeded `processTimeoutSeconds`) |
 | `quality_gate.process.duration` | Histogram | seconds | `gate_name`, `qgc_name` | Duration of a single QGC process invocation (compilation or test command). Distinct from `quality_gate.duration` which covers the entire retry phase |
 | `quality_gate.stall.warnings` | Counter | — | `phase` | Agent silence warnings by pipeline phase — fires after each `stallWarningInterval` with no output |
-| `quality_gate.stall.kills` | Counter | — | `phase` | Agent processes killed due to stall timeout |
-| `quality_gate.stall.process_deaths` | Counter | — | `phase` | Agent process death events (process exited unexpectedly) by phase |
+| `quality_gate.stall.kills` | Counter | — | `phase` | Agent processes killed due to stall timeout — **deprecated**: use `pipeline.run.agent_stalls` with `kind=stall_kill`. Recorded agent-side; replaced by server-side recording in issue #2979 |
+| `quality_gate.stall.process_deaths` | Counter | — | `phase` | Agent process death events — **deprecated**: use `pipeline.run.agent_stalls` with `kind=process_death`. Recorded agent-side; replaced by server-side recording in issue #2979 |
 | `dispatch.queue.wait_time` | Histogram | seconds | — | Time a job spent waiting in the dispatch queue |
 | `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
 | `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
@@ -107,8 +111,12 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
 | `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
-| `phase` | `qgc_retry_agent`, `codegen`, `analysis`, `code_review`, `decomposition`, `unknown` | Pipeline phase — only present on `quality_gate.stall.*` metrics |
+| `phase` | `qgc_retry_agent`, `codegen`, `analysis`, `code_review`, `decomposition`, `unknown` | Pipeline phase — only present on `quality_gate.stall.*` and `pipeline.run.agent_stalls` metrics |
 | `qgc_name` | QGC display name | Quality gate config name — only present on `quality_gate.process.*` metrics |
+| `gate` | `compilation`, `tests`, `external_ci` | Quality gate name — only present on `pipeline.run.quality_gate.results` |
+| `infrastructure_failure` | `true`, `false` | Whether the gate failure was due to infrastructure (OOM, container kill) rather than a code failure — only present on `pipeline.run.quality_gate.results` |
+| `stage` | `pre_pr`, `post_pr` | CI polling stage — only present on `pipeline.run.ci.wait` |
+| `kind` | `stall_kill`, `process_death`, `process_timeout` | Stall event kind — only present on `pipeline.run.agent_stalls` |
 
 #### Outcome mapping
 
@@ -236,6 +244,7 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 | `pipeline.run.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800 |
 | `quality_gate.process.duration` | 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600 |
 | `quality_gate.post_pr_ci.duration` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
+| `pipeline.run.ci.wait` | 60, 300, 600, 900, 1800, 3600, 7200, 14400 |
 | `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
 | `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
 | `workdistribution.workitems_pending_duration_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |

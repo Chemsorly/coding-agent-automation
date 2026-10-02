@@ -29,4 +29,5 @@ internal sealed record PipelineExecutionContext
     public required Action<PipelineStep> TransitionTo { get; init; }
     public required Action<string> EmitOutputLine { get; init; }
     public required Action<QualityGateReport> ReportQualityGateResult { get; init; }
+    public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
 }

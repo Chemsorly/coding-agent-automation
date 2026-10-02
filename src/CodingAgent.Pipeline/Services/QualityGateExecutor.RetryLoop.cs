@@ -508,13 +508,11 @@ public partial class QualityGateExecutor
                     Description = $"{retryAgentDescription} (attempt {pendingAttemptNum})",
                     Logger = _logger,
                     Phase = null,
-                    EnvironmentVariables = context.InjectedSecrets
-                    // NOTE [WARNING]: StallMetrics was removed from this AgentExecutionRequest.
-                    // The StallMetrics field is nullable, so passing null is safe and won't NRE
-                    // in the stall monitor. However, stall events during QGC retry agent calls
-                    // will no longer be recorded. If stall monitoring is still active elsewhere,
-                    // verify this is intentional.
-                    // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:481
+                    EnvironmentVariables = context.InjectedSecrets,
+                    // Wire stall metrics with server-side event reporting (issue #2979).
+                    // The Warnings counter stays agent-side (warnings are not in the server-side requirements).
+                    // Kills and ProcessDeaths fire the ReportStallEvent delegate which calls back to the API.
+                    StallMetrics = BuildStallMetricsWithServerSideReporting(context)
                 },
                 callbacks, ct,
                 resumeSessionId: run.CodegenSessionId);

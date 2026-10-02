@@ -233,6 +233,55 @@ public static class PipelineTelemetry
             HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
         });
 
+    // ── API-side quality gate and CI metrics (issue #2979) ───────────────────────────────────────
+    // These are recorded by the API when the agent reports events via the hub, NOT by agent pods.
+    // Agent pods must not record quality_gate.results, ci.not_started_retriggers, ci.wait, or
+    // agent_stalls — those counters live exclusively on the API side.
+
+    /// <summary>
+    /// Counter: individual gate evaluation outcomes, recorded by the API when ReportQualityGateResult
+    /// arrives from the agent. Tags: run_type, gate (compilation|tests|external_ci),
+    /// result (pass|fail), infrastructure_failure (true|false).
+    /// Pre-initialized at process start for closed tag combinations.
+    /// </summary>
+    public static readonly Counter<long> RunQualityGateResults = Meter.CreateCounter<long>(
+        "pipeline.run.quality_gate.results", "{evaluation}",
+        "Quality gate evaluation outcomes recorded by the API at time of result");
+
+    /// <summary>
+    /// Counter: CI re-trigger commits (empty commit + push to restart CI that never started).
+    /// Recorded by the API when the agent reports a re-trigger event via ReportPipelineRunEvent.
+    /// Tags: run_type.
+    /// Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<long> RunCiNotStartedRetriggers = Meter.CreateCounter<long>(
+        "pipeline.run.ci.not_started_retriggers", "{retrigger}",
+        "CI re-trigger commits (empty push) fired when CI never started");
+
+    /// <summary>
+    /// Histogram: time from push to CI conclusion, recorded by the API when the agent reports
+    /// the CI wait duration via ReportPipelineRunEvent.
+    /// Tags: run_type, stage (pre_pr|post_pr), result (pass|fail).
+    /// Buckets sized for CI pipeline wait times (1 min → 4 h).
+    /// Not pre-initialized (histograms cannot be pre-initialized).
+    /// </summary>
+    public static readonly Histogram<double> RunCiWait = Meter.CreateHistogram<double>(
+        "pipeline.run.ci.wait", "s",
+        "Time from push to CI conclusion (pre-PR and post-PR)",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [60, 300, 600, 900, 1800, 3600, 7200, 14400]
+        });
+
+    /// <summary>
+    /// Counter: agent stall events recorded by the API when the agent reports a stall event
+    /// via ReportPipelineRunEvent. Tags: run_type, phase, kind (stall_kill|process_death|process_timeout).
+    /// Pre-initialized at process start for phase × kind combinations.
+    /// </summary>
+    public static readonly Counter<long> RunAgentStalls = Meter.CreateCounter<long>(
+        "pipeline.run.agent_stalls", "{stall}",
+        "Agent stall events (stall_kill, process_death, process_timeout) recorded by the API");
+
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
         "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",
         advice: new InstrumentAdvice<double>
@@ -464,6 +513,37 @@ public static class PipelineTelemetry
         public const string Compilation = "compilation";
         public const string Tests = "tests";
         public const string ExternalCi = "external_ci";
+    }
+
+    /// <summary>
+    /// Closed-set gate name values for <c>pipeline.run.quality_gate.results</c> gate tag.
+    /// </summary>
+    public static class QualityGateResultGates
+    {
+        public const string Compilation = "compilation";
+        public const string Tests = "tests";
+        public const string ExternalCi = "external_ci";
+        public static readonly string[] All = [Compilation, Tests, ExternalCi];
+    }
+
+    /// <summary>
+    /// Closed-set kind values for <c>pipeline.run.agent_stalls</c> kind tag.
+    /// </summary>
+    public static class AgentStallKinds
+    {
+        public const string StallKill = "stall_kill";
+        public const string ProcessDeath = "process_death";
+        public const string ProcessTimeout = "process_timeout";
+        public static readonly string[] All = [StallKill, ProcessDeath, ProcessTimeout];
+    }
+
+    /// <summary>
+    /// Closed-set stage values for <c>pipeline.run.ci.wait</c> stage tag.
+    /// </summary>
+    public static class CiWaitStages
+    {
+        public const string PrePr = "pre_pr";
+        public const string PostPr = "post_pr";
     }
 
     /// <summary>

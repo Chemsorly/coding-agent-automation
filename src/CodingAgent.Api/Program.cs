@@ -310,7 +310,66 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
         foreach (var result in new[] { "pushed", "none" })
             PipelineTelemetry.RunBrainUpdates.Add(0, new KeyValuePair<string, object?>("result", result));
 
-        // pipeline.run.tokens, pipeline.run.cost_usd, pipeline.run.agent_sessions, pipeline.run.agent_time:
+        // pipeline.run.quality_gate.results: run_type × gate × result × infrastructure_failure (issue #2979)
+        // Skip infrastructure_failure=true for compilation (never fires there).
+        // TODO [WARNING]: The condition below (`gate != Compilation`) also pre-initializes external_ci with
+        // infrastructure_failure=true, but RecordQualityGateResultMetrics hard-codes infraFailure:false for the
+        // ExternalCi gate (GateResult.IsInfrastructureFailure is documented as only applicable to the Tests gate).
+        // This creates a permanent external_ci/infrastructure_failure=true series that can never increment.
+        // Fix: change the condition to `gate == PipelineTelemetry.QualityGateResultGates.Tests` so only the
+        // tests gate gets infrastructure_failure=true pre-initialization. (Correctness #2979)
+        foreach (var runType in runTypes)
+        {
+            foreach (var gate in PipelineTelemetry.QualityGateResultGates.All)
+            {
+                foreach (var result in new[] { "pass", "fail" })
+                {
+                    PipelineTelemetry.RunQualityGateResults.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("gate", gate),
+                        new KeyValuePair<string, object?>("result", result),
+                        new KeyValuePair<string, object?>("infrastructure_failure", "false"));
+
+                    if (gate != PipelineTelemetry.QualityGateResultGates.Compilation)
+                    {
+                        PipelineTelemetry.RunQualityGateResults.Add(0,
+                            new KeyValuePair<string, object?>("run_type", runType),
+                            new KeyValuePair<string, object?>("gate", gate),
+                            new KeyValuePair<string, object?>("result", result),
+                            new KeyValuePair<string, object?>("infrastructure_failure", "true"));
+                    }
+                }
+            }
+        }
+
+        // pipeline.run.ci.not_started_retriggers: 5 run_types (issue #2979)
+        foreach (var runType in runTypes)
+            PipelineTelemetry.RunCiNotStartedRetriggers.Add(0,
+                new KeyValuePair<string, object?>("run_type", runType));
+
+        // pipeline.run.agent_stalls: run_type × phase × kind (issue #2979)
+        string[] stallPhases = [
+            PipelineTelemetry.StallPhases.QgcRetryAgent,
+            PipelineTelemetry.StallPhases.CodeGen,
+            PipelineTelemetry.StallPhases.Analysis,
+            PipelineTelemetry.StallPhases.CodeReview,
+            PipelineTelemetry.StallPhases.Decomposition,
+            PipelineTelemetry.StallPhases.Unknown
+        ];
+        foreach (var runType in runTypes)
+        {
+            foreach (var phase in stallPhases)
+            {
+                foreach (var kind in PipelineTelemetry.AgentStallKinds.All)
+                {
+                    PipelineTelemetry.RunAgentStalls.Add(0,
+                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("kind", kind));
+                }
+            }
+        }
+
         // 5 run_types × 9 phases × 3 providers = 135 series per metric (< ~100-per-series limit accepted
         // since we have 4 metrics × 135 = 540 total pre-init Add calls, all idempotent Add(0)).
         // model is excluded from pre-initialization (unbounded cardinality per Req 7 additional comment).

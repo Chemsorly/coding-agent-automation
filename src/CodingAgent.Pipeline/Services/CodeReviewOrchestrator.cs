@@ -508,7 +508,9 @@ internal class CodeReviewOrchestrator
                 },
                 run, config, "Acceptance criteria compliance",
                 context.Callbacks.NotifyChange, _logger, ct,
-                line => context.Callbacks.EmitOutputLine($"[AcceptanceCriteria] {line}"));
+                line => context.Callbacks.EmitOutputLine($"[AcceptanceCriteria] {line}"),
+                stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                phase: "code_review");
 
             _logger.Information(
                 "Pipeline {RunId} acceptance criteria check completed with exit code {ExitCode}",
@@ -595,7 +597,9 @@ internal class CodeReviewOrchestrator
                     : null
             },
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
-            line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));
+            line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"),
+            stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+            phase: "code_review");
 
         if (reviewResult.ExitCode != 0)
         {

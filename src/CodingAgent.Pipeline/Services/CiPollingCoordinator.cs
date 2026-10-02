@@ -15,20 +15,16 @@ internal sealed class CiPollingCoordinator
 {
     private readonly Serilog.ILogger _logger;
     private readonly CiLogWriter _ciLogWriter;
-    private readonly CiPollingMetrics _metrics;
 
     internal CiPollingCoordinator(
         Serilog.ILogger logger,
-        CiLogWriter ciLogWriter,
-        CiPollingMetrics metrics)
+        CiLogWriter ciLogWriter)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(ciLogWriter);
-        ArgumentNullException.ThrowIfNull(metrics);
 
         _logger = logger;
         _ciLogWriter = ciLogWriter;
-        _metrics = metrics;
     }
 
     // ── Public phase methods ───────────────────────────────────────────────────
@@ -191,6 +187,12 @@ internal sealed class CiPollingCoordinator
                 config.BlacklistedPaths, allowEmpty: true, ct,
                 config.PipelineInjectedPaths);
             await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+
+            // Report CI re-trigger event to the API (server-side metric, issue #2979).
+            context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+            {
+                Kind = PipelineRunEventKind.CiNotStartedRetrigger
+            });
 
             pollSha = await TryReadHeadShaAsync(context, "could not read HEAD after re-push", ct);
         }
@@ -619,9 +621,15 @@ internal sealed class CiPollingCoordinator
             var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(
                 context, commitSha, config, callbacks, notBefore, linkedCts.Token);
 
-            _metrics.PostPrCiDuration.Record(
-                ciPollStopwatch.Elapsed.TotalSeconds,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+            // Report CI wait duration server-side (issue #2979): replaces the agent-side
+            // _metrics.PostPrCiDuration recording so the histogram is recorded in the API.
+            context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+            {
+                Kind = PipelineRunEventKind.CiWait,
+                DurationSeconds = ciPollStopwatch.Elapsed.TotalSeconds,
+                Stage = PipelineTelemetry.CiWaitStages.PostPr,
+                Result = ciPassed ? "pass" : "fail"
+            });
 
             ciGate = BuildCiGateResult(ciPassed, ciStatus, ciLogPaths, PostPrCiPrefix, PostPrCiPrefix, callbacks);
         }

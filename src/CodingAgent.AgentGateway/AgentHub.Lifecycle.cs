@@ -1,5 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR;
 namespace CodingAgent.AgentGateway;
 
@@ -161,7 +162,8 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
-    /// Updates the run's quality gate report and history.
+    /// Updates the run's quality gate report and history. Also records gate result metrics
+    /// server-side (run_type × gate × result × infrastructure_failure).
     /// Also pushes <see cref="IAgentHubUiClient.OnQualityGateResult"/> to the run group.
     /// </summary>
     [RequiresActiveJob]
@@ -176,10 +178,138 @@ public sealed partial class AgentHub
             run.QualityGateHistory.Enqueue(report);
             _facade.ReplaceRun(run);
             _logger.Information("Job {JobId} quality gate result received", jobId.Value);
+
+            // Record gate result metrics server-side (issue #2979).
+            // Agent pods must NOT record these — the API is the authoritative recording site.
+            RecordQualityGateResultMetrics(run.RunType, report);
         }
 
         // Push quality gate result to subscribed UI circuits (Req 5.2)
         await _uiContext.Clients.Group($"run-{jobId.Value}")
             .SendAsync(HubMethodNames.OnQualityGateResult, jobId.Value, report);
+    }
+
+    /// <summary>
+    /// Records <c>pipeline.run.quality_gate.results</c> counter for each gate in the report.
+    /// Called by <see cref="ReportQualityGateResult"/> on the API side.
+    /// Uses the QgcResults list when present (multi-QGC mode) so each QGC pair contributes
+    /// its own compilation and tests gate measurement; otherwise falls back to the aggregate
+    /// flat fields for backward compat with single-QGC payloads.
+    /// </summary>
+    private static void RecordQualityGateResultMetrics(PipelineRunType runType, QualityGateReport report)
+    {
+        // In multi-QGC mode, the aggregate flat fields collapse per-QGC detail so we record
+        // from QgcResults instead. In single-QGC mode QgcResults is empty and we use flat fields.
+        if (report.QgcResults.Count > 0)
+        {
+            foreach (var qgcResult in report.QgcResults)
+            {
+                if (qgcResult.Compilation is not null)
+                    RecordGate(runType, PipelineTelemetry.QualityGateResultGates.Compilation,
+                        qgcResult.Compilation.Passed, infraFailure: false);
+
+                if (qgcResult.Tests is not null)
+                    RecordGate(runType, PipelineTelemetry.QualityGateResultGates.Tests,
+                        qgcResult.Tests.Passed, infraFailure: qgcResult.Tests.IsInfrastructureFailure == true);
+            }
+        }
+        else
+        {
+            RecordGate(runType, PipelineTelemetry.QualityGateResultGates.Compilation,
+                report.Compilation.Passed, infraFailure: false);
+            RecordGate(runType, PipelineTelemetry.QualityGateResultGates.Tests,
+                report.Tests.Passed, infraFailure: report.Tests.IsInfrastructureFailure == true);
+        }
+
+        // ExternalCi is always from the flat field (single entry per report).
+        if (report.ExternalCi is not null)
+            RecordGate(runType, PipelineTelemetry.QualityGateResultGates.ExternalCi,
+                report.ExternalCi.Passed, infraFailure: false);
+    }
+
+    private static void RecordGate(PipelineRunType runType, string gate, bool passed, bool infraFailure)
+    {
+        PipelineTelemetry.RunQualityGateResults.Add(1,
+            PipelineTelemetry.RunTypeTag(runType),
+            new KeyValuePair<string, object?>("gate", gate),
+            new KeyValuePair<string, object?>("result", passed ? "pass" : "fail"),
+            new KeyValuePair<string, object?>("infrastructure_failure", infraFailure ? "true" : "false"));
+    }
+
+    /// <summary>
+    /// Records a discrete pipeline run event (CI re-trigger, CI wait, agent stall) as a server-side metric.
+    /// Agent pods call this hub method instead of recording metrics locally, avoiding the first-increment
+    /// Prometheus gap on counters that fire once per pod lifetime.
+    /// </summary>
+    [RequiresActiveJob]
+    public Task ReportPipelineRunEvent(JobId jobId, PipelineRunEventReport report)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+
+        var run = _facade.GetRun(jobId);
+        // TODO [WARNING]: When _facade.GetRun returns null (race between job completion and event arrival),
+        // runType defaults to PipelineRunType.Implementation, silently mis-attributing metrics for any
+        // non-implementation run type. [RequiresActiveJob] makes this unlikely but not impossible.
+        // Consider logging a Warning when run is null (consistent with how other hub methods handle this),
+        // or skipping the metric recording entirely when the run cannot be resolved. (DotNetSpecialist #2979)
+        var runType = run?.RunType ?? PipelineRunType.Implementation;
+
+        switch (report.Kind)
+        {
+            case PipelineRunEventKind.CiNotStartedRetrigger:
+                PipelineTelemetry.RunCiNotStartedRetriggers.Add(1,
+                    PipelineTelemetry.RunTypeTag(runType));
+                _logger.Debug("Job {JobId} CI not-started retrigger recorded", jobId.Value);
+                break;
+
+            case PipelineRunEventKind.CiWait:
+                if (report.DurationSeconds.HasValue && report.Stage is not null && report.Result is not null)
+                {
+                    // TODO [WARNING]: report.Stage and report.Result are forwarded directly from the agent
+                    // payload without normalization against the closed sets (PipelineTelemetry.CiWaitStages,
+                    // PipelineTelemetry.AgentStallKinds). A compromised or buggy agent pod could send arbitrary
+                    // strings, inflating label cardinality on the metrics backend. Consider validating against
+                    // the closed sets and logging+skipping unknown values. (SecurityReviewer #2979)
+                    PipelineTelemetry.RunCiWait.Record(report.DurationSeconds.Value,
+                        PipelineTelemetry.RunTypeTag(runType),
+                        new KeyValuePair<string, object?>("stage", report.Stage),
+                        new KeyValuePair<string, object?>("result", report.Result));
+                    _logger.Debug("Job {JobId} CI wait recorded: stage={Stage} result={Result} duration={Duration:F1}s",
+                        jobId.Value, report.Stage, report.Result, report.DurationSeconds.Value);
+                }
+                else
+                {
+                    _logger.Warning("Job {JobId} CiWait event missing required fields (DurationSeconds, Stage, Result) — skipped",
+                        jobId.Value);
+                }
+                break;
+
+            case PipelineRunEventKind.AgentStall:
+                if (report.Stage is not null && report.Result is not null)
+                {
+                    // TODO [WARNING]: report.Stage and report.Result are forwarded directly from the agent
+                    // payload without validation against the closed sets (PipelineTelemetry.StallPhases,
+                    // PipelineTelemetry.AgentStallKinds). See the CiWait note above. (SecurityReviewer #2979)
+                    PipelineTelemetry.RunAgentStalls.Add(1,
+                        PipelineTelemetry.RunTypeTag(runType),
+                        new KeyValuePair<string, object?>("phase", report.Stage),
+                        new KeyValuePair<string, object?>("kind", report.Result));
+                    _logger.Debug("Job {JobId} agent stall recorded: phase={Phase} kind={Kind}",
+                        jobId.Value, report.Stage, report.Result);
+                }
+                else
+                {
+                    _logger.Warning("Job {JobId} AgentStall event missing required fields (Stage, Result) — skipped",
+                        jobId.Value);
+                }
+                break;
+
+            default:
+                _logger.Warning("Job {JobId} unknown PipelineRunEventKind {Kind} — ignored",
+                    jobId.Value, report.Kind);
+                break;
+        }
+
+        return Task.CompletedTask;
     }
 }
