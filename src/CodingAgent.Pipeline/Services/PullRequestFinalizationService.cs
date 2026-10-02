@@ -286,40 +286,14 @@ public sealed class PullRequestFinalizationService
             {
                 rawDescription = await File.ReadAllTextAsync(filePath, ct);
             }
-            // TODO: DirectoryNotFoundException (thrown when the .agent/ parent directory is absent) is a sibling
-            // of FileNotFoundException under IOException — not a subclass — so it is NOT caught here and falls
-            // through to the outer "generation failed" handler, producing a misleading log message. To preserve
-            // the prior File.Exists semantics (missing directory → fallback path), also catch
-            // DirectoryNotFoundException and route it into the same fallback block.
-            catch (FileNotFoundException)
+            // A missing .agent/ directory throws DirectoryNotFoundException, a sibling of FileNotFoundException;
+            // both mean the agent wrote no description.
+            catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
             {
-                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, using OutputLines fallback",
+                // The agent's stdout mixes in tool output and reasoning, so it never becomes the PR body
+                // (decisions.md: the PR narrative never comes from the agent's stdout).
+                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, keeping the generated PR body",
                     run.RunId, filePath);
-
-                var fallbackText = StripBlockquotePrefix(string.Join("\n", result.OutputLines));
-                if (!string.IsNullOrWhiteSpace(fallbackText))
-                {
-                    if (!int.TryParse(run.PullRequestNumber, out var prNumberFallback))
-                    {
-                        _logger.Warning("Pipeline {RunId} PR description fallback skipped — PullRequestNumber '{PrNumber}' is not a valid integer",
-                            run.RunId, run.PullRequestNumber);
-                        return;
-                    }
-                    // TODO: When run.PullRequestBody is null (no body set before description generation), ?? ""
-                    // produces an empty string and the resulting body ends with a spurious "\n\n---\n\n" separator.
-                    // The file-present path has the same pattern. Consider omitting the separator
-                    // entirely when currentBody is empty: newBody = string.IsNullOrWhiteSpace(currentBody)
-                    //   ? fallbackText : $"{fallbackText}\n\n---\n\n{currentBody}".
-                    var currentBodyFallback = run.PullRequestBody ?? "";
-                    var newBodyFallback = $"{fallbackText}\n\n---\n\n{currentBodyFallback}";
-                    await repoProvider.UpdatePullRequestAsync(prNumberFallback, newBodyFallback, null, ct);
-                    run.PullRequestBody = newBodyFallback;
-                    _logger.Information("Pipeline {RunId} PR description applied from OutputLines fallback", run.RunId);
-                }
-                else
-                {
-                    _logger.Warning("Pipeline {RunId} PR description fallback: OutputLines also empty, description skipped", run.RunId);
-                }
                 return;
             }
 
@@ -336,8 +310,10 @@ public sealed class PullRequestFinalizationService
                 _logger.Warning("Pipeline {RunId} PR description skipped — PullRequestNumber '{PrNumber}' is not a valid integer", run.RunId, run.PullRequestNumber);
                 return;
             }
-            var currentBody = run.PullRequestBody ?? "";
-            var newBody = $"{description}\n\n---\n\n{currentBody}";
+            var currentBody = run.PullRequestBody;
+            var newBody = string.IsNullOrWhiteSpace(currentBody)
+                ? description
+                : $"{description}\n\n---\n\n{currentBody}";
             await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, ct);
             run.PullRequestBody = newBody;
 

@@ -197,18 +197,14 @@ public sealed class DatabaseStartupService
     /// </summary>
     public async Task RunStartupSeedingAsync(CancellationToken ct)
     {
-        // NOTE: The three child methods each acquire and release MigrationLockKey independently.
-        // The overall seed-and-repair sequence is therefore NOT atomic across replicas: a second replica
-        // can interleave between any two steps. In practice each step is idempotent and the per-method lock
-        // serializes the SaveChangesAsync that was the original race concern, so no crash results today.
-        // However, between the lock release of SeedDefaultProjectIfNeededAsync and the lock acquisition of
-        // ClaimOrphanedTemplatesAsync, two replicas could both pass the AnyAsync existence check in step 1
-        // and attempt to insert the same Default project PK — on real Postgres this surfaces as a
-        // DbUpdateException (PK violation) aborting one replica's startup. The correct fix is either a
-        // single lock acquisition wrapping all three steps here, or an INSERT … ON CONFLICT DO NOTHING
-        // approach in SeedDefaultProjectIfNeededAsync. MigrationLockKey is non-reentrant (Postgres:
-        // pg_try_advisory_lock on a new connection per acquire; InProcess: SemaphoreSlim(1,1)), so any
-        // change that nests an outer AcquireAsync around these calls will deadlock.
+        // Each step holds MigrationLockKey around both its existence check and its write, so concurrent
+        // replicas serialize per step: a second replica's check runs only after the first replica's write
+        // has committed. The sequence as a whole is not atomic, but every interleaving is safe, because each
+        // step re-reads under the lock and is idempotent. StartupSeedingConcurrencyTests races two replicas
+        // against real Postgres; without the lock, the Default project insert fails with a PK violation.
+        // MigrationLockKey is non-reentrant (Postgres: pg_try_advisory_lock on a new connection per acquire;
+        // InProcess: SemaphoreSlim(1,1)), so nesting an outer AcquireAsync around these calls deadlocks
+        // (InProcess) or times out after 60 s (Postgres).
         await SeedDefaultProjectIfNeededAsync(ct);
         await SeedDefaultReviewerConfigsIfNeededAsync(ct);
         await ClaimOrphanedTemplatesAsync(ct);
