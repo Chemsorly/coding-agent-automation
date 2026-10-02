@@ -1222,7 +1222,7 @@ public class LocalPipelineExecutorTests : IDisposable
     // DisposeAsync is skipped. Use 'await using' declarations for reliable cleanup.
 
     [Fact]
-    public async Task BuildAgentStepPipeline_Returns16Steps()
+    public async Task BuildAgentStepPipeline_Returns17Steps()
     {
         var job = CreateMinimalJobAssignment();
         await using var connection = CreateDisconnectedHubConnection();
@@ -1231,7 +1231,27 @@ public class LocalPipelineExecutorTests : IDisposable
 
         var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
-        steps.Should().HaveCount(16);
+        steps.Should().HaveCount(17);
+    }
+
+    [Fact]
+    public async Task BuildAgentAndReviewStepPipelines_CloneTheProjectReviewRepositoriesRightBeforeTheReview()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        foreach (var steps in new[]
+        {
+            AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig),
+            AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig)
+        })
+        {
+            var review = steps.ToList().FindIndex(s => s is ReviewCodeStep);
+            review.Should().BePositive();
+            steps[review - 1].Should().BeOfType<CloneProjectReviewRepositoriesStep>();
+        }
     }
 
     [Fact]

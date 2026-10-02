@@ -14,7 +14,8 @@ public static class PipelineStepFactory
     /// </summary>
     /// <remarks>
     /// Order: DetectRework → WritePrConversationContext → CreateBranch → VerifyBaseline →
-    /// AnalyzeCode → GenerateCode → BrainPullBeforeWrite → ReviewCode → RunQualityGates.
+    /// AnalyzeCode → GenerateCode → BrainPullBeforeWrite → CloneProjectReviewRepositories → ReviewCode →
+    /// RunQualityGates.
     /// </remarks>
     public static IReadOnlyList<IPipelineStep> CreateCoreImplementationSteps()
     {
@@ -27,6 +28,7 @@ public static class PipelineStepFactory
             new AnalyzeCodeStep(),
             new GenerateCodeStep(),
             new BrainPullBeforeWriteStep(),
+            new CloneProjectReviewRepositoriesStep(),
             new ReviewCodeStep(),
             new RunQualityGatesStep()
         };

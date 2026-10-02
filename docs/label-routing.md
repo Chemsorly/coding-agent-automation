@@ -81,7 +81,7 @@ Resolution: all Reviewer Configurations whose labels intersect with the job's la
 
 The other code review settings (iterations, fix prompt, inline comments, acceptance criteria) are on Settings → Global Defaults → Code Review; see [Configuration — Code Review](configuration.md#code-review).
 
-Labels are set per repository, and the same labels also pick the agent profile, which must contain every one of them. A project therefore cannot choose its own reviewers or quality gates, and adding a label to a repository only to select a reviewer also changes which agent profile, and so which agent image, the repository needs.
+Labels are set per repository, and the same labels also pick the agent profile, which must contain every one of them. A project therefore cannot choose which of these reviewers or quality gates apply, and adding a label to a repository only to select a reviewer also changes which agent profile, and so which agent image, the repository needs. What a project can do is add its own reviewer, which checks a change against the whole project: see [PR Review — Project Review](pr-review.md#project-review).
 
 ## Agent Lifecycle Labels
 

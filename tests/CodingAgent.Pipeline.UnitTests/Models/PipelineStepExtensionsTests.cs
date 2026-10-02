@@ -32,4 +32,55 @@ public class PipelineStepExtensionsTests
     {
         Assert.Equal(expected, step.ToDisplayName());
     }
+
+    #region IsQualityGateExitState
+
+    [Theory]
+    [InlineData(PipelineStep.Failed)]
+    [InlineData(PipelineStep.ConflictRestart)]
+    [InlineData(PipelineStep.PrMerged)]
+    [InlineData(PipelineStep.PrClosed)]
+    public void IsQualityGateExitState_ExitStates_ReturnsTrue(PipelineStep step)
+    {
+        Assert.True(step.IsQualityGateExitState(),
+            $"{step} must be a quality-gate exit state");
+    }
+
+    [Theory]
+    [InlineData(PipelineStep.Completed)]
+    [InlineData(PipelineStep.Cancelled)]
+    [InlineData(PipelineStep.RunningQualityGates)]
+    [InlineData(PipelineStep.GeneratingCode)]
+    [InlineData(PipelineStep.Created)]
+    public void IsQualityGateExitState_NonExitStates_ReturnsFalse(PipelineStep step)
+    {
+        Assert.False(step.IsQualityGateExitState(),
+            $"{step} must NOT be a quality-gate exit state");
+    }
+
+    /// <summary>
+    /// Verifies that <see cref="PipelineStepExtensions.IsQualityGateExitState"/> is a strict
+    /// subset of <see cref="PipelineStepExtensions.IsTerminal"/>: ConflictRestart is a quality-gate
+    /// exit state but Completed (a terminal state) is not, demonstrating the two methods are not
+    /// interchangeable.
+    /// </summary>
+    [Fact]
+    public void IsQualityGateExitState_IsStrictSubsetOfIsTerminal_DoesNotIncludeCompletedOrCancelled()
+    {
+        // ConflictRestart: in both sets
+        Assert.True(PipelineStep.ConflictRestart.IsQualityGateExitState());
+        Assert.True(PipelineStep.ConflictRestart.IsTerminal());
+
+        // Completed: terminal but NOT a quality-gate exit state
+        Assert.False(PipelineStep.Completed.IsQualityGateExitState(),
+            "Completed must not be a quality-gate exit state — IsQualityGateExitState is narrower than IsTerminal");
+        Assert.True(PipelineStep.Completed.IsTerminal());
+
+        // Cancelled: terminal but NOT a quality-gate exit state
+        Assert.False(PipelineStep.Cancelled.IsQualityGateExitState(),
+            "Cancelled must not be a quality-gate exit state — IsQualityGateExitState is narrower than IsTerminal");
+        Assert.True(PipelineStep.Cancelled.IsTerminal());
+    }
+
+    #endregion
 }

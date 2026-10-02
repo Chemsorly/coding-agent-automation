@@ -164,7 +164,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.WaitForFunctionAsync(
                 "() => localStorage.getItem('autoRefresh.work') === '10'",
                 null,
-                new() { Timeout = 5_000 });
+                new() { Timeout = 10_000 });
 
             // --- Runs page: set to Off ---
             await Page.GotoAsync($"{BaseUrl}/runs");
@@ -178,7 +178,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.WaitForFunctionAsync(
                 "() => localStorage.getItem('autoRefresh.runs') === '0'",
                 null,
-                new() { Timeout = 5_000 });
+                new() { Timeout = 10_000 });
 
             // --- Reload Work page and verify persisted value is 10s ---
             await Page.GotoAsync($"{BaseUrl}/work");

@@ -31,7 +31,7 @@ public class ChatJobExecutorTests : IDisposable
 
     // ── Setup helpers ─────────────────────────────────────────────────────
 
-    private static (ChatJobExecutor Handler, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
+    private static (ChatJobExecutor Handler, ChatSlotManager SlotManager, AgentConnectionLifecycle Lifecycle)
         CreateHandler(
             KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
             IHostApplicationLifetime? hostLifetime = null,
@@ -47,11 +47,8 @@ public class ChatJobExecutorTests : IDisposable
         var lifetime = hostLifetime ?? Mock.Of<IHostApplicationLifetime>();
         var hm = TestAgentWorkerServiceFactory.CreateTestHubManager(mockLogger);
         var hmFactory = TestAgentWorkerServiceFactory.CreateTestHubManagerFactory(mockLogger);
-        var buffer = new CriticalMessageBuffer();
-        var pipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger);
-        var signalRReporter = new SignalRCompletionReporter(hm, pipeline, buffer, mockLogger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
+        var slotManager = new ChatSlotManager();
+        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, slotManager,
             new AgentId("test-chat"), lifetime, mockLogger);
 
         var deps = new ChatJobExecutorDependencies(
@@ -101,15 +98,14 @@ public class ChatJobExecutorTests : IDisposable
     {
         var (handler, slotManager, _) = CreateHandler();
 
-        // Simulate busy agent
-        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"busy-job");
-        SetPrivateField(slotManager, "_isBusy", true);
+        // Simulate busy agent — acquire a chat slot for another session
+        slotManager.TryAcquireChatSlot("already-active-session", out _);
 
         var message = new ChatPromptMessage { SessionId = "rejected-session", Prompt = "test" };
         await handler.HandleChatPromptAsync(message);
 
         GetPrivateField<string?>(slotManager, "_activeChatSessionId")
-            .Should().BeNull("busy agent must reject chat prompt without acquiring chat slot");
+            .Should().Be("already-active-session", "busy agent must reject chat prompt without overwriting existing slot");
     }
 
     [Fact]

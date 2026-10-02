@@ -174,4 +174,30 @@ public sealed class JobAssignmentMessageFactoryTests
         var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
         msg.ForceRefreshAnalysis.Should().BeTrue();
     }
+
+    // ── Project review ────────────────────────────────────────────────────
+
+    [Fact]
+    public void BuildJobAssignmentMessage_ProjectReview_PassesTheReviewersAndRepositoriesOn()
+    {
+        var req = MinimalRequest() with
+        {
+            ProjectReviewers = [new ReviewAgent { Name = "ProjectReviewer", Prompt = "Check the project." }],
+            ProjectReviewRepositories = [new RepositoryTarget { TemplateName = "api", Description = "", RepoProviderId = "repo-api" }]
+        };
+
+        var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
+
+        msg.ProjectReviewers.Select(r => r.Name).Should().Equal("ProjectReviewer");
+        msg.ProjectReviewRepositories!.Select(r => r.RepoProviderId).Should().Equal("repo-api");
+    }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_NoProjectReview_HasNoReviewersOrRepositories()
+    {
+        var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), MinimalRequest());
+
+        msg.ProjectReviewers.Should().BeEmpty();
+        msg.ProjectReviewRepositories.Should().BeNull();
+    }
 }

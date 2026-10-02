@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgent.Agent;
-using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -11,36 +10,31 @@ namespace CodingAgent.Agent.UnitTests;
 /// Additional coverage tests for <see cref="AgentConnectionLifecycle"/> targeting paths
 /// not yet covered by existing test files:
 ///
-/// - <see cref="AgentConnectionLifecycle.ShouldDropBufferedMessage"/> — static predicate
 /// - <see cref="AgentConnectionLifecycle.SignalChatEnd"/> — idempotent TCS completion
 /// - Constructor chat-mode fields populated from <see cref="AgentRuntimeOptions"/>
 /// - <see cref="AgentConnectionLifecycle.ShutdownAsync"/> graceful paths
 /// - <see cref="AgentConnectionLifecycle.IsConnected"/> and <see cref="AgentConnectionLifecycle.Connection"/> after dispose
+/// - Constructor null-guard for <c>hubManagerFactory</c>
 /// </summary>
 [Collection("EnvironmentVariables")]
 public sealed class AgentConnectionLifecycleAdditionalTests
 {
-    // ── ShouldDropBufferedMessage (static predicate) ──────────────────────
+    // ── Constructor null guards ───────────────────────────────────────────
 
-    private static JobCompletionPayload MakePayload(PipelineStep step = PipelineStep.Completed)
-        => new() { FinalStep = step, CompletedAt = DateTimeOffset.UtcNow };
-
-    [Theory]
-    [InlineData(0, 1, false)]
-    [InlineData(0, 3, false)]
-    [InlineData(1, 3, false)]
-    [InlineData(2, 3, false)]
-    [InlineData(3, 3, true)]
-    [InlineData(4, 3, true)]
-    [InlineData(10, 3, true)]
-    public void ShouldDropBufferedMessage_VariousAttemptCounts(int attempts, int max, bool shouldDrop)
+    [Fact]
+    public void Constructor_ThrowsOnNullFactory()
     {
-        var msg = new BufferedJobCompleted("job-x",
-            MakePayload(),
-            DateTimeOffset.UtcNow) { DrainAttempts = attempts };
+        var mockLogger = new Mock<Serilog.ILogger>();
 
-        AgentConnectionLifecycle.ShouldDropBufferedMessage(msg, max)
-            .Should().Be(shouldDrop, $"attempts={attempts}, max={max}");
+        var act = () => new AgentConnectionLifecycle(
+            CreateTestHubManager(),
+            null!,
+            new ChatSlotManager(),
+            new AgentId("test"),
+            Mock.Of<IHostApplicationLifetime>(),
+            mockLogger.Object);
+
+        act.Should().Throw<ArgumentNullException>().WithParameterName("hubManagerFactory");
     }
 
     // ── SignalChatEnd ─────────────────────────────────────────────────────
@@ -189,10 +183,7 @@ public sealed class AgentConnectionLifecycleAdditionalTests
         var factory = new FakeHubConnectionManagerFactory(
             factoryFunc ?? (() => new FakeHubConnectionManager()));
 
-        var buffer = new CriticalMessageBuffer();
-        var signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger);
-        var signalRReporter = new SignalRCompletionReporter(initialManager, signalRPipeline, buffer, mockLogger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
+        var slotManager = new ChatSlotManager();
 
         var lifetimeMock = new Mock<IHostApplicationLifetime>();
         lifetimeMock.Setup(l => l.ApplicationStopping).Returns(appStoppingToken);
@@ -202,7 +193,6 @@ public sealed class AgentConnectionLifecycleAdditionalTests
         var lifecycle = new AgentConnectionLifecycle(
             initialManager,
             factory,
-            signalRReporter,
             slotManager,
             new AgentId("test-agent"),
             lifetimeMock.Object,
@@ -210,5 +200,11 @@ public sealed class AgentConnectionLifecycleAdditionalTests
             runtimeOptions);
 
         return (lifecycle, initialManager, factory);
+    }
+
+    private static HubConnectionManager CreateTestHubManager()
+    {
+        var logger = new Mock<Serilog.ILogger>();
+        return new HubConnectionManager("http://localhost:9999", "test-agent", "test-api-key", logger.Object);
     }
 }
