@@ -3398,6 +3398,172 @@ public sealed class ReconciliationLoopErrorTests
             It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
+    // ─── OperationCanceledException propagation (Issue #3236) ─────────────────
+
+    // TODO: [WARNING] The six OCE-propagation tests below each verify only that OCE *propagates*.
+    // They do not verify the complementary behaviour: that a non-OCE exception (e.g. InvalidOperationException)
+    // at the same catch site is still *caught* and causes the method to return normally. Without that
+    // counterpart, a regression that removes the `when` filter entirely would still pass all six tests
+    // (the bare catch would re-swallow everything, so OCE would still not propagate — wait, actually the
+    // test would fail, but through a different mechanism). More precisely: if the filter is accidentally
+    // removed, non-OCE exceptions would propagate unexpectedly and break the "skip this cycle" contract.
+    // Consider adding one complementary test per method asserting that a plain InvalidOperationException
+    // from e.g. ListJobsAsync causes ReconcileOnceAsync to return normally without throwing.
+    // (Review finding: DotNetSpecialist [WARNING] and TestQualityReviewer [WARNING])
+
+    /// <summary>
+    /// Issue #3236: When ListJobsAsync throws OperationCanceledException, ReconcileOnceAsync
+    /// must propagate it rather than swallowing it with the bare catch block.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenListJobsThrowsOce_PropagatesOperationCanceledException()
+    {
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var loop = CreateLoop();
+
+        // OCE must propagate — must NOT be swallowed and silently skipped
+        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Issue #3236: When GetActiveAsync throws OperationCanceledException, EnforceTimeoutsAsync
+    /// must propagate it rather than swallowing it with the bare catch block.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenGetActiveThrowsOce_PropagatesOperationCanceledException()
+    {
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var loop = CreateLoop();
+
+        var act = async () => await loop.EnforceTimeoutsAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Issue #3236: When GetActiveAsync throws OperationCanceledException,
+    /// EnforceDispatchedTimeoutAsync must propagate it (first catch, line 272).
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenGetActiveThrowsOce_PropagatesOperationCanceledException()
+    {
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var loop = CreateLoop();
+
+        var act = async () => await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Issue #3236: When ListJobsAsync throws OperationCanceledException,
+    /// EnforceDispatchedTimeoutAsync must propagate it (second catch, line 300).
+    /// The GetActiveAsync mock must return a Dispatched item so the method proceeds past
+    /// the early-return guard (if dispatched.Count == 0 return) and reaches ListJobsAsync.
+    /// </summary>
+    [Fact]
+    public async Task EnforceDispatchedTimeout_WhenListJobsThrowsOce_PropagatesOperationCanceledException()
+    {
+        // Must return at least one Dispatched item to reach the ListJobsAsync call.
+        // If the list is empty the method returns early before the second await.
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = Guid.NewGuid(),
+            Status = WorkItemStatus.Dispatched,
+            // TODO: [WARNING] Using _options.ChatPodConnectTimeoutSeconds here makes the test brittle:
+            // if the fixture ever initialises ChatPodConnectTimeoutSeconds to a very large value,
+            // the AddSeconds arithmetic can overflow DateTimeOffset. Consider replacing with a hardcoded
+            // offset (e.g. AddSeconds(-3600)) that is guaranteed to exceed any reasonable timeout.
+            // (Review finding: TestQualityReviewer [WARNING])
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet",
+            IssueIdentifier = "owner/repo#1"
+        };
+        _workItemClient.Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var loop = CreateLoop();
+
+        var act = async () => await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Issue #3236: When GetStatusAsync throws OperationCanceledException inside
+    /// ClassifyJobFailureReasonAsync, the OCE must propagate through HandleJobAsync
+    /// and out of ReconcileOnceAsync rather than being swallowed and returning AgentError.
+    /// Must use a FAILED job to enter the JobPhaseFailed branch where GetStatusAsync is called.
+    /// </summary>
+    [Fact]
+    public async Task ReconcileOnce_WhenClassifyJobFailureReasonThrowsOce_PropagatesOperationCanceledException()
+    {
+        var id = Guid.NewGuid();
+        var job = MakeJob($"caa-agent-{id:N}"[..21], id, failed: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // OCE thrown from GetStatusAsync inside ClassifyJobFailureReasonAsync
+        _workItemClient.Setup(c => c.GetStatusAsync(id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        // TODO: [WARNING] The GetStatusAsync mock above is shared with HandleJobCompletedAsync.
+        // If a regression re-introduces OCE-swallowing in ClassifyJobFailureReasonAsync (i.e. the
+        // `when` filter is removed), the OCE would be consumed there, and HandleJobCompletedAsync
+        // would proceed to call PostStatusAsync (not mocked), throwing a MockException rather than
+        // the expected OperationCanceledException. The test would still fail, but with a confusing
+        // MockException diagnostic rather than a clear assertion message. Consider also mocking
+        // PostStatusAsync to throw OperationCanceledException to make regression failure messages
+        // unambiguous and pinpoint the correct site. (Review finding: TestQualityReviewer [WARNING])
+
+        var loop = CreateLoop();
+
+        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    /// <summary>
+    /// Issue #3236: When GetStatusAsync throws OperationCanceledException inside the
+    /// HandleJobCompletedAsync 400-path inner catch, the OCE must propagate out of
+    /// ReconcileOnceAsync rather than returning false.
+    /// Must use a SUCCEEDED job so that ClassifyJobFailureReasonAsync is NOT called first
+    /// (a failed job would call GetStatusAsync for classification before HandleJobCompletedAsync
+    /// is reached, consuming the OCE throw at the wrong site).
+    /// </summary>
+    [Fact]
+    public async Task HandleJobCompleted_When400AndGetStatusThrowsOce_PropagatesOperationCanceledException()
+    {
+        var id = Guid.NewGuid();
+        // Use a SUCCEEDED job — ClassifyJobFailureReasonAsync is only called for failed jobs.
+        // Using a succeeded job routes directly into HandleJobCompletedAsync without any
+        // prior GetStatusAsync call, so the OCE throw is consumed by the correct inner catch.
+        var job = MakeJob($"caa-agent-{id:N}"[..21], id, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // PostStatusAsync throws 400 to enter the outer HttpRequestException when-filter catch
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rejected", null, System.Net.HttpStatusCode.BadRequest));
+
+        // GetStatusAsync inside the 400-catch throws OCE — must propagate
+        _workItemClient.Setup(c => c.GetStatusAsync(id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var loop = CreateLoop();
+
+        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
 }
 
 // ─── Metric / telemetry tests ─────────────────────────────────────────────────
