@@ -148,7 +148,7 @@ public sealed class ReconciliationLoop
                 "app.kubernetes.io/managed-by=caa-orchestrator",
                 ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Warning(ex, "Failed to list K8s Jobs; skipping reconciliation cycle");
             return;
@@ -184,7 +184,7 @@ public sealed class ReconciliationLoop
         {
             timedOut = await _workItemClient.GetActiveAsync(TimeoutCanaryMinAgeSeconds, ct: ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Warning(ex, "Failed to query active work items for timeout enforcement");
             return;
@@ -269,7 +269,7 @@ public sealed class ReconciliationLoop
         {
             items = await _workItemClient.GetActiveAsync(_options.ChatPodConnectTimeoutSeconds, ct: ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Warning(ex, "Failed to query active work items for dispatched timeout enforcement");
             return;
@@ -297,7 +297,7 @@ public sealed class ReconciliationLoop
             // dereference further below in the foreach for the label-based null-K8sJobName branch.)
             liveJobNames = (liveJobs.Items ?? []).Select(j => j.Metadata?.Name ?? "").ToHashSet(StringComparer.Ordinal);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Warning(ex, "Failed to list Jobs for dispatched timeout check; skipping");
             return;
@@ -655,14 +655,8 @@ public sealed class ReconciliationLoop
             // is a fallback due to a missing item. Consider adding a Debug-level log here:
             // if (status is null) _log.Debug("ClassifyJobFailureReasonAsync: status null for {WorkItemId}, defaulting to AgentError", workItemId);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // TODO: [WARNING] This catch is too broad — it swallows OperationCanceledException from the
-            // reconciliation loop's own CancellationToken, causing the loop to mark the WorkItem as
-            // AgentError and return silently instead of propagating the cancellation. Fix:
-            //   catch (Exception ex) when (ex is not OperationCanceledException)
-            // All current callers pass the loop's CancellationToken, so a mid-flight cancellation
-            // would silently emit AgentError. (Review finding: DotNetSpecialist [WARNING] — issue #2956)
             _log.Warning(ex, "ClassifyJobFailureReasonAsync: failed to query status for WorkItem {WorkItemId}, defaulting to AgentError", workItemId);
         }
 
@@ -742,13 +736,7 @@ public sealed class ReconciliationLoop
             {
                 currentStatus = await _workItemClient.GetStatusAsync(workItemId, ct);
             }
-            // TODO: [WARNING] This catch swallows OperationCanceledException. When `ct` fires while
-            // GetStatusAsync is awaited (e.g. leadership lease expires), the cancellation is logged
-            // as a Warning and the method returns false instead of propagating. The outer loop then
-            // treats this as a retryable transient error rather than exiting.
-            // Fix: change to `catch (Exception statusEx) when (statusEx is not OperationCanceledException)`
-            // so cancellations propagate (mirrors the existing pattern at the outer catch).
-            catch (Exception statusEx)
+            catch (Exception statusEx) when (statusEx is not OperationCanceledException)
             {
                 _log.Warning(statusEx,
                     "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400) " +
@@ -786,6 +774,13 @@ public sealed class ReconciliationLoop
             _reconciledTerminalIds.Add(workItemId);
             return false;
         }
+        // TODO: [WARNING] This catch is too broad — it swallows OperationCanceledException from the
+        // loop's own CancellationToken. PostStatusAsync receives `ct` (the loop token); if cancelled
+        // mid-flight, the OCE is caught here, logged as an Error, and HandleJobCompletedAsync returns
+        // false, causing the caller to treat the cancellation as a transient failure rather than
+        // propagating. Fix: add `when (ex is not OperationCanceledException)` filter to this catch.
+        // Out of scope for issue #3236 (which targeted the six explicitly named sites), but the same
+        // class of bug as those fixes. (Review finding: DotNetSpecialist [WARNING])
         catch (Exception ex)
         {
             _log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
