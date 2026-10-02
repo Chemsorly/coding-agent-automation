@@ -72,7 +72,10 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 
 | Reviewer Config | Match Labels | Agents |
 |----------------|-------------|--------|
-| Default Reviewers | *(empty — global fallback)* | Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer |
+| Default Reviewers | *(empty — global fallback)* | Correctness, SecurityReviewer, TestQualityReviewer |
+| .NET Reviewers | `dotnet` | DotNetSpecialist |
+
+The default reviewers do not depend on the stack, so they apply to every repository. A stack's specialist matches the stack label, like the stack's quality gate config: add one per stack you use (for example a Python reviewer with `python`).
 
 Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches (or all are disabled), or the matching configs define no review agents, the review phase is **skipped**. A warning is logged (`Pipeline {RunId} no reviewer configurations matched — review phase skipped`). An implementation run then opens its PR without a review; a PR review run posts a comment on the pull request that says why no review ran. To ensure review always runs, keep the default reviewer configuration (`MatchLabels = []`) enabled in Settings → Reviewers.
 

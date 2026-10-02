@@ -188,4 +188,50 @@ public sealed class AgentCodingPage
         var warningText = await _page.TextContentAsync(".settings-status.status-error");
         Assert.Contains("This PR is a draft", warningText, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>Clicks the "Browse Epics" button to open the epic dispatch drawer.</summary>
+    public async Task ClickBrowseEpicsAsync()
+    {
+        // TODO [WARNING]: WaitForFunctionAsync + separate ClickAsync has a TOCTOU window: the
+        // button could be re-disabled between the two calls if a template de-selection triggers
+        // a re-render. The existing page-object helpers use WaitForSelectorAsync with
+        // :not([disabled]) or rely on ClickAsync's built-in wait to avoid this gap. This is low
+        // risk (only relevant under extreme re-render races) but is inconsistent with the rest
+        // of the page object.
+
+        // Wait for the button to become enabled (depends on template selection triggering re-render)
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const btn = document.querySelector('[data-testid=""browse-epics-btn""]');
+                return btn && !btn.disabled;
+            }",
+            null,
+            new() { Timeout = 10_000 });
+
+        await _page.ClickAsync("[data-testid='browse-epics-btn']");
+
+        // TODO [WARNING]: ".dispatch-drawer.open" matches any open dispatch drawer (Issue, PR, or
+        // Epic). If a prior test's state leaked and left another drawer open, this wait would
+        // succeed for the wrong drawer. Consider asserting on a drawer-specific element (e.g. the
+        // "Select Epic for Decomposition" header) to confirm the Epic drawer specifically opened.
+        await _page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
+    }
+
+    /// <summary>Selects an epic from the epic drawer by its identifier.</summary>
+    public async Task SelectEpicAsync(string identifier)
+    {
+        // TODO [WARNING]: identifier is interpolated directly into a CSS attribute selector. If
+        // identifier contains a single-quote character, the selector becomes malformed and
+        // Playwright throws a cryptic PlaywrightException rather than a clear "element not found"
+        // message. All current callers pass numeric identifiers, so this is safe today, but a
+        // future test using a GitLab-style prefixed identifier (e.g. "GL-42") or any identifier
+        // with special CSS characters would fail here with a misleading error.
+        await _page.ClickAsync($"[data-testid='epic-row-{identifier}']");
+    }
+
+    /// <summary>Clicks the "Start Decomposition on #X" button in the epic drawer.</summary>
+    public async Task ClickDispatchEpicAsync()
+    {
+        await _page.ClickAsync("[data-testid='dispatch-epic-btn']");
+    }
 }

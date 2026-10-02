@@ -63,34 +63,19 @@ public class DatabaseStartupServiceReviewerSeedingTests : IDisposable
         // Act
         await service.SeedDefaultReviewerConfigsIfNeededAsync(CancellationToken.None);
 
-        // Assert: row count matches the number of default configs
+        // Assert: two configs, the stack-agnostic default reviewers and the .NET specialist for dotnet repositories
         await using var db = _dbFactory.CreateDbContext();
-        var count = await db.ReviewerConfigs.CountAsync();
-        // TODO: Asserting against the runtime constant means a change to DefaultReviewerConfigurations
-        // (e.g. accidentally becoming 0 or 2) would not be caught. Consider asserting count.Should().Be(1)
-        // with an inline comment explaining the expected value.
-        count.Should().Be(PipelineConfigurationDefaults.DefaultReviewerConfigurations.Count);
+        var seeded = (await db.ReviewerConfigs.ToListAsync())
+            .Select(e => JsonSerializer.Deserialize<ReviewerConfiguration>(e.Configuration!, PipelineJsonOptions.Default)!)
+            .OrderBy(c => c.ExecutionOrder)
+            .ToList();
 
-        // Assert: the seeded config has the expected name
-        var entity = await db.ReviewerConfigs.SingleAsync();
-        // TODO: Hard-coded string "Default Reviewers" duplicates PipelineConfigurationDefaults.DefaultReviewerConfigurations[0].DisplayName.
-        // Reference the constant directly so a display-name change produces a compile-time signal rather than a misleading mismatch.
-        entity.Name.Should().Be("Default Reviewers");
-
-        // Assert: Configuration blob is valid JSON that round-trips to a ReviewerConfiguration
-        entity.Configuration.Should().NotBeNullOrEmpty();
-        var deserialized = JsonSerializer.Deserialize<ReviewerConfiguration>(
-            entity.Configuration!, PipelineJsonOptions.Default);
-        deserialized.Should().NotBeNull();
-        // TODO: Hard-coded string "Default Reviewers" duplicates PipelineConfigurationDefaults.DefaultReviewerConfigurations[0].DisplayName.
-        // Reference the constant directly.
-        deserialized!.DisplayName.Should().Be("Default Reviewers");
-        deserialized.MatchLabels.Should().BeEmpty();
-        // TODO: Expected agent count is derived from the same runtime list the production code reads. A silent
-        // drop/duplication in DefaultReviewAgents would still pass. Assert .HaveCount(<concrete number>) or
-        // verify agent identity explicitly (e.g. .Contain(a => a.Name == "Correctness")).
-        deserialized.Agents.Should().HaveCount(PipelineConfigurationDefaults.DefaultReviewAgents.Count);
-        deserialized.Enabled.Should().BeTrue();
+        seeded.Select(c => c.DisplayName).Should().Equal("Default Reviewers", ".NET Reviewers");
+        seeded[0].MatchLabels.Should().BeEmpty();
+        seeded[0].Agents.Select(a => a.Name).Should().Equal("Correctness", "SecurityReviewer", "TestQualityReviewer");
+        seeded[1].MatchLabels.Should().Equal("dotnet");
+        seeded[1].Agents.Select(a => a.Name).Should().Equal("DotNetSpecialist");
+        seeded.Should().OnlyContain(c => c.Enabled);
 
         // Assert: an Information log was emitted (AC: startup log entry when seeding occurs)
         sink.Events
@@ -175,11 +160,8 @@ public class DatabaseStartupServiceReviewerSeedingTests : IDisposable
 
         // Assert: ReviewerConfigs table is populated
         await using var db = _dbFactory.CreateDbContext();
-        var count = await db.ReviewerConfigs.CountAsync();
-        count.Should().Be(PipelineConfigurationDefaults.DefaultReviewerConfigurations.Count);
-
-        var entity = await db.ReviewerConfigs.SingleAsync();
-        entity.Name.Should().Be("Default Reviewers");
+        var names = await db.ReviewerConfigs.Select(e => e.Name).ToListAsync();
+        names.Should().BeEquivalentTo("Default Reviewers", ".NET Reviewers");
     }
 
     [Fact]
