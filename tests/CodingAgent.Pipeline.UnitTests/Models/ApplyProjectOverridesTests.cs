@@ -648,6 +648,9 @@ public class ApplyProjectOverridesTests
         nameof(PipelineProject.Secrets),
         // McpServers is dispatched directly (merged at dispatch time), not via ApplyProjectOverrides
         nameof(PipelineProject.McpServers),
+        // The project review adds reviewers to the code review at claim time; it overrides no global setting
+        nameof(PipelineProject.ProjectReviewEnabled),
+        nameof(PipelineProject.ProjectReviewers),
     };
 
     [Fact]

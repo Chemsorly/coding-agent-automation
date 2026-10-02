@@ -21,6 +21,8 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///   <item>Secret merge — project secrets and repository secrets arrive in separate assignment fields.</item>
 ///   <item>Template BrainReadOnly — template flag overrides project flag one-directionally (only to true).</item>
 /// </list>
+/// A seventh scenario covers the project review: its reviewer and the project's other repository reach the
+/// assignment.
 /// </para>
 ///
 /// <para>
@@ -36,7 +38,7 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 {
     // ── Issue identifiers ────────────────────────────────────────────────────────
     // Identifiers used in other files: 1, 10, 14, 42–51, 55, 60–62, 77, 80–82, 92, 99,
-    // 100–103, 200, 300, 700, 3000, 3010, 3011. Identifiers 49, 52–54, 56–59 are unallocated
+    // 100–103, 200, 300, 700, 3000, 3010, 3011. Identifiers 49, 52–54, 56–59 and 63 are unallocated
     // and are used here. ("55" is taken by PrReviewPipelineTests.)
 
     public DbModeProjectSettingsTests(E2EFixture fixture) : base(fixture) { }
@@ -640,6 +642,99 @@ public sealed class DbModeProjectSettingsTests : HeadlessE2ETestBase
 
         // Project BrainReadOnly=true must survive; template BrainReadOnly=false is a no-op.
         Assert.True(assignment.PipelineConfiguration.BrainReadOnly);
+
+        await agent.AcceptAndCompleteJobAsync(assignment.JobId);
+    }
+
+    // ── Scenario 7 ────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Scenario 7 — Project review: with the project review on, the assignment carries the project's reviewer and
+    /// the project's other repository, but not the run's own one. The other repository is a GitLab repository, so it
+    /// arrives as a clone-only config: its own token, none of its secrets.
+    /// </summary>
+    [Fact]
+    public async Task DbMode_ProjectReview_AssignmentCarriesTheReviewerAndTheOtherRepositoryToClone()
+    {
+        const string reviewProjectId = "aaaaaaaa-bbbb-cccc-dddd-888888888888";
+
+        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = "repo-e2e-project-review-other",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Other Product Repository",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "glpat-e2e-other",
+                ["projectId"] = "4401"
+            },
+            Secrets = new Dictionary<string, string> { ["OTHER_SECRET"] = "must-not-reach-the-job" }
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveProjectAsync(new PipelineProject
+        {
+            Id = reviewProjectId,
+            Name = "Project Review Project",
+            Enabled = true,
+            TemplateIds = new List<string>(),
+            ProjectReviewEnabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveTemplateAsync(reviewProjectId, new PipelineJobTemplate
+        {
+            Id = "template-project-review-own-e2e",
+            Name = "Own Repository",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveTemplateAsync(reviewProjectId, new PipelineJobTemplate
+        {
+            Id = "template-project-review-other-e2e",
+            Name = "Other Repository",
+            IssueProviderId = "issue-e2e-project-review-other",
+            RepoProviderId = "repo-e2e-project-review-other",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-project-review-e2e",
+            DisplayName = "Project Review Agent Profile",
+            MatchLabels = new[] { "db-e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "63",
+            Title = "Project review test",
+            Description = "## Requirements\nTest the project review\n\n## Acceptance Criteria\n- [ ] Done",
+            Labels = new[] { "enhancement", "agent:next" }
+        });
+
+        await using var agent = new FakeAgentClient("project-review-agent-1", "db-e2e");
+        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+
+        var result = await DispatchIssueAsync("63", projectId: reviewProjectId);
+        Assert.True(result.Success, $"Dispatch failed: {result.ErrorMessage}");
+
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var reviewer = Assert.Single(assignment.ProjectReviewers);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultProjectReviewerName, reviewer.Name);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultProjectReviewPrompt, reviewer.Prompt);
+
+        var other = Assert.Single(assignment.ProjectReviewRepositories!);
+        Assert.Equal("Other Repository", other.TemplateName);
+        Assert.Equal("repo-e2e-project-review-other", other.RepoProviderId);
+
+        var cloneConfig = Assert.Single(assignment.ProviderConfigs, c => c.Id == "repo-e2e-project-review-other");
+        Assert.Equal("glpat-e2e-other", cloneConfig.Settings[ProviderSettingKeys.Token]);
+        Assert.Null(cloneConfig.Secrets);
 
         await agent.AcceptAndCompleteJobAsync(assignment.JobId);
     }

@@ -254,6 +254,21 @@ public sealed record JobAssignmentMessage
     /// </summary>
     [Key(38)]
     public bool AutoDispatch { get; init; }
+
+    /// <summary>
+    /// The project's reviewers, which join the code review next to <see cref="ReviewerConfigs"/>. Empty when the
+    /// project review is off.
+    /// </summary>
+    [Key(39)]
+    public IReadOnlyList<ReviewAgent> ProjectReviewers { get; init; } = [];
+
+    /// <summary>
+    /// The project's other repositories. The agent clones them read-only into
+    /// <see cref="AgentWorkspacePaths.ProjectReviewRepositoriesDirectory"/> for the project reviewers. Null when the
+    /// project review is off.
+    /// </summary>
+    [Key(40)]
+    public IReadOnlyList<RepositoryTarget>? ProjectReviewRepositories { get; init; }
 }
 
 /// <summary>
