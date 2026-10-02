@@ -119,6 +119,44 @@ public class CiPollingCoordinatorTests
             "must push one empty commit per retry attempt (not on the exhaustion pass)");
     }
 
+    /// <summary>
+    /// Each empty-commit re-trigger must fire a <see cref="PipelineRunEventKind.CiNotStartedRetrigger"/>
+    /// event via <see cref="QualityGateContext.ReportPipelineRunEvent"/> immediately after the push.
+    /// This is the key acceptance criterion: "a run stuck in the CI-not-started loop shows up within
+    /// one re-trigger interval" (issue #2979). Without this test, removing or misplacing the Invoke call
+    /// in PollCiWithNotStartedRetryAsync would silently break CI re-trigger observability.
+    /// </summary>
+    [Fact]
+    public async Task WhenCiNeverStarts_EachRetriggerPushFiresServerSideReportEvent()
+    {
+        const int maxRetries = 3;
+        var run = CreateRun();
+        run.PullRequestNumber = null;
+
+        var reportedEvents = new List<PipelineRunEventReport>();
+        var context = BuildContextWithReporting(run, ciNotStartedMaxRetries: maxRetries, reportEvent: reportedEvents.Add);
+
+        // GetRunStatusAsync always returns Pending (CI never starts)
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Pending,
+                Jobs = new List<PipelineJobResult>()
+            });
+
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // One CiNotStartedRetrigger event must be fired per empty-commit push (maxRetries events total)
+        var retrigerEvents = reportedEvents
+            .Where(e => e.Kind == PipelineRunEventKind.CiNotStartedRetrigger)
+            .ToList();
+
+        retrigerEvents.Should().HaveCount(maxRetries,
+            $"one CiNotStartedRetrigger event must be reported per empty-commit push (expected {maxRetries}, one per retry attempt before exhaustion check)");
+    }
+
     // ── Gap 2: PollCiWithNotStartedRetryAsync — already-running branch guard ──
 
     /// <summary>
@@ -535,6 +573,20 @@ public class CiPollingCoordinatorTests
             PipelineProvider = _mockPipelineProvider.Object,
             QualityGateConfigs = new List<QualityGateConfiguration>()
         };
+
+    /// <summary>
+    /// Variant of <see cref="BuildContext"/> that wires <see cref="QualityGateContext.ReportPipelineRunEvent"/>
+    /// to allow tests to capture server-side pipeline run events (issue #2979).
+    /// </summary>
+    private QualityGateContext BuildContextWithReporting(
+        PipelineRun run,
+        Action<PipelineRunEventReport> reportEvent,
+        int ciNotStartedMaxRetries = 1,
+        int maxInfraRetries = 0)
+    {
+        var ctx = BuildContext(run, ciNotStartedMaxRetries, maxInfraRetries);
+        return ctx with { ReportPipelineRunEvent = reportEvent };
+    }
 
     // ── Issue #2954: PR state checks in CI polling loop ───────────────────────
 
@@ -1152,35 +1204,32 @@ public class CiPollingCoordinatorTests
         PipelineRun run,
         int ciNotStartedMaxRetries = 0,
         TimeSpan? ciNotStartedTimeout = null) => new()
-    {
-        Run = run,
-        Config = new PipelineConfiguration
         {
-            AgentTimeout = TimeSpan.FromMinutes(10),
-            MaxRetries = 0,
-            MaxInfrastructureRetries = 0,
-            ExternalCiTimeout = TimeSpan.FromMinutes(5),
-            CiNotStartedTimeout = ciNotStartedTimeout ?? TimeSpan.FromMilliseconds(50),
-            CiNotStartedMaxRetries = ciNotStartedMaxRetries,
-            ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
-            StallPollInterval = TimeSpan.FromMilliseconds(50),
-            StallWarningInterval = TimeSpan.FromHours(1)
-        },
-        AgentProvider = new Mock<IAgentProvider>().Object,
-        IssueOps = _mockIssueOps.Object,
-        Callbacks = _mockCallbacks.Object,
-        RepoProvider = _mockRepoProvider.Object,
-        PipelineProvider = _mockPipelineProvider.Object,
-        QualityGateConfigs = new List<QualityGateConfiguration>()
-    };
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                MaxRetries = 0,
+                MaxInfrastructureRetries = 0,
+                ExternalCiTimeout = TimeSpan.FromMinutes(5),
+                CiNotStartedTimeout = ciNotStartedTimeout ?? TimeSpan.FromMilliseconds(50),
+                CiNotStartedMaxRetries = ciNotStartedMaxRetries,
+                ExternalCiPollInterval = TimeSpan.FromMilliseconds(50),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1)
+            },
+            AgentProvider = new Mock<IAgentProvider>().Object,
+            IssueOps = _mockIssueOps.Object,
+            Callbacks = _mockCallbacks.Object,
+            RepoProvider = _mockRepoProvider.Object,
+            PipelineProvider = _mockPipelineProvider.Object,
+            QualityGateConfigs = new List<QualityGateConfiguration>()
+        };
 
     private CiPollingCoordinator BuildCoordinator() =>
         new CiPollingCoordinator(
             _mockLogger.Object,
-            new CiLogWriter(_mockLogger.Object),
-            new CiPollingMetrics(
-                PipelineTelemetry.ExternalCiDuration,
-                PipelineTelemetry.PostPrCiDuration));
+            new CiLogWriter(_mockLogger.Object));
 
     /// <summary>
     /// True mid-loop scenario: N-1 CI-not-started iterations push empty re-trigger commits,

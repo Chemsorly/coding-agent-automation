@@ -546,7 +546,7 @@ public class RetentionSweepIntegrationTests : IDisposable
             {
                 var config = await _configStore.LoadPipelineConfigAsync(ct);
                 var n = config.PipelineRunRetentionCount;
-                if (n == -1) return 0;
+                if (n <= 0) return 0; // as in production: 0 or -1 keeps every row
 
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 const string sql = """
@@ -582,7 +582,7 @@ public class RetentionSweepIntegrationTests : IDisposable
             {
                 var config = await _configStore.LoadPipelineConfigAsync(ct);
                 var n = config.WorkItemRetentionCount;
-                if (n == -1) return 0;
+                if (n <= 0) return 0; // as in production: 0 or -1 keeps every row
 
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 // Status IN (3,4,5): Succeeded=3, Failed=4, Cancelled=5 (WorkItemStatus enum)

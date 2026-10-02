@@ -20,7 +20,7 @@ namespace CodingAgent.Agent;
 /// <remarks>
 /// <para>
 /// This class owns the <see cref="HubConnectionManager"/> and <see cref="HubConnectionManagerFactory"/>,
-/// handles the Reconnected/Closed events, and exposes business-level events (AssignJob, CancelJob, etc.)
+/// handles the Reconnected/Closed events, and exposes business-level events (AssignChatPrompt, CancelChat, CancelJob, FetchModels)
 /// for the coordinator (<see cref="AgentWorkerService"/>) to wire its handlers to.
 /// </para>
 /// <para>

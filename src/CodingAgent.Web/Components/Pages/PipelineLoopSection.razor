@@ -5,19 +5,26 @@
     <h2>Pipeline Loop</h2>
     <p class="section-description">Controls the automated polling loop that picks up <code>agent:next</code> issues and dispatches them to available agents.</p>
     <div class="provider-form">
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ClosedLoopPollInterval)">
             <div class="label-with-hint">
                 <label>Poll Interval (seconds)</label>
-                <span class="form-hint-icon" aria-hidden="true" title="How often the loop checks for new agent:next issues when idle">?</span>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the loop checks for new agent:next issues when idle. Default: 60s">?</span>
             </div>
-            <input type="number" @bind="_closedLoopPollIntervalSeconds" min="10" max="600" />
+            <input type="number" @bind="_closedLoopPollIntervalSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ClosedLoopPollInterval), SettingUnit.Seconds)" max="@SettingLimits.Max(nameof(PipelineConfiguration.ClosedLoopPollInterval), SettingUnit.Seconds)" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ClosedLoopMaxRunsPerCycle)">
             <div class="label-with-hint">
                 <label>Max Runs Per Cycle</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum issues to process per poll cycle. 0 = unlimited (process entire backlog)">?</span>
             </div>
-            <input type="number" @bind="_closedLoopMaxRunsPerCycle" min="0" />
+            <input type="number" @bind="_closedLoopMaxRunsPerCycle" min="@SettingLimits.Min(nameof(PipelineConfiguration.ClosedLoopMaxRunsPerCycle))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ClosedLoopMaxRunsPerCycle))" />
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MinIssueSlots)">
+            <div class="label-with-hint">
+                <label>Reserved Issue Slots Per Cycle</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Slots per cycle held back for implementation issues when PRs and other higher-priority work would take them all. Applies when Max Runs Per Cycle is 0 or at least 2. 0 = strict priority. Default: 1">?</span>
+            </div>
+            <input type="number" @bind="_minIssueSlots" min="@SettingLimits.Min(nameof(PipelineConfiguration.MinIssueSlots))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MinIssueSlots))" />
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
             <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
@@ -25,37 +32,37 @@
         </div>
         @if (_showAdvanced)
         {
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ClosedLoopMaxPagesToFetch)">
             <div class="label-with-hint">
                 <label>Max Pages to Fetch</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum pages fetched per poll when looking for agent:next issues. Each page holds up to 100 issues. Default: 10 (1000 issues max)">?</span>
             </div>
-            <input type="number" @bind="_closedLoopMaxPagesToFetch" min="1" max="100" />
+            <input type="number" @bind="_closedLoopMaxPagesToFetch" min="@SettingLimits.Min(nameof(PipelineConfiguration.ClosedLoopMaxPagesToFetch))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ClosedLoopMaxPagesToFetch))" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ClosedLoopMaxConsecutivePollFailures)">
             <div class="label-with-hint">
                 <label>Max Consecutive Poll Failures</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Number of consecutive poll failures before the loop pauses (circuit breaker). Default: 5">?</span>
             </div>
-            <input type="number" @bind="_closedLoopMaxConsecutivePollFailures" min="1" max="50" />
+            <input type="number" @bind="_closedLoopMaxConsecutivePollFailures" min="@SettingLimits.Min(nameof(PipelineConfiguration.ClosedLoopMaxConsecutivePollFailures))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ClosedLoopMaxConsecutivePollFailures))" />
         </div>
-        <div class="form-group">
-            <div class="label-with-hint">
-                <label>Max Backoff Interval (seconds)</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum delay between poll retries after consecutive failures. Default: 900s (15 min)">?</span>
-            </div>
-            <input type="number" @bind="_closedLoopMaxBackoffIntervalSeconds" min="10" max="3600" />
-        </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ClosedLoopCircuitBreakerCooldown)">
             <div class="label-with-hint">
                 <label>Circuit Breaker Cooldown (seconds)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Cooldown before the circuit breaker auto-resumes polling after tripping. Default: 300s (5 min)">?</span>
             </div>
-            <input type="number" @bind="_closedLoopCircuitBreakerCooldownSeconds" min="30" max="3600" />
+            <input type="number" @bind="_closedLoopCircuitBreakerCooldownSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ClosedLoopCircuitBreakerCooldown), SettingUnit.Seconds)" max="@SettingLimits.Max(nameof(PipelineConfiguration.ClosedLoopCircuitBreakerCooldown), SettingUnit.Seconds)" />
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.OrphanedLabelSweepIntervalMinutes)">
+            <div class="label-with-hint">
+                <label>Orphaned Label Sweep Interval (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the Scheduler looks for issues stuck with an agent label and no active run, and repairs them. Default: 30 min">?</span>
+            </div>
+            <input type="number" @bind="_orphanedLabelSweepIntervalMinutes" min="@SettingLimits.Min(nameof(PipelineConfiguration.OrphanedLabelSweepIntervalMinutes))" max="@SettingLimits.Max(nameof(PipelineConfiguration.OrphanedLabelSweepIntervalMinutes))" />
         </div>
         }
 
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.QueueSweepEnabled)">
             <div class="label-with-hint">
                 <label>Queue Sweep</label>
                 <span class="form-hint-icon" aria-hidden="true" title="When enabled, the loop cancels Pending WorkItems whose issue or PR is no longer eligible (closed, label removed, or terminal state) after each dispatch cycle. Implementation items are checked against the issue queue; Review items are checked against the PR queue. Default: on (opt-out).">?</span>
@@ -79,10 +86,11 @@
 
     private int _closedLoopPollIntervalSeconds = 60;
     private int _closedLoopMaxRunsPerCycle = 0;
+    private int _minIssueSlots = 1;
     private int _closedLoopMaxPagesToFetch = 10;
     private int _closedLoopMaxConsecutivePollFailures = 5;
-    private int _closedLoopMaxBackoffIntervalSeconds = 900;
     private int _closedLoopCircuitBreakerCooldownSeconds = 300;
+    private int _orphanedLabelSweepIntervalMinutes = PipelineConstants.DefaultOrphanedLabelSweepIntervalMinutes;
     private bool _queueSweepEnabled = true;
     private bool _showAdvanced;
 
@@ -91,10 +99,11 @@
         var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
         _closedLoopPollIntervalSeconds = (int)config.ClosedLoopPollInterval.TotalSeconds;
         _closedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
+        _minIssueSlots = config.MinIssueSlots;
         _closedLoopMaxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
         _closedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures;
-        _closedLoopMaxBackoffIntervalSeconds = (int)config.ClosedLoopMaxBackoffInterval.TotalSeconds;
         _closedLoopCircuitBreakerCooldownSeconds = (int)config.ClosedLoopCircuitBreakerCooldown.TotalSeconds;
+        _orphanedLabelSweepIntervalMinutes = config.OrphanedLabelSweepIntervalMinutes;
         _queueSweepEnabled = config.QueueSweepEnabled;
     }
 
@@ -107,10 +116,11 @@
                 {
                     ClosedLoopPollInterval = TimeSpan.FromSeconds(_closedLoopPollIntervalSeconds),
                     ClosedLoopMaxRunsPerCycle = _closedLoopMaxRunsPerCycle,
+                    MinIssueSlots = _minIssueSlots,
                     ClosedLoopMaxPagesToFetch = _closedLoopMaxPagesToFetch,
                     ClosedLoopMaxConsecutivePollFailures = _closedLoopMaxConsecutivePollFailures,
-                    ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(_closedLoopMaxBackoffIntervalSeconds),
                     ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(_closedLoopCircuitBreakerCooldownSeconds),
+                    OrphanedLabelSweepIntervalMinutes = _orphanedLabelSweepIntervalMinutes,
                     QueueSweepEnabled = _queueSweepEnabled
                 },
                 CancellationToken.None);

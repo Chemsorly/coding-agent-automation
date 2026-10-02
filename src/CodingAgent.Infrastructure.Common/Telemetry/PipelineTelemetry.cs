@@ -233,15 +233,54 @@ public static class PipelineTelemetry
             HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
         });
 
-    public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
-        "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",
+    // ── API-side quality gate and CI metrics (issue #2979) ───────────────────────────────────────
+    // These are recorded by the API when the agent reports events via the hub, NOT by agent pods.
+    // Agent pods must not record quality_gate.results, ci.not_started_retriggers, ci.wait, or
+    // agent_stalls — those counters live exclusively on the API side.
+
+    /// <summary>
+    /// Counter: individual gate evaluation outcomes, recorded by the API when ReportQualityGateResult
+    /// arrives from the agent. Tags: run_type, gate (compilation|tests|external_ci),
+    /// result (pass|fail), infrastructure_failure (true|false).
+    /// Pre-initialized at process start for closed tag combinations.
+    /// </summary>
+    public static readonly Counter<long> RunQualityGateResults = Meter.CreateCounter<long>(
+        "pipeline.run.quality_gate.results", "{evaluation}",
+        "Quality gate evaluation outcomes recorded by the API at time of result");
+
+    /// <summary>
+    /// Counter: CI re-trigger commits (empty commit + push to restart CI that never started).
+    /// Recorded by the API when the agent reports a re-trigger event via ReportPipelineRunEvent.
+    /// Tags: run_type.
+    /// Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<long> RunCiNotStartedRetriggers = Meter.CreateCounter<long>(
+        "pipeline.run.ci.not_started_retriggers", "{retrigger}",
+        "CI re-trigger commits (empty push) fired when CI never started");
+
+    /// <summary>
+    /// Histogram: time from push to CI conclusion, recorded by the API when the agent reports
+    /// the CI wait duration via ReportPipelineRunEvent.
+    /// Tags: run_type, stage (pre_pr|post_pr), result (pass|fail).
+    /// Buckets sized for CI pipeline wait times (1 min → 4 h).
+    /// Not pre-initialized (histograms cannot be pre-initialized).
+    /// </summary>
+    public static readonly Histogram<double> RunCiWait = Meter.CreateHistogram<double>(
+        "pipeline.run.ci.wait", "s",
+        "Time from push to CI conclusion (pre-PR and post-PR)",
         advice: new InstrumentAdvice<double>
         {
-            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+            HistogramBucketBoundaries = [60, 300, 600, 900, 1800, 3600, 7200, 14400]
         });
 
-    public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
-        "consolidation.jobs.expired", UnitJob, "Consolidation jobs expired from queue");
+    /// <summary>
+    /// Counter: agent stall events recorded by the API when the agent reports a stall event
+    /// via ReportPipelineRunEvent. Tags: run_type, phase, kind (stall_kill|process_death|process_timeout).
+    /// Pre-initialized at process start for phase × kind combinations.
+    /// </summary>
+    public static readonly Counter<long> RunAgentStalls = Meter.CreateCounter<long>(
+        "pipeline.run.agent_stalls", "{stall}",
+        "Agent stall events (stall_kill, process_death, process_timeout) recorded by the API");
 
     public static readonly Counter<long> ConsolidationDispatchPermanentFailures = Meter.CreateCounter<long>(
         "consolidation.dispatch.permanent_failures", UnitFailure,
@@ -254,8 +293,6 @@ public static class PipelineTelemetry
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
         "token_vending.failures", UnitFailure, "Token vending failures");
-    public static readonly Histogram<double> TokenVendingDuration = Meter.CreateHistogram<double>(
-        "token_vending.duration", "s", "Duration of token vending operations");
 
     // Loop metrics
     public static readonly Counter<long> LoopPolls = Meter.CreateCounter<long>(
@@ -407,10 +444,6 @@ public static class PipelineTelemetry
         "pipeline.queue_sweep.failed", UnitItem, "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
 
     // Agent worker metrics
-    public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
-        "agent.jobs.received", UnitJob, "Jobs received by agent workers");
-    public static readonly Counter<long> AgentJobsRejected = Meter.CreateCounter<long>(
-        "agent.jobs.rejected", UnitJob, "Jobs rejected by agent workers");
     public static readonly Counter<long> AgentHeartbeatFailures = Meter.CreateCounter<long>(
         "agent.heartbeat.failures", UnitFailure, "Agent heartbeat failures");
     public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
@@ -467,6 +500,37 @@ public static class PipelineTelemetry
     }
 
     /// <summary>
+    /// Closed-set gate name values for <c>pipeline.run.quality_gate.results</c> gate tag.
+    /// </summary>
+    public static class QualityGateResultGates
+    {
+        public const string Compilation = "compilation";
+        public const string Tests = "tests";
+        public const string ExternalCi = "external_ci";
+        public static readonly string[] All = [Compilation, Tests, ExternalCi];
+    }
+
+    /// <summary>
+    /// Closed-set kind values for <c>pipeline.run.agent_stalls</c> kind tag.
+    /// </summary>
+    public static class AgentStallKinds
+    {
+        public const string StallKill = "stall_kill";
+        public const string ProcessDeath = "process_death";
+        public const string ProcessTimeout = "process_timeout";
+        public static readonly string[] All = [StallKill, ProcessDeath, ProcessTimeout];
+    }
+
+    /// <summary>
+    /// Closed-set stage values for <c>pipeline.run.ci.wait</c> stage tag.
+    /// </summary>
+    public static class CiWaitStages
+    {
+        public const string PrePr = "pre_pr";
+        public const string PostPr = "post_pr";
+    }
+
+    /// <summary>
     /// Normalized phase tag values for stall-monitor metrics (issue #2367).
     /// Using a closed constant set prevents unbounded label cardinality on the
     /// <c>quality_gate.stall.*</c> counters.
@@ -519,10 +583,6 @@ public static class PipelineTelemetry
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());
 
-    /// <summary>Creates a pipeline.project_id tag.</summary>
-    public static KeyValuePair<string, object?> ProjectIdTag(string? projectId) =>
-        new("pipeline.project_id", projectId ?? ActivityTags.Unknown);
-
     /// <summary>Creates a pipeline.project_name tag.</summary>
     public static KeyValuePair<string, object?> ProjectNameTag(string? projectName) =>
         new("pipeline.project_name", projectName ?? ActivityTags.Unknown);
@@ -537,27 +597,19 @@ public static class PipelineTelemetry
     }
 
     /// <summary>
-    /// Builds a <see cref="TagList"/> containing run_type, project_id, and project_name tags.
-    /// Use this when recording metrics that should include project context.
+    /// Builds a <see cref="TagList"/> containing run_type and project_name tags.
+    /// <para>
+    /// The <paramref name="projectId"/> parameter is accepted but no longer emitted as a metric
+    /// tag — <c>pipeline.project_name</c> is 1:1 with it and already present, so the extra tag
+    /// was redundant cardinality. <c>pipeline.project_id</c> is still set on spans via
+    /// <see cref="SetProjectTags"/>. See issue #2980.
+    /// </para>
     /// </summary>
     public static TagList BuildTags(PipelineRunType runType, string? projectId, string? projectName) =>
         new(
         [
             RunTypeTag(runType),
-            ProjectIdTag(projectId),
             ProjectNameTag(projectName)
-        ]);
-
-    /// <summary>
-    /// Builds a <see cref="TagList"/> with an additional phase tag for per-phase attribution.
-    /// </summary>
-    public static TagList BuildTagsWithPhase(PipelineRunType runType, string? projectId, string? projectName, string phase) =>
-        new(
-        [
-            RunTypeTag(runType),
-            ProjectIdTag(projectId),
-            ProjectNameTag(projectName),
-            new KeyValuePair<string, object?>("phase", phase)
         ]);
 
     /// <summary>

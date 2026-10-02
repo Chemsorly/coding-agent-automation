@@ -28,7 +28,8 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         bool analysisReviewEnabled,
         bool acceptanceCriteriaEnabled,
         bool baselineHealthCheckEnabled,
-        bool brainReadOnly)
+        bool brainReadOnly,
+        PositiveInt maxIssueImages)
     {
         var config = new PipelineConfiguration
         {
@@ -38,6 +39,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
             AcceptanceCriteriaEnabled = acceptanceCriteriaEnabled,
             BaselineHealthCheckEnabled = baselineHealthCheckEnabled,
             BrainReadOnly = brainReadOnly,
+            MaxIssueImages = maxIssueImages.Get
         };
 
         var json = JsonSerializer.Serialize(config, Options);
@@ -49,7 +51,8 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
             && deserialized.AnalysisReviewEnabled == config.AnalysisReviewEnabled
             && deserialized.AcceptanceCriteriaEnabled == config.AcceptanceCriteriaEnabled
             && deserialized.BaselineHealthCheckEnabled == config.BaselineHealthCheckEnabled
-            && deserialized.BrainReadOnly == config.BrainReadOnly;
+            && deserialized.BrainReadOnly == config.BrainReadOnly
+            && deserialized.MaxIssueImages == config.MaxIssueImages;
     }
 
     /// <summary>
@@ -102,7 +105,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
 
     /// <summary>
     /// Collection properties roundtrip: BlacklistedPaths (IReadOnlyList&lt;string&gt;)
-    /// and LastUsedProviderIds (IReadOnlyDictionary&lt;string,string&gt;) survive serialization.
+    /// survive serialization.
     /// </summary>
     [Fact]
     public void JsonRoundtrip_PreservesCollectionProperties()
@@ -165,6 +168,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         deserialized.ClosedLoopAutoStart.Should().Be(config.ClosedLoopAutoStart);
         deserialized.ClosedLoopPollInterval.Should().Be(config.ClosedLoopPollInterval);
         deserialized.ExternalCiTimeout.Should().Be(config.ExternalCiTimeout);
+        deserialized.MaxIssueImages.Should().Be(config.MaxIssueImages);
         deserialized.BrainReadOnly.Should().Be(config.BrainReadOnly);
         deserialized.RefactoringReviewEnabled.Should().Be(config.RefactoringReviewEnabled);
         deserialized.BrainConsolidationReviewEnabled.Should().Be(config.BrainConsolidationReviewEnabled);

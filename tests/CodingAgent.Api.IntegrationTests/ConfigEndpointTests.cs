@@ -970,10 +970,8 @@ public sealed class ConfigEndpointTests
         result.Should().BeAssignableTo<Microsoft.AspNetCore.Http.IResult>("a sub-60s AgentTimeout must be rejected");
         var badRequest = result as Microsoft.AspNetCore.Http.HttpResults.BadRequest<string>;
         badRequest.Should().NotBeNull("result must be a typed BadRequest<string>");
-        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
-        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
-        // will silently pass even though the error message no longer references the correct minimum.
-        badRequest!.Value.Should().Contain("60", "the error message must reference the 60s minimum");
+        // AgentTimeoutMinimum_IsTheReconciliationCanaryMinimum ties this minimum to PipelineConstants.TimeoutCanaryMinAgeSeconds.
+        badRequest!.Value.Should().Contain("AgentTimeout must be between 00:01:00", "the error message names the setting and its minimum");
 
         // Store must never have been called
         mockStore.Verify(s => s.SavePipelineConfigAsync(
@@ -999,11 +997,8 @@ public sealed class ConfigEndpointTests
             "AgentTimeout below 60s must be rejected at the API layer");
 
         var body = await response.Content.ReadAsStringAsync();
-        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
-        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
-        // will silently pass even though the error message no longer references the correct minimum.
-        body.Should().Contain("60",
-            "the error body must reference the 60-second minimum so the operator knows what to fix");
+        body.Should().Contain("AgentTimeout must be between 00:01:00",
+            "the error body must name the setting and its minimum so the operator knows what to fix");
     }
 
     /// <summary>
@@ -1048,11 +1043,8 @@ public sealed class ConfigEndpointTests
             "a project-level AgentTimeout below 60s must be rejected to prevent the same silent bypass");
 
         var body = await response.Content.ReadAsStringAsync();
-        // TODO: [WARNING] Use PipelineConstants.TimeoutCanaryMinAgeSeconds.ToString() as the expected substring
-        // instead of the hardcoded literal "60". If the constant is ever changed (e.g. to 120), this assertion
-        // will silently pass even though the error message no longer references the correct minimum.
-        body.Should().Contain("60",
-            "the error body must reference the 60-second minimum");
+        body.Should().Contain("AgentTimeout must be between 00:01:00",
+            "the error body must name the override and its minimum");
     }
 
     /// <summary>
@@ -1095,257 +1087,138 @@ public sealed class ConfigEndpointTests
             "a project with no AgentTimeout override must be accepted — null means inherit the global timeout");
     }
 
-    // ── Project override range validation ─────────────────────────────────────────
+    // ── Settings ranges (#3144) ───────────────────────────────────────────────────
 
-    /// <summary>
-    /// PUT /api/config/projects with MaxDecompositionSubIssues=25 (max is 20) must return 400
-    /// and name the offending field. Verifies the probe-apply path in ValidateProjectOverrides.
-    /// </summary>
     [Fact]
-    public async Task SaveProject_MaxDecompositionSubIssuesOutOfRange_Returns400()
+    public void AgentTimeoutMinimum_IsTheReconciliationCanaryMinimum()
+    {
+        var minimum = TimeSpan.Parse((string)PipelineSettingsValidator.RangeOf(nameof(PipelineConfiguration.AgentTimeout))!.Minimum,
+            System.Globalization.CultureInfo.InvariantCulture);
+
+        minimum.Should().Be(TimeSpan.FromSeconds(PipelineConstants.TimeoutCanaryMinAgeSeconds),
+            "a timeout below the canary minimum could never be enforced, so the setting must not allow it");
+    }
+
+    [Fact]
+    public async Task SavePipelineConfig_OutOfRangeSetting_Returns400NamingIt()
+    {
+        var config = new PipelineConfiguration { MaxRetries = 11 };
+
+        var response = await _client.PutAsJsonAsync("/api/config/pipeline", config, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        (await response.Content.ReadAsStringAsync()).Should().Contain("MaxRetries must be between 0 and 10 (was 11).");
+    }
+
+    [Fact]
+    public async Task SaveProject_OutOfRangeOverride_Returns400NamingIt()
     {
         var project = new PipelineProject
         {
             Id = Guid.NewGuid().ToString(),
-            Name = "Range Test Project",
-            MaxDecompositionSubIssues = 25  // valid range: 1-20
-        };
-
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
-            "MaxDecompositionSubIssues=25 exceeds the maximum of 20 and must be rejected");
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("MaxDecompositionSubIssues",
-            "the error body must name the offending field");
-    }
-
-    /// <summary>
-    /// PUT /api/config/projects with CiNotStartedMaxRetries=25 (max is 20) must return 400.
-    /// Verifies another probe-apply-guarded field.
-    /// </summary>
-    [Fact]
-    public async Task SaveProject_CiNotStartedMaxRetriesOutOfRange_Returns400()
-    {
-        var project = new PipelineProject
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "CiRetries Test Project",
-            CiNotStartedMaxRetries = 25  // valid range: 0-20
-        };
-
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
-            "CiNotStartedMaxRetries=25 exceeds the maximum of 20 and must be rejected");
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("CiNotStartedMaxRetries",
-            "the error body must name the offending field");
-    }
-
-    /// <summary>
-    /// PUT /api/config/projects with MaxRetries=11 (max is 10) must return 400.
-    /// MaxRetries has no init-setter guard — verifies the explicit check path in ValidateProjectOverrides.
-    /// </summary>
-    [Fact]
-    public async Task SaveProject_MaxRetriesOutOfRange_Returns400()
-    {
-        var project = new PipelineProject
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "MaxRetries Test Project",
-            MaxRetries = 11  // valid range: 0-10
-        };
-
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
-            "MaxRetries=11 exceeds the maximum of 10 and must be rejected");
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("MaxRetries",
-            "the error body must name the offending field");
-    }
-
-    /// <summary>
-    /// PUT /api/config/projects with two out-of-range fields must return 400 naming both.
-    /// </summary>
-    [Fact]
-    public async Task SaveProject_MultipleFieldsOutOfRange_Returns400ListingAllFields()
-    {
-        var project = new PipelineProject
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "Multi Invalid Project",
-            MaxDecompositionSubIssues = 25,  // max 20
-            MaxRetries = 11                  // max 10
-        };
-
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
-            "two out-of-range fields must both be rejected");
-
-        var body = await response.Content.ReadAsStringAsync();
-        body.Should().Contain("MaxDecompositionSubIssues",
-            "the error body must name the first offending field");
-        body.Should().Contain("MaxRetries",
-            "the error body must name the second offending field");
-    }
-
-    /// <summary>
-    /// PUT /api/config/projects with all in-range overrides must return 200 and save.
-    /// Verifies the happy path is not broken by validation.
-    /// </summary>
-    [Fact]
-    public async Task SaveProject_ValidOverrides_Returns200AndSaves()
-    {
-        var projectId = Guid.NewGuid().ToString();
-        var project = new PipelineProject
-        {
-            Id = projectId,
-            Name = "Valid Overrides Project",
-            MaxRetries = 5,
-            MaxAnalysisRetries = 2,
-            MaxDecompositionSubIssues = 10,
-            CiNotStartedMaxRetries = 10,
-            MaxInfrastructureRetries = 3
-        };
-
-        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK,
-            "all in-range overrides must be accepted");
-
-        // Verify the project was actually saved by reading it back
-        var getResponse = await _client.GetAsync($"/api/config/projects/{projectId}");
-        getResponse.StatusCode.Should().Be(HttpStatusCode.OK);
-        var saved = await getResponse.Content.ReadFromJsonAsync<PipelineProject>(PipelineJsonOptions.Default);
-        saved.Should().NotBeNull();
-        saved!.MaxRetries.Should().Be(5);
-        saved.MaxDecompositionSubIssues.Should().Be(10);
-    }
-
-    // ── Config import project override validation ─────────────────────────────────
-
-    /// <summary>
-    /// POST /api/config/import with a project whose Settings JSON contains an out-of-range
-    /// MaxDecompositionSubIssues must return 400 naming the project and field.
-    /// The Settings blob is serialized with PipelineJsonOptions.Default (matching what the store writes).
-    /// The outer bundle is serialized with CamelCaseEnumOptions (matching the existing import tests).
-    /// </summary>
-    [Fact]
-    public async Task ImportConfig_ProjectWithOutOfRangeOverride_Returns400()
-    {
-        // Build a PipelineProject with an out-of-range override.
-        // Settings must be serialized with PipelineJsonOptions.Default — NOT ImportOptions —
-        // because PipelineProject has TimeSpan? fields requiring TimeSpanJsonConverter.
-        var projectWithBadOverride = new PipelineProject
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "Invalid Override Project",
-            MaxDecompositionSubIssues = 25  // max 20
-        };
-        var settingsJson = JsonSerializer.Serialize(
-            projectWithBadOverride with { TemplateIds = [] },
-            PipelineJsonOptions.Default);
-
-        var bundle = new ConfigBundle
-        {
-            Projects = new List<ProjectDto>
+            Name = "Out Of Range Project",
+            MaxRetries = 4,
+            MaxDecompositionSubIssues = 25,
+            CodeReview = new CodeReviewOverrides
             {
-                new ProjectDto
-                {
-                    Id = Guid.Parse(projectWithBadOverride.Id),
-                    Name = projectWithBadOverride.Name,
-                    Enabled = true,
-                    Settings = settingsJson
-                }
-            }
+                InlineComments = new CodingAgent.Pipeline.CodeReview.Models.InlineCommentOverrides { MaxInlineComments = 500 },
+            },
         };
 
-        var bundleJson = JsonSerializer.Serialize(bundle, CamelCaseEnumOptions);
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
 
-        using var content = new MultipartFormDataContent();
-        content.Add(new ByteArrayContent(Encoding.UTF8.GetBytes(bundleJson))
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadAsStringAsync();
+        body.Should().Contain("MaxDecompositionSubIssues must be between 1 and 20 (was 25).");
+        body.Should().Contain("CodeReview.InlineComments.MaxInlineComments must be between 1 and 50 (was 500).");
+        body.Should().NotContain("MaxRetries", "valid overrides are not reported");
+    }
+
+    [Fact]
+    public async Task SaveProject_InRangeOverrides_Returns200()
+    {
+        var project = new PipelineProject
         {
-            Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") }
-        }, "file", "import.json");
+            Id = Guid.NewGuid().ToString(),
+            Name = "In Range Project",
+            MaxDecompositionSubIssues = 20,
+            CodeReview = new CodeReviewOverrides { MaxIterations = 0 },
+        };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Import_WithOutOfRangeProjectOverride_Returns400()
+    {
+        var projectSettings = JsonSerializer.Serialize(
+            new PipelineProject { Id = Guid.NewGuid().ToString(), Name = "Imported", MaxDecompositionSubIssues = 25 },
+            PipelineJsonOptions.Default);
+        var bundle = new
+        {
+            pipelineConfig = JsonSerializer.Serialize(new PipelineConfiguration(), PipelineJsonOptions.Default),
+            projects = new[] { new { id = Guid.NewGuid(), name = "Imported", enabled = true, settings = projectSettings } },
+        };
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(bundle)));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Add(file, "file", "config.json");
 
         var response = await _client.PostAsync("/api/config/import", content);
 
-        response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
-            "import of a project with MaxDecompositionSubIssues=25 must be rejected");
-
-        var result = await response.Content.ReadFromJsonAsync<ImportExportResult>(CaseInsensitiveOptions);
-        result.Should().NotBeNull();
-        result!.Success.Should().BeFalse();
-        result.Message.Should().Contain("MaxDecompositionSubIssues",
-            "the error message must name the offending field");
-        result.Message.Should().Contain("Invalid Override Project",
-            "the error message must name the offending project");
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var result = await response.Content.ReadFromJsonAsync<JsonElement>();
+        result.GetProperty("message").GetString().Should().Contain("Project 'Imported': MaxDecompositionSubIssues must be between 1 and 20 (was 25).");
     }
 
-    /// <summary>
-    /// POST /api/config/import with a project whose Settings JSON contains valid int overrides
-    /// must return 200 and import successfully. Exercises the deserialization path with non-null Settings.
-    /// </summary>
     [Fact]
-    public async Task ImportConfig_ValidProjectOverrides_ImportsSuccessfully()
+    public async Task Import_WithInRangeProjectOverrides_StoresThem()
     {
         var projectId = Guid.NewGuid();
-        var projectWithValidOverrides = new PipelineProject
-        {
-            Id = projectId.ToString(),
-            Name = "Valid Override Import Project",
-            MaxRetries = 5,
-            MaxDecompositionSubIssues = 10,
-            CiNotStartedMaxRetries = 5
-        };
         var settingsJson = JsonSerializer.Serialize(
-            projectWithValidOverrides with { TemplateIds = [] },
+            new PipelineProject { Id = projectId.ToString(), Name = "Imported", MaxRetries = 5, MaxDecompositionSubIssues = 12 },
             PipelineJsonOptions.Default);
-
         var bundle = new ConfigBundle
         {
-            Projects = new List<ProjectDto>
-            {
-                new ProjectDto
-                {
-                    Id = projectId,
-                    Name = projectWithValidOverrides.Name,
-                    Enabled = true,
-                    Settings = settingsJson
-                }
-            }
+            Projects = [new ProjectDto { Id = projectId, Name = "Imported", Enabled = true, Settings = settingsJson }],
         };
-
-        var bundleJson = JsonSerializer.Serialize(bundle, CamelCaseEnumOptions);
-
         using var content = new MultipartFormDataContent();
-        content.Add(new ByteArrayContent(Encoding.UTF8.GetBytes(bundleJson))
-        {
-            Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json") }
-        }, "file", "import.json");
+        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(bundle, CamelCaseEnumOptions)));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Add(file, "file", "config.json");
 
         var response = await _client.PostAsync("/api/config/import", content);
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK,
-            "import of a project with valid overrides must succeed");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var project = await _client.GetFromJsonAsync<PipelineProject>($"/api/config/projects/{projectId}", PipelineJsonOptions.Default);
+        project.Should().NotBeNull();
+        project!.MaxRetries.Should().Be(5);
+        project.MaxDecompositionSubIssues.Should().Be(12);
+    }
 
-        var result = await response.Content.ReadFromJsonAsync<ImportExportResult>(CaseInsensitiveOptions);
-        result.Should().NotBeNull();
-        result!.Success.Should().BeTrue();
+    // ── IDs that are not GUIDs ────────────────────────────────────────────────────
 
-        // Verify the project was actually imported
-        var getResponse = await _client.GetAsync($"/api/config/projects/{projectId}");
-        getResponse.StatusCode.Should().Be(HttpStatusCode.OK,
-            "the imported project must be retrievable after import");
-        // TODO: Assert that the imported property values match the input — e.g. saved.MaxRetries.Should().Be(5).
-        // The current assertion only checks the HTTP status code; if deserialization silently zeroed the override
-        // fields during import, this test would still pass. Compare SaveProject_ValidOverrides_Returns200AndSaves
-        // which does assert specific field values. (Review finding: TestQualityReviewer:1228)
+    [Fact]
+    public async Task SaveProviderConfig_IdThatIsNotAGuid_Returns400()
+    {
+        var config = new ProviderConfig { Id = "repo-web", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Web repo" };
+
+        var response = await _client.PutAsJsonAsync("/api/config/provider-configs", config, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid provider config ID: repo-web");
+    }
+
+    [Fact]
+    public async Task SaveProject_IdThatIsNotAGuid_Returns400()
+    {
+        var project = new PipelineProject { Id = "proj-platform", Name = "Platform" };
+
+        var response = await _client.PutAsJsonAsync("/api/config/projects", project, PipelineJsonOptions.Default);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest, "a bad ID is the caller's mistake, not a server failure");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("Invalid project ID: proj-platform");
     }
 }

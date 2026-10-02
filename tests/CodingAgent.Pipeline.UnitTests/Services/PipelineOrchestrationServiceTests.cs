@@ -573,11 +573,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
         config.CodeReview.MaxIterations.Should().Be(2);
         config.CodeReview.FixPrompt.Should().BeNull();
         PipelineConfigurationDefaults.DefaultReviewAgents.Should().NotBeNull();
-        PipelineConfigurationDefaults.DefaultReviewAgents.Count.Should().Be(4);
+        PipelineConfigurationDefaults.DefaultReviewAgents.Count.Should().Be(3);
         PipelineConfigurationDefaults.DefaultReviewAgents[0].Name.Should().Be("Correctness");
-        PipelineConfigurationDefaults.DefaultReviewAgents[1].Name.Should().Be("DotNetSpecialist");
-        PipelineConfigurationDefaults.DefaultReviewAgents[2].Name.Should().Be("SecurityReviewer");
-        PipelineConfigurationDefaults.DefaultReviewAgents[3].Name.Should().Be("TestQualityReviewer");
+        PipelineConfigurationDefaults.DefaultReviewAgents[1].Name.Should().Be("SecurityReviewer");
+        PipelineConfigurationDefaults.DefaultReviewAgents[2].Name.Should().Be("TestQualityReviewer");
     }
 
     // --- Fix prompt tests ---
@@ -734,13 +733,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     // --- Config defaults ---
-
-    [Fact]
-    public void FailedWorkspaceRetentionDays_DefaultsToSeven()
-    {
-        var config = new PipelineConfiguration();
-        config.FailedWorkspaceRetentionDays.Should().Be(7);
-    }
 
     // --- Workspace cleanup ---
 
@@ -1313,12 +1305,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public void CodeReviewDefaults_IncludeDefaultAgents()
     {
-        var agents = PipelineConfigurationDefaults.DefaultReviewAgents;
-        agents.Should().HaveCount(4);
-        agents[0].Name.Should().Be("Correctness");
-        agents[1].Name.Should().Be("DotNetSpecialist");
-        agents[2].Name.Should().Be("SecurityReviewer");
-        agents[3].Name.Should().Be("TestQualityReviewer");
+        var agents = PipelineConfigurationDefaults.DefaultReviewAgents
+            .Concat(PipelineConfigurationDefaults.DefaultDotNetReviewAgents)
+            .ToList();
+        agents.Select(a => a.Name).Should().Equal("Correctness", "SecurityReviewer", "TestQualityReviewer", "DotNetSpecialist");
 
         // Verify all agents have non-empty prompts
         foreach (var agent in agents)
@@ -1331,7 +1321,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public void DefaultReviewerConfigurations_ContainsExpectedStructure()
     {
         var configs = PipelineConfigurationDefaults.DefaultReviewerConfigurations;
-        configs.Should().HaveCount(1);
+        configs.Should().HaveCount(2);
 
         var config = configs[0];
         config.Id.Should().Be(PipelineConfigurationDefaults.DefaultReviewerConfigurationId);
@@ -1340,13 +1330,34 @@ public class PipelineOrchestrationServiceTests : IDisposable
         config.MatchLabels.Should().BeEmpty("default config applies globally");
         config.Enabled.Should().BeTrue();
         config.ExecutionOrder.Should().Be(0);
+        AssertAgentsMirror(config, PipelineConfigurationDefaults.DefaultReviewAgents);
 
-        // Agents should mirror DefaultReviewAgents
-        config.Agents.Should().HaveCount(PipelineConfigurationDefaults.DefaultReviewAgents.Count);
+        var dotNet = configs[1];
+        dotNet.Id.Should().Be(PipelineConfigurationDefaults.DefaultDotNetReviewerConfigurationId);
+        dotNet.DisplayName.Should().Be(".NET Reviewers");
+        dotNet.MatchLabels.Should().Equal(new[] { "dotnet" }, "the .NET specialist only reviews .NET repositories");
+        dotNet.Enabled.Should().BeTrue();
+        dotNet.ExecutionOrder.Should().Be(1);
+        AssertAgentsMirror(dotNet, PipelineConfigurationDefaults.DefaultDotNetReviewAgents);
+    }
+
+    [Theory]
+    [InlineData(new[] { "kiro", "python", "python312" }, new[] { "Correctness", "SecurityReviewer", "TestQualityReviewer" })]
+    [InlineData(new[] { "kiro", "dotnet", "dotnet10" }, new[] { "Correctness", "SecurityReviewer", "TestQualityReviewer", "DotNetSpecialist" })]
+    public void DefaultReviewerConfigurations_RunTheDotNetSpecialistOnlyOnDotNetRepositories(string[] repoLabels, string[] expectedAgents)
+    {
+        var resolved = new ReviewerResolver().Resolve(PipelineConfigurationDefaults.DefaultReviewerConfigurations, repoLabels);
+
+        ReviewerResolver.FlattenAgents(resolved).Select(a => a.Name).Should().Equal(expectedAgents);
+    }
+
+    private static void AssertAgentsMirror(ReviewerConfiguration config, IReadOnlyList<ReviewAgentConfig> expected)
+    {
+        config.Agents.Should().HaveCount(expected.Count);
         for (var i = 0; i < config.Agents.Count; i++)
         {
-            config.Agents[i].Name.Should().Be(PipelineConfigurationDefaults.DefaultReviewAgents[i].Name);
-            config.Agents[i].Prompt.Should().Be(PipelineConfigurationDefaults.DefaultReviewAgents[i].Prompt);
+            config.Agents[i].Name.Should().Be(expected[i].Name);
+            config.Agents[i].Prompt.Should().Be(expected[i].Prompt);
         }
     }
 

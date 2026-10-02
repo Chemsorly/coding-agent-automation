@@ -27,7 +27,8 @@ internal sealed record AgentExecutionRequest
 
     /// <summary>
     /// Optional stall monitor metrics to record when the agent stalls or is killed during this execution.
-    /// Only set for QGC retry agent calls. All other call sites leave this null.
+    /// Set for QGC retry agent calls and all other agent phase calls (codegen, analysis, code_review,
+    /// decomposition) to enable server-side recording of <c>pipeline.run.agent_stalls</c> (issue #2979).
     /// </summary>
     public StallMonitorMetrics? StallMetrics { get; init; }
 }

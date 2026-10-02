@@ -12,7 +12,7 @@ namespace CodingAgent.Agent.UnitTests;
 /// <summary>
 /// Targeted tests for uncovered branches in AgentWorkerService:
 /// - ShutdownAsync with active chat session (cancels chat + waits)
-/// - FinalizeJobAsync when SignalRCompletionReporter.HasPendingMessages is true
+/// - ExecuteAsync swallowing the cancellation that stops the service
 /// </summary>
 [Collection("EnvironmentVariables")]
 public sealed class AgentWorkerServiceShutdownTests : IDisposable
@@ -109,85 +109,6 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
 
         jobCts.IsCancellationRequested.Should().BeTrue("active job CTS must be cancelled on shutdown");
         chatCts.IsCancellationRequested.Should().BeTrue("active chat CTS must be cancelled on shutdown");
-    }
-
-    // ── FinalizeJobAsync — HasPendingMessages branch ─────────────────────────
-
-    [Fact]
-    public async Task FinalizeJobAsync_WithPendingMessages_HoldsJobSlot()
-    {
-        // When SignalRCompletionReporter has pending messages, the slot must NOT be released
-        // (so reconnection re-registers with ActiveJob=true and can replay buffered messages).
-        var buffer = new CriticalMessageBuffer();
-        var hm = TestAgentWorkerServiceFactory.CreateTestHubManager();
-        var hmFactory = TestAgentWorkerServiceFactory.CreateTestHubManagerFactory();
-        var logger = new Mock<Serilog.ILogger>().Object;
-        var pipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(logger);
-        var signalRReporter = new SignalRCompletionReporter(hm, pipeline, buffer, logger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifetime = Mock.Of<IHostApplicationLifetime>();
-        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
-            new AgentId("test"), lifetime, logger);
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager);
-        var executor = new Mock<IPipelineExecutor>().Object;
-
-        var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
-            lifecycle, slotManager,
-            chatHandler,
-            executor,
-            signalRReporter, logger));
-
-        // Seed a message into the buffer BEFORE FinalizeJobAsync so HasPendingMessages = true
-        // (simulates a previous failed delivery where hub was unavailable)
-        buffer.Enqueue(new BufferedJobCompleted(
-            "pending-job",
-            new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow },
-            DateTimeOffset.UtcNow));
-
-        // Acquire the slot
-        slotManager.TryAcquireJobSlot("pending-job", out _);
-
-        // Call FinalizeJobAsync with null completion (skip reporter, only test slot-hold logic)
-        await (Task)GetPrivateMethod(service, "FinalizeJobAsync")
-            .Invoke(service, ["pending-job", null])!;
-
-        // Slot should still be held (HasPendingMessages = true → ReleaseJobSlotAndSignalReadyAsync not called)
-        GetPrivateField<JobId?>(slotManager, "_activeJobId")
-            .Should().Be((JobId)"pending-job",
-                "slot must be held when HasPendingMessages is true to allow buffer replay on reconnect");
-    }
-
-    [Fact]
-    public async Task FinalizeJobAsync_NoPendingMessages_ReleasesJobSlot()
-    {
-        var buffer = new CriticalMessageBuffer(); // empty buffer
-        var hm = TestAgentWorkerServiceFactory.CreateTestHubManager();
-        var hmFactory = TestAgentWorkerServiceFactory.CreateTestHubManagerFactory();
-        var logger = new Mock<Serilog.ILogger>().Object;
-        var pipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(logger);
-        var signalRReporter = new SignalRCompletionReporter(hm, pipeline, buffer, logger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifetime = Mock.Of<IHostApplicationLifetime>();
-        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, signalRReporter, slotManager,
-            new AgentId("test"), lifetime, logger);
-        var chatHandler = TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager);
-        var executor = new Mock<IPipelineExecutor>().Object;
-
-        var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
-            lifecycle, slotManager,
-            chatHandler,
-            executor,
-            signalRReporter, logger));
-
-        slotManager.TryAcquireJobSlot("clean-job", out _);
-
-        // Pass null completion — skips reporter call, buffer stays empty → slot released
-        await (Task)GetPrivateMethod(service, "FinalizeJobAsync")
-            .Invoke(service, ["clean-job", null])!;
-
-        // Empty buffer → slot is released normally
-        GetPrivateField<JobId?>(slotManager, "_activeJobId")
-            .Should().BeNull("slot must be released when buffer has no pending messages");
     }
 
     // ── ExecuteAsync — OperationCanceledException is swallowed ──────────────

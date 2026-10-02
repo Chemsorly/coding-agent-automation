@@ -13,26 +13,22 @@ public static class PipelineJsonOptions
 {
     /// <summary>
     /// Standard options for serialization: camelCase, indented, enum-as-string, TimeSpan support.
-    /// ReviewIsolationJsonConverter is registered before the global JsonStringEnumConverter so that
-    /// it takes precedence for ReviewIsolation values (handles the legacy "Shared" migration).
     /// </summary>
     public static JsonSerializerOptions Default { get; } = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
-        Converters = { new TimeSpanJsonConverter(), new ReviewIsolationJsonConverter(), new JsonStringEnumConverter() }
+        Converters = { new TimeSpanJsonConverter(), new JsonStringEnumConverter() }
     };
 
     /// <summary>
     /// Lenient options for deserialization: case-insensitive property matching, enum-as-string.
-    /// ReviewIsolationJsonConverter is registered before the global JsonStringEnumConverter so that
-    /// it takes precedence for ReviewIsolation values (handles the legacy "Shared" migration).
     /// </summary>
     public static JsonSerializerOptions Lenient { get; } = new()
     {
         PropertyNameCaseInsensitive = true,
-        Converters = { new ReviewIsolationJsonConverter(), new JsonStringEnumConverter() }
+        Converters = { new JsonStringEnumConverter() }
     };
 
     /// <summary>

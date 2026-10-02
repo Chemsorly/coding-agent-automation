@@ -125,9 +125,6 @@ public static class PipelineConstants
     /// <summary>Default poll interval for closed-loop issue polling (60 seconds).</summary>
     public static readonly TimeSpan DefaultClosedLoopPollInterval = TimeSpan.FromSeconds(60);
 
-    /// <summary>Default maximum backoff interval for closed-loop polling (15 minutes).</summary>
-    public static readonly TimeSpan DefaultClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(15);
-
     /// <summary>Default cooldown duration before the circuit breaker auto-resumes polling (5 minutes).</summary>
     public static readonly TimeSpan DefaultClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(5);
 

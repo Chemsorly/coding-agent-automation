@@ -163,12 +163,22 @@ public class ReviewerConfigurationStoreTests
         await store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
 
         var loaded = await store.LoadReviewerConfigsAsync(CancellationToken.None);
-        var config = Assert.Single(loaded);
+        Assert.Equal(2, loaded.Count);
+        AssertAgentsMirror(
+            Assert.Single(loaded, c => c.Id == PipelineConfigurationDefaults.DefaultReviewerConfigurationId),
+            PipelineConfigurationDefaults.DefaultReviewAgents);
+        AssertAgentsMirror(
+            Assert.Single(loaded, c => c.Id == PipelineConfigurationDefaults.DefaultDotNetReviewerConfigurationId),
+            PipelineConfigurationDefaults.DefaultDotNetReviewAgents);
+    }
 
-        for (var i = 0; i < PipelineConfigurationDefaults.DefaultReviewAgents.Count; i++)
+    private static void AssertAgentsMirror(ReviewerConfiguration config, IReadOnlyList<ReviewAgentConfig> expected)
+    {
+        Assert.Equal(expected.Count, config.Agents.Count);
+        for (var i = 0; i < expected.Count; i++)
         {
-            Assert.Equal(PipelineConfigurationDefaults.DefaultReviewAgents[i].Name, config.Agents[i].Name);
-            Assert.Equal(PipelineConfigurationDefaults.DefaultReviewAgents[i].Prompt, config.Agents[i].Prompt);
+            Assert.Equal(expected[i].Name, config.Agents[i].Name);
+            Assert.Equal(expected[i].Prompt, config.Agents[i].Prompt);
         }
     }
 }

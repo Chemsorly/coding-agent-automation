@@ -1,8 +1,13 @@
 using CodingAgent.Pipeline.CodeReview.Models;
 using MessagePack;
+using RangeAttribute = System.ComponentModel.DataAnnotations.RangeAttribute;
 
 namespace CodingAgent.Pipeline.Models;
 
+/// <summary>
+/// Code review settings. <see cref="MaxIterations"/> and <see cref="FixPrompt"/> apply to the review step of
+/// implementation runs; <see cref="InlineComments"/> applies to PR review runs, which always review once and never fix.
+/// </summary>
 [MessagePackObject]
 public sealed record CodeReviewConfiguration
 {
@@ -23,39 +28,29 @@ public sealed record CodeReviewConfiguration
     [Key(1)]
     public InlineCommentSettings InlineComments { get; init; } = new();
 
+    /// <summary>
+    /// Review/fix cycles in implementation runs. 0 turns off the review step of implementation runs;
+    /// PR review runs are unaffected.
+    /// </summary>
     [Key(2)]
+    [Range(0, 5)]
     public int MaxIterations { get; init; } = 2;
 
     // Key(3) is retired — was previously used, then briefly reused for ReviewIsolation.
-    // Old payloads carry a stale value at index 3 (typically 0). Moved to Key(4) so that
-    // stale Key(3) values are silently ignored and ReviewIsolation defaults to Isolated.
-
-    /// <summary>
-    /// Controls whether review agents run in fresh isolated sessions.
-    /// Always Isolated — the only valid value since ReviewIsolation.Shared was removed in #2233.
-    /// Retained at Key(4) for wire compatibility; stored MessagePack payloads with integer 1
-    /// at Key(4) deserialize to (ReviewIsolation)1 (unnamed) which is safe because execution
-    /// unconditionally uses UseResume = false regardless of this field's value.
-    /// </summary>
-    [Key(4)]
-    public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
+    // Key(4) is retired — was ReviewIsolation, whose only value was Isolated (Shared was removed in #2233). Do NOT reuse either index.
 
     /// <summary>
     /// Deep-merges the given overrides into this configuration. Only non-null properties
     /// in the overrides record replace the corresponding values; null properties are left unchanged.
+    /// An empty <see cref="CodeReviewOverrides.FixPrompt"/> turns the find-then-fix split off.
     /// </summary>
     public CodeReviewConfiguration ApplyOverrides(CodeReviewOverrides overrides)
     {
         var result = this;
-        // TODO: Nullable sentinel pattern means a project cannot override FixPrompt to null
-        // (which disables fix prompts). null here means "don't override," so there is no way
-        // to express "clear this value." Consider a sentinel pattern if this becomes a requirement.
         if (overrides.FixPrompt is not null)
             result = result with { FixPrompt = overrides.FixPrompt };
         if (overrides.MaxIterations.HasValue)
             result = result with { MaxIterations = overrides.MaxIterations.Value };
-        if (overrides.ReviewIsolation.HasValue)
-            result = result with { ReviewIsolation = overrides.ReviewIsolation.Value };
         if (overrides.InlineComments is not null)
             result = result with { InlineComments = result.InlineComments.ApplyOverrides(overrides.InlineComments) };
         return result;
@@ -72,5 +67,4 @@ public sealed record CodeReviewOverrides
     public string? FixPrompt { get; init; }
     public InlineCommentOverrides? InlineComments { get; init; }
     public int? MaxIterations { get; init; }
-    public ReviewIsolation? ReviewIsolation { get; init; }
 }

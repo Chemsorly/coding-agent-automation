@@ -82,6 +82,9 @@ public class PipelineDbContext : DbContext
         modelBuilder.Entity<ProjectEntity>(e =>
         {
             e.HasKey(p => p.Id);
+            // Every writer sets the ID, and the Default project's ID is Guid.Empty, which EF would otherwise treat as unset
+            // and replace with a new GUID: startup seeding then added another "Default" project on every start.
+            e.Property(p => p.Id).ValueGeneratedNever();
             e.Property(p => p.RowVersion).IsRowVersion();
             e.Property(p => p.Settings).HasColumnType(JsonbColumnType);
         });

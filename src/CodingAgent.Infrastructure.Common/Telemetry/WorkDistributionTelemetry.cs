@@ -95,23 +95,38 @@ public static class WorkDistributionTelemetry
 
     /// <summary>
     /// Gauge: number of available credential PVCs in the kiro pool.
+    /// Emits no measurement until <see cref="UpdateCredentialPoolMetrics"/> has been called
+    /// (the same owner-only pattern used by <see cref="DispatcherLastPollEpoch"/>).
+    /// Processes that never call <see cref="UpdateCredentialPoolMetrics"/> — Scheduler,
+    /// Job Controller, and Web — emit nothing, preventing spurious 0 series.
+    /// Only the API process owns this metric (set in <c>WorkItemDispatchEndpoints</c>).
     /// </summary>
     public static readonly ObservableGauge<int> CredentialPoolAvailable =
-        Meter.CreateObservableGauge(
+        Meter.CreateObservableGauge<int>(
             "workdistribution.credential_pool_available",
-            observeValue: () => new Measurement<int>(_credentialPoolAvailable,
-                new KeyValuePair<string, object?>("pool", "kiro")),
+            observeValues: () =>
+            {
+                if (!_credentialPoolUpdated) return [];
+                return [new Measurement<int>(_credentialPoolAvailable,
+                    new KeyValuePair<string, object?>("pool", "kiro"))];
+            },
             unit: "{pvc}",
             description: "Number of available credential PVCs");
 
     /// <summary>
     /// Gauge: number of claimed credential PVCs in the kiro pool.
+    /// Emits no measurement until <see cref="UpdateCredentialPoolMetrics"/> has been called
+    /// (the same owner-only pattern used by <see cref="DispatcherLastPollEpoch"/>).
     /// </summary>
     public static readonly ObservableGauge<int> CredentialPoolClaimed =
-        Meter.CreateObservableGauge(
+        Meter.CreateObservableGauge<int>(
             "workdistribution.credential_pool_claimed",
-            observeValue: () => new Measurement<int>(_credentialPoolClaimed,
-                new KeyValuePair<string, object?>("pool", "kiro")),
+            observeValues: () =>
+            {
+                if (!_credentialPoolUpdated) return [];
+                return [new Measurement<int>(_credentialPoolClaimed,
+                    new KeyValuePair<string, object?>("pool", "kiro"))];
+            },
             unit: "{pvc}",
             description: "Number of claimed credential PVCs");
 
@@ -205,6 +220,10 @@ public static class WorkDistributionTelemetry
     private static long _pollEpochMillis;
     private static int _credentialPoolAvailable;
     private static int _credentialPoolClaimed;
+    // Sentinel: set to true by UpdateCredentialPoolMetrics on the first call.
+    // Gauges emit no measurement until the owning process (API) calls UpdateCredentialPoolMetrics,
+    // preventing Scheduler, Job Controller, and Web from emitting spurious 0 series.
+    private static volatile bool _credentialPoolUpdated;
     private static Func<IEnumerable<Measurement<long>>>? _workItemsByStatusCallback;
 
     // Backing field for the oldest-pending-age gauge.
@@ -256,12 +275,24 @@ public static class WorkDistributionTelemetry
 
     /// <summary>
     /// Updates credential pool gauge values.
-    /// Called by DispatchService after computing PVC availability.
+    /// Called by the API's <c>WorkItemDispatchEndpoints</c> after computing PVC availability.
+    /// Setting these values activates the owner-only guard — only the API emits measurements
+    /// for these gauges; other processes that never call this method emit nothing.
     /// </summary>
     public static void UpdateCredentialPoolMetrics(int available, int claimed)
     {
+        // TODO [WARNING]: _credentialPoolAvailable and _credentialPoolClaimed are plain static int
+        // fields (no volatile, no Volatile.Write). The volatile write to _credentialPoolUpdated
+        // provides a release fence, but the two int stores that precede it are not guaranteed to be
+        // visible to the collection thread before it sees the sentinel flip. On a CPU with a
+        // store-buffer (x86 is strongly-ordered, but ARM is not), the collection thread can observe
+        // _credentialPoolUpdated == true while still reading stale 0 values for the ints.
+        // Fix: use Volatile.Write for both int fields (matching the _pollEpochMillis pattern), or
+        // consolidate both values into an Interlocked-exchanged reference type to prevent torn reads.
+        // See review findings for issue #2980.
         _credentialPoolAvailable = available;
         _credentialPoolClaimed = claimed;
+        _credentialPoolUpdated = true;
     }
 
     /// <summary>

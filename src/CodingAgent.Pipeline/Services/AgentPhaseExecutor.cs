@@ -190,4 +190,29 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         if (File.Exists(path))
             File.Delete(path);
     }
+
+    /// <summary>
+    /// Builds a <see cref="StallMonitorMetrics"/> instance that fires a server-side event
+    /// via <paramref name="reportAction"/> for stall_kill and process_death events (issue #2979).
+    /// The Warnings counter remains agent-side (not in server requirements).
+    /// When <paramref name="reportAction"/> is null (test/orchestrator path), <see cref="StallMonitorMetrics.ReportStallEvent"/>
+    /// is left null so no server-side call is attempted.
+    /// </summary>
+    internal static StallMonitorMetrics BuildStallMetricsWithServerSideReporting(
+        Action<PipelineRunEventReport>? reportAction)
+    {
+        return new StallMonitorMetrics(
+            PipelineTelemetry.StallWarnings,
+            PipelineTelemetry.StallKills,
+            PipelineTelemetry.StallProcessDeaths)
+        {
+            ReportStallEvent = reportAction is null ? null : (phase, kind) =>
+                reportAction(new PipelineRunEventReport
+                {
+                    Kind = PipelineRunEventKind.AgentStall,
+                    Stage = phase,
+                    Result = kind
+                })
+        };
+    }
 }

@@ -157,6 +157,7 @@ internal sealed class PipelineExecutionContextBuilder
             // so output before that step passes through unmasked (no secrets exist yet).
             void TransitionTo(PipelineStep step) => reporter.TransitionTo(step, ct);
             void ReportQualityGateResult(QualityGateReport report) => reporter.ReportQualityGateResult(report, ct);
+            void ReportPipelineRunEvent(PipelineRunEventReport report) => reporter.ReportPipelineRunEvent(report, ct);
             void EmitOutputLine(string line) => reporter.EmitOutputLine(line, result?.StepContext, ct);
 
             var prContext = new PullRequestCreationContext
@@ -192,7 +193,8 @@ internal sealed class PipelineExecutionContextBuilder
                 PrContext = prContext,
                 TransitionTo = TransitionTo,
                 EmitOutputLine = EmitOutputLine,
-                ReportQualityGateResult = ReportQualityGateResult
+                ReportQualityGateResult = ReportQualityGateResult,
+                ReportPipelineRunEvent = ReportPipelineRunEvent
             };
 
             result = new PipelineExecutionBuildResult
@@ -273,7 +275,8 @@ internal sealed class PipelineExecutionContextBuilder
                 BrainSync = inputs.BrainSync,
                 PrOrchestrator = inputs.PrOrchestrator,
                 Logger = _logger,
-                QualityGateValidator = _qualityGateValidator
+                QualityGateValidator = _qualityGateValidator,
+                ReportPipelineRunEvent = inputs.ReportPipelineRunEvent
             },
             issue: inputs.Job.IssueDetail,
             parsedIssue: inputs.Job.ParsedIssue,

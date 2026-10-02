@@ -504,11 +504,6 @@
             var effective = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
             _modalMaxProposals = effective.MaxRefactoringProposals;
-            // TODO: [WARNING] The equality check (effective.MaxRefactoringProposals != config.MaxRefactoringProposals)
-            // correctly handles the PipelineConfigurationResolver fallback path (ArgumentOutOfRangeException returns
-            // original config reference), but this relies on reference equality of the returned config object.
-            // If ApplyProjectOverrides is ever changed to return a copy on fallback, the badge could incorrectly
-            // show "project override" when the value was not actually applied. (Correctness review, issue #3148)
             _modalMaxProposalsIsOverride = project is not null
                 && project.MaxRefactoringProposals.HasValue
                 && effective.MaxRefactoringProposals != config.MaxRefactoringProposals;
@@ -517,9 +512,6 @@
             _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
 
             _modalReviewEnabled = effective.RefactoringReviewEnabled;
-            // TODO: [WARNING] Same resolver-fallback concern as _modalMaxProposalsIsOverride above.
-            // If ApplyProjectOverrides is changed to return a copy on fallback, this equality check may
-            // produce a false-positive override indicator. (Correctness review, issue #3148)
             _modalReviewEnabledIsOverride = project is not null
                 && project.RefactoringReviewEnabled.HasValue
                 && effective.RefactoringReviewEnabled != config.RefactoringReviewEnabled;

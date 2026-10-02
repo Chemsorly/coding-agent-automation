@@ -80,163 +80,51 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Agent1"));
 
         _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
-        _run.CodeReviewSkipReason.Should().NotBeNullOrEmpty("MaxIterations=0 should record the disabled reason");
-        _run.CodeReviewSkipReason.Should().Contain("disabled");
     }
 
     [Fact]
-    public async Task CodeReview_ReviewRun_MaxIterationsZero_ExecutesReviewers()
+    public async Task CodeReview_MaxIterationsZero_PrReviewRun_StillRunsTheReviewers()
     {
-        // Review run with MaxIterations = 0 must still execute reviewers (the RunType override forces 1 iteration)
+        // MaxIterations = 0 turns off the review step of implementation runs only (#3146).
         var reviewRun = new PipelineRun
         {
-            RunId = "test-run-review-maxzero",
-            IssueIdentifier = "55",
+            RunId = "test-run-pr-review",
+            IssueIdentifier = "42",
             IssueTitle = "Test PR",
-            IssueProviderConfigId = "ip-1",
+            IssueProviderConfigId = "rp-1",
             RepoProviderConfigId = "rp-1",
             WorkspacePath = _workspacePath,
-            RunType = PipelineRunType.Review
+            RunType = PipelineRunType.Review,
         };
-
+        SetupAgentWritingFindings("Agent1", "[WARNING] Style issue");
         var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 0 } };
-
-        SetupAgentWritingFindings("correctness", "[WARNING] A finding");
-
-        // TODO [WARNING]: OrchestratorCts = null here (and in CodeReview_ImplementationRun_MaxIterationsZero_SkipsReview
-        // below). If ExecuteCodeReviewAsync ever dereferences OrchestratorCts (e.g. calls .Token or .Cancel()),
-        // this will throw NullReferenceException instead of a meaningful assertion failure. These tests
-        // currently pass because both exercise early-return paths or a single-iteration path that does not
-        // reach orchestration code, but the null assignment is fragile. Consider using BuildContext() with a
-        // run override, or pass a real CancellationTokenSource, to avoid misleading failures if the code changes.
-        var context = new AgentPhaseContext
-        {
-            Run = reviewRun,
-            Config = config,
-            AgentProvider = _mockAgent.Object,
-            IssueOps = _mockIssueOps.Object,
-            Callbacks = _mockCallbacks.Object,
-            OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "55", Title = "Test PR", Description = "Test", Labels = new[] { "bug" } },
-            ParsedIssue = new ParsedIssue { RequirementsSection = "Requirements", AcceptanceCriteria = new[] { "AC1" } }
-        };
-
-        // TODO [WARNING]: SetupAgentWritingFindings uses lowercase "correctness" but CreateReviewers passes
-        // "Correctness" (capital C). If ReviewerResolver.FlattenAgents or AgentWorkspacePaths.GetReviewFindingsFilePath
-        // is case-sensitive, the findings file will not be picked up and the test passes vacuously (agent called,
-        // findings empty). This is consistent with the pre-existing pattern in other tests, but weakens regression
-        // detection on the file-name resolution path.
-        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
-
-        // Review run should not set a skip reason — assert this first, independently of the agent-call check,
-        // so a regression that sets CodeReviewSkipReason before invoking the agent is visible on its own.
-        reviewRun.CodeReviewSkipReason.Should().BeNull("Review runs bypass the MaxIterations=0 guard");
-
-        // The RunType override forces the reviewer to execute (bypassing the MaxIterations=0 guard).
-        // ExecuteCodeReviewAsync calls the agent at least once for the review itself. A second call may
-        // follow for GenerateReviewSummarySafeAsync (review summary generation), so we assert AtLeastOnce
-        // rather than Exactly(1) to avoid coupling this test to infrastructure call counts. Times.Never
-        // would indicate the guard was incorrectly triggered.
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce());
-        // TODO [WARNING]: This test does not assert reviewRun.CodeReviewAgentsRun.Count > 0. A regression
-        // that calls the agent but fails to record it in CodeReviewAgentsRun would pass here while leaving
-        // PostReviewFindingsStep to incorrectly use the skip-comment path (CodeReviewAgentsRun.Count == 0).
-        // Add: reviewRun.CodeReviewAgentsRun.Should().NotBeEmpty("executed reviewer must be recorded")
-        // Note: the case-mismatch between SetupAgentWritingFindings("correctness") and CreateReviewers("Correctness")
-        // may need to be resolved first for findings to be picked up (see existing TODO above). (Correctness review)
-    }
-
-    [Fact]
-    public async Task CodeReview_ImplementationRun_MaxIterationsZero_SkipsReview()
-    {
-        // Acceptance criterion: Implementation run with MaxIterations=0 still skips (unchanged behaviour)
-        // TODO [WARNING]: This test duplicates CodeReview_MaxIterationsZero_EarlyReturn — both cover the same
-        // code path (Implementation run, MaxIterations=0) and make the same assertions. The only difference
-        // is that this test explicitly sets RunType = PipelineRunType.Implementation while BuildContext() in
-        // the other test already defaults to Implementation. Consider consolidating into a single parameterized
-        // test or removing the redundant one.
-        var implRun = new PipelineRun
-        {
-            RunId = "test-run-impl-maxzero",
-            IssueIdentifier = "10",
-            IssueTitle = "Test Issue",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            WorkspacePath = _workspacePath,
-            RunType = PipelineRunType.Implementation
-        };
-
-        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 0 } };
-
-        // TODO [WARNING]: OrchestratorCts = null — see note in CodeReview_ReviewRun_MaxIterationsZero_ExecutesReviewers above.
-        var context = new AgentPhaseContext
-        {
-            Run = implRun,
-            Config = config,
-            AgentProvider = _mockAgent.Object,
-            IssueOps = _mockIssueOps.Object,
-            Callbacks = _mockCallbacks.Object,
-            OrchestratorCts = null,
-            Issue = new IssueDetail { Identifier = "10", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
-            ParsedIssue = new ParsedIssue { RequirementsSection = "Requirements", AcceptanceCriteria = new[] { "AC1" } }
-        };
-
-        await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
-
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Never);
-        implRun.CodeReviewSkipReason.Should().NotBeNullOrEmpty();
-        implRun.CodeReviewSkipReason.Should().Contain("disabled");
-    }
-
-    [Fact]
-    public async Task CodeReview_MaxIterationsZero_SetsSkipReasonForDisabled()
-    {
-        // Verify the exact skip reason recorded for the MaxIterations=0 path
-        // TODO [WARNING]: This test hard-codes the exact skip-reason string including the UI path
-        // "Settings → Implementation → Advanced Settings." A future UI rename will break this test without
-        // any behaviour regression, and a behaviour regression that alters the string will only be caught if
-        // the exact new string is anticipated. The sibling tests use Should().Contain("disabled") to avoid
-        // this brittleness — consider aligning this test to a substring assertion (or extracting the string
-        // to a shared constant) if the UI label is expected to change.
-        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 0 } };
-        var context = BuildContext(config);
+        var context = BuildContext(config) with { Run = reviewRun };
 
         await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Agent1"));
 
-        _run.CodeReviewSkipReason.Should().Be(
-            "Code review is disabled (MaxIterations = 0). Enable it in Settings → Implementation → Advanced Settings.");
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.AtLeastOnce);
+        reviewRun.CodeReviewIterationsTotal.Should().Be(1);
+        reviewRun.CodeReviewSkipReason.Should().BeNull();
     }
 
     [Fact]
-    public async Task CodeReview_NoConfigs_SetsSkipReasonForNoConfigs()
+    public async Task CodeReview_NoResolvedReviewers_RecordsTheSkipReason()
     {
-        // Verify the exact skip reason recorded for the no-configs path
-        // TODO [WARNING]: This test asserts CodeReviewSkipReason but does not assert Times.Never on the
-        // agent mock. The pre-existing CodeReview_NoResolvedReviewers_EarlyReturn covers the Times.Never
-        // side of this path. Neither test alone is complete coverage of the null-configs early-return path.
-        // Consider consolidating both tests so each asserts both the skip reason AND that the agent is never
-        // called, then removing the now-redundant CodeReview_NoResolvedReviewers_EarlyReturn.
         await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None, resolvedReviewerConfigs: null);
 
-        _run.CodeReviewSkipReason.Should().Be("No reviewer configurations matched this repository's labels.");
+        _run.CodeReviewSkipReason.Should().Be(
+            "No enabled reviewer configuration matches this repository's labels. Review skipped.");
     }
 
     [Fact]
-    public async Task CodeReview_ZeroAgents_SetsSkipReasonForZeroAgents()
+    public async Task CodeReview_ReviewersWithoutAgents_RecordsTheSkipReason()
     {
-        // Verify the exact skip reason recorded for the zero-agents path
-        var configs = new[]
-        {
-            new ReviewerConfiguration
-            {
-                DisplayName = "Empty",
-                Agents = Array.Empty<ReviewAgent>()
-            }
-        };
+        var configs = new[] { new ReviewerConfiguration { DisplayName = "Empty", Agents = Array.Empty<ReviewAgent>() } };
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(), CancellationToken.None, resolvedReviewerConfigs: configs);
 
-        _run.CodeReviewSkipReason.Should().Be("Reviewer configurations matched but resolved to zero agents.");
+        _run.CodeReviewSkipReason.Should().Be(
+            "The reviewer configurations that match this repository's labels define no review agents. Review skipped.");
     }
 
     [Fact]

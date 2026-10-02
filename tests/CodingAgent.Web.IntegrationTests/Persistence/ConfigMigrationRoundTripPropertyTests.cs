@@ -90,6 +90,7 @@ public class ConfigMigrationRoundTripPropertyTests : IDisposable
         // Verify key properties survive the migration round-trip
         return loaded.MaxRetries == config.MaxRetries
             && loaded.AgentTimeout == config.AgentTimeout
+            && loaded.MaxIssueImages == config.MaxIssueImages
             && loaded.AnalysisReviewEnabled == config.AnalysisReviewEnabled
             && loaded.AcceptanceCriteriaEnabled == config.AcceptanceCriteriaEnabled
             && loaded.BaselineHealthCheckEnabled == config.BaselineHealthCheckEnabled;

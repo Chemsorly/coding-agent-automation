@@ -92,6 +92,13 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
     public void ReportQualityGateResult(QualityGateReport report, CancellationToken ct)
         => _ = SerializedSendAsync(_signalrLock, () => ReportQualityGateResultInternalAsync(report, ct), ct);
 
+    /// <summary>
+    /// Fire-and-forget pipeline run event reporting (CI retrigger, CI wait, agent stall).
+    /// Serialized via the internal semaphore.
+    /// </summary>
+    public void ReportPipelineRunEvent(PipelineRunEventReport report, CancellationToken ct)
+        => _ = SerializedSendAsync(_signalrLock, () => ReportPipelineRunEventInternalAsync(report, ct), ct);
+
     // ── Awaited SignalR calls (no semaphore, uses InvokeAsync) ───────────
 
     /// <summary>
@@ -174,6 +181,20 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         {
             PipelineTelemetry.AgentSignalRFailures.Add(1);
             _logger.Warning(ex, "Failed to report quality gate result");
+        }
+    }
+
+    /// <summary>
+    /// Reports a pipeline run event (CI retrigger, CI wait, agent stall) to the orchestrator via SignalR.
+    /// Failures are logged as warnings — best-effort, does not affect pipeline outcome.
+    /// </summary>
+    internal async Task ReportPipelineRunEventInternalAsync(PipelineRunEventReport report, CancellationToken ct)
+    {
+        try { await _connection.SendAsync(HubMethodNames.ReportPipelineRunEvent, _jobId, report, ct); }
+        catch (Exception ex)
+        {
+            PipelineTelemetry.AgentSignalRFailures.Add(1);
+            _logger.Warning(ex, "Failed to report pipeline run event (kind={Kind})", report.Kind);
         }
     }
 

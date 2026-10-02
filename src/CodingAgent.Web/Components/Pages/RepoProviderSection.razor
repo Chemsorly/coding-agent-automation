@@ -157,7 +157,7 @@
                     <div class="form-group">
                         <label>Steering Instructions</label>
                         <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
-                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="## Architecture&#10;- This is a Spring Boot application using Gradle&#10;- All REST endpoints require OpenAPI annotations&#10;- Database migrations live in src/main/resources/db/migration/&#10;&#10;## Build Commands&#10;- Build: ./gradlew build&#10;- Test: ./gradlew test&#10;- Lint: ./gradlew spotlessCheck"></textarea>
+                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="@SteeringPlaceholder"></textarea>
                     </div>
                 </AdditionalFields>
             </GitLabProviderForm>
@@ -281,7 +281,7 @@
                     <div class="form-group">
                         <label>Steering Instructions</label>
                         <p class="form-hint">These instructions are provided to agents working on this repository. Use them for repo-specific conventions like architecture constraints, build/test commands, or file organization rules.</p>
-                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="## Architecture&#10;- This is a Spring Boot application using Gradle&#10;- All REST endpoints require OpenAPI annotations&#10;- Database migrations live in src/main/resources/db/migration/&#10;&#10;## Build Commands&#10;- Build: ./gradlew build&#10;- Test: ./gradlew test&#10;- Lint: ./gradlew spotlessCheck"></textarea>
+                        <textarea @bind="_form.SteeringContent" rows="15" placeholder="@SteeringPlaceholder"></textarea>
                     </div>
                 </AdditionalFields>
                 <HelpContent>
@@ -313,6 +313,12 @@
 </section>
 
 @code {
+    // A multi-line placeholder is a C# string: in an attribute of a rendered element, "&#10;" would show up as text.
+    private const string SteeringPlaceholder =
+        "## Architecture\n- This is a Spring Boot application using Gradle\n- All REST endpoints require OpenAPI annotations\n" +
+        "- Database migrations live in src/main/resources/db/migration/\n\n" +
+        "## Build Commands\n- Build: ./gradlew build\n- Test: ./gradlew test\n- Lint: ./gradlew spotlessCheck";
+
     [Parameter, EditorRequired] public List<ProviderConfig> Providers { get; set; } = new();
     [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis
     [Parameter, EditorRequired] public GitHubValidationService GitHubValidator { get; set; } = default!; // NOSONAR S8970 — Razor compiler generates #nullable disable; ! is required here to satisfy C# nullable analysis

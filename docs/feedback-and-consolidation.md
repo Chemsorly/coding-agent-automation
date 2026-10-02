@@ -110,7 +110,7 @@ Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which 
 
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
-- **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Job Controller fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle. `PendingJob.ConsolidationDispatchAttempt` is defined on the model but is not currently incremented by any service. `MaxConsolidationDispatchRetries` was a `PipelineConfiguration` property removed in #3149 alongside the consolidation drain service that read it (deleted in #2323).
+- **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Job Controller fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
 
 ### Consolidation Page
 

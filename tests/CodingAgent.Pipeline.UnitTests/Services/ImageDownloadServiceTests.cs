@@ -35,7 +35,6 @@ public class ImageDownloadServiceTests : IDisposable
         MaxImageSizeBytes = 5_242_880,
         MaxTotalImageSizeBytes = 20_971_520,
         TotalImageDownloadTimeoutSeconds = 60,
-        ImageDownloadTimeoutSeconds = 30
     };
 
     private static ImageReference MakeRef(string url) => new()
