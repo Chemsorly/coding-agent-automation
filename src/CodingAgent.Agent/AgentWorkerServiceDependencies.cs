@@ -6,6 +6,6 @@ namespace CodingAgent.Agent;
 /// </summary>
 public sealed record AgentWorkerServiceDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
-    AgentJobSlotManager SlotManager,
+    ChatSlotManager SlotManager,
     ChatJobExecutor ChatHandler,
     Serilog.ILogger Logger);

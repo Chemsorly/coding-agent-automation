@@ -333,26 +333,20 @@ public class DiResolutionSmokeTests
         services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
 
         // ── SignalR-mode: AgentWorkerService (not WorkItemHttpClient) ──
-        services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
-            sp.GetRequiredService<IHubConnectionManager>(),
-            CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger),
-            new CriticalMessageBuffer(),
-            Log.Logger));
-        services.AddSingleton<AgentJobSlotManager>(sp => new AgentJobSlotManager(() => Task.CompletedTask));
+        services.AddSingleton<ChatSlotManager>();
         services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
             sp.GetRequiredService<IHubConnectionManager>(),
             sp.GetRequiredService<IHubConnectionManagerFactory>(),
-            sp.GetRequiredService<SignalRCompletionReporter>(),
-            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<ChatSlotManager>(),
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
-            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<ChatSlotManager>(),
             new ChatJobExecutor(new ChatJobExecutorDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
-                sp.GetRequiredService<AgentJobSlotManager>(),
+                sp.GetRequiredService<ChatSlotManager>(),
                 sp.GetRequiredService<IKiroCliOrchestrator>(),
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IHostApplicationLifetime>(),

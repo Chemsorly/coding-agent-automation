@@ -7,13 +7,16 @@ using Moq;
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Tests for <see cref="AgentWorkerService"/> fresh reconnection behavior (Task 6.3).
-/// Validates that when the SignalR connection enters terminal Closed state,
-/// the service disposes the old connection and creates a fresh one via the factory.
+/// Tests for <see cref="ReconnectionHelper.CalculateReconnectionDelay"/> (exponential backoff math)
+/// and <see cref="HubConnectionManagerFactory.Create"/>.
+/// Migrated from <c>AgentWorkerServiceReconnectionTests.cs</c> when that file was deleted as
+/// part of removing the unused job path from chat-mode agent pods (Issue #3228).
 /// </summary>
 [Collection("EnvironmentVariables")]
-public class AgentWorkerServiceReconnectionTests
+public class ReconnectionHelperTests
 {
+    // ── ReconnectionHelper.CalculateReconnectionDelay ─────────────────────
+
     [Fact]
     public void CalculateReconnectionDelay_FirstAttempt_ReturnsBaseDelay()
     {
@@ -64,6 +67,8 @@ public class AgentWorkerServiceReconnectionTests
         }
     }
 
+    // ── HubConnectionManagerFactory ───────────────────────────────────────
+
     [Fact]
     public void HubConnectionManagerFactory_Create_ReturnsNewInstance()
     {
@@ -92,24 +97,7 @@ public class AgentWorkerServiceReconnectionTests
         manager.IsConnected.Should().BeFalse(); // Not started yet
     }
 
-    [Fact]
-    public void Constructor_ThrowsOnNullFactory()
-    {
-        var mockLogger = new Mock<Serilog.ILogger>();
-
-        var act = () => new AgentConnectionLifecycle(
-            CreateTestHubManager(),
-            null!,
-            new SignalRCompletionReporter(CreateTestHubManager(),
-                CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object),
-                new CriticalMessageBuffer(), mockLogger.Object),
-            new AgentJobSlotManager(() => Task.CompletedTask),
-            new AgentId("test"),
-            Mock.Of<IHostApplicationLifetime>(),
-            mockLogger.Object);
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("hubManagerFactory");
-    }
+    // ── HubConnectionManager event subscription ───────────────────────────
 
     [Fact]
     public void HubConnectionManager_OnClosed_EventCanBeSubscribed()
@@ -129,19 +117,5 @@ public class AgentWorkerServiceReconnectionTests
         // We can't easily trigger Closed without a real server,
         // but we verify subscription compiles and the manager is in a valid state
         manager.IsConnected.Should().BeFalse();
-    }
-
-    private static HubConnectionManager CreateTestHubManager()
-    {
-        var logger = new Mock<Serilog.ILogger>();
-        return new HubConnectionManager(
-            "http://localhost:9999", "test-agent", "test-api-key", logger.Object);
-    }
-
-    private static HubConnectionManagerFactory CreateTestHubManagerFactory()
-    {
-        var logger = new Mock<Serilog.ILogger>();
-        return new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent", "test-api-key", logger.Object);
     }
 }
