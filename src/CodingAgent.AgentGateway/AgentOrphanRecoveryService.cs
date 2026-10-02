@@ -681,12 +681,8 @@ public sealed class AgentOrphanRecoveryService(
         // GetWorkItemRunRecordAsync throws on DB failure (intentional — failed reads must not look
         // like missing records during normal ownership checks). Here, reconstruction is best-effort:
         // a DB outage should degrade to "skip reconstruction" rather than crashing re-registration.
-        // TODO: [WARNING] The broad catch swallows all exception types, including OperationCanceledException.
-        // During a DB outage, returning null means the caller treats the run as unrecoverable for this
-        // re-registration cycle. On the next agent reconnect, reconstruction is retried — but if the
-        // outage persists, the run stays orphaned for its duration. Consider re-throwing
-        // OperationCanceledException and logging DB-specific exception types distinctly to allow callers
-        // to distinguish transient failures from genuine missing records.
+        // OperationCanceledException is not caught so a cancelled token propagates to the caller
+        // rather than being silently treated as a missing record.
         // TODO: [WARNING] CancellationToken.None is passed here. Ideally a connection-lifetime
         // CancellationToken from the SignalR hub context should be threaded through so a disconnecting
         // agent can abort the in-flight DB read rather than letting it run to completion.
@@ -695,7 +691,7 @@ public sealed class AgentOrphanRecoveryService(
         {
             record = await _facade.GetWorkItemRunRecordAsync(new JobId(runId), CancellationToken.None);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // TODO: [WARNING] runId is logged verbatim here. Serilog's structured logging prevents
             // format-string injection, but the raw value is persisted in the log store without
