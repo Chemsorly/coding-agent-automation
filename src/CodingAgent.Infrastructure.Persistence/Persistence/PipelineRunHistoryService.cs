@@ -221,39 +221,4 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// </summary>
     public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory)
         => WorkspaceDeletionGuard.TryDelete(workspacePath?.Value, runId, workspaceBaseDirectory, _logger);
-
-    /// <summary>
-    /// Cleans up expired workspace folders for failed/cancelled runs based on retention policy.
-    /// </summary>
-    public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
-    {
-        ArgumentNullException.ThrowIfNull(config);
-        if (config.FailedWorkspaceRetentionDays < 0)
-            return;
-
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-config.FailedWorkspaceRetentionDays);
-
-        List<PipelineRunSummary> snapshot;
-        lock (_lock) { snapshot = _runHistory.ToList(); }
-
-        foreach (var summary in snapshot)
-        {
-            if (summary.FinalStep == PipelineStep.Completed)
-                continue;
-
-#pragma warning disable CS0618 // Fallback to legacy CompletedAt for older persisted summaries without CompletedAtOffset
-            var completedOffset = summary.CompletedAtOffset
-                ?? (summary.CompletedAt.HasValue ? new DateTimeOffset(summary.CompletedAt.Value, TimeSpan.Zero) : (DateTimeOffset?)null);
-#pragma warning restore CS0618
-
-            if (completedOffset == null || completedOffset > cutoff)
-                continue;
-
-            if (activeRunId != null && activeRunId == summary.RunId)
-                continue;
-
-            var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, summary.RunId);
-            TryDeleteWorkspace(workspacePath, summary.RunId, config.WorkspaceBaseDirectory);
-        }
-    }
 }

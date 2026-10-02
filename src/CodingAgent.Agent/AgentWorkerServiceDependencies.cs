@@ -1,5 +1,3 @@
-using CodingAgent.Pipeline.Interfaces;
-
 namespace CodingAgent.Agent;
 
 /// <summary>
@@ -10,6 +8,4 @@ public sealed record AgentWorkerServiceDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
     AgentJobSlotManager SlotManager,
     ChatJobExecutor ChatHandler,
-    IPipelineExecutor Executor,
-    IJobCompletionReporter CompletionReporter,
     Serilog.ILogger Logger);

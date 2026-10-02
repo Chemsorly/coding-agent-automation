@@ -13,28 +13,28 @@ Without projects, all templates share one global configuration. A Java repositor
 
 ## Settings Inheritance
 
-The pipeline uses a two-level settings hierarchy with a nullable override pattern:
+A project overrides global settings for all its templates. The settings it can override are marked **Project** in the [Settings Reference](configuration.md#settings-reference); [Where Settings Live](configuration.md#where-settings-live) shows every layer and how the layers combine.
 
 ```mermaid
 flowchart LR
-    A[Global PipelineConfiguration] -->|null = inherit| B[Project overrides]
-    B -->|non-null = replace| C[Template overrides<br/>BrainReadOnly + ProviderConfig blacklist]
-    C --> D[Final config sent to agent]
+    A[Global settings] -->|empty = inherit| B[Project overrides]
+    B -->|set = replace| C[Template: BrainReadOnly]
+    C -->|blacklist only| D[Repository provider]
+    D --> E[Final config sent to agent]
 ```
 
 **Rules:**
-- A `null` project setting means "inherit from global defaults"
-- A non-null project setting completely replaces the global value
-- Nested objects (e.g., `CodeReview`) use **deep-merge semantics** — only non-null sub-fields from the project override replace the corresponding global sub-fields; null sub-fields inherit the global value
-- Template-level `BrainReadOnly: true` overrides the resolved value to read-only (one-directional: can only switch on, never off)
-- Per-repository blacklist overrides (from ProviderConfig) are applied in the same template step and take precedence over project-level blacklist settings
-- Settings are resolved at dispatch time — changes take effect on the next dispatched job without restarting
+- An empty project setting inherits the global value; a set one replaces it
+- `codeReview` is merged field by field: only the sub-fields the project sets replace the global ones
+- An override must be within the range of the setting it overrides; saving a project with one outside it is refused with a message that names the setting. An override stored outside its range (saved before this check) is skipped, so that setting keeps the global value while the project's other overrides still apply
+- Settings are resolved when an agent claims a job, so changes apply to the next job without a restart
 
 ### Resolution Order
 
-1. **Global defaults** — `pipeline-config.json` provides base values for all settings
-2. **Project overrides** — Non-null project settings replace corresponding global values
-3. **Template overrides** — Applied by `PipelineConfigurationResolver.ApplyTemplateOverrides`: `BrainReadOnly` from the matched template (one-directional: only overrides to `true`), then `BlacklistedPaths` from the repository's ProviderConfig (replaces if set)
+1. **Global settings** — Settings → Global Defaults
+2. **Project overrides** — the project's set values replace the global ones
+3. **Template** — `BrainReadOnly` on the pipeline job template can turn brain writes off, never on; the template also holds its workflow switches and housekeeping limit
+4. **Repository provider** — its `BlacklistedPaths` replace the global or project list (if set)
 
 ## Project Storage
 
@@ -42,25 +42,26 @@ Projects are persisted in PostgreSQL (the `Projects` table). Configuration is ma
 
 The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
-A project does not store its templates: each template names the project it belongs to. The API returns a project's templates as a read-only `TemplateIds` list, ordered by name; saving a project ignores that list.
+A project does not store its templates: each template names the project it belongs to. The API returns a project's templates as a read-only `templateIds` list, ordered by name; saving a project ignores that list.
 
 ### Example: Mono-Repo Project (Settings Only)
 
 ```json
 {
-  "Id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "Name": "Backend Services",
-  "Description": "Java microservices with extended timeouts",
-  "Enabled": true,
-  "EpicIssueProviderId": null,
-  "MaxRetries": 5,
-  "AgentTimeout": "00:45:00",
-  "AnalysisPrompt": "You are working on a Java 21 Spring Boot microservice...",
-  "CodeReview": {
-    "MaxIterations": 3
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "name": "Backend Services",
+  "description": "Java microservices with extended timeouts",
+  "enabled": true,
+  "epicIssueProviderId": null,
+  "maxRetries": 5,
+  "agentTimeout": "00:45:00",
+  "analysisPrompt": "You are working on a Java 21 Spring Boot microservice...",
+  "codeReview": {
+    "maxIterations": 3,
+    "inlineComments": { "maxInlineComments": 25 }
   },
-  "BaselineHealthCheckEnabled": true,
-  "ExternalCiTimeout": "00:20:00"
+  "baselineHealthCheckEnabled": true,
+  "externalCiTimeout": "00:20:00"
 }
 ```
 
@@ -68,74 +69,18 @@ A project does not store its templates: each template names the project it belon
 
 ```json
 {
-  "Id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
-  "Name": "Platform Product",
-  "Description": "Cross-repo product with Polarion epic tracking",
-  "Enabled": true,
-  "EpicIssueProviderId": "polarion-provider-id",
-  "MaxDecompositionSubIssues": 8
+  "id": "b2c3d4e5-f6a7-8901-bcde-f12345678901",
+  "name": "Platform Product",
+  "description": "Cross-repo product with a central epic tracker",
+  "enabled": true,
+  "epicIssueProviderId": "epic-tracker-provider-id",
+  "maxDecompositionSubIssues": 8
 }
 ```
 
-## Overridable Settings
+## Project-Only Settings
 
-All settings below are nullable on the project. When `null`, the global default from `pipeline-config.json` is used.
-
-### Execution Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `MaxRetries` | int? | Max retry attempts when quality gates fail |
-| `MaxAnalysisRetries` | int? | Max retry attempts for the analysis phase |
-| `AgentTimeout` | TimeSpan? | Maximum time for each agent call, in every run type including decomposition. Also the job deadline: Kubernetes stops the job after this value plus 60 seconds |
-| `MaxInfrastructureRetries` | int? | Max retries for infrastructure operations |
-| `StallWarningInterval` | TimeSpan? | Time without output before stall warning |
-
-### Prompt Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `AnalysisPrompt` | string? | Custom prompt for the analysis phase |
-| `ImplementationPrompt` | string? | Custom prompt for code generation |
-| `AnalysisReviewPrompt` | string? | Custom prompt for analysis review |
-| `AnalysisRefinementPrompt` | string? | Custom prompt for analysis refinement |
-
-### Review Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `AnalysisReviewEnabled` | bool? | Enable analysis review step |
-| `CodeReview` | CodeReviewConfiguration? | Code review config (deep-merge: non-null sub-fields override global) |
-| `RefactoringReviewEnabled` | bool? | Enable refactoring review |
-| `BrainConsolidationReviewEnabled` | bool? | Enable brain consolidation review |
-
-### CI/CD Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `BaselineHealthCheckEnabled` | bool? | Enable baseline health check before agent runs |
-| `ExternalCiTimeout` | TimeSpan? | Max wait for external CI |
-| `ExternalCiPollInterval` | TimeSpan? | Poll interval for external CI status |
-
-### Decomposition Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `MaxDecompositionSubIssues` | int? | Max sub-issues per epic (1–20) |
-| `MaxOpenIssuesForContext` | int? | Max open issues fetched for deduplication context |
-
-### Blacklist & Brain Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `BlacklistedPaths` | list? | Paths excluded from agent commits |
-| `BrainReadOnly` | bool? | If true, brain is synced pre-run but not written post-run, and brain consolidation does not run from the project's templates |
-
-### Refactoring Settings
-
-| Setting | Type | Description |
-|---------|------|-------------|
-| `MaxRefactoringProposals` | int? | Max refactoring proposals per run |
+Besides overrides, a project holds settings of its own:
 
 ### Secrets & Steering
 
@@ -182,6 +127,8 @@ A template binds one repository to one implementation tracker. Among **enabled**
 
 Saving or moving an enabled template that breaks a rule is refused with the reason. Disabled templates are not checked, so one of two conflicting templates can always be switched off. A project's epic tracker may also be the tracker of one of its templates.
 
+A saved template keeps its repository and issue tracker. **Edit** on the Pipelines page changes everything else in place: name, brain provider and `BrainReadOnly`, CI provider, workflow switches and housekeeping. The template keeps its id, and with it its run and consolidation history. To bind another repository or tracker, add a new template.
+
 Templates saved before these rules were enforced keep working. The **Pipelines** page lists any conflicts above the template table, and an enabled template that is part of one cannot be saved until the conflict is fixed, for example by disabling, moving or removing the other template.
 
 ### Moving Templates Between Projects
@@ -220,10 +167,10 @@ A single-project setup where the goal is behavioral customization without cross-
 1. Create a project named "Java Monolith"
 2. Move the relevant template into it
 3. Override settings:
-   - `AgentTimeout`: "00:45:00" (45 min instead of 30)
-   - `MaxRetries`: 5 (instead of 3)
-   - `ExternalCiTimeout`: "00:20:00"
-   - `AnalysisPrompt`: Custom Java-focused instructions
+   - Agent Timeout: 45 minutes instead of 30
+   - Max Retries: 5 instead of 3
+   - CI Timeout: 20 minutes
+   - Analysis Prompt: custom Java-focused instructions
 
 **Result:** All runs dispatched from templates in this project use the overridden settings. Other projects continue using global defaults.
 

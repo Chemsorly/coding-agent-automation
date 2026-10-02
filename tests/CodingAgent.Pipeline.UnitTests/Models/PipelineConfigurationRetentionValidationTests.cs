@@ -5,140 +5,44 @@ using Xunit;
 namespace CodingAgent.Pipeline.UnitTests.Models;
 
 /// <summary>
-/// Unit tests for the new retention-related properties on <see cref="PipelineConfiguration"/>.
-/// Validates that <see cref="PipelineConfiguration.PipelineRunRetentionCount"/>,
-/// <see cref="PipelineConfiguration.WorkItemRetentionCount"/>, and
-/// <see cref="PipelineConfiguration.DbRetentionSweepInterval"/> enforce their invariants
-/// at init time.
+/// Unit tests for the retention caps <see cref="PipelineConfiguration.PipelineRunRetentionCount"/> and
+/// <see cref="PipelineConfiguration.WorkItemRetentionCount"/>: 0 or -1 (the default, from before 0 meant the same)
+/// keeps every row, a positive number keeps that many per project, and the validator reports anything below -1.
 /// </summary>
 public class PipelineConfigurationRetentionValidationTests
 {
-    // ── PipelineRunRetentionCount ───────────────────────────────────────
-
-    [Fact]
-    public void PipelineRunRetentionCount_MinusOne_IsValid()
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(100)]
+    public void RetentionCounts_InRange_AreValid(int value)
     {
-        // -1 = disabled (sentinel) — must not throw
-        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = -1 };
-        act.Should().NotThrow();
-    }
+        var config = new PipelineConfiguration { PipelineRunRetentionCount = value, WorkItemRetentionCount = value };
 
-    [Fact]
-    public void PipelineRunRetentionCount_PositiveInteger_IsValid()
-    {
-        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = 100 };
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void PipelineRunRetentionCount_One_IsValid()
-    {
-        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = 1 };
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void PipelineRunRetentionCount_Zero_Throws()
-    {
-        // 0 would delete every row per project on every sweep — explicitly rejected
-        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = 0 };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*PipelineRunRetentionCount*");
+        PipelineSettingsValidator.Validate(config).Should().BeEmpty();
     }
 
     [Theory]
     [InlineData(-2)]
-    [InlineData(-100)]
     [InlineData(int.MinValue)]
-    public void PipelineRunRetentionCount_NegativeOtherThanMinusOne_Throws(int value)
+    public void RetentionCounts_BelowMinusOne_AreReported(int value)
     {
-        // Only -1 is a valid negative value
-        var act = () => new PipelineConfiguration { PipelineRunRetentionCount = value };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*PipelineRunRetentionCount*");
-    }
+        var config = new PipelineConfiguration { PipelineRunRetentionCount = value, WorkItemRetentionCount = value };
 
-    // ── WorkItemRetentionCount ──────────────────────────────────────────
+        var errors = PipelineSettingsValidator.Validate(config);
 
-    [Fact]
-    public void WorkItemRetentionCount_MinusOne_IsValid()
-    {
-        var act = () => new PipelineConfiguration { WorkItemRetentionCount = -1 };
-        act.Should().NotThrow();
+        errors.Should().HaveCount(2);
+        errors.Should().Contain(e => e.StartsWith(nameof(PipelineConfiguration.PipelineRunRetentionCount), StringComparison.Ordinal));
+        errors.Should().Contain(e => e.StartsWith(nameof(PipelineConfiguration.WorkItemRetentionCount), StringComparison.Ordinal));
     }
 
     [Fact]
-    public void WorkItemRetentionCount_PositiveInteger_IsValid()
-    {
-        var act = () => new PipelineConfiguration { WorkItemRetentionCount = 500 };
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void WorkItemRetentionCount_Zero_Throws()
-    {
-        var act = () => new PipelineConfiguration { WorkItemRetentionCount = 0 };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*WorkItemRetentionCount*");
-    }
-
-    [Theory]
-    [InlineData(-2)]
-    [InlineData(-50)]
-    public void WorkItemRetentionCount_NegativeOtherThanMinusOne_Throws(int value)
-    {
-        var act = () => new PipelineConfiguration { WorkItemRetentionCount = value };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*WorkItemRetentionCount*");
-    }
-
-    // ── DbRetentionSweepInterval ────────────────────────────────────────
-
-    [Fact]
-    public void DbRetentionSweepInterval_OneMinute_IsValid()
-    {
-        var act = () => new PipelineConfiguration { DbRetentionSweepInterval = TimeSpan.FromMinutes(1) };
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void DbRetentionSweepInterval_24Hours_IsValid()
-    {
-        var act = () => new PipelineConfiguration { DbRetentionSweepInterval = TimeSpan.FromHours(24) };
-        act.Should().NotThrow();
-    }
-
-    [Fact]
-    public void DbRetentionSweepInterval_59Seconds_Throws()
-    {
-        // Below the 1-minute minimum — would hammer the DB
-        var act = () => new PipelineConfiguration { DbRetentionSweepInterval = TimeSpan.FromSeconds(59) };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*DbRetentionSweepInterval*");
-    }
-
-    [Fact]
-    public void DbRetentionSweepInterval_Zero_Throws()
-    {
-        var act = () => new PipelineConfiguration { DbRetentionSweepInterval = TimeSpan.Zero };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithMessage("*DbRetentionSweepInterval*");
-    }
-
-    // ── Default values ──────────────────────────────────────────────────
-
-    [Fact]
-    public void DefaultConfiguration_RetentionCountsAreDisabled()
+    public void DefaultConfiguration_RetentionCountsKeepEveryRow()
     {
         var config = new PipelineConfiguration();
-        config.PipelineRunRetentionCount.Should().Be(-1, "retention is opt-in, default must be disabled");
-        config.WorkItemRetentionCount.Should().Be(-1, "retention is opt-in, default must be disabled");
-    }
 
-    [Fact]
-    public void DefaultConfiguration_SweepIntervalIs24Hours()
-    {
-        var config = new PipelineConfiguration();
-        config.DbRetentionSweepInterval.Should().Be(TimeSpan.FromHours(24));
+        config.PipelineRunRetentionCount.Should().Be(-1);
+        config.WorkItemRetentionCount.Should().Be(-1);
     }
 }

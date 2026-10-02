@@ -78,110 +78,32 @@ public class PostReviewFindingsStepTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_WithSkipReason_PostsSkipReasonInComment()
+    public async Task ExecuteAsync_NoReviewerRan_PostsTheRecordedSkipReason()
     {
-        // New path: CodeReviewSkipReason is set → reason appears in posted body (not the static fallback)
+        const string reason = "The reviewer configurations that match this repository's labels define no review agents. Review skipped.";
         var run = new PipelineRun
         {
             RunId = "test-run",
-            IssueIdentifier = "43",
+            IssueIdentifier = "42",
             IssueTitle = "Test PR",
             IssueProviderConfigId = "ip",
             RepoProviderConfigId = "rp",
             StartedAt = DateTime.UtcNow,
             RunType = PipelineRunType.Review,
             CodeReviewAgentsRun = Array.Empty<string>(),
-            CodeReviewSkipReason = "Code review is disabled (MaxIterations = 0). Enable it in Settings → Implementation → Advanced Settings."
+            CodeReviewSkipReason = reason,
         };
-
-        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(43, It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(42, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((long?)null);
 
-        string? postedBody = null;
-        _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            43, It.IsAny<string>(), It.IsAny<PullRequestReviewType>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, PullRequestReviewType, CancellationToken>((_, body, _, _) => postedBody = body)
-            .Returns(Task.CompletedTask);
+        await new PostReviewFindingsStep().ExecuteAsync(BuildContext(run), CancellationToken.None);
 
-        var context = BuildContext(run);
-        var step = new PostReviewFindingsStep();
-
-        await step.ExecuteAsync(context, CancellationToken.None);
-
-        postedBody.Should().NotBeNull();
-        postedBody.Should().Contain("MaxIterations = 0", "the specific skip reason should appear in the posted comment");
-        postedBody.Should().NotContain("No applicable reviewers found", "static fallback message should not be used when CodeReviewSkipReason is set");
-        postedBody.Should().Contain(CommentMarkers.PrReview, "the marker must be present so future runs can find and collapse this review");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_SkipReasonForNoConfigs_PostsCorrectReason()
-    {
-        // Verify the "no configs matched" reason string surfaces in the PR comment
-        var run = new PipelineRun
-        {
-            RunId = "test-run",
-            IssueIdentifier = "44",
-            IssueTitle = "Test PR",
-            IssueProviderConfigId = "ip",
-            RepoProviderConfigId = "rp",
-            StartedAt = DateTime.UtcNow,
-            RunType = PipelineRunType.Review,
-            CodeReviewAgentsRun = Array.Empty<string>(),
-            CodeReviewSkipReason = "No reviewer configurations matched this repository's labels."
-        };
-
-        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(44, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((long?)null);
-
-        string? postedBody = null;
-        _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            44, It.IsAny<string>(), It.IsAny<PullRequestReviewType>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, PullRequestReviewType, CancellationToken>((_, body, _, _) => postedBody = body)
-            .Returns(Task.CompletedTask);
-
-        var context = BuildContext(run);
-        var step = new PostReviewFindingsStep();
-
-        await step.ExecuteAsync(context, CancellationToken.None);
-
-        postedBody.Should().Contain("No reviewer configurations matched this repository's labels.");
-        postedBody.Should().Contain(CommentMarkers.PrReview, "the marker must be present so future runs can find and collapse this review");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_SkipReasonForZeroAgents_PostsCorrectReason()
-    {
-        // Verify the "zero agents" reason string surfaces in the PR comment
-        var run = new PipelineRun
-        {
-            RunId = "test-run",
-            IssueIdentifier = "45",
-            IssueTitle = "Test PR",
-            IssueProviderConfigId = "ip",
-            RepoProviderConfigId = "rp",
-            StartedAt = DateTime.UtcNow,
-            RunType = PipelineRunType.Review,
-            CodeReviewAgentsRun = Array.Empty<string>(),
-            CodeReviewSkipReason = "Reviewer configurations matched but resolved to zero agents."
-        };
-
-        _repoProvider.Setup(r => r.FindExistingReviewCommentAsync(45, It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((long?)null);
-
-        string? postedBody = null;
-        _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
-            45, It.IsAny<string>(), It.IsAny<PullRequestReviewType>(), It.IsAny<CancellationToken>()))
-            .Callback<int, string, PullRequestReviewType, CancellationToken>((_, body, _, _) => postedBody = body)
-            .Returns(Task.CompletedTask);
-
-        var context = BuildContext(run);
-        var step = new PostReviewFindingsStep();
-
-        await step.ExecuteAsync(context, CancellationToken.None);
-
-        postedBody.Should().Contain("Reviewer configurations matched but resolved to zero agents.");
-        postedBody.Should().Contain(CommentMarkers.PrReview, "the marker must be present so future runs can find and collapse this review");
+        _repoProvider.Verify(r => r.SubmitPullRequestReviewAsync(
+            42,
+            // The marker lets the next run find and collapse this comment.
+            It.Is<string>(body => body.StartsWith(CommentMarkers.PrReview, StringComparison.Ordinal) && body.Contains(reason) && !body.Contains("No applicable reviewers found")),
+            PullRequestReviewType.Comment,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

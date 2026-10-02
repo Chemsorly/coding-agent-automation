@@ -53,31 +53,25 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `pipeline.loop.backoff_events` | Counter | — | — | Incremented when a template poll failure triggers backoff escalation |
 | `pipeline.loop.circuit_breaker_trips` | Counter | — | — | Incremented when the circuit breaker trips (all templates failing) |
 | `token_vending.failures` | Counter | — | — | Token vending operation failures |
-| `token_vending.duration` | Histogram | seconds | — | Duration of token vending operations |
-| `agent.jobs.received` | Counter | — | — | Jobs received by agent workers |
-| `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
 | `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
 | `pipeline.run.tokens` | Counter | `{token}` | `run_type`, `phase`, `provider` | LLM tokens consumed per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
 | `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost in USD per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
 | `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per run, per phase — recorded **API-side** at terminal status time. Pre-initialized with `model=unknown` for all `run_type × phase × provider` combinations. |
 | `pipeline.run.agent_time` | Counter | `s` | `run_type`, `phase`, `provider` | Agent execution time (seconds) per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
-| `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
-| `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
-| `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
-| `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI |
-| `quality_gate.post_pr_ci.duration` | Histogram | seconds | — | Time waiting for post-PR CI to complete |
+| `pipeline.run.quality_gate.results` | Counter | `{evaluation}` | `run_type`, `gate`, `result`, `infrastructure_failure` | Quality gate evaluation outcomes — recorded **API-side** in `ReportQualityGateResult` when the agent reports a gate result. `gate`: `compilation`, `tests`, `external_ci`. `result`: `pass`, `fail`. `infrastructure_failure`: `true`, `false`. Pre-initialized for all combinations (excluding `infrastructure_failure=true` for `compilation`). |
+| `pipeline.run.ci.not_started_retriggers` | Counter | `{retrigger}` | `run_type` | CI re-trigger commits (empty push to restart CI that never started) — recorded **API-side** in `ReportPipelineRunEvent` each time the agent re-pushes an empty commit. Pre-initialized for all run types. |
+| `pipeline.run.ci.wait` | Histogram | `s` | `run_type`, `stage`, `result` | Time from push to CI conclusion — recorded **API-side** in `ReportPipelineRunEvent` when CI polling concludes. `stage`: `pre_pr`, `post_pr`. `result`: `pass`, `fail`. Buckets: 60, 300, 600, 900, 1800, 3600, 7200, 14400. Not pre-initialized (histograms cannot be pre-initialized). |
+| `pipeline.run.agent_stalls` | Counter | `{stall}` | `run_type`, `phase`, `kind` | Agent stall events — recorded **API-side** in `ReportPipelineRunEvent` when the agent detects a stall. `kind`: `stall_kill`, `process_death`, `process_timeout`. `phase`: see `quality_gate.stall.*` phases. Pre-initialized for all `run_type × phase × kind` combinations. |
+| `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_name` | Quality gate retry attempts — recorded by the pipeline service |
+| `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_name` | Total time in quality gate phase — recorded by the pipeline service |
+| `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events — recorded by the pipeline service |
 | `quality_gate.process.timeout` | Counter | — | `gate_name`, `qgc_name` | QGC process timeouts (compilation or test command exceeded `processTimeoutSeconds`) |
 | `quality_gate.process.duration` | Histogram | seconds | `gate_name`, `qgc_name` | Duration of a single QGC process invocation (compilation or test command). Distinct from `quality_gate.duration` which covers the entire retry phase |
 | `quality_gate.stall.warnings` | Counter | — | `phase` | Agent silence warnings by pipeline phase — fires after each `stallWarningInterval` with no output |
-| `quality_gate.stall.kills` | Counter | — | `phase` | Agent processes killed due to stall timeout |
-| `quality_gate.stall.process_deaths` | Counter | — | `phase` | Agent process death events (process exited unexpectedly) by phase |
-| `dispatch.queue.wait_time` | Histogram | seconds | — | Time a job spent waiting in the dispatch queue |
-| `agent.jobs.active` | ObservableGauge | — | — | Currently executing agent jobs |
 | `agent.connections.total` | ObservableGauge | — | — | Total registered agents |
-| `consolidation.jobs.expired` | Counter | — | — | Consolidation jobs expired from queue (not currently emitted) |
 | `agent.signalr.failures` | Counter | — | — | Failed or dropped SignalR messages from agent |
-| `pipeline.decomposition.duration` | Histogram | seconds | `pipeline.project_id`, `pipeline.project_name`, `phase` | Duration of decomposition phases (`phase`: `analysis` or `creation`) |
+| `pipeline.decomposition.duration` | Histogram | seconds | `pipeline.project_name`, `phase` | Duration of decomposition phases (`phase`: `analysis` or `creation`) |
 | `pipeline.housekeeping.triggered` | Counter | — | `repo_provider_id` | Server-side branch updates triggered |
 | `pipeline.housekeeping.succeeded` | Counter | — | `repo_provider_id` | Server-side branch updates completed successfully |
 | `pipeline.housekeeping.failed` | Counter | — | `repo_provider_id` | Server-side branch updates that threw an exception |
@@ -107,8 +101,12 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
 | `reason` | `busy`, `shutting_down`, `unknown` | Agent job rejection reason |
 | `repo_provider_id` | provider config UUID | Repository provider config ID — only present on `pipeline.housekeeping.*` metrics |
-| `phase` | `qgc_retry_agent`, `codegen`, `analysis`, `code_review`, `decomposition`, `unknown` | Pipeline phase — only present on `quality_gate.stall.*` metrics |
+| `phase` | `qgc_retry_agent`, `codegen`, `analysis`, `code_review`, `decomposition`, `unknown` | Pipeline phase — only present on `quality_gate.stall.*` and `pipeline.run.agent_stalls` metrics |
 | `qgc_name` | QGC display name | Quality gate config name — only present on `quality_gate.process.*` metrics |
+| `gate` | `compilation`, `tests`, `external_ci` | Quality gate name — only present on `pipeline.run.quality_gate.results` |
+| `infrastructure_failure` | `true`, `false` | Whether the gate failure was due to infrastructure (OOM, container kill) rather than a code failure — only present on `pipeline.run.quality_gate.results` |
+| `stage` | `pre_pr`, `post_pr` | CI polling stage — only present on `pipeline.run.ci.wait` |
+| `kind` | `stall_kill`, `process_death`, `process_timeout` | Stall event kind — only present on `pipeline.run.agent_stalls` |
 
 #### Outcome mapping
 
@@ -236,13 +234,17 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 | `pipeline.run.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800 |
 | `quality_gate.process.duration` | 5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600 |
 | `quality_gate.post_pr_ci.duration` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
-| `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
-| `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
-| `workdistribution.workitems_pending_duration_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600 |
+| `pipeline.run.ci.wait` | 60, 300, 600, 900, 1800, 3600, 7200, 14400 |
+| `workdistribution.dispatch_latency_seconds` | 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400 |
 | `workdistribution.job_execution_duration_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 | `workdistribution.timeout_execution_age_seconds` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
 
-Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
+Other histograms (`quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
+<!-- TODO [WARNING]: The previous sentence incorrectly listed quality_gate.external_ci.duration as a
+default-bucket histogram. It has explicit InstrumentAdvice boundaries [5,10,30,60,120,300,600,1200,1800,3600]
+(verified by ExternalCiDuration_HasExpectedBucketBoundaries in HistogramBucketBoundaryTests). Additionally,
+quality_gate.external_ci.duration and quality_gate.post_pr_ci.duration (in the custom-bucket table above)
+are described as deprecated in this doc but still referenced here — remove them or clarify deprecated status. -->
 
 ### Step & Run-Level Metrics (API-only)
 
@@ -273,12 +275,15 @@ Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use t
 
 ### Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/WorkDistributionTelemetry.cs`, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by `ReconciliationService` in the Job Controller, and by `WorkItemCountsService` in the Scheduler (`workitems_by_status` gauge only — `WorkItemMetricsBackgroundService` was removed from the Pipeline API in Spec 047/048).
+The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetry.cs` (`src/CodingAgent.Infrastructure.Common/Telemetry/WorkDistributionTelemetry.cs`, namespace `CodingAgent.Pipeline.Telemetry`). Instruments are fed by multiple processes:
+- **API** (`service.name=coding-agent-api` or `coding-agent-web`): `workdistribution.dispatch_latency_seconds`, `workdistribution.credential_pool_available/claimed`, `workdistribution.dispatch.attempts`, `workdistribution.workitems_terminated`
+- **Scheduler** (`service.name=coding-agent-scheduler`): `workdistribution.dispatcher_last_poll_epoch_seconds`, `workdistribution.dispatcher_polls`, `workdistribution.workitems_by_status` (via `WorkItemCountsService`)
+- **Job Controller** (`service.name=coding-agent-jobcontroller`): `workdistribution.timeout_execution_age_seconds`, `workdistribution.timeout_canary_violations`, `workdistribution.agent_timeouts` (via `ReconciliationLoop`)
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
 | `workdistribution.dispatch_latency_seconds` | Histogram | s | — | Time from WorkItem creation (Pending) to Dispatched |
-| `workdistribution.workitems_pending_duration_seconds` | Histogram | s | — | Time spent in Pending status before dispatch |
+| `workdistribution.workitems_pending_duration_seconds` | Histogram | s | — | **Removed in issue #2976** — this entry is stale. TODO [WARNING]: delete this row. The instrument no longer exists in WorkDistributionTelemetry.cs; `RecordDispatchLatency` doc comment confirms removal. Operators querying this metric will find no data. |
 | `workdistribution.job_execution_duration_seconds` | Histogram | s | — | Total execution duration (Dispatched → terminal) |
 | `workdistribution.timeout_execution_age_seconds` | Histogram | s | — | Execution age at the moment a timeout is enforced. Canary: if p10 clusters near zero, the timeout anchor is wrong |
 | `workdistribution.workitems_terminated` | Counter | {item} | `status`, `failure_reason` | Work items reaching a terminal state |
@@ -451,7 +456,7 @@ The Scheduler and Web (closed-loop) processes emit spans only when actual work o
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
-| `pipeline.project_id` | UUID | Project identifier (set on job/step metrics and agent-side spans) |
+| `pipeline.project_id` | UUID | Project identifier — set only on **spans** (not on metric tags; use `pipeline.project_name` for metrics since it is 1:1 with `pipeline.project_id`) |
 | `pipeline.project_name` | string | Project display name |
 | `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection`, `HarnessSuggestions` | Consolidation run type (on `ExecuteConsolidation` span) |
 | `code_review.iteration` | integer | Code review iteration index (1-based) |

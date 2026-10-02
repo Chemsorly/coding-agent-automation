@@ -456,8 +456,10 @@ select option { background: var(--surface); color: var(--text); }
 .form-hint-icon[title] { /* tooltip via native title attribute */ }
 .label-with-hint { display: flex; align-items: center; gap: 6px; }
 .label-with-hint label { margin: 0; }
-.form-checkbox { display: flex; flex-direction: row; align-items: center; gap: 6px; }
+.form-checkbox { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; }
 .form-group.form-checkbox { flex-direction: row; }
+/* A hint next to a checkbox takes the rest of the row and moves below on narrow screens, so the label never wraps. */
+.form-checkbox > .form-hint { flex: 1 1 12rem; min-width: 0; }
 .config-category { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
 .config-category:last-child { margin-bottom: 0; }
 .config-category-title {

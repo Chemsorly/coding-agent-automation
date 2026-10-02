@@ -28,23 +28,17 @@ public class ParameterObjectTests
         AgentConnectionLifecycle connectionLifecycle = null!;
         AgentJobSlotManager slotManager = null!;
         ChatJobExecutor chatHandler = null!;
-        var executor = Mock.Of<IPipelineExecutor>();
-        var completionReporter = Mock.Of<IJobCompletionReporter>();
         var logger = Mock.Of<Serilog.ILogger>();
 
         var deps = new AgentWorkerServiceDependencies(
             connectionLifecycle,
             slotManager,
             chatHandler,
-            executor,
-            completionReporter,
             logger);
 
         deps.ConnectionLifecycle.Should().BeNull();
         deps.SlotManager.Should().BeNull();
         deps.ChatHandler.Should().BeNull();
-        deps.Executor.Should().BeSameAs(executor);
-        deps.CompletionReporter.Should().BeSameAs(completionReporter);
         deps.Logger.Should().BeSameAs(logger);
     }
 

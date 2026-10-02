@@ -218,20 +218,9 @@ public sealed partial class PipelineRun
     public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
 
     /// <summary>
-    /// Human-readable reason why code review was skipped, or null if review ran (or was not applicable).
-    /// Set by <see cref="AgentPhaseExecutor.ExecuteCodeReviewAsync"/> before each early-return path.
-    /// Used by <see cref="Services.Steps.PostReviewFindingsStep"/> to post an accurate skip comment.
+    /// Why the review step ran no reviewers, when it ran none; a PR review posts this as its skip comment.
+    /// Null when reviewers ran, or when the step never started.
     /// </summary>
-    // TODO [WARNING]: This property is set from multiple early-return paths in ExecuteCodeReviewAsync and
-    // never reset before those guards run. If ExecuteCodeReviewAsync is called more than once on the same
-    // PipelineRun instance (e.g. in retry loops), a skip reason written on an aborted first call could
-    // persist into a second call that actually runs reviewers, causing the skip comment to surface
-    // incorrectly. In the current single-call pipeline flow this is benign, but should be addressed if
-    // retry semantics ever reuse the same PipelineRun instance across calls to ExecuteCodeReviewAsync.
-    // TODO [WARNING]: The public setter allows any pipeline step (not just ExecuteCodeReviewAsync) to
-    // overwrite or clear this value. Consider replacing the public setter with a dedicated method
-    // (e.g. SetCodeReviewSkipReason) or documenting it as write-once to prevent unintended mutation
-    // by downstream steps that receive the PipelineRun by reference.
     public string? CodeReviewSkipReason { get; set; }
 
     /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if generation failed/skipped.</summary>

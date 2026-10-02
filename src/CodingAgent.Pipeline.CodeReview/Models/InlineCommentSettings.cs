@@ -1,4 +1,5 @@
 using MessagePack;
+using RangeAttribute = System.ComponentModel.DataAnnotations.RangeAttribute;
 
 namespace CodingAgent.Pipeline.CodeReview.Models;
 
@@ -6,8 +7,8 @@ namespace CodingAgent.Pipeline.CodeReview.Models;
 /// Controls inline review comment behavior: severity threshold, maximum comments,
 /// verbosity ordering, retry count, and master enablement switch.
 /// All properties use init-only setters for immutability.
-/// Validation of ranges (MaxInlineComments 1–50, MaxRetries 0–5) is performed at usage time
-/// via Math.Clamp, not at deserialization time.
+/// Ranges (MaxInlineComments 1–50, MaxRetries 0–5) are [Range] attributes, checked when settings are saved;
+/// usage also clamps with Math.Clamp.
 /// </summary>
 [MessagePackObject]
 public sealed record InlineCommentSettings
@@ -29,6 +30,7 @@ public sealed record InlineCommentSettings
     /// Clamped at usage time via Math.Clamp.
     /// </summary>
     [Key(1)]
+    [Range(1, 50)]
     public int MaxInlineComments { get; init; } = 15;
 
     /// <summary>
@@ -38,6 +40,7 @@ public sealed record InlineCommentSettings
     /// NOTE: Each retry invokes an additional LLM API call per agent.
     /// </summary>
     [Key(2)]
+    [Range(0, 5)]
     public int MaxRetries { get; init; } = 1;
 
     /// <summary>

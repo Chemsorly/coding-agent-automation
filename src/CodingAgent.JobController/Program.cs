@@ -111,12 +111,13 @@ builder.Services.AddOpenTelemetry()
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         // The Job Controller owns the reconciliation loop — LogTerminalStatus is called from ReconciliationLoop.
-         // TODO: RecordLastPollEpoch, UpdateCredentialPoolMetrics, and RecordDispatchLatency have no live callers
-         // in this process (their original owner, DispatchService, was deleted in #2322). Consider removing
-         // these dead instruments from WorkDistributionTelemetry or moving RecordDispatchLatency docs to
-         // CodingAgent.Api/Dispatch/DispatchLifecycleService (its only remaining caller).
-         // Without this AddMeter, those measurements are taken but never exported.
+         // The Job Controller owns the reconciliation loop. ReconciliationLoop records
+         // workdistribution.timeout_execution_age_seconds, workdistribution.timeout_canary_violations,
+         // and workdistribution.agent_timeouts via factory-created instruments on this meter.
+         // RecordLastPollEpoch is owned by the Scheduler (WorkItemDispatchLoop); UpdateCredentialPoolMetrics
+         // and RecordDispatchLatency are owned by the API (WorkItemDispatchEndpoints / DispatchLifecycleService).
+         // Those instruments are not called in this process, but the meter registration must remain for
+         // the timeout/canary instruments above.
          .AddMeter(WorkDistributionTelemetry.MeterName)
          // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
          // are recorded via the pipeline library inside the Job Controller process.

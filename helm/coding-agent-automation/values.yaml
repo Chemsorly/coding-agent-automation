@@ -114,7 +114,6 @@ web:
     # relative asset and navigation URLs correctly under the proxy prefix.
     basePath: "./"
 
-
 # ── Secrets ──────────────────────────────────────────────────────────────────
 
 secrets:
@@ -397,7 +396,6 @@ api:
     # Allows Kubernetes to remove the pod from Service endpoints before connections are dropped.
     # Mirrors web.env.readinessDrainDelaySeconds. Must be < terminationGracePeriodSeconds - preStop.
     readinessDrainDelaySeconds: 15
-
 
 # ── Job Controller ────────────────────────────────────────────────────────────
 

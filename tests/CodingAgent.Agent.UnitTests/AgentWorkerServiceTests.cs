@@ -13,7 +13,7 @@ namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="AgentWorkerService"/>.
-/// Since AgentWorkerService depends on concrete classes (HubConnectionManager, LocalPipelineExecutor),
+/// Since AgentWorkerService depends on concrete classes (HubConnectionManager),
 /// we test constructor validation, public property defaults, and the service's behavioral contract
 /// through its observable state.
 /// </summary>
@@ -56,20 +56,8 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockLogger = new Mock<Serilog.ILogger>();
 
-        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
+        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionLifecycle");
-    }
-
-    [Fact]
-    public void Constructor_ThrowsOnNullExecutor()
-    {
-        var mockLogger = new Mock<Serilog.ILogger>();
-        var (_, slotManager, lifecycle, _) = TestAgentWorkerServiceFactory.CreateWithComponents();
-        var chatHandler = CreateChatHandler(lifecycle, slotManager, mockLogger.Object);
-
-        var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, null!, Mock.Of<IJobCompletionReporter>(), mockLogger.Object));
-        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Executor");
     }
 
     [Fact]
@@ -80,7 +68,7 @@ public class AgentWorkerServiceTests : IDisposable
         var chatHandler = CreateChatHandler(lifecycle, slotManager, logger);
 
         var act = () => new AgentWorkerService(
-            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, CreateMockExecutor(), Mock.Of<IJobCompletionReporter>(), null!));
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, chatHandler, null!));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
@@ -755,21 +743,6 @@ public class AgentWorkerServiceTests : IDisposable
             "test-agent",
             "test-api-key",
             logger.Object);
-    }
-
-    private static LocalPipelineExecutor CreateMockExecutor()
-    {
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockHttpClientFactory = new Mock<System.Net.Http.IHttpClientFactory>();
-        var mockQualityGateValidator = new Mock<Pipeline.Interfaces.IQualityGateValidator>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
-            mockOrchestrator.Object,
-            mockHttpClientFactory.Object,
-            new Pipeline.Models.PipelineConfiguration(),
-            mockQualityGateValidator.Object,
-            mockLogger.Object,
-            AgentIdentity: new Pipeline.Models.AgentId("test-agent")));
     }
 
     private static ChatJobExecutor CreateChatHandler(AgentConnectionLifecycle lifecycle, AgentJobSlotManager slotManager, Serilog.ILogger logger) =>

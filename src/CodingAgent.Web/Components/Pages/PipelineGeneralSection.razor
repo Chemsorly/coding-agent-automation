@@ -3,50 +3,43 @@
 
 <section class="settings-section">
     <h2>General</h2>
-    <p class="section-description">Global pipeline settings — retry limits, timeouts, and workspace configuration that apply to all runs.</p>
+    <p class="section-description">Global pipeline settings — retry limits, timeouts, commits and housekeeping that apply to all runs.</p>
     <div class="provider-form">
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxRetries)">
             <div class="label-with-hint">
                 <label>Max Retries</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum number of full pipeline retry attempts per run (analysis + implementation). Does not include infrastructure retries. Default: 3">?</span>
             </div>
-            <input type="number" @bind="_maxRetries" min="0" max="10" />
+            <input type="number" @bind="_maxRetries" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxRetries))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxRetries))" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.AgentTimeout)">
             <div class="label-with-hint">
                 <label>Agent Timeout (minutes)</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum time an agent can run before the pipeline forcibly terminates it. Default: 30 min">?</span>
+                <span class="form-hint-icon" aria-hidden="true" title="Limit for each agent call, and the job deadline: Kubernetes stops the job after this value plus 60 seconds. Default: 30 min">?</span>
             </div>
-            <input type="number" @bind="_agentTimeoutMinutes" min="1" />
+            <input type="number" @bind="_agentTimeoutMinutes" min="@SettingLimits.Min(nameof(PipelineConfiguration.AgentTimeout), SettingUnit.Minutes)" max="@SettingLimits.Max(nameof(PipelineConfiguration.AgentTimeout), SettingUnit.Minutes)" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxInfrastructureRetries)">
             <div class="label-with-hint">
                 <label>Max Infrastructure Retries</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Maximum retries for infrastructure CI failures (e.g. flaky runners, network issues). Does not consume the agent retry budget.">?</span>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum retries for infrastructure CI failures (e.g. flaky runners, network issues). Does not consume the agent retry budget. Default: 5">?</span>
             </div>
-            <input type="number" @bind="_maxInfrastructureRetries" min="0" max="10" />
+            <input type="number" @bind="_maxInfrastructureRetries" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxInfrastructureRetries))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxInfrastructureRetries))" />
         </div>
-        <div class="form-group">
-            <div class="label-with-hint">
-                <label>Failed Run Workspace Retention (days)</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Days to keep workspaces for failed/cancelled runs. 0 = delete immediately, -1 = keep forever">?</span>
-            </div>
-            <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
-        </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.HousekeepingConcurrencyLimit)">
             <div class="label-with-hint">
                 <label>Housekeeping Concurrency Limit</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Maximum number of PRs allowed in the 'update triggered, CI running' state per repository at once. Prevents CI runner starvation. Default: 1">?</span>
             </div>
-            <input type="number" @bind="_housekeepingConcurrencyLimit" min="1" max="20" />
+            <input type="number" @bind="_housekeepingConcurrencyLimit" min="@SettingLimits.Min(nameof(PipelineConfiguration.HousekeepingConcurrencyLimit))" max="@SettingLimits.Max(nameof(PipelineConfiguration.HousekeepingConcurrencyLimit))" />
             <span class="form-hint">Per-repository limit for automatic branch updates (spec 040). Can be overridden per template.</span>
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.HousekeepingBranchCleanupIntervalMinutes)">
             <div class="label-with-hint">
                 <label>Branch Cleanup Interval (minutes)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="How often the stale branch cleanup pass runs. The pass lists all agent branches and deletes those with no open PR and an inactive issue. Default: 60 minutes.">?</span>
             </div>
-            <input type="number" @bind="_branchCleanupIntervalMinutes" min="0" max="10080" />
+            <input type="number" @bind="_branchCleanupIntervalMinutes" min="@SettingLimits.Min(nameof(PipelineConfiguration.HousekeepingBranchCleanupIntervalMinutes))" max="@SettingLimits.Max(nameof(PipelineConfiguration.HousekeepingBranchCleanupIntervalMinutes))" />
             <span class="form-hint">Set to 0 to run every poll tick (not recommended for busy repos).</span>
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
@@ -55,53 +48,60 @@
         </div>
         @if (_showAdvanced)
         {
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.HousekeepingTriggerCooldownMinutes)">
             <div class="label-with-hint">
                 <label>Branch Update Trigger Cooldown (minutes)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Minimum time between consecutive branch-update triggers for the same PR. Prevents a single PR from monopolising the update slot when CI takes longer than one poll cycle. Default: 25 minutes.">?</span>
             </div>
-            <input type="number" @bind="_housekeepingTriggerCooldownMinutes" min="1" />
-            <span class="form-hint">Minimum cooldown per PR after a branch update is triggered. Must be at least 1 minute.</span>
+            <input type="number" @bind="_housekeepingTriggerCooldownMinutes" min="@SettingLimits.Min(nameof(PipelineConfiguration.HousekeepingTriggerCooldownMinutes))" max="@SettingLimits.Max(nameof(PipelineConfiguration.HousekeepingTriggerCooldownMinutes))" />
+            <span class="form-hint">Minimum cooldown per PR after a branch update is triggered.</span>
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.MaxAnalysisRetries)">
             <div class="label-with-hint">
                 <label>Max Analysis Retries</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Retry cap for the analysis phase specifically. 0 = no retry (fail on first failure). Default: 2">?</span>
             </div>
-            <input type="number" @bind="_maxAnalysisRetries" min="0" max="5" />
+            <input type="number" @bind="_maxAnalysisRetries" min="@SettingLimits.Min(nameof(PipelineConfiguration.MaxAnalysisRetries))" max="@SettingLimits.Max(nameof(PipelineConfiguration.MaxAnalysisRetries))" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.AnalysisCommitThreshold)">
+            <div class="label-with-hint">
+                <label>Analysis Refresh After Commits</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Number of commits on the default branch since the last analysis that triggers a fresh analysis. 0 = off. Default: 30">?</span>
+            </div>
+            <input type="number" @bind="_analysisCommitThreshold" min="@SettingLimits.Min(nameof(PipelineConfiguration.AnalysisCommitThreshold))" max="@SettingLimits.Max(nameof(PipelineConfiguration.AnalysisCommitThreshold))" />
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.StallWarningInterval)">
             <div class="label-with-hint">
                 <label>Stall Warning Interval (seconds)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="How long the agent can be silent before the stall monitor logs a warning. Resets after each occurrence. Default: 120s">?</span>
             </div>
-            <input type="number" @bind="_stallWarningIntervalSeconds" min="30" max="600" />
+            <input type="number" @bind="_stallWarningIntervalSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.StallWarningInterval), SettingUnit.Seconds)" max="@SettingLimits.Max(nameof(PipelineConfiguration.StallWarningInterval), SettingUnit.Seconds)" />
         </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.StallPollInterval)">
             <div class="label-with-hint">
                 <label>Stall Poll Interval (seconds)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="How often the stall monitor polls agent health status. Default: 30s">?</span>
             </div>
-            <input type="number" @bind="_stallPollIntervalSeconds" min="5" max="120" />
+            <input type="number" @bind="_stallPollIntervalSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.StallPollInterval), SettingUnit.Seconds)" max="@SettingLimits.Max(nameof(PipelineConfiguration.StallPollInterval), SettingUnit.Seconds)" />
         </div>
-        <div class="form-group form-checkbox">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.FeedbackTimeoutSeconds)">
+            <div class="label-with-hint">
+                <label>Feedback Timeout (seconds)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Limit for the agent call that collects feedback after a PR is opened or after the retries are used up. Increase for slow models or large repositories. Default: 60s">?</span>
+            </div>
+            <input type="number" @bind="_feedbackTimeoutSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.FeedbackTimeoutSeconds))" max="@SettingLimits.Max(nameof(PipelineConfiguration.FeedbackTimeoutSeconds))" />
+        </div>
+        <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.BaselineHealthCheckEnabled)">
             <label>
                 <input type="checkbox" @bind="_baselineHealthCheckEnabled" />
                 Baseline Health Check
             </label>
             <span class="form-hint">Run baseline build/environment check after branch creation and before analysis.</span>
         </div>
-        <div class="form-group">
-            <div class="label-with-hint">
-                <label>Workspace Base Directory</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Base path where agent workspaces are created. Default: ./workspaces">?</span>
-            </div>
-            <input type="text" @bind="_workspaceBaseDirectory" />
-        </div>
-        <div class="form-group">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.BlacklistedPaths)">
             <div class="label-with-hint">
                 <label>Blacklisted Paths</label>
-                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated paths that are always unstaged before commit. Prevents agent from committing config/metadata files.">?</span>
+                <span class="form-hint-icon" aria-hidden="true" title="Comma-separated paths that are always unstaged before commit. Prevents agent from committing config/metadata files. .agent and .brain are always excluded.">?</span>
             </div>
             <input type="text" @bind="_blacklistedPathsText" />
             <span class="form-hint">Comma-separated (e.g. .kiro,.github,.brain)</span>
@@ -121,11 +121,11 @@
     private int _maxAnalysisRetries = 2;
     private int _agentTimeoutMinutes = 30;
     private int _maxInfrastructureRetries = 5;
-    private int _failedWorkspaceRetentionDays = 7;
+    private int _analysisCommitThreshold = PipelineConstants.DefaultAnalysisCommitThreshold;
     private int _stallWarningIntervalSeconds = 120;
     private int _stallPollIntervalSeconds = 30;
+    private int _feedbackTimeoutSeconds = 60;
     private bool _baselineHealthCheckEnabled = true;
-    private string _workspaceBaseDirectory = "./workspaces";
     private string _blacklistedPathsText = ".kiro,.github,.brain";
     private bool _showAdvanced;
     private int _housekeepingConcurrencyLimit = 1;
@@ -139,11 +139,11 @@
         _maxAnalysisRetries = config.MaxAnalysisRetries;
         _agentTimeoutMinutes = (int)config.AgentTimeout.TotalMinutes;
         _maxInfrastructureRetries = config.MaxInfrastructureRetries;
-        _failedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays;
+        _analysisCommitThreshold = config.AnalysisCommitThreshold;
         _stallWarningIntervalSeconds = (int)config.StallWarningInterval.TotalSeconds;
         _stallPollIntervalSeconds = (int)config.StallPollInterval.TotalSeconds;
+        _feedbackTimeoutSeconds = config.FeedbackTimeoutSeconds;
         _baselineHealthCheckEnabled = config.BaselineHealthCheckEnabled;
-        _workspaceBaseDirectory = config.WorkspaceBaseDirectory;
         _blacklistedPathsText = string.Join(",", config.BlacklistedPaths);
         _housekeepingConcurrencyLimit = config.HousekeepingConcurrencyLimit;
         _branchCleanupIntervalMinutes = config.HousekeepingBranchCleanupIntervalMinutes;
@@ -165,15 +165,15 @@
                     MaxAnalysisRetries = _maxAnalysisRetries,
                     AgentTimeout = TimeSpan.FromMinutes(_agentTimeoutMinutes),
                     MaxInfrastructureRetries = _maxInfrastructureRetries,
-                    FailedWorkspaceRetentionDays = _failedWorkspaceRetentionDays,
+                    AnalysisCommitThreshold = _analysisCommitThreshold,
                     StallWarningInterval = TimeSpan.FromSeconds(_stallWarningIntervalSeconds),
                     StallPollInterval = TimeSpan.FromSeconds(_stallPollIntervalSeconds),
+                    FeedbackTimeoutSeconds = _feedbackTimeoutSeconds,
                     BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
-                    WorkspaceBaseDirectory = _workspaceBaseDirectory,
                     BlacklistedPaths = blacklistedPaths,
-                    HousekeepingConcurrencyLimit = Math.Max(1, _housekeepingConcurrencyLimit),
-                    HousekeepingBranchCleanupIntervalMinutes = Math.Max(0, _branchCleanupIntervalMinutes),
-                    HousekeepingTriggerCooldownMinutes = Math.Max(1, _housekeepingTriggerCooldownMinutes)
+                    HousekeepingConcurrencyLimit = _housekeepingConcurrencyLimit,
+                    HousekeepingBranchCleanupIntervalMinutes = _branchCleanupIntervalMinutes,
+                    HousekeepingTriggerCooldownMinutes = _housekeepingTriggerCooldownMinutes
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("General settings saved.", false));

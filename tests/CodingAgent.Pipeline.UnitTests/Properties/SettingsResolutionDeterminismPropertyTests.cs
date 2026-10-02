@@ -173,8 +173,6 @@ public class SettingsResolutionDeterminismPropertyTests
                 result.CodeReview.MaxIterations.Should().Be(project.CodeReview.MaxIterations.Value);
             if (project.CodeReview.FixPrompt is not null)
                 result.CodeReview.FixPrompt.Should().Be(project.CodeReview.FixPrompt);
-            if (project.CodeReview.ReviewIsolation.HasValue)
-                result.CodeReview.ReviewIsolation.Should().Be(project.CodeReview.ReviewIsolation.Value);
         }
         if (project.BaselineHealthCheckEnabled.HasValue)
             result.BaselineHealthCheckEnabled.Should().Be(project.BaselineHealthCheckEnabled.Value);
@@ -255,12 +253,10 @@ public class SettingsResolutionArbitraries
         // Add occasional non-null InlineCommentOverrides to improve coverage.
         from maxIterations in Gen.Elements<int?>(null, 1, 2, 3, 5)
         from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Apply corrections")
-        from isolation in Gen.Elements<ReviewIsolation?>(null, ReviewIsolation.Isolated)
         select new CodeReviewOverrides
         {
             MaxIterations = maxIterations,
-            FixPrompt = fixPrompt,
-            ReviewIsolation = isolation
+            FixPrompt = fixPrompt
         };
 
     private static Gen<CodeReviewConfiguration> GenCodeReview() =>
@@ -354,11 +350,6 @@ public class SettingsResolutionArbitraries
         from maxInfraRetries in Gen.Elements<int?>(null, 1, 3)
         from stallWarningInterval in Gen.Elements<TimeSpan?>(null, TimeSpan.FromMinutes(5))
         from maxDecompSubIssues in Gen.Elements<int?>(null, 5, 10, 15)
-        // TODO: MinIssueSlots was never generated here (pre-existing gap) and was removed from
-        // PipelineProject in issue #3150. The property tests therefore have no coverage confirming
-        // that the global PipelineConfiguration.MinIssueSlots value still passes through
-        // ApplyProjectOverrides unchanged after [ProjectOverridable] was removed from that field.
-        // Add a targeted property test or unit test to close this gap.
         from maxOpenIssues in Gen.Elements<int?>(null, 25, 50)
         from maxRefactoringProposals in Gen.Elements<int?>(null, 2, 5)
         from refactoringReviewEnabled in Gen.Elements<bool?>(null, true, false)

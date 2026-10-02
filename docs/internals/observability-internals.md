@@ -9,9 +9,8 @@ These metrics are primarily useful for pipeline developers debugging infrastruct
 | Metric | Type | Description |
 |--------|------|-------------|
 | `token_vending.failures` | Counter | Token vending operation failures |
-| `token_vending.duration` | Histogram | Duration of token vending operations |
-| `agent.heartbeat.failures` | Counter | Agent heartbeat send failures |
-| `agent.reconnections` | Counter | Agent reconnection events |
+| `agent.heartbeat.failures` | Counter | Agent heartbeat send failures (API-side) |
+| `agent.reconnections` | Counter | Agent reconnection events (API-side) |
 
 ## Internal Trace Spans
 
@@ -72,7 +71,13 @@ Data collected includes: page load timing, Blazor circuit errors, unhandled JS e
 
 ## Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgent.Pipeline`, namespace `CodingAgent.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. The instruments are fed by `DispatchService` and `ReconciliationService` in the **Job Controller** (`service.name=coding-agent-jobcontroller`), and `workitems_by_status` is fed by `WorkItemCountsService` in the **Scheduler** (`service.name=coding-agent-scheduler`), which polls `GET /api/work-items/counts-by-status`.
+The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgent.Pipeline`, namespace `CodingAgent.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. Ownership by process (issue #2980):
+
+- **API** (`service.name=coding-agent-api` or `coding-agent-web`): `workdistribution.dispatch_latency_seconds`, `workdistribution.credential_pool_available`, `workdistribution.credential_pool_claimed`, `workdistribution.dispatch.attempts`, `workdistribution.workitems_terminated` — recorded when the API dispatches work items or transitions them to terminal states.
+- **Scheduler** (`service.name=coding-agent-scheduler`): `workdistribution.dispatcher_last_poll_epoch_seconds`, `workdistribution.dispatcher_polls` (via `WorkItemDispatchLoop`), and `workdistribution.workitems_by_status` (via `WorkItemCountsService`). The `workitems_by_status` gauge is only emitted by the leader Scheduler replica.
+- **Job Controller** (`service.name=coding-agent-jobcontroller`): `workdistribution.timeout_execution_age_seconds`, `workdistribution.timeout_canary_violations`, `workdistribution.agent_timeouts` — recorded by `ReconciliationLoop` when enforcing session timeouts.
+
+The credential pool and dispatcher gauges use owner-only empty-measurement guards: non-owning processes emit no measurement, preventing spurious 0 series that would corrupt the `CredentialPoolExhausted` and `DispatcherStalled` Prometheus alerts.
 
 See [Observability — Work Distribution Metrics](../observability.md#work-distribution-metrics) for the full metric table.
 

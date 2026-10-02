@@ -2,7 +2,7 @@
 @using static CodingAgent.Web.Components.Pages.TemplateTableSection
 
 <div class="provider-form" style="margin-top: 12px;">
-    <h3>Add Pipeline Job Template</h3>
+    <h3>@(IsEdit ? "Edit Pipeline Job Template" : "Add Pipeline Job Template")</h3>
 
     @if (!string.IsNullOrEmpty(FormError))
     {
@@ -13,18 +13,25 @@
         <label>Name *</label>
         <input type="text" @bind="Form.Name" placeholder="e.g. DotNet Main Repo" />
     </div>
-    <div class="form-group">
-        <label>Project</label>
-        <select @bind="Form.ProjectId">
-            @foreach (var p in Projects)
-            {
-                <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "[Epic]" : "")</option>
-            }
-        </select>
-    </div>
+    @if (!IsEdit)
+    {
+        <div class="form-group">
+            <label>Project</label>
+            <select @bind="Form.ProjectId">
+                @foreach (var p in Projects)
+                {
+                    <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "[Epic]" : "")</option>
+                }
+            </select>
+        </div>
+    }
+    else
+    {
+        <p class="form-hint">A template keeps its issue tracker and repository; to use another one, add a new template. Use "Move to…" to change its project.</p>
+    }
     <div class="form-group">
         <label>Issue Provider *</label>
-        <select @bind="Form.IssueProviderId">
+        <select @bind="Form.IssueProviderId" disabled="@IsEdit">
             <option value="">-- Select --</option>
             @foreach (var p in IssueProviders)
             {
@@ -34,7 +41,7 @@
     </div>
     <div class="form-group">
         <label>Repo Provider *</label>
-        <select @bind="Form.RepoProviderId">
+        <select @bind="Form.RepoProviderId" disabled="@IsEdit">
             <option value="">-- Select --</option>
             @foreach (var p in RepoProviders)
             {
@@ -114,7 +121,7 @@
                 <label>Housekeeping Concurrency Limit</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Max PRs allowed in 'update triggered, CI running' state per repository at once. Leave blank to inherit global setting.">?</span>
             </div>
-            <input type="number" @bind="Form.HousekeepingConcurrencyLimit" min="1" placeholder="Inherited from global" />
+            <input type="number" @bind="Form.HousekeepingConcurrencyLimit" min="@SettingLimits.Min(nameof(PipelineConfiguration.HousekeepingConcurrencyLimit))" max="@SettingLimits.Max(nameof(PipelineConfiguration.HousekeepingConcurrencyLimit))" placeholder="Inherited from global" />
             <span class="form-hint">Leave blank to inherit the global setting.</span>
         </div>
     }
@@ -142,4 +149,6 @@
     [Parameter] public LabelPreviewResult LabelPreview { get; set; } = new();
     [Parameter] public EventCallback OnSave { get; set; }
     [Parameter] public EventCallback OnCancel { get; set; }
+
+    private bool IsEdit => Form.EditingTemplateId is not null;
 }

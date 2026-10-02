@@ -101,7 +101,9 @@ public sealed class DecompositionStep : IPipelineStep
                     UseResume = true
                 },
                 run, config, "Decomposition agent", context.Callbacks.NotifyChange, logger, ct,
-                line => context.Callbacks.EmitOutputLine(line));
+                line => context.Callbacks.EmitOutputLine(line),
+                stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                phase: "decomposition");
         }
         catch (OperationCanceledException) when (context.Cts?.IsCancellationRequested == true)
         {

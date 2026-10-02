@@ -44,7 +44,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
             StallWarningInterval = TimeSpan.FromMinutes(5),
             StallPollInterval = TimeSpan.FromSeconds(15),
             BlacklistedPaths = new[] { ".agent", ".github", ".secret" },
-            FailedWorkspaceRetentionDays = 14,
             BrainReadOnly = true,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
             ClosedLoopMaxRunsPerCycle = 5,
@@ -67,7 +66,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         loaded.StallWarningInterval.Should().Be(original.StallWarningInterval);
         loaded.StallPollInterval.Should().Be(original.StallPollInterval);
         loaded.BlacklistedPaths.Should().BeEquivalentTo(original.BlacklistedPaths);
-        loaded.FailedWorkspaceRetentionDays.Should().Be(original.FailedWorkspaceRetentionDays);
         loaded.BrainReadOnly.Should().Be(original.BrainReadOnly);
         loaded.ClosedLoopPollInterval.Should().Be(original.ClosedLoopPollInterval);
         loaded.ClosedLoopMaxRunsPerCycle.Should().Be(original.ClosedLoopMaxRunsPerCycle);
@@ -87,7 +85,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             CodeReview = new CodeReviewConfiguration
             {
                 FixPrompt = null
-            },
+            }
         };
 
         await ConfigStore.SavePipelineConfigAsync(original, CancellationToken.None);
@@ -321,65 +319,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
         MockAgentProvider.Verify(p => p.ExecuteAsync(
             It.Is<AgentRequest>(r => r.Prompt.Contains("[CRITICAL]") && r.Prompt.Contains("Fix only") && r.UseResume),
             It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task WorkspaceCleanup_RealFileSystem()
-    {
-        var expiredRunId = Guid.NewGuid().ToString();
-        var recentRunId = Guid.NewGuid().ToString();
-
-        // Create workspace directories
-        Directory.CreateDirectory(Path.Combine(WorkspaceBase, expiredRunId));
-        Directory.CreateDirectory(Path.Combine(WorkspaceBase, recentRunId));
-
-        // Persist run summaries directly to the runs directory
-        var jsonOptions = new System.Text.Json.JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase,
-            Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-        };
-
-        File.WriteAllText(Path.Combine(RunsDir, $"{expiredRunId}.json"),
-            System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
-            {
-                RunId = expiredRunId,
-                IssueIdentifier = "1",
-                IssueTitle = "Expired run",
-                FinalStep = PipelineStep.Failed,
-                StartedAt = DateTime.UtcNow.AddDays(-30),
-                CompletedAt = DateTime.UtcNow.AddDays(-30)
-            }, jsonOptions));
-
-        File.WriteAllText(Path.Combine(RunsDir, $"{recentRunId}.json"),
-            System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
-            {
-                RunId = recentRunId,
-                IssueIdentifier = "2",
-                IssueTitle = "Recent run",
-                FinalStep = PipelineStep.Failed,
-                StartedAt = DateTime.UtcNow.AddDays(-1),
-                CompletedAt = DateTime.UtcNow.AddDays(-1)
-            }, jsonOptions));
-
-        // Create service — its constructor loads run history, and RunAsync
-        // calls CleanupExpiredWorkspaces at the start
-        var config = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = WorkspaceBase,
-            FailedWorkspaceRetentionDays = 7
-        };
-        await using var service = await CreateServiceWithPersistedConfigAsync(config);
-
-        // Starting a pipeline triggers cleanup
-        await service.RunAsync(
-            "issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-
-        // Expired workspace (30 days old, retention = 7) should be deleted
-        Directory.Exists(Path.Combine(WorkspaceBase, expiredRunId)).Should().BeFalse();
-        // Recent workspace (1 day old, retention = 7) should be retained
-        Directory.Exists(Path.Combine(WorkspaceBase, recentRunId)).Should().BeTrue();
     }
 
     private static async Task WaitForFileAsync(string path, int timeoutMs = 2000)
