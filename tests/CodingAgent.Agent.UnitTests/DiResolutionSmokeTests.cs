@@ -333,8 +333,6 @@ public class DiResolutionSmokeTests
         services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
 
         // ── SignalR-mode: AgentWorkerService (not WorkItemHttpClient) ──
-        services.AddSingleton<IJobCompletionReporter>(sp =>
-            Mock.Of<IJobCompletionReporter>());
         services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
             sp.GetRequiredService<IHubConnectionManager>(),
             CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger),
@@ -362,8 +360,6 @@ public class DiResolutionSmokeTests
                 IsOpenCodeProvider: false,
                 IsChatMode: false,
                 Logger: Log.Logger)),
-            sp.GetRequiredService<IPipelineExecutor>(),
-            sp.GetRequiredService<IJobCompletionReporter>(),
             Log.Logger)));
 
         return services.BuildServiceProvider(new ServiceProviderOptions
