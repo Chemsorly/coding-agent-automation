@@ -53,6 +53,13 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
         PipelineTelemetry.QgcProcessTimeouts.Add(0);
         PipelineTelemetry.QgcProcessDuration.Record(0.0);
         PipelineTelemetry.StallWarnings.Add(0);
+        // TODO [WARNING]: StallKills and StallProcessDeaths are listed as deprecated in the docs
+        // (replaced by pipeline.run.agent_stalls) but have not been deleted from PipelineTelemetry.cs.
+        // If they are removed in a follow-up cleanup, these warm-up calls will silently become no-ops
+        // (emitting 0 on a non-existent counter produces no measurement), causing the
+        // NewQgcStallInstruments_AreOnPipelineTelemetryMeter assertion below to fail.
+        // When deleting StallKills/StallProcessDeaths from PipelineTelemetry.cs, also remove these
+        // warm-up lines and the corresponding assertions in that test.
         PipelineTelemetry.StallKills.Add(0);
         PipelineTelemetry.StallProcessDeaths.Add(0);
 
@@ -167,9 +174,9 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     }
 
     /// <summary>
-    /// The agent's Program.cs must register PipelineTelemetry.SourceName as a meter
-    /// with the OTLP exporter. This is the production wiring that enables quality gate
-    /// metrics to flow to Prometheus/Grafana from ephemeral worker pods.
+    /// After issue #2980, the agent's Program.cs must NOT register any WithMetrics block.
+    /// All metric recording was migrated to the API in #2967/#2974/#2978/#2979; agent pods
+    /// export traces and logs only. Verifies that the .WithMetrics() block was removed.
     /// </summary>
     [Fact]
     public void AgentProgramCs_RegistersPipelineTelemetryMeterWithOtlpExporter()
@@ -177,21 +184,15 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
         var agentProgramPath = FindSourceFile("src/CodingAgent.Agent/Program.cs");
         var sourceCode = File.ReadAllText(agentProgramPath);
 
-        sourceCode.Should().Contain($"AddMeter(PipelineTelemetry.SourceName)",
-            "The agent's Program.cs must call AddMeter(PipelineTelemetry.SourceName) in the " +
-            "WithMetrics() configuration block. Without this, the OTel SDK will not observe or " +
-            "export any quality_gate.* instruments even when OTLP_ENDPOINT is configured.");
+        // Issue #2980: agent pods no longer export metrics — .WithMetrics() must be absent
+        sourceCode.Should().NotContain("WithMetrics",
+            "After issue #2980, the agent's Program.cs must not register a metrics pipeline. " +
+            "All metric recording was migrated to the API in #2967/#2974/#2978/#2979. " +
+            "Agent pods export traces and logs only.");
 
-        sourceCode.Should().Contain("AddOtlpExporter",
-            "The agent's Program.cs must call AddOtlpExporter() in the WithMetrics() " +
-            "configuration block to push quality_gate.* metrics to the OTLP endpoint. " +
-            "Without OTLP export, ephemeral worker pods cannot deliver metrics to Prometheus.");
-
-        sourceCode.Should().Contain("MetricReaderTemporalityPreference.Cumulative",
-            "The OTLP exporter must use Cumulative temporality. The SDK defaults to Delta, " +
-            "which Prometheus/Grafana Cloud silently drops for histograms and counters. " +
-            "Cumulative is required for quality_gate_retries_total and quality_gate_evaluations_total " +
-            "to appear as monotonically increasing counters in Grafana.");
+        // Tracing must still be configured
+        sourceCode.Should().Contain("WithTracing",
+            "The agent's Program.cs must still register distributed tracing via WithTracing().");
     }
 
     /// <summary>

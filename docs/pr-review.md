@@ -184,11 +184,13 @@ Each `ReviewAgent` has:
 
 ### Default Configuration
 
-When no custom reviewers are configured, the system uses four built-in agents:
+When no custom reviewers are configured, the system uses two built-in configurations. **Default Reviewers** applies to every repository:
 - **Correctness** — Logical correctness, edge cases, error handling
-- **DotNetSpecialist** — .NET-specific patterns, performance, API usage
 - **SecurityReviewer** — Security vulnerabilities, injection risks, auth issues
 - **TestQualityReviewer** — Test coverage, test quality, assertion completeness
+
+**.NET Reviewers** applies to repositories labelled `dotnet`:
+- **DotNetSpecialist** — .NET-specific patterns, performance, API usage
 
 Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset collection to defaults" (asks for confirmation).
 
