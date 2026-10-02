@@ -881,45 +881,81 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StallMonitor_WarningResetsAfterEachWarning()
     {
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration
-            {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
-                StallWarningInterval = TimeSpan.FromMilliseconds(100),
-                StallPollInterval = TimeSpan.FromMilliseconds(200),
-                AgentTimeout = TimeSpan.FromHours(1),
-                AnalysisReviewEnabled = false
-            });
+        // This test verifies that HandleSilenceWarning resets lastWarnTime after each emission,
+        // so a second warning fires after another StallWarningInterval elapses.
+        // Uses FakeTimeProvider + direct AgentStallMonitor call — deterministic, no wall-clock dependency.
+        var fakeTime = new Microsoft.Extensions.Time.Testing.FakeTimeProvider();
 
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = Path.GetTempPath(),
+            StallWarningInterval = TimeSpan.FromMinutes(2),
+            StallPollInterval = TimeSpan.FromMinutes(1),
+            AgentTimeout = TimeSpan.FromHours(1),
+            AnalysisReviewEnabled = false
+        };
+
+        var run = new PipelineRun
+        {
+            RunId = "test-stall-reset",
+            IssueIdentifier = "42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        };
+
+        // Agent has been silent for 10 minutes relative to fake "now" — always above StallWarningInterval
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
-            .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 12345, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow.AddMinutes(-10) });
+            .Returns(new AgentHealthStatus
+            {
+                IsExecuting = true,
+                ProcessId = 12345,
+                IsProcessAlive = true,
+                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-10)
+            });
 
         var agentTcs = new TaskCompletionSource<AgentResult>();
-        var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
-            {
-                callCount++;
-                if (callCount <= 1)
-                {
-                    WriteAnalysisFile(req.WorkspacePath, new string('x', 200));
-                    WriteAssessmentFile(req.WorkspacePath, "ready");
-                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-                }
-                return agentTcs.Task;
-            });
+            .Returns(agentTcs.Task);
 
-        var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while ((_service.ActiveRun?.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("no output for")).Count() ?? 0) < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        var monitorTask = AgentStallMonitor.ExecuteWithMonitoringAsync(
+            _mockAgentProvider.Object,
+            new AgentRequest { Prompt = "test", WorkspacePath = Path.GetTempPath() },
+            run, config, "Code generation agent", null, _mockLogger.Object,
+            CancellationToken.None, timeProvider: fakeTime);
+
+        // Let the monitor loop start and register its first Delay
+        await Task.Delay(500);
+
+        // First warning: advance past StallPollInterval + StallWarningInterval
+        // lastWarnTime starts at fakeTime.GetUtcNow(), so we need timeSinceLastWarn >= 2m
+        fakeTime.Advance(TimeSpan.FromMinutes(2));
+        var deadline = DateTime.UtcNow.AddSeconds(15);
+        while (run.ChatHistory.Count(c => c.Role == ChatRole.System && c.Content.Contains("no output for")) < 1
+               && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+            if (run.ChatHistory.Count(c => c.Role == ChatRole.System && c.Content.Contains("no output for")) < 1)
+                fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
+
+        // Second warning: advance another full StallWarningInterval (lastWarnTime was reset)
+        fakeTime.Advance(TimeSpan.FromMinutes(2));
+        deadline = DateTime.UtcNow.AddSeconds(15);
+        while (run.ChatHistory.Count(c => c.Role == ChatRole.System && c.Content.Contains("no output for")) < 2
+               && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+            if (run.ChatHistory.Count(c => c.Role == ChatRole.System && c.Content.Contains("no output for")) < 2)
+                fakeTime.Advance(TimeSpan.FromMinutes(1));
+        }
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        await pipelineTask;
+        await monitorTask;
 
-        var run = _service.ActiveRun!;
         run.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("no output for"))
-            .Should().HaveCountGreaterThanOrEqualTo(2);
+            .Should().HaveCountGreaterThanOrEqualTo(2,
+                "HandleSilenceWarning resets lastWarnTime after each warning so subsequent warnings fire after each StallWarningInterval");
     }
 
     // --- Provider validation ---
