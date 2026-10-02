@@ -16,7 +16,7 @@ namespace CodingAgent.Agent;
 /// Background service of a chat-mode agent pod (started without <c>--work-item-id</c>). It coordinates
 /// the agent lifecycle by composing
 /// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection),
-/// <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control), and
+/// <see cref="ChatSlotManager"/> (slot acquisition, concurrency control), and
 /// <see cref="ChatJobExecutor"/> (chat session and model-fetch handling).
 /// </summary>
 /// <remarks>
@@ -41,7 +41,7 @@ namespace CodingAgent.Agent;
 public sealed class AgentWorkerService : BackgroundService, IAgentService
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
-    private readonly AgentJobSlotManager _slotManager;
+    private readonly ChatSlotManager _slotManager;
     // S1450 suppressed: this field is used only in the constructor for event wiring, but it
     // must remain a field so tests can access the handler instance via reflection to verify
     // handler behavior in integration with the service's slot manager and lifecycle.
@@ -73,7 +73,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         // Wire business event handlers (unconditional)
         _connectionLifecycle.OnAssignChatPrompt += _chatJobHandler.HandleChatPromptAsync;
         _connectionLifecycle.OnCancelChat += _chatJobHandler.HandleCancelChatAsync;
-        _connectionLifecycle.OnCancelJob += HandleCancelJobAsync;
         _connectionLifecycle.OnFetchModels += _chatJobHandler.HandleFetchModelsAsync;
 
         if (isChatMode)
@@ -86,17 +85,17 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         }
     }
 
-    /// <summary>Whether the agent is currently executing a job.</summary>
-    public bool IsBusy => _slotManager.IsBusy;
+    /// <summary>Whether the agent is currently executing a job. Always false in chat mode.</summary>
+    public bool IsBusy => false;
 
-    /// <summary>The current pipeline step being executed, or null if idle.</summary>
-    public PipelineStep? CurrentStep => _slotManager.CurrentStep;
+    /// <summary>The current pipeline step being executed. Always null in chat mode.</summary>
+    public PipelineStep? CurrentStep => null;
 
     /// <summary>Whether the hub connection is active.</summary>
     public bool IsConnected => _connectionLifecycle.IsConnected;
 
     /// <inheritdoc/>
-    public void CancelCurrentJob() => _slotManager.CancelCurrentJob();
+    public void CancelCurrentJob() { /* no-op: chat pods never hold a pipeline job */ }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -116,35 +115,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         }
     }
 
-    private Task HandleCancelJobAsync(string jobId)
-    {
-        if (!_slotManager.CancelJobIfMatch(jobId))
-        {
-            _logger.Warning("Received CancelJob for {JobId} but active job is {ActiveJobId}",
-                jobId, _slotManager.ActiveJobId);
-            return Task.CompletedTask;
-        }
-
-        _logger.Information("Cancelling job {JobId}", jobId);
-        return Task.CompletedTask;
-    }
-
     private async Task ShutdownAsync()
     {
         _logger.Information("Agent shutting down...");
-
-        // Cancel active job if running
-        if (_slotManager.ActiveJobId is not null)
-        {
-            _logger.Information("Cancelling active job {JobId} due to shutdown", _slotManager.ActiveJobId);
-            _slotManager.CancelCurrentJob();
-            await GracefulShutdownHelper.CancelAndWaitAsync(
-                null,
-                _slotManager.ActiveJobTask,
-                TimeSpan.FromSeconds(5),
-                _logger,
-                "Active job shutdown");
-        }
 
         // Cancel active chat session if running
         if (_slotManager.ActiveChatSessionId is not null)

@@ -56,7 +56,7 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockLogger = new Mock<Serilog.ILogger>();
 
-        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), null!, mockLogger.Object));
+        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new ChatSlotManager(), null!, mockLogger.Object));
         act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionLifecycle");
     }
 
@@ -154,90 +154,6 @@ public class AgentWorkerServiceTests : IDisposable
         completed.Should().Be(executeTask, "service should stop when cancelled");
     }
 
-    // ── Requirement 4.3: Cancel Job for Active Job ──────────────────────
-
-    [Fact]
-    public async Task HandleCancelJob_ActiveJob_CancelsTokenSource()
-    {
-        // Arrange
-        var service = CreateService();
-        var cts = new CancellationTokenSource();
-
-        // Set up internal state to simulate an active job
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-123");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-        SetPrivateField(GetSlotManager(service), "_jobCts", cts);
-
-        // Act
-        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
-        var task = (Task)handler.Invoke(service, ["job-123"])!;
-        await task;
-
-        // Assert
-        cts.IsCancellationRequested.Should().BeTrue("cancel handler should cancel the token source");
-    }
-
-    // ── Requirement 4.4: Cancel Job for Non-Active Job ──────────────────
-
-    [Fact]
-    public async Task HandleCancelJob_NonActiveJob_TakesNoAction()
-    {
-        // Arrange
-        var service = CreateService();
-        var cts = new CancellationTokenSource();
-
-        // Set up internal state with a different active job
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-123");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-        SetPrivateField(GetSlotManager(service), "_jobCts", cts);
-
-        // Act — cancel a different job ID
-        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
-        var task = (Task)handler.Invoke(service, ["different-job"])!;
-        await task;
-
-        // Assert — the CTS should NOT be cancelled
-        cts.IsCancellationRequested.Should().BeFalse("cancel for non-active job should be a no-op");
-    }
-
-    [Fact]
-    public async Task HandleCancelJob_NoActiveJob_TakesNoAction()
-    {
-        // Arrange
-        var service = CreateService();
-        // _activeJobId is null by default
-
-        // Act
-        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
-        var task = (Task)handler.Invoke(service, ["any-job"])!;
-        await task;
-
-        // Assert — should complete without throwing
-        service.IsBusy.Should().BeFalse();
-    }
-
-    // ── Requirement 4.4b: Cancel with disposed CTS does not throw ───────
-
-    [Fact]
-    public async Task HandleCancelJob_DisposedCts_DoesNotThrow()
-    {
-        // Arrange
-        var service = CreateService();
-        var cts = new CancellationTokenSource();
-        cts.Dispose();
-
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-123");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-        SetPrivateField(GetSlotManager(service), "_jobCts", cts);
-
-        // Act — should not throw ObjectDisposedException
-        var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
-        var task = (Task)handler.Invoke(service, ["job-123"])!;
-        await task;
-
-        Assert.True(task.IsCompletedSuccessfully, "task should complete successfully without throwing");
-    }
-
     [Fact]
     public async Task HandleCancelChat_DisposedCts_DoesNotThrow()
     {
@@ -274,31 +190,6 @@ public class AgentWorkerServiceTests : IDisposable
         // Assert — should complete without throwing; connection was never started
         // so StopAsync on a disconnected connection is a graceful no-op
         service.IsConnected.Should().BeFalse();
-    }
-
-    [Fact]
-    public async Task ShutdownAsync_WithActiveJob_CancelsJobBeforeStopping()
-    {
-        // Arrange
-        var service = CreateService();
-        var cts = new CancellationTokenSource();
-        var completionSource = new TaskCompletionSource();
-
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"active-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-        SetPrivateField(GetSlotManager(service), "_jobCts", cts);
-        SetPrivateField(GetSlotManager(service), "_activeJobTask", completionSource.Task);
-
-        // Complete the task so shutdown doesn't wait forever
-        completionSource.SetResult();
-
-        // Act
-        var shutdownMethod = GetPrivateMethod(service, "ShutdownAsync");
-        var task = (Task)shutdownMethod.Invoke(service, [])!;
-        await task;
-
-        // Assert — the job CTS should have been cancelled during shutdown
-        cts.IsCancellationRequested.Should().BeTrue("shutdown should cancel active job");
     }
 
     // ── Requirement 4.6: Chat Prompt Handler ────────────────────────────
@@ -372,12 +263,11 @@ public class AgentWorkerServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task HandleChatPrompt_WhenBusy_RejectsPrompt()
+    public async Task HandleChatPrompt_WhenChatAlreadyActive_RejectsPrompt()
     {
-        // Arrange
+        // Arrange — a chat session is already active
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"busy-job");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
+        SetPrivateField(GetSlotManager(service), "_activeChatSessionId", "existing-session");
 
         var message = new ChatPromptMessage
         {
@@ -389,9 +279,9 @@ public class AgentWorkerServiceTests : IDisposable
         var chatJobHandler = GetChatJobHandler(service);
         await chatJobHandler.HandleChatPromptAsync(message);
 
-        // Assert — chat session should not be set (rejected)
+        // Assert — existing session remains (new one rejected)
         var activeChatSession = GetPrivateField<string?>(GetSlotManager(service), "_activeChatSessionId");
-        activeChatSession.Should().BeNull("agent is busy with a job, chat should be rejected");
+        activeChatSession.Should().Be("existing-session", "slot already held — new chat should be rejected");
     }
 
     // ── Shutdown Cancellation Label Tests ──────────────────────────────
@@ -410,14 +300,6 @@ public class AgentWorkerServiceTests : IDisposable
         //
         // This test exercises AgentJobRunner.ExecuteAsync directly with a delegate that
         // throws OperationCanceledException, verifying the OCE catch path sets FinalLabel.
-        //
-        // TODO [WARNING]: This test no longer exercises the wiring between RunJobTaskAsync and
-        // AgentJobRunner.ExecuteAsync. It verifies that AgentJobRunner's OCE catch path sets
-        // FinalLabel = "agent:cancelled", but it does not verify that RunJobTaskAsync passes
-        // cancelledLabel: AgentLabels.Cancelled when calling AgentJobRunner.ExecuteAsync. If
-        // RunJobTaskAsync were modified to pass a different cancelledLabel (or to call a different
-        // runner method), this test would continue to pass while the regression existed. A
-        // complementary test that exercises RunJobTaskAsync end-to-end would close this gap.
 
         // Arrange
         var message = CreateTestJobAssignment("cancel-test-job");
@@ -448,27 +330,6 @@ public class AgentWorkerServiceTests : IDisposable
     }
 
     // ── Bug Fix Characterization Tests ─────────────────────────────────
-
-    [Fact]
-    public void HandleAssignJob_SetsJobCtsInsideLock()
-    {
-        // Verify that after setting _activeJobId, _jobCts is also set atomically
-        // (both inside the lock). We simulate by checking that after the lock block
-        // sets _activeJobId, _jobCts is non-null — which means cancel can't miss it.
-        var service = CreateService();
-
-        // Use reflection to invoke the handler synchronously up to the lock
-        // Since we can't intercept mid-lock, we verify the invariant:
-        // if _activeJobId is set, _jobCts must also be set.
-        // Set both as the fixed code does:
-        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-1");
-        SetPrivateField(GetSlotManager(service), "_isBusy", true);
-        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
-
-        // Now cancel should work
-        var cts = GetPrivateField<CancellationTokenSource?>(GetSlotManager(service), "_jobCts");
-        cts.Should().NotBeNull("_jobCts must be set when _activeJobId is set (both inside lock)");
-    }
 
     [Fact]
     public async Task HandleCancelChat_WaitsForChatTaskCompletion_BeforeSendingAgentReady()
@@ -655,98 +516,7 @@ public class AgentWorkerServiceTests : IDisposable
         callOrder[0].useResume.Should().BeTrue();
     }
 
-    // ── Re-registration extended retry ──────────────────────────────────
-
-    [Fact]
-    public async Task HandleReconnectedAsync_AllRetriesFail_CallsStopApplication()
-    {
-        // Arrange
-        var mockLifetime = new Mock<IHostApplicationLifetime>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-
-        var hubManager = CreateTestHubManager();
-        var hubManagerFactory = CreateTestHubManagerFactory();
-        var buffer = new CriticalMessageBuffer();
-        var signalRPipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object);
-        var signalRReporter = new SignalRCompletionReporter(hubManager, signalRPipeline, buffer, mockLogger.Object);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifecycle = new AgentConnectionLifecycle(
-            hubManager, hubManagerFactory, signalRReporter, slotManager,
-            new AgentId("test-agent"),
-            mockLifetime.Object, mockLogger.Object);
-
-        // Override ExtendedRetryDelay to zero for fast test execution
-        lifecycle.ExtendedRetryDelay = TimeSpan.Zero;
-
-        // Act — invoke HandleReconnectedAsync; hub is not connected so all calls throw
-        var method = typeof(AgentConnectionLifecycle).GetMethod("HandleReconnectedAsync",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Method 'HandleReconnectedAsync' not found");
-        var task = (Task)method.Invoke(lifecycle, ["fake-connection-id"])!;
-        await task;
-
-        // Assert
-        mockLifetime.Verify(l => l.StopApplication(), Times.Once);
-    }
-
-    [Fact]
-    public async Task HandleReconnectedAsync_ExtendedRetry_ExitsCleanlyOnCancellation()
-    {
-        // Arrange — wire ApplicationStopping to a CancellationTokenSource we control
-        // TODO: Wrap cts in a using declaration to follow IDisposable best practices and
-        // avoid holding the underlying OS timer handle longer than necessary.
-        var cts = new CancellationTokenSource();
-        var mockLifetime = new Mock<IHostApplicationLifetime>();
-        mockLifetime.Setup(l => l.ApplicationStopping).Returns(cts.Token);
-        var mockLogger = new Mock<Serilog.ILogger>();
-
-        var hubManager = CreateTestHubManager();
-        var hubManagerFactory = CreateTestHubManagerFactory();
-        var buffer = new CriticalMessageBuffer();
-        var signalRPipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object);
-        var signalRReporter = new SignalRCompletionReporter(hubManager, signalRPipeline, buffer, mockLogger.Object);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        var lifecycle = new AgentConnectionLifecycle(
-            hubManager, hubManagerFactory, signalRReporter, slotManager,
-            new AgentId("test-agent"),
-            mockLifetime.Object, mockLogger.Object);
-
-        // Use a non-zero delay so the Task.Delay actually awaits (and can be cancelled)
-        lifecycle.ExtendedRetryDelay = TimeSpan.FromSeconds(30);
-
-        // Act — invoke HandleReconnectedAsync; hub is not connected so initial registration
-        // fails and we enter the extended retry loop. Cancel shortly after to simulate shutdown.
-        var method = typeof(AgentConnectionLifecycle).GetMethod("HandleReconnectedAsync",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Method 'HandleReconnectedAsync' not found");
-        var task = (Task)method.Invoke(lifecycle, ["fake-connection-id"])!;
-
-        // Cancel after a brief delay to allow the method to enter the extended retry loop
-        // TODO: CancelAfter(100ms) fires before the initial resilience pipeline exhausts its retries,
-        // so the token is pre-cancelled when the extended loop starts. This validates clean exit on a
-        // pre-cancelled token but does NOT exercise cancellation arriving mid-delay in the loop.
-        // Consider using a longer delay or a TaskCompletionSource-based gate to test mid-delay cancellation.
-        cts.CancelAfter(TimeSpan.FromMilliseconds(100));
-        await task;
-
-        // Assert — method should exit cleanly without calling StopApplication and without throwing
-        mockLifetime.Verify(l => l.StopApplication(), Times.Never);
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
-
-    private static HubConnectionManager CreateTestHubManager()
-    {
-        var logger = new Mock<Serilog.ILogger>();
-        return new HubConnectionManager(
-            "http://localhost:9999",
-            "test-agent",
-            "test-api-key",
-            logger.Object);
-    }
-
-    private static ChatJobExecutor CreateChatHandler(AgentConnectionLifecycle lifecycle, AgentJobSlotManager slotManager, Serilog.ILogger logger) =>
-        TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, logger: logger);
 
     private static ChatJobExecutor GetChatJobHandler(AgentWorkerService service)
     {
@@ -820,19 +590,14 @@ public class AgentWorkerServiceTests : IDisposable
         return (T?)field.GetValue(obj);
     }
 
-    private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
+    private static ChatSlotManager GetSlotManager(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_slotManager",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_slotManager' not found");
-        return (AgentJobSlotManager)field.GetValue(service)!;
+        return (ChatSlotManager)field.GetValue(service)!;
     }
 
-    private static AgentConnectionLifecycle GetLifecycle(AgentWorkerService service)
-    {
-        var field = typeof(AgentWorkerService).GetField("_connectionLifecycle",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Field '_connectionLifecycle' not found");
-        return (AgentConnectionLifecycle)field.GetValue(service)!;
-    }
+    private static ChatJobExecutor CreateChatHandler(AgentConnectionLifecycle lifecycle, ChatSlotManager slotManager, Serilog.ILogger logger) =>
+        TestAgentWorkerServiceFactory.CreateChatJobExecutor(lifecycle, slotManager, logger: logger);
 }

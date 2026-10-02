@@ -4,11 +4,7 @@ namespace CodingAgent.Agent;
 
 /// <summary>
 /// Unified interface for reporting job completion to the orchestrator.
-/// Ensures consistent completion durability across both agent execution modes:
-/// <list type="bullet">
-///   <item><see cref="SignalRCompletionReporter"/> — SignalR with Polly resilience + CriticalMessageBuffer (SignalR mode)</item>
-///   <item><see cref="HttpPrimaryCompletionReporter"/> — HTTP POST (primary, durable) + SignalR (secondary, real-time) (K8s mode)</item>
-/// </list>
+/// Implemented by <see cref="HttpPrimaryCompletionReporter"/> — HTTP POST (primary, durable) + SignalR (secondary, real-time) (K8s mode).
 /// </summary>
 public interface IJobCompletionReporter
 {
