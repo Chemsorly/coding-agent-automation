@@ -38,8 +38,8 @@ namespace CodingAgent.Api.IntegrationTests;
 /// <see cref="InMemoryPipelineDbContext"/> (InMemory cannot enforce xmin-style tokens).
 /// Therefore the concurrent-startup test proves the two calls serialise without deadlock,
 /// but cannot prove the lock eliminates <see cref="Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException"/>
-/// on real Postgres. A Postgres concurrency test belongs in
-/// <c>CodingAgent.Infrastructure.IntegrationTests</c>.
+/// on real Postgres. <c>StartupSeedingConcurrencyTests</c> in <c>CodingAgent.Infrastructure.IntegrationTests</c>
+/// proves that with two replicas and real advisory locks.
 /// </summary>
 public sealed class ApiStartupSeedingTests : IDisposable
 {
@@ -165,17 +165,11 @@ public sealed class ApiStartupSeedingTests : IDisposable
     [Fact]
     public async Task RunStartupSeeding_TwoConcurrentCalls_DoNotThrow()
     {
-        // NOTE: InMemory EF disables RowVersion concurrency tokens (see class-level XML doc),
-        // so this test proves the two calls serialise via the in-process lock provider
-        // without deadlock — it does NOT prove the lock eliminates DbUpdateConcurrencyException
-        // on real Postgres. A Postgres concurrency test belongs in CodingAgent.Infrastructure.IntegrationTests.
-        // TODO [WARNING]: Both tasks share a single DatabaseStartupService instance. The two-task race is
-        // more cooperative than a true multi-process race: interleaving only happens at async await points,
-        // and the async scheduler may run Task1 to completion before Task2 starts, meaning concurrent
-        // serialization via the lock is not actually exercised. This test confirms no exception is raised
-        // and the result is idempotent, but does not guarantee thread-safety in a stronger sense. A
-        // Postgres-level concurrency test with two separate service instances and a real advisory lock
-        // is needed to truly verify the DbUpdateConcurrencyException protection.
+        // NOTE: InMemory EF disables RowVersion concurrency tokens (see class-level XML doc), and both
+        // tasks share one DatabaseStartupService instance, so this test only proves the two calls
+        // serialise via the in-process lock provider without deadlock and stay idempotent. The
+        // multi-replica guarantee is covered by StartupSeedingConcurrencyTests in
+        // CodingAgent.Infrastructure.IntegrationTests (two service instances, real advisory locks).
         var sut = CreateService();
 
         var t1 = sut.RunStartupSeedingAsync(CancellationToken.None);
