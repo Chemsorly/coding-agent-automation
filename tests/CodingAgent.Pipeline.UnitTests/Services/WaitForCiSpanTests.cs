@@ -51,10 +51,7 @@ public class WaitForCiSpanTests : IDisposable
 
         _coordinator = new CiPollingCoordinator(
             _logger.Object,
-            new CiLogWriter(_logger.Object),
-            new CiPollingMetrics(
-                PipelineTelemetry.ExternalCiDuration,
-                PipelineTelemetry.PostPrCiDuration));
+            new CiLogWriter(_logger.Object));
 
         SetupDefaultMocks();
     }
