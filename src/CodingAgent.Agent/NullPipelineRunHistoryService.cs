@@ -41,6 +41,4 @@ public sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
         => Task.CompletedTask;
 
     public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory) { }
-
-    public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
 }

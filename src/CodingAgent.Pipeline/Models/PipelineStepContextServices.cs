@@ -26,4 +26,10 @@ public sealed record PipelineStepContextServices
     public required PullRequestOrchestrator PrOrchestrator { get; init; }
     public required Serilog.ILogger Logger { get; init; }
     public required IQualityGateValidator? QualityGateValidator { get; init; }
+
+    /// <summary>
+    /// Action to report pipeline run events (CI retrigger, CI wait, agent stall) server-side.
+    /// Null on orchestrator/test paths where no SignalR reporter is wired.
+    /// </summary>
+    public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
 }

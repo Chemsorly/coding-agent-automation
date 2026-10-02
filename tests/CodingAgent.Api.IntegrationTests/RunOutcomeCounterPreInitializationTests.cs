@@ -284,3 +284,111 @@ public sealed class RunOutcomeCounterPreInitializationTests
             "exactly 2 pre-initialized series for pipeline.run.brain_updates");
     }
 }
+
+/// <summary>
+/// Tests for pre-initialization of the new API-side counters introduced in issue #2979:
+/// - pipeline.run.quality_gate.results
+/// - pipeline.run.ci.not_started_retriggers
+/// - pipeline.run.agent_stalls
+/// These counters must be pre-initialized so Prometheus increase() shows the first event.
+/// </summary>
+[Collection("PostStatusIdempotencyCollection")]
+public sealed class PipelineRunEventCounterPreInitializationTests
+{
+    [Fact]
+    public void PreInitialization_RunQualityGateResults_CoversAllGatesAndResults()
+    {
+        var observed = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.quality_gate.results")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string gate = "", result = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "gate") gate = tag.Value?.ToString() ?? "";
+                if (tag.Key == "result") result = tag.Value?.ToString() ?? "";
+            }
+            observed.Add($"{gate}:{result}");
+        });
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        // Each gate × result combination must be covered
+        observed.Should().Contain("compilation:pass");
+        observed.Should().Contain("compilation:fail");
+        observed.Should().Contain("tests:pass");
+        observed.Should().Contain("tests:fail");
+        observed.Should().Contain("external_ci:pass");
+        observed.Should().Contain("external_ci:fail");
+    }
+
+    [Fact]
+    public void PreInitialization_RunCiNotStartedRetriggers_CoversAllRunTypes()
+    {
+        var observedRunTypes = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.ci.not_started_retriggers")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            foreach (var tag in tags)
+                if (tag.Key == "run_type") observedRunTypes.Add(tag.Value?.ToString() ?? "");
+        });
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        // All 5 run types must have a pre-initialized re-trigger series
+        observedRunTypes.Should().Contain("implementation",
+            "ci.not_started_retriggers must be pre-initialized for implementation runs");
+        observedRunTypes.Should().Contain("review",
+            "ci.not_started_retriggers must be pre-initialized for review runs");
+    }
+
+    [Fact]
+    public void PreInitialization_RunAgentStalls_CoversAllPhasesAndKinds()
+    {
+        var observed = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.agent_stalls")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
+        {
+            string phase = "", kind = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "phase") phase = tag.Value?.ToString() ?? "";
+                if (tag.Key == "kind") kind = tag.Value?.ToString() ?? "";
+            }
+            observed.Add($"{phase}:{kind}");
+        });
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        // Key combinations that must be pre-initialized
+        observed.Should().Contain($"{PipelineTelemetry.StallPhases.QgcRetryAgent}:{PipelineTelemetry.AgentStallKinds.StallKill}",
+            "stall_kill in qgc_retry_agent phase must be pre-initialized");
+        observed.Should().Contain($"{PipelineTelemetry.StallPhases.CodeGen}:{PipelineTelemetry.AgentStallKinds.ProcessDeath}",
+            "process_death in codegen phase must be pre-initialized");
+        observed.Should().Contain($"{PipelineTelemetry.StallPhases.Analysis}:{PipelineTelemetry.AgentStallKinds.ProcessTimeout}",
+            "process_timeout in analysis phase must be pre-initialized");
+        observed.Should().Contain($"{PipelineTelemetry.StallPhases.Unknown}:{PipelineTelemetry.AgentStallKinds.StallKill}",
+            "unknown phase must be pre-initialized");
+    }
+}

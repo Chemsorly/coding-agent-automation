@@ -13,7 +13,6 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// GetRunHistoryAsync paginated overload (validation, hasMore, feedbackOnly filter),
 /// GetRunAsync,
 /// TryDeleteWorkspace (symlink, path-traversal, delete exception),
-/// CleanupExpiredWorkspaces (activeRunId guard, completedAt null path),
 /// GetRunHistory empty-directory path.
 /// </summary>
 public class PipelineRunHistoryServiceAdditionalTests : IDisposable
@@ -310,129 +309,6 @@ public class PipelineRunHistoryServiceAdditionalTests : IDisposable
         history.Should().BeEmpty();
     }
 
-    // ── CleanupExpiredWorkspaces — activeRunId guard ──────────────────────────
     // Note: TryDeleteWorkspace guard logic is tested via WorkspaceDeletionGuardTests.
 
-    [Fact]
-    public void CleanupExpiredWorkspaces_ActiveRunId_PreservesItsWorkspace()
-    {
-        var baseDir = MakeTempDir();
-        var runsDir = MakeTempDir();
-        var activeRunId = Guid.NewGuid().ToString();
-        var expiredRunId = Guid.NewGuid().ToString();
-
-        // Both workspaces exist
-        Directory.CreateDirectory(Path.Combine(baseDir, activeRunId));
-        Directory.CreateDirectory(Path.Combine(baseDir, expiredRunId));
-
-        // Both runs are expired (completedAt 10 days ago, retention = 7 days)
-        var activeSummary = new PipelineRunSummary
-        {
-            RunId = activeRunId,
-            IssueIdentifier = "1",
-            IssueTitle = "Active",
-            FinalStep = PipelineStep.Failed,
-            CompletedAtOffset = DateTimeOffset.UtcNow.AddDays(-10)
-        };
-        var expiredSummary = new PipelineRunSummary
-        {
-            RunId = expiredRunId,
-            IssueIdentifier = "2",
-            IssueTitle = "Expired",
-            FinalStep = PipelineStep.Failed,
-            CompletedAtOffset = DateTimeOffset.UtcNow.AddDays(-10)
-        };
-
-        File.WriteAllText(Path.Combine(runsDir, $"{activeRunId}.json"), JsonSerializer.Serialize(activeSummary, _jsonOpts));
-        File.WriteAllText(Path.Combine(runsDir, $"{expiredRunId}.json"), JsonSerializer.Serialize(expiredSummary, _jsonOpts));
-
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-        svc.CleanupExpiredWorkspaces(
-            new PipelineConfiguration { WorkspaceBaseDirectory = baseDir, FailedWorkspaceRetentionDays = 7 },
-            activeRunId: activeRunId);
-
-        // Active run workspace preserved (its run is still in-progress)
-        Directory.Exists(Path.Combine(baseDir, activeRunId)).Should().BeTrue("active run workspace must be preserved");
-        // Expired run workspace removed (past retention, not the active run)
-        Directory.Exists(Path.Combine(baseDir, expiredRunId)).Should().BeFalse("expired run workspace must be deleted");
-    }
-
-    [Fact]
-    public void CleanupExpiredWorkspaces_CompletedStep_SkipsWorkspace()
-    {
-        var baseDir = MakeTempDir();
-        var runsDir = MakeTempDir();
-        var runId = Guid.NewGuid().ToString();
-        Directory.CreateDirectory(Path.Combine(baseDir, runId));
-
-        var summary = new PipelineRunSummary
-        {
-            RunId = runId,
-            IssueIdentifier = "1",
-            IssueTitle = "Completed",
-            FinalStep = PipelineStep.Completed,         // terminal "success" step — must be skipped
-            CompletedAtOffset = DateTimeOffset.UtcNow.AddDays(-10)
-        };
-        File.WriteAllText(Path.Combine(runsDir, $"{runId}.json"), JsonSerializer.Serialize(summary, _jsonOpts));
-
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-        svc.CleanupExpiredWorkspaces(
-            new PipelineConfiguration { WorkspaceBaseDirectory = baseDir, FailedWorkspaceRetentionDays = 7 });
-
-        Directory.Exists(Path.Combine(baseDir, runId)).Should().BeTrue(
-            "Completed runs are skipped by CleanupExpiredWorkspaces (continue when FinalStep == Completed)");
-    }
-
-    [Fact]
-    public void CleanupExpiredWorkspaces_NullCompletedAt_SkipsWorkspace()
-    {
-        var baseDir = MakeTempDir();
-        var runsDir = MakeTempDir();
-        var runId = Guid.NewGuid().ToString();
-        Directory.CreateDirectory(Path.Combine(baseDir, runId));
-
-        // No CompletedAtOffset AND no legacy CompletedAt → completedOffset will be null → skip
-        var summary = new PipelineRunSummary
-        {
-            RunId = runId,
-            IssueIdentifier = "1",
-            IssueTitle = "No CompletedAt",
-            FinalStep = PipelineStep.Failed,
-            CompletedAtOffset = null
-            // CompletedAt (DateTime?) is also null by default
-        };
-        File.WriteAllText(Path.Combine(runsDir, $"{runId}.json"), JsonSerializer.Serialize(summary, _jsonOpts));
-
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-        svc.CleanupExpiredWorkspaces(
-            new PipelineConfiguration { WorkspaceBaseDirectory = baseDir, FailedWorkspaceRetentionDays = 7 });
-
-        Directory.Exists(Path.Combine(baseDir, runId)).Should().BeTrue(
-            "run with null CompletedAt is skipped — cannot evaluate expiry");
-    }
-
-    [Fact]
-    public void CleanupExpiredWorkspaces_WithinRetentionPeriod_SkipsWorkspace()
-    {
-        var baseDir = MakeTempDir();
-        var runsDir = MakeTempDir();
-        var runId = Guid.NewGuid().ToString();
-        Directory.CreateDirectory(Path.Combine(baseDir, runId));
-
-        var summary = new PipelineRunSummary
-        {
-            RunId = runId,
-            IssueIdentifier = "1",
-            IssueTitle = "Recent",
-            FinalStep = PipelineStep.Failed,
-            CompletedAtOffset = DateTimeOffset.UtcNow.AddDays(-3)   // within 7-day retention
-        };
-        File.WriteAllText(Path.Combine(runsDir, $"{runId}.json"), JsonSerializer.Serialize(summary, _jsonOpts));
-
-        var svc = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-        svc.CleanupExpiredWorkspaces(
-            new PipelineConfiguration { WorkspaceBaseDirectory = baseDir, FailedWorkspaceRetentionDays = 7 });
-
-        Directory.Exists(Path.Combine(baseDir, runId)).Should().BeTrue("within retention — workspace must not be deleted");
-    }
 }

@@ -92,11 +92,12 @@ public class QualityGateExecutorRetryCounterDimensionTests : IDisposable
     /// <summary>
     /// When the fix agent runs successfully (default/Retry outcome), the
     /// <c>quality_gate.retries</c> counter must include
-    /// <c>run_type</c>, <c>pipeline.project_id</c>, <c>pipeline.project_name</c>,
+    /// <c>run_type</c>, <c>pipeline.project_name</c>,
     /// AND <c>outcome="retry"</c>.
+    /// (<c>pipeline.project_id</c> was removed from metric tags in issue #2980.)
     /// </summary>
     [Fact]
-    public async Task RetryCounter_OnNormalRetryOutcome_EmitsRunType_ProjectId_ProjectName_AndOutcomeRetry()
+    public async Task RetryCounter_OnNormalRetryOutcome_EmitsRunType_ProjectName_AndOutcomeRetry()
     {
         // Arrange: validator always fails so we enter the retry loop.
         // Agent returns a normal successful result → default (Retry) branch.
@@ -112,20 +113,15 @@ public class QualityGateExecutorRetryCounterDimensionTests : IDisposable
         // Assert: at least one retry emission with the outcome tag
         var measurements = _retriesCollector.GetMeasurementSnapshot();
         measurements.Should().NotBeEmpty("the retry loop must have fired at least once");
-        // TODO [WARNING]: The combined predicate below catches the case where outcome is emitted but
-        // one of run_type/project_id/project_name is missing — however the failure message won't
-        // isolate which tag is absent. The remaining three outcome tests only assert the outcome tag
-        // and do not verify the standard tags, so a regression stripping pipeline.project_id or
-        // pipeline.project_name from BuildRetryTags would not be caught by those tests. Consider
-        // splitting the assertion into separate Should().Contain() calls (one per tag) to produce
-        // targeted failure messages, and add parallel tag assertions to the other outcome tests.
         measurements.Should().Contain(m =>
             m.Value == 1 &&
             m.Tags.Contains(new KeyValuePair<string, object?>("outcome", "retry")) &&
             m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")) &&
-            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-2744")) &&
             m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_name", "RetryCounterProject")),
-            "normal retry outcome must emit outcome='retry' plus run_type, project_id, and project_name tags");
+            "normal retry outcome must emit outcome='retry' plus run_type and project_name tags");
+        // pipeline.project_id must not be a metric tag (issue #2980)
+        measurements.Should().NotContain(m => m.Tags.Any(t => t.Key == "pipeline.project_id"),
+            "pipeline.project_id was removed from metric tags in issue #2980");
     }
 
     // ── Transient outcome ────────────────────────────────────────────────────

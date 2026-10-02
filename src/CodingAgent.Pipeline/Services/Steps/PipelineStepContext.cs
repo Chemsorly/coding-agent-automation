@@ -83,7 +83,8 @@ public sealed class PipelineStepContext
             Logger = services.Logger,
             QualityGateValidator = services.QualityGateValidator,
             IssueProvider = issueProvider,
-            ProjectContext = projectContext
+            ProjectContext = projectContext,
+            ReportPipelineRunEvent = services.ReportPipelineRunEvent
         };
     }
 
@@ -123,6 +124,13 @@ public sealed class PipelineStepContext
     /// Null on the orchestrator side when not wired up.
     /// </summary>
     public IQualityGateValidator? QualityGateValidator { get; init; }
+
+    /// <summary>
+    /// Action to report pipeline run events (CI retrigger, CI wait, agent stall) server-side.
+    /// Null on the orchestrator/test path where no SignalR reporter is wired.
+    /// Set by the agent path via <see cref="PipelineStepContextServices.ReportPipelineRunEvent"/>.
+    /// </summary>
+    public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
 
     /// <summary>
     /// Project context for cross-repo decomposition, populated when the epic
@@ -238,7 +246,8 @@ public sealed class PipelineStepContext
             Issue = Issue,
             ParsedIssue = ParsedIssue,
             DownloadedImages = DownloadedImages,
-            InjectedSecrets = InjectedSecrets
+            InjectedSecrets = InjectedSecrets,
+            ReportPipelineRunEvent = ReportPipelineRunEvent
         };
     }
 

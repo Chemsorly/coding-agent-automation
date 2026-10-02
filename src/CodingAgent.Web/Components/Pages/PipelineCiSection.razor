@@ -1,0 +1,98 @@
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+
+<section class="settings-section">
+    <h2>External CI</h2>
+    <p class="section-description">How implementation runs wait for external CI. CI runs automatically when a Pipeline Provider is configured on the pipeline job template.</p>
+    <div class="provider-form">
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ExternalCiTimeout)">
+            <div class="label-with-hint">
+                <label>CI Timeout (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum time to wait for external CI checks to complete before marking as timed out. Default: 15 min">?</span>
+            </div>
+            <input type="number" @bind="_externalCiTimeoutMinutes" min="@SettingLimits.Min(nameof(PipelineConfiguration.ExternalCiTimeout), SettingUnit.Minutes)" max="@SettingLimits.Max(nameof(PipelineConfiguration.ExternalCiTimeout), SettingUnit.Minutes)" />
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.ExternalCiPollInterval)">
+            <div class="label-with-hint">
+                <label>CI Poll Interval (seconds)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the pipeline checks CI status while waiting for completion. Default: 30s">?</span>
+            </div>
+            <input type="number" @bind="_externalCiPollIntervalSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ExternalCiPollInterval), SettingUnit.Seconds)" max="@SettingLimits.Max(nameof(PipelineConfiguration.ExternalCiPollInterval), SettingUnit.Seconds)" />
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.CiNotStartedTimeout)">
+            <div class="label-with-hint">
+                <label>CI Not Started Timeout (minutes)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How long to wait for CI runs to appear before concluding CI never started and re-pushing. Prevents burning the full CI timeout when GitHub Actions fails to trigger. Default: 10 min">?</span>
+            </div>
+            <input type="number" @bind="_ciNotStartedTimeoutMinutes" min="@SettingLimits.Min(nameof(PipelineConfiguration.CiNotStartedTimeout), SettingUnit.Minutes)" max="@SettingLimits.Max(nameof(PipelineConfiguration.CiNotStartedTimeout), SettingUnit.Minutes)" />
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.CiNotStartedMaxRetries)">
+            <div class="label-with-hint">
+                <label>CI Not Started Max Retries</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum re-push retries when CI never starts. Each retry creates an empty commit and force-pushes to re-trigger GitHub Actions. Default: 15">?</span>
+            </div>
+            <input type="number" @bind="_ciNotStartedMaxRetries" min="@SettingLimits.Min(nameof(PipelineConfiguration.CiNotStartedMaxRetries))" max="@SettingLimits.Max(nameof(PipelineConfiguration.CiNotStartedMaxRetries))" />
+        </div>
+        <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
+            <span>Advanced settings</span>
+        </div>
+        @if (_showAdvanced)
+        {
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.CiCancelledMoveMaxRetries)">
+            <div class="label-with-hint">
+                <label>CI Re-Polls After Branch Moves</label>
+                <span class="form-hint-icon" aria-hidden="true" title="How often the pipeline polls CI again when a run is cancelled because the branch moved to a new commit (a push, a merge from main, or its own retry commit), instead of counting it as a failed gate. The whole wait stays within the CI timeout. Default: 3">?</span>
+            </div>
+            <input type="number" @bind="_ciCancelledMoveMaxRetries" min="@SettingLimits.Min(nameof(PipelineConfiguration.CiCancelledMoveMaxRetries))" max="@SettingLimits.Max(nameof(PipelineConfiguration.CiCancelledMoveMaxRetries))" />
+        </div>
+        }
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save External CI Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private int _externalCiTimeoutMinutes = 15;
+    private int _externalCiPollIntervalSeconds = 30;
+    private int _ciNotStartedTimeoutMinutes = 10;
+    private int _ciNotStartedMaxRetries = PipelineConstants.DefaultCiNotStartedMaxRetries;
+    private int _ciCancelledMoveMaxRetries = PipelineConstants.DefaultCiCancelledMoveMaxRetries;
+    private bool _showAdvanced;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+        _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
+        _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
+        _ciNotStartedTimeoutMinutes = (int)config.CiNotStartedTimeout.TotalMinutes;
+        _ciNotStartedMaxRetries = config.CiNotStartedMaxRetries;
+        _ciCancelledMoveMaxRetries = config.CiCancelledMoveMaxRetries;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigClient.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
+                    ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds),
+                    CiNotStartedTimeout = TimeSpan.FromMinutes(_ciNotStartedTimeoutMinutes),
+                    CiNotStartedMaxRetries = _ciNotStartedMaxRetries,
+                    CiCancelledMoveMaxRetries = _ciCancelledMoveMaxRetries
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("External CI settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

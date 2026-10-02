@@ -21,7 +21,6 @@ internal static class TestAgentWorkerServiceFactory
     public static (AgentWorkerService Service, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle, ChatJobExecutor ChatHandler)
         CreateWithComponents(
             IHostApplicationLifetime? hostLifetime = null,
-            IJobCompletionReporter? completionReporter = null,
             KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
             Serilog.ILogger? logger = null,
             IHubConnectionManager? hubManager = null,
@@ -38,7 +37,6 @@ internal static class TestAgentWorkerServiceFactory
         var buffer = new CriticalMessageBuffer();
         var signalRPipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger);
         var signalRReporter = new SignalRCompletionReporter(hm, signalRPipeline, buffer, mockLogger);
-        var reporter = completionReporter ?? signalRReporter;
 
         var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
         // TODO: signalReady callback is always a no-op in tests. This means tests never verify
@@ -60,8 +58,6 @@ internal static class TestAgentWorkerServiceFactory
         var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             chatHandler,
-            CreateMockExecutor(mockOrchestrator),
-            reporter,
             mockLogger));
 
         return (service, slotManager, lifecycle, chatHandler);
@@ -72,12 +68,11 @@ internal static class TestAgentWorkerServiceFactory
     /// </summary>
     public static AgentWorkerService Create(
         IHostApplicationLifetime? hostLifetime = null,
-        IJobCompletionReporter? completionReporter = null,
         KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
         Serilog.ILogger? logger = null,
         TimeSpan? chatGracePeriod = null)
     {
-        return CreateWithComponents(hostLifetime, completionReporter, orchestrator, logger,
+        return CreateWithComponents(hostLifetime, orchestrator, logger,
             chatGracePeriod: chatGracePeriod).Service;
     }
 
@@ -126,19 +121,5 @@ internal static class TestAgentWorkerServiceFactory
     {
         var l = logger ?? new Mock<Serilog.ILogger>().Object;
         return new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-api-key", l);
-    }
-
-    private static LocalPipelineExecutor CreateMockExecutor(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
-    {
-        var mockHttpClientFactory = new Mock<IHttpClientFactory>();
-        var mockQualityGateValidator = new Mock<IQualityGateValidator>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
-            orchestrator,
-            mockHttpClientFactory.Object,
-            new PipelineConfiguration(),
-            mockQualityGateValidator.Object,
-            mockLogger.Object,
-            AgentIdentity: new AgentId("test-agent")));
     }
 }

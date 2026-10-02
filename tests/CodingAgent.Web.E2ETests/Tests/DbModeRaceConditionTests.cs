@@ -71,12 +71,8 @@ public sealed class DbModeRaceConditionTests : HeadlessE2ETestBase
     [Fact]
     public async Task Race_CompletionAndHeartbeatTimeout_OnlyOneFinalizes()
     {
-        // Arrange: configure short heartbeat timeout
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
-        }, CancellationToken.None);
+        // Arrange: short disconnect grace period
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(1);
 
         await SeedIssueAndProfileAsync("2001", "Completion vs timeout race");
         await using var agent = new FakeAgentClient("race-agent-c4", "race-e2e");

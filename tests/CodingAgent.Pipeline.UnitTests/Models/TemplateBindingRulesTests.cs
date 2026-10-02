@@ -105,6 +105,28 @@ public class TemplateBindingRulesTests
             .Should().BeNull();
     }
 
+    [Fact]
+    public void Validate_EditedNameBrainAndCi_AreAccepted()
+    {
+        var saved = Template("t1", "Api", "issues-1", "repo-1");
+        var edited = saved with { Name = "Api v2", BrainProviderId = "brain-1", BrainReadOnly = true, PipelineProviderId = "ci-1" };
+
+        TemplateBindingRules.Validate(edited, ProjectA, [saved], [Project(ProjectA, "t1")])
+            .Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData("issues-2", "repo-1")]
+    [InlineData("issues-1", "repo-2")]
+    public void Validate_ChangedRepositoryOrTrackerOfASavedTemplate_IsRefused(string issue, string repo)
+    {
+        var saved = Template("t1", "Api", "issues-1", "repo-1", enabled: false);
+        var edited = saved with { IssueProviderId = issue, RepoProviderId = repo };
+
+        TemplateBindingRules.Validate(edited, ProjectA, [saved], [Project(ProjectA, "t1")])
+            .Should().Be("A template keeps its repository and issue tracker. To use another one, add a new template.");
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

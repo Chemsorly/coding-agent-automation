@@ -63,6 +63,8 @@ public class AgentProviderSectionComponentTests : BunitContext
         Assert.Contains("My Kiro Agent", component.Markup);
         Assert.Contains("KiroCli", component.Markup);
         Assert.Contains("/usr/bin/kiro-cli", component.Markup);
+        Assert.Contains("model: claude-sonnet-4", component.Markup);
+        Assert.DoesNotContain("min ·", component.Markup);
     }
 
     [Fact]
@@ -104,6 +106,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         Assert.Contains("Add Agent Provider", component.Markup);
         Assert.Contains("Display Name", component.Markup);
         Assert.Contains("Executable Path", component.Markup);
+        Assert.DoesNotContain("Timeout (minutes)", component.Markup);
         Assert.Contains("Agent Name", component.Markup);
         Assert.Contains("Model", component.Markup);
     }

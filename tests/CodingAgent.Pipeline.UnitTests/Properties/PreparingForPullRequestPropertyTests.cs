@@ -205,11 +205,9 @@ public class PreparingForPullRequestPropertyTests
             StallWarningInterval = config.StallWarningInterval,
             StallPollInterval = config.StallPollInterval,
             BlacklistedPaths = config.BlacklistedPaths,
-            FailedWorkspaceRetentionDays = config.FailedWorkspaceRetentionDays,
             ClosedLoopPollInterval = config.ClosedLoopPollInterval,
             ClosedLoopMaxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle,
             ClosedLoopMaxConsecutivePollFailures = config.ClosedLoopMaxConsecutivePollFailures,
-            ClosedLoopMaxBackoffInterval = config.ClosedLoopMaxBackoffInterval,
         };
 
         configStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))

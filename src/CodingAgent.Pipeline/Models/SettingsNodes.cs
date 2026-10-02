@@ -13,8 +13,8 @@ public static class SettingsNodes
     public const string PipelineGeneral = "pipeline-general";
     public const string PipelineLoop = "pipeline-loop";
     public const string PipelinePrompts = "pipeline-prompts";
-    public const string PipelineImplementation = "pipeline-implementation";
-    public const string PipelineReview = "pipeline-review";
+    public const string PipelineCi = "pipeline-ci";
+    public const string PipelineCodeReview = "pipeline-code-review";
     public const string PipelineDecomposition = "pipeline-decomposition";
     public const string PipelineConsolidation = "pipeline-consolidation";
     public const string PipelineAdvanced = "pipeline-advanced";

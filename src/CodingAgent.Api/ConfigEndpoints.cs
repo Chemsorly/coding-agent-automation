@@ -104,16 +104,18 @@ public static class ConfigEndpoints
         return TypedResults.Ok(config);
     }
 
+    /// <summary>
+    /// PUT /api/config/pipeline. Rejects settings outside their range (400, one sentence per setting). AgentTimeout's
+    /// minimum is the reconciliation canary minimum, below which the timeout could never be enforced.
+    /// </summary>
     internal static async Task<IResult> SavePipelineConfig(
         [FromBody] PipelineConfiguration config,
         IPipelineConfigStore store,
         CancellationToken ct)
     {
-        if (config.AgentTimeout.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
-            return TypedResults.BadRequest(
-                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
-                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
-                "because the ReconciliationLoop canary guard fires first on every cycle.");
+        var errors = PipelineSettingsValidator.Validate(config);
+        if (errors.Count > 0)
+            return TypedResults.BadRequest(string.Join(" ", errors));
 
         await store.SavePipelineConfigAsync(config, ct);
         return TypedResults.Ok();
@@ -178,8 +180,7 @@ public static class ConfigEndpoints
         IProviderConfigStore store,
         CancellationToken ct)
     {
-        await store.SaveProviderConfigAsync(config, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveProviderConfigAsync(config, ct));
     }
 
     internal static async Task<IResult> DeleteProviderConfig(
@@ -206,8 +207,7 @@ public static class ConfigEndpoints
         IAgentProfileStore store,
         CancellationToken ct)
     {
-        await store.SaveAgentProfileAsync(profile, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
     }
 
     internal static async Task<IResult> DeleteAgentProfile(
@@ -233,8 +233,7 @@ public static class ConfigEndpoints
         IQualityGateConfigStore store,
         CancellationToken ct)
     {
-        await store.SaveQualityGateConfigAsync(config, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveQualityGateConfigAsync(config, ct));
     }
 
     internal static async Task<IResult> DeleteQualityGateConfig(
@@ -260,8 +259,7 @@ public static class ConfigEndpoints
         IReviewerConfigStore store,
         CancellationToken ct)
     {
-        await store.SaveReviewerConfigAsync(config, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveReviewerConfigAsync(config, ct));
     }
 
     internal static async Task<IResult> DeleteReviewerConfig(
@@ -311,122 +309,20 @@ public static class ConfigEndpoints
         return TypedResults.Ok(project);
     }
 
+    /// <summary>
+    /// PUT /api/config/projects. Rejects overrides outside the range of the setting they override (400, one sentence
+    /// per override), so a bad value never reaches the resolver.
+    /// </summary>
     internal static async Task<IResult> SaveProject(
         [FromBody] PipelineProject project,
         IProjectStore store,
         CancellationToken ct)
     {
-        var errors = ValidateProjectOverrides(project);
+        var errors = PipelineSettingsValidator.ValidateOverrides(project);
         if (errors.Count > 0)
-            return TypedResults.BadRequest(string.Join("; ", errors));
+            return TypedResults.BadRequest(string.Join(" ", errors));
 
-        await store.SaveProjectAsync(project, ct);
-        return TypedResults.Ok();
-    }
-
-    /// <summary>
-    /// Validates all range-constrained project override fields and returns a list of
-    /// human-readable error messages for any that are out of range.
-    /// Uses a hybrid approach:
-    ///   - Probe-apply to a fresh PipelineConfiguration for fields that have range-validating
-    ///     init setters (these throw ArgumentOutOfRangeException on invalid values).
-    ///   - Explicit range checks for fields that are plain auto-properties with no init-setter guard.
-    /// The AgentTimeout canary minimum is also enforced here (unified with SaveProject).
-    /// </summary>
-    internal static IReadOnlyList<string> ValidateProjectOverrides(PipelineProject project)
-    {
-        var errors = new List<string>();
-
-        // ── AgentTimeout: canary minimum (existing check, unified here) ──────────
-        // TODO: AgentTimeout has no upper-bound check here. The project Settings UI caps it at 120 minutes,
-        // but a direct PUT /api/config/projects caller can supply an arbitrarily large value (e.g. 99999 hours)
-        // and it will be accepted and stored. Add an explicit upper-bound check aligned with the UI's 120-minute cap
-        // once the correct domain limit is confirmed. (Review finding: ConfigEndpoints.cs:369)
-        if (project.AgentTimeout.HasValue &&
-            project.AgentTimeout.Value.TotalSeconds < PipelineConstants.TimeoutCanaryMinAgeSeconds)
-        {
-            errors.Add(
-                $"AgentTimeout must be at least {PipelineConstants.TimeoutCanaryMinAgeSeconds} seconds " +
-                "(reconciliation canary minimum). Values below this threshold can never be enforced " +
-                "because the ReconciliationLoop canary guard fires first on every cycle.");
-        }
-
-        // ── Probe-apply for fields with range-validating init setters ────────────
-        // Each field is attempted independently so all violations are reported at once.
-        // TODO: `defaults` is a shared PipelineConfiguration instance passed into each ProbeField closure.
-        // Each closure uses `defaults with { ... }` (a record with-expression), which is immutable and never
-        // mutates `defaults` — so probes are independent and safe. If any future probe were refactored to mutate
-        // `defaults` directly (e.g. via reflection), earlier probes would affect later ones. Keep all closures
-        // using with-expressions, or allocate a fresh `new PipelineConfiguration()` per ProbeField call. (Review finding: ConfigEndpoints.cs:350)
-        var defaults = new PipelineConfiguration();
-
-        ProbeField(project.MaxDecompositionSubIssues,
-            v => _ = defaults with { MaxDecompositionSubIssues = v },
-            nameof(PipelineProject.MaxDecompositionSubIssues), errors);
-
-        ProbeField(project.MaxDecompositionSubIssueFiles,
-            v => _ = defaults with { MaxDecompositionSubIssueFiles = v },
-            nameof(PipelineProject.MaxDecompositionSubIssueFiles), errors);
-
-        ProbeField(project.CiNotStartedMaxRetries,
-            v => _ = defaults with { CiNotStartedMaxRetries = v },
-            nameof(PipelineProject.CiNotStartedMaxRetries), errors);
-
-        ProbeField(project.MaxInfrastructureRetries,
-            v => _ = defaults with { MaxInfrastructureRetries = v },
-            nameof(PipelineProject.MaxInfrastructureRetries), errors);
-
-        ProbeField(project.AnalysisCommitThreshold,
-            v => _ = defaults with { AnalysisCommitThreshold = v },
-            nameof(PipelineProject.AnalysisCommitThreshold), errors);
-
-        ProbeField(project.CiCancelledMoveMaxRetries,
-            v => _ = defaults with { CiCancelledMoveMaxRetries = v },
-            nameof(PipelineProject.CiCancelledMoveMaxRetries), errors);
-
-        // ── Explicit range checks for plain auto-properties (no init-setter guard) ──
-        // Ranges match the UI's RenderIntOverride min/max arguments.
-        CheckIntRange(project.MaxRetries, nameof(PipelineProject.MaxRetries), 0, 10, errors);
-        CheckIntRange(project.MaxAnalysisRetries, nameof(PipelineProject.MaxAnalysisRetries), 0, 10, errors);
-        CheckIntRange(project.MaxOpenIssuesForContext, nameof(PipelineProject.MaxOpenIssuesForContext), 1, 200, errors);
-        CheckIntRange(project.MaxRefactoringProposals, nameof(PipelineProject.MaxRefactoringProposals), 1, 10, errors);
-        // FeedbackTimeoutSeconds: must be positive (> 0); no upper cap in the domain
-        // TODO: int.MaxValue is a leaky abstraction — FeedbackTimeoutSeconds has no meaningful upper bound in the current
-        // domain model, but accepting int.MaxValue (a ~68-year timeout) is unrealistic.
-        // Replace int.MaxValue with an explicit domain-appropriate cap once a limit is defined. (Review finding: ConfigEndpoints.cs:410)
-        CheckIntRange(project.FeedbackTimeoutSeconds, nameof(PipelineProject.FeedbackTimeoutSeconds), 1, int.MaxValue, errors);
-
-        return errors;
-    }
-
-    /// <summary>
-    /// Attempts to construct a record with the given field set to the override value.
-    /// Catches ArgumentOutOfRangeException from the init setter and records the error.
-    /// </summary>
-    private static void ProbeField(int? overrideValue, Action<int> applyFn, string propertyName, List<string> errors)
-    {
-        if (!overrideValue.HasValue) return;
-        try
-        {
-            applyFn(overrideValue.Value);
-        }
-        catch (ArgumentOutOfRangeException ex)
-        {
-            errors.Add($"'{propertyName}' value {overrideValue.Value} is out of range. {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Checks that a nullable int override is within [min, max] when set.
-    /// </summary>
-    private static void CheckIntRange(int? overrideValue, string propertyName, int min, int max, List<string> errors)
-    {
-        if (!overrideValue.HasValue) return;
-        if (overrideValue.Value < min || overrideValue.Value > max)
-        {
-            var rangeText = max == int.MaxValue ? $">= {min}" : $"{min}–{max}";
-            errors.Add($"'{propertyName}' value {overrideValue.Value} is out of range. Valid range is {rangeText}.");
-        }
+        return await SaveAsync(() => store.SaveProjectAsync(project, ct));
     }
 
     internal static async Task<IResult> DeleteProject(
@@ -503,8 +399,7 @@ public static class ConfigEndpoints
         if (conflict is not null)
             return TypedResults.BadRequest(conflict);
 
-        await store.SaveTemplateAsync(projectId, template, ct);
-        return TypedResults.Ok();
+        return await SaveAsync(() => store.SaveTemplateAsync(projectId, template, ct));
     }
 
     internal static async Task<IResult> DeleteTemplate(
@@ -727,40 +622,9 @@ public static class ConfigEndpoints
         if (bundle is null)
             return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
 
-        // Validate project override ranges BEFORE beginning the destructive transaction.
-        // The Settings blob is a raw JSON string (PipelineProject serialized with PipelineJsonOptions.Default).
-        // We must deserialize with PipelineJsonOptions.Default — NOT ImportOptions — because PipelineProject
-        // contains TimeSpan? fields that require TimeSpanJsonConverter, which ImportOptions lacks.
-        foreach (var proj in bundle.Projects ?? [])
-        {
-            if (proj.Settings is null) continue;
-
-            PipelineProject? typedProject;
-            try
-            {
-                typedProject = JsonSerializer.Deserialize<PipelineProject>(proj.Settings, PipelineJsonOptions.Default);
-            }
-            catch (JsonException ex)
-            {
-                return TypedResults.BadRequest(new ImportExportResult
-                {
-                    Success = false,
-                    Message = $"Project '{proj.Name}': invalid Settings JSON — {ex.Message}"
-                });
-            }
-
-            if (typedProject is null) continue;
-
-            var projectErrors = ValidateProjectOverrides(typedProject);
-            if (projectErrors.Count > 0)
-            {
-                return TypedResults.BadRequest(new ImportExportResult
-                {
-                    Success = false,
-                    Message = $"Project '{proj.Name}' has invalid override values: {string.Join("; ", projectErrors)}"
-                });
-            }
-        }
+        var settingsErrors = ValidateImportedSettings(bundle);
+        if (settingsErrors.Count > 0)
+            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid settings: {string.Join(" ", settingsErrors)}" });
 
         // Obtain the execution strategy from a short-lived context that is properly disposed.
         // CreateDbContext() checks out a pooled slot — callers must dispose it to return the slot.
@@ -892,6 +756,63 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
+    }
+
+    /// <summary>
+    /// Runs a configuration save. The stores refuse an argument they cannot store, such as an ID that is not a GUID, with
+    /// an ArgumentException: that is the caller's mistake, so it becomes a 400 with the store's message instead of a 500.
+    /// </summary>
+    private static async Task<IResult> SaveAsync(Func<Task> save)
+    {
+        try
+        {
+            await save();
+            return TypedResults.Ok();
+        }
+        catch (ArgumentException ex)
+        {
+            return TypedResults.BadRequest(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// The settings problems in an import bundle: global settings or project overrides outside their range, or settings
+    /// that cannot be read. An import replaces all configuration at once, so any problem rejects the whole bundle.
+    /// </summary>
+    private static List<string> ValidateImportedSettings(ConfigBundle bundle)
+    {
+        var errors = new List<string>();
+        if (bundle.PipelineConfig is not null)
+        {
+            try
+            {
+                var config = JsonSerializer.Deserialize<PipelineConfiguration>(bundle.PipelineConfig, PipelineJsonOptions.Default);
+                if (config is not null)
+                    errors.AddRange(PipelineSettingsValidator.Validate(config));
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"The pipeline settings cannot be read: {ex.Message}");
+            }
+        }
+
+        foreach (var project in bundle.Projects ?? [])
+        {
+            if (project.Settings is null)
+                continue;
+            try
+            {
+                var settings = JsonSerializer.Deserialize<PipelineProject>(project.Settings, PipelineJsonOptions.Default);
+                if (settings is not null)
+                    errors.AddRange(PipelineSettingsValidator.ValidateOverrides(settings).Select(error => $"Project '{project.Name}': {error}"));
+            }
+            catch (JsonException ex)
+            {
+                errors.Add($"Project '{project.Name}': its settings cannot be read: {ex.Message}");
+            }
+        }
+
+        return errors;
     }
 
     private static async Task<string?> LoadFirstEntityJson<T>(

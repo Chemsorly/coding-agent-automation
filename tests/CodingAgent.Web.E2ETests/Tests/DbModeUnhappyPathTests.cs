@@ -69,11 +69,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentCrashMidRun_HeartbeatTimeout_RunFailed()
     {
         // Arrange: configure short timeouts for faster test execution
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(1);
 
         await SeedIssueAndProfileAsync("1000", "Crash test issue");
 
@@ -93,8 +89,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // Simulate crash: dispose agent (drops SignalR connection, stops heartbeats)
         await agent.DisposeAsync();
 
-        // Assert: HeartbeatMonitor detects stale heartbeat → disconnect → grace expiry → Failed
-        // FakeJobController uses a built-in 2s grace period, so detection takes at most ~12s.
+        // Assert: the fake job controller counts the pod as dead after its 1s grace period and fails the run.
         var failedItem = await WaitForWorkItemStatusAsync(
             workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
         Assert.Equal(WorkItemStatus.Failed, failedItem.Status);
@@ -213,11 +208,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentDisconnectsBeforeAccepting_RunEventuallyFailed()
     {
         // Arrange: configure short timeouts
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(1);
 
         await SeedIssueAndProfileAsync("1003", "Disconnect before accept");
 
@@ -311,11 +302,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentReconnects_OrphanRestoredAndCompletes()
     {
         // Arrange: configure grace period long enough for reconnection
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(30); // Long enough to reconnect
 
         await SeedIssueAndProfileAsync("1006", "Orphan restoration issue");
 
@@ -334,21 +321,11 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
         // Disconnect (simulating network blip)
         await agent.DisposeAsync();
 
-        // Wait briefly for the disconnect to be registered by the hub (OnDisconnectedAsync),
-        // but stay well within FakeJobController's 2-second grace period so the agent entry
-        // has not yet been removed when we assert below. 500ms is enough for the SignalR hub
-        // to transition the agent to Disconnected; the reconciler won't remove the entry until
-        // the full 2s grace has elapsed (~t=2.25s at the earliest given the 250ms poll interval).
-        // TODO: This timing window is fragile (assertion delay 500ms vs grace period 2s, poll
-        // interval 250ms). The invariant that must hold is: assertion delay < grace period -
-        // poll interval (500ms < 2000ms - 250ms = 1750ms, satisfied here). Any increase to the
-        // poll interval or reduction to the grace period in FakeJobController could cause this
-        // assertion to fail under a slow CI runner. Previously safe because the grace period was
-        // configurable and tests set it to 30s; with a fixed 2s grace this margin is now narrow.
-        // (Review finding: TestQualityReviewer WARNING)
+        // Wait briefly for the hub to register the disconnect (OnDisconnectedAsync). The 30-second grace
+        // period set above keeps the agent entry until the agent reconnects.
         await Task.Delay(TimeSpan.FromMilliseconds(500));
 
-        // Verify agent is marked Disconnected (not yet removed — still within 2s grace period)
+        // Verify agent is marked Disconnected (not yet removed — within grace period)
         var registry = Fixture.AgentRegistry;
         var entry = registry.GetByAgentId("unhappy-orphan-agent");
         // Entry might be Disconnected or already have ActiveJobId preserved
@@ -382,11 +359,7 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
     public async Task DbMode_AgentDoesNotReconnect_OrphanExpires_RunFailed()
     {
         // Arrange: configure VERY short grace period
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149 — FakeJobController uses a built-in 2s grace period
-        }, CancellationToken.None);
+        Fixture.JobController.DisconnectGracePeriod = TimeSpan.FromSeconds(2); // Very short — orphan expires quickly
 
         await SeedIssueAndProfileAsync("1007", "Orphan expiry issue");
 

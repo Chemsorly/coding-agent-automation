@@ -1446,9 +1446,12 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("provider communication error"));
 
+        // Capture server-side events (issue #2979 migration)
+        var reportedEvents = new List<PipelineRunEventReport>();
+
         // Act: AppendExternalCiIfNeededAsync absorbs the exception via catch (Exception ex)
         var result = await _executor.AppendExternalCiIfNeededAsync(
-            BuildContext(), PassingLocalReport, allowEmptyCommit: false, CancellationToken.None);
+            BuildContext(reportedEvents.Add), PassingLocalReport, allowEmptyCommit: false, CancellationToken.None);
 
         // Assert: ExternalCi gate is set (confirms the exception path was taken, not a short-circuit)
         result.ExternalCi.Should().NotBeNull(
@@ -1456,18 +1459,17 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
         result.ExternalCi!.Passed.Should().BeFalse(
             "a provider exception must result in a failed CI gate");
 
-        // Assert: _externalCiDuration was recorded despite the exception (regression guard for #3046)
-        var measurements = _externalCiCollector.GetMeasurementSnapshot();
-        measurements.Should().HaveCount(1,
-            "quality_gate.external_ci.duration must be recorded exactly once even when " +
-            "PollAndHandleInfraRetryAsync throws (issue #3046: Record must be in a finally block)");
-        // TODO [WARNING]: This assertion is too weak — BeGreaterThanOrEqualTo(0) is always satisfied
-        // by Stopwatch.Elapsed.TotalSeconds (which is never negative). Even a zeroed or unused stopwatch
-        // would pass. Consider tightening to BeGreaterThan(0) once the async operations consistently
-        // produce a measurable elapsed time (the test involves async mocks, so sub-millisecond completion
-        // is possible in theory, but in practice some positive time will have elapsed).
-        measurements[0].Value.Should().BeGreaterThanOrEqualTo(0,
-            "recorded duration must be a non-negative elapsed time");
+        // Assert: No CiWait event is reported on exception path (issue #2979).
+        // The server-side CiWait event is only fired on the successful poll path; on exception,
+        // the CI gate result is an error, and the duration is not meaningful.
+        // Agent-side histogram recording (quality_gate.external_ci.duration) was removed (issue #2979).
+        var ciWaitEvents = reportedEvents.Where(e => e.Kind == PipelineRunEventKind.CiWait).ToList();
+        ciWaitEvents.Should().BeEmpty(
+            "CiWait events are only reported on the successful CI polling path, not on exception paths (issue #2979)");
+
+        // Agent-side histogram is no longer recorded at all (removed in issue #2979 migration)
+        _externalCiCollector.GetMeasurementSnapshot().Should().BeEmpty(
+            "quality_gate.external_ci.duration is no longer recorded agent-side — the API records it via ReportPipelineRunEvent (issue #2979)");
     }
 
     // TODO [WARNING]: Only the exception path through RunExternalCiPollAsync is tested here.
@@ -1503,7 +1505,7 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
     }
 
-    private QualityGateContext BuildContext() => new()
+    private QualityGateContext BuildContext(Action<PipelineRunEventReport>? reportEvent = null) => new()
     {
         Run = _run,
         Config = new PipelineConfiguration
@@ -1522,6 +1524,7 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
         Callbacks = _mockCallbacks.Object,
         RepoProvider = _mockRepoProvider.Object,
         PipelineProvider = _mockPipelineProvider.Object,
+        ReportPipelineRunEvent = reportEvent,
         QualityGateConfigs = new List<QualityGateConfiguration>()
     };
 }

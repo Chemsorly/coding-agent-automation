@@ -188,12 +188,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
         }, cts.Token);
     }
 
-    private void OnAssignJob(JobAssignmentMessage msg)
-    {
-        ReceivedJobIds.Add(msg.JobId);
-        JobAssigned.TrySetResult(msg);
-    }
-
     /// <summary>
     /// Accepts a job without completing it. Use with <see cref="ReportStepAsync"/> for fine-grained control.
     /// </summary>
@@ -730,7 +724,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
             .AddMessagePackProtocol(options => options.SerializerOptions = AgentHubMessagePack.SerializerOptions)
             .Build();
 
-        _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);
         _connection.On<JobId>("CancelJob", _ => { });
         _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
         _connection.On<string>("CancelChat", sessionId => CancelChatReceived.TrySetResult());

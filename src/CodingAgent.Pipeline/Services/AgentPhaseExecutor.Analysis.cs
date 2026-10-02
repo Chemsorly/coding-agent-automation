@@ -237,7 +237,9 @@ public partial class AgentPhaseExecutor
                 EnvironmentVariables = context.InjectedSecrets
             },
             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
-            line => context.Callbacks.EmitOutputLine(line));
+            line => context.Callbacks.EmitOutputLine(line),
+            stallMetrics: BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+            phase: "analysis");
 
         run.AccumulateTokenUsage(analysisResult, phase: "analysis");
 

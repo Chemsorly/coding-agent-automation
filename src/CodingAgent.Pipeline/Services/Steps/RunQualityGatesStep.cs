@@ -48,7 +48,8 @@ public sealed class RunQualityGatesStep : IPipelineStep
             QgcsConfiguredAtDispatch = qgcsConfiguredAtDispatch,
             Issue = context.Issue,
             IssueReference = context.IssueProvider?.FormatIssueReference(context.Run.IssueIdentifier),
-            InjectedSecrets = context.InjectedSecrets
+            InjectedSecrets = context.InjectedSecrets,
+            ReportPipelineRunEvent = context.ReportPipelineRunEvent
         };
 
         await context.QualityGates.ProceedToQualityGatesAsync(qualityGateContext, ct);

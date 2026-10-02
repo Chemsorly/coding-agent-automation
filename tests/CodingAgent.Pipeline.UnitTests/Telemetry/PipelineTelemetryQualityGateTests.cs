@@ -43,8 +43,8 @@ public class PipelineTelemetryQualityGateTests : IDisposable
         collector.GetMeasurementSnapshot().Should().ContainSingle(m =>
             m.Value == 1 &&
             m.Tags.Contains(new KeyValuePair<string, object?>("run_type", "implementation")) &&
-            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_id", "proj-1")) &&
-            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject")));
+            m.Tags.Contains(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject")) &&
+            !m.Tags.Any(t => t.Key == "pipeline.project_id"));
     }
 
     [Theory]

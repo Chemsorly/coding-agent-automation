@@ -268,22 +268,22 @@ public sealed class LabelRoutingSettingsCrudTests : E2ETestBase
         // Assert: toast confirms reset
         Assert.True(await reviewerHelper.IsStatusMessageVisibleAsync("reset to defaults"), "Expected 'reset to defaults' status after reset");
 
-        // Assert: "Default Reviewers" row appears in the table
-        var namesAfterReset = await reviewerHelper.GetTableRowNamesAsync();
-        // TODO [WARNING]: "Default Reviewers" and the 4 agent names are duplicated from PipelineConfigurationDefaults.
-        // Consider referencing PipelineConfigurationDefaults.DefaultReviewerConfigurations directly (see DatabaseStartupServiceReviewerSeedingTests).
-        Assert.Contains("Default Reviewers", namesAfterReset.Select(n => n.Replace("GLOBAL", "").Trim()));
+        // Assert: both default rows appear in the table
+        var namesAfterReset = (await reviewerHelper.GetTableRowNamesAsync())
+            .Select(n => n.Replace("GLOBAL", "").Trim())
+            .ToList();
+        Assert.Contains("Default Reviewers", namesAfterReset);
+        Assert.Contains(".NET Reviewers", namesAfterReset);
 
-        // Assert via store: one config with 4 default agents
+        // Assert via store: the stack-agnostic reviewers for every repository, and the .NET specialist for dotnet repositories
         var storedAfterReset = await Fixture.ConfigStore.LoadReviewerConfigsAsync(CancellationToken.None);
-        Assert.Single(storedAfterReset);
-        Assert.Equal("Default Reviewers", storedAfterReset[0].DisplayName);
-        Assert.Equal(4, storedAfterReset[0].Agents.Count);
-        var agentNames = storedAfterReset[0].Agents.Select(a => a.Name).ToList();
-        Assert.Contains("Correctness", agentNames);
-        Assert.Contains("DotNetSpecialist", agentNames);
-        Assert.Contains("SecurityReviewer", agentNames);
-        Assert.Contains("TestQualityReviewer", agentNames);
+        Assert.Equal(2, storedAfterReset.Count);
+        var defaults = Assert.Single(storedAfterReset, c => c.DisplayName == "Default Reviewers");
+        Assert.Empty(defaults.MatchLabels);
+        Assert.Equal(["Correctness", "SecurityReviewer", "TestQualityReviewer"], defaults.Agents.Select(a => a.Name));
+        var dotNet = Assert.Single(storedAfterReset, c => c.DisplayName == ".NET Reviewers");
+        Assert.Equal(["dotnet"], dotNet.MatchLabels);
+        Assert.Equal(["DotNetSpecialist"], dotNet.Agents.Select(a => a.Name));
     }
 
     // ── Scenario 4: Label Preview on Pipelines ────────────────────────────

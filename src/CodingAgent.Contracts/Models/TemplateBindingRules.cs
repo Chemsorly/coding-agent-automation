@@ -8,6 +8,8 @@ namespace CodingAgent.Pipeline.Models;
 /// <item>a name is unique within its project, because the name is how a project epic routes its sub-issues.</item>
 /// </list>
 /// Disabled templates are not checked, so one of two conflicting templates can always be switched off.
+/// A saved template also keeps its repository and issue tracker: everything else about it can be edited, but another
+/// repository or tracker is another template.
 /// A project's epic tracker may also be the tracker of one of its templates; that is not a template binding.
 /// </summary>
 public static class TemplateBindingRules
@@ -26,6 +28,12 @@ public static class TemplateBindingRules
     {
         if (string.IsNullOrWhiteSpace(template.Name))
             return "A template needs a name.";
+
+        var saved = allTemplates.FirstOrDefault(t => t.Id == template.Id);
+        if (saved is not null
+            && (!string.Equals(saved.RepoProviderId, template.RepoProviderId, StringComparison.Ordinal)
+                || !string.Equals(saved.IssueProviderId, template.IssueProviderId, StringComparison.Ordinal)))
+            return "A template keeps its repository and issue tracker. To use another one, add a new template.";
 
         if (!template.Enabled)
             return null;
