@@ -3,12 +3,21 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*.*.*']
+    # Strict vX.Y.Z only: the image signing identity below accepts no other tag shape.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
   pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+# Keyless cosign identity of every image this workflow pushes. The signing certificate is issued
+# by Fulcio for this workflow file on main or a release tag, so verification pins the workflow,
+# the ref and the repository. Keep in sync with the "Verify Images" section of docs/deployment.md.
+env:
+  IMAGE_SIGNER_IDENTITY_REGEXP: '^https://github\.com/Chemsorly/coding-agent-automation/\.github/workflows/ci\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$'
+  IMAGE_SIGNER_OIDC_ISSUER: https://token.actions.githubusercontent.com
+  IMAGE_SIGNER_REPOSITORY: Chemsorly/coding-agent-automation
 
 jobs:
   build-and-test:
@@ -158,6 +167,8 @@ jobs:
 
     permissions:
       contents: read
+      # Keyless cosign signing of the pushed per-arch image (main and release tags only).
+      id-token: write
 
     strategy:
       fail-fast: false
@@ -220,9 +231,43 @@ jobs:
           if [ "${{ github.ref }}" = "refs/heads/main" ] || echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
             buildah push \
               --authfile "${XDG_RUNTIME_DIR}/containers/auth.json" \
+              --digestfile "${RUNNER_TEMP}/digest" \
               docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }} \
               docker://docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }}
           fi
+
+      - name: Install cosign
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      # Sign the per-arch image by the digest buildah pushed, so the signature cannot attach to
+      # a tag that moved in between. The manifest list is signed separately in docker-push.
+      - name: Sign ${{ matrix.image.tag }} (${{ matrix.arch }})
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # cosign reads registry auth from the Docker config; the buildah auth file has the same format.
+          mkdir -p ~/.docker
+          cp "${XDG_RUNTIME_DIR}/containers/auth.json" ~/.docker/config.json
+
+          REF="docker.io/chemsorly/coding-agent@$(cat "${RUNNER_TEMP}/digest")"
+          cosign sign --yes "${REF}"
+
+          # The signature is an OCI referrer; retry in case the registry's referrers index lags.
+          for ATTEMPT in 1 2 3; do
+            if cosign verify \
+              --certificate-identity-regexp "${IMAGE_SIGNER_IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer "${IMAGE_SIGNER_OIDC_ISSUER}" \
+              --certificate-github-workflow-repository "${IMAGE_SIGNER_REPOSITORY}" \
+              "${REF}" > /dev/null; then
+              exit 0
+            fi
+            echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/3)"
+            sleep 10
+          done
+          echo "::error::cosign verify failed for ${REF}"
+          exit 1
 
   # Gate job for branch protection — matrix jobs report as "docker-build (arch, ...)"
   # but branch protection requires a single named check. This aggregates the result.
@@ -249,6 +294,8 @@ jobs:
 
     permissions:
       contents: read
+      # Keyless cosign signing of the pushed manifest list.
+      id-token: write
 
     strategy:
       fail-fast: false
@@ -266,7 +313,15 @@ jobs:
           - { tag: coding-agent-opencode-python312 }
 
     steps:
-      - name: Create and push multi-arch manifest for ${{ matrix.tag }}
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      # The manifest list is pushed to the immutable SHA tag first and signed there. The mutable
+      # -latest and -<version> tags are moved only after the signature exists, so a cancelled or
+      # failed run never leaves them pointing at an unsigned image.
+      - name: Create, sign and push multi-arch manifest for ${{ matrix.tag }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -278,31 +333,76 @@ jobs:
           echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > "${XDG_RUNTIME_DIR}/containers/auth.json"
           AUTHFILE="${XDG_RUNTIME_DIR}/containers/auth.json"
 
+          # cosign reads registry auth from the Docker config; the buildah auth file has the same format.
+          mkdir -p ~/.docker
+          cp "${AUTHFILE}" ~/.docker/config.json
+
           IMG="docker.io/chemsorly/coding-agent"
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          # buildah manifest push returns the result of writing --digestfile, not of the push, so a
+          # failed push exits 0 with an empty digest file. Treat anything but a digest as a failure.
+          push_manifest() {
+            buildah manifest push --authfile "${AUTHFILE}" --all \
+              --digestfile "${RUNNER_TEMP}/digest" \
+              "${IMG}:${{ matrix.tag }}" \
+              "docker://${IMG}:$1"
+            PUSHED_DIGEST=$(cat "${RUNNER_TEMP}/digest")
+            if ! echo "${PUSHED_DIGEST}" | grep -qE '^sha256:[0-9a-f]{64}$'; then
+              echo "::error::Push of ${IMG}:$1 failed (digest file: '${PUSHED_DIGEST}')"
+              exit 1
+            fi
+          }
+
+          # --recursive also signs each platform manifest the list references. Those are the same
+          # digests as the per-arch tags docker-build already signed; signing them twice is harmless.
+          sign_manifest() {
+            local REF="${IMG}@$1"
+            cosign sign --yes --recursive "${REF}"
+            # The signature is an OCI referrer; retry in case the registry's referrers index lags.
+            for ATTEMPT in 1 2 3; do
+              if cosign verify \
+                --certificate-identity-regexp "${IMAGE_SIGNER_IDENTITY_REGEXP}" \
+                --certificate-oidc-issuer "${IMAGE_SIGNER_OIDC_ISSUER}" \
+                --certificate-github-workflow-repository "${IMAGE_SIGNER_REPOSITORY}" \
+                "${REF}" > /dev/null; then
+                return 0
+              fi
+              echo "Signature for ${REF} not verifiable yet (attempt ${ATTEMPT}/3)"
+              sleep 10
+            done
+            echo "::error::cosign verify failed for ${REF}"
+            exit 1
+          }
+
+          # Pushes of the same local list normally produce the same digest. If one does not, sign it
+          # too rather than leave a tag pointing at an unsigned list.
+          push_signed_manifest() {
+            push_manifest "$1"
+            if [ "${PUSHED_DIGEST}" != "${SIGNED_DIGEST}" ]; then
+              echo "::warning::${IMG}:$1 has digest ${PUSHED_DIGEST}, not ${SIGNED_DIGEST}; signing it separately"
+              sign_manifest "${PUSHED_DIGEST}"
+            fi
+          }
 
           # Create manifest from per-arch images
           buildah manifest create "${IMG}:${{ matrix.tag }}"
           buildah manifest add --authfile "${AUTHFILE}" "${IMG}:${{ matrix.tag }}" "docker://${IMG}:${{ matrix.tag }}-amd64"
           buildah manifest add --authfile "${AUTHFILE}" "${IMG}:${{ matrix.tag }}" "docker://${IMG}:${{ matrix.tag }}-arm64"
 
-          # Push SHA-tagged manifest (pinnable version)
-          buildah manifest push --authfile "${AUTHFILE}" --all \
-            "${IMG}:${{ matrix.tag }}" \
-            "docker://${IMG}:${{ matrix.tag }}-${SHORT_SHA}"
+          # Push SHA-tagged manifest (pinnable version) and sign it
+          push_manifest "${{ matrix.tag }}-${SHORT_SHA}"
+          SIGNED_DIGEST="${PUSHED_DIGEST}"
+          sign_manifest "${SIGNED_DIGEST}"
 
           # Push latest-tagged manifest
-          buildah manifest push --authfile "${AUTHFILE}" --all \
-            "${IMG}:${{ matrix.tag }}" \
-            "docker://${IMG}:${{ matrix.tag }}-latest"
+          push_signed_manifest "${{ matrix.tag }}-latest"
 
           # Push version-tagged manifest on tag pushes
           if echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
-            buildah manifest push --authfile "${AUTHFILE}" --all \
-              "${IMG}:${{ matrix.tag }}" \
-              "docker://${IMG}:${{ matrix.tag }}-${VERSION}"
+            push_signed_manifest "${{ matrix.tag }}-${VERSION}"
           fi
 
   # Chart publishing — only on tag pushes (release)
