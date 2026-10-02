@@ -178,8 +178,12 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         return conclusion switch
         {
             WorkflowJobConclusion.Success => PipelineRunState.Passed,
+            WorkflowJobConclusion.Neutral => PipelineRunState.Passed,       // Neutral = non-blocking success
             WorkflowJobConclusion.Failure => PipelineRunState.Failed,
+            WorkflowJobConclusion.TimedOut => PipelineRunState.Failed,
+            WorkflowJobConclusion.ActionRequired => PipelineRunState.Failed,
             WorkflowJobConclusion.Cancelled => PipelineRunState.Cancelled,
+            WorkflowJobConclusion.Skipped => PipelineRunState.Cancelled,    // Skipped jobs are non-blocking
             _ => PipelineRunState.Failed
         };
     }

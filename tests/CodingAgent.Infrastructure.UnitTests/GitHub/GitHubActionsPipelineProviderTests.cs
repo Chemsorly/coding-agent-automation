@@ -147,6 +147,12 @@ public class GitHubActionsPipelineProviderTests
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Success, PipelineRunState.Passed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Failure, PipelineRunState.Failed)]
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Cancelled, PipelineRunState.Cancelled)]
+    // Skipped jobs (e.g. docker-push when docker-build is still running and the workflow is cancelled,
+    // or jobs whose 'if:' condition evaluated to false) must not map to Failed — they are non-blocking.
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped, PipelineRunState.Cancelled)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Neutral, PipelineRunState.Passed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.TimedOut, PipelineRunState.Failed)]
+    [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.ActionRequired, PipelineRunState.Failed)]
     public void MapJobState_MapsCorrectly(WorkflowJobStatus status, WorkflowJobConclusion? conclusion, PipelineRunState expected)
     {
         GitHubActionsPipelineProvider.MapJobState(status, conclusion).Should().Be(expected);
