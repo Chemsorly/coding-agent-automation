@@ -494,35 +494,20 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
             _mockLogger.Object,
             _mockHistoryService.Object);
 
-        // First QG call (pre-loop): fails — so the retry loop is entered
-        // Subsequent calls (in-loop): pass compilation+tests — so AppendExternalCiIfNeededAsync
-        // proceeds past the early-exit guard and reaches the CI poll / conflict check
-        // TODO [WARNING]: Replace this shared captured-integer sequencing with SetupSequence.
-        // The current approach has two problems:
-        // 1. Cross-test contamination: xUnit creates one instance per test class for [Fact] tests,
-        //    so validatorCallCount is shared across all tests in this class. The second test starts
-        //    with the counter already incremented by the first, causing it to return InLoopPassingReport
-        //    on the very first call — the retry loop is never entered and both Times.Once and
-        //    ConflictRestart assertions may pass vacuously or fail unexpectedly depending on run order.
-        // 2. Order-fragility: if a future code path adds a ValidateAsync call before the retry loop,
-        //    the sequence shifts silently — the first in-loop call gets InitialFailingReport instead
-        //    of InLoopPassingReport, exercising a different path with no signal.
-        // Fix: _mockValidator.SetupSequence(v => v.ValidateAsync(...))
-        //          .ReturnsAsync(InitialFailingReport)
-        //          .ReturnsAsync(InLoopPassingReport);
-        var validatorCallCount = 0;
-        _mockValidator.Setup(v => v.ValidateAsync(
+        // First QG call (pre-loop): fails — so the retry loop is entered.
+        // Second QG call (in-loop): passes compilation+tests — so AppendExternalCiIfNeededAsync
+        // proceeds past the early-exit guard and reaches the CI poll / conflict check.
+        // Using SetupSequence avoids the cross-test contamination present in the original
+        // captured-integer approach: xUnit creates one class instance per [Fact] test, so a shared
+        // counter would be stale on the second test — causing it to return InLoopPassingReport on
+        // the very first call (loop never entered, ConflictRestart assertion passes vacuously).
+        _mockValidator.SetupSequence(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
                 It.IsAny<string?>()))
-            .ReturnsAsync(() =>
-            {
-                validatorCallCount++;
-                // First call: initial QG before the retry loop — fails so loop is entered
-                // Subsequent calls: inside the retry loop — passes so CI check is reached
-                return validatorCallCount == 1 ? InitialFailingReport : InLoopPassingReport;
-            });
+            .ReturnsAsync(InitialFailingReport)   // call 1: pre-loop — causes retry loop to be entered
+            .ReturnsAsync(InLoopPassingReport);   // call 2: in-loop — lets AppendExternalCiIfNeededAsync reach the CI/conflict check
 
         // Agent returns a real non-null, non-empty result so RunFixAgentIterationAsync falls through
         // to quality gate validation. Without this, Moq returns null → ClassifyRetryOutcome(null)
@@ -598,6 +583,15 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
             .ReturnsAsync(PrMergeabilityStatus.Conflicted);
 
         // MaxRetries=2 so the loop would continue to iteration 2 if the guard is absent
+        // TODO [WARNING]: This test uses MaxRetries=2, which allows one extra iteration before the
+        // retry budget is exhausted. A guard failure where the loop runs exactly once more than it
+        // should before the count ceiling terminates it would still pass here (Times.Once accepts
+        // exactly one call, and the ceiling stops the second). Add a complementary test case with
+        // MaxRetries=1 to demonstrate that even a single extra iteration is prevented:
+        //   var context1 = BuildContext(run, maxRetries: 1);
+        //   await _executor.ProceedToQualityGatesAsync(context1, CancellationToken.None);
+        //   _mockAgent.Verify(a => a.ExecuteAsync(...), Times.Once,
+        //       "fix agent must be called exactly once even with MaxRetries=1");
         var context = BuildContext(run, maxRetries: 2);
         await _executor.ProceedToQualityGatesAsync(context, CancellationToken.None);
 
