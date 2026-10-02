@@ -11,7 +11,6 @@ using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
-using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Serilog;
@@ -33,7 +32,8 @@ try
     builder.Host.UseSerilog();
     builder.Services.AddSingleton(Log.Logger);
 
-    // Configure OpenTelemetry (tracing + metrics)
+    // Configure OpenTelemetry (tracing only — agent pods record no metrics after #2967/#2974/#2978/#2979
+    // migrated all metric recording to the API; see issue #2980)
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(r => r.AddService(
             serviceName: Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker",
@@ -41,15 +41,7 @@ try
         .WithTracing(t => t
             .AddHttpClientInstrumentation()
             .AddSource(PipelineTelemetry.SourceName)
-            .AddOtlpExporter())
-        .WithMetrics(m => m
-            .AddHttpClientInstrumentation()
-            .AddMeter(PipelineTelemetry.SourceName)
-            // OTLP exporter defaults to Delta temporality, but Prometheus (and Grafana Cloud's OTLP
-            // receiver) require Cumulative. Without this, histograms and counters are silently dropped
-            // by the Grafana collector. The two-argument overload is only available inside WithMetrics().
-            .AddOtlpExporter((_, readerOptions) =>
-                readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
+            .AddOtlpExporter());
 
     // ── KiroCliLib ──
     var kiroConfig = new Configuration

@@ -264,15 +264,6 @@ public class ClaimOrphanedTemplatesTests : IDisposable
                     rowVersionProp.IsConcurrencyToken = false;
                     rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
                 }
-
-                // Disable auto-generation on Guid PKs so Guid.Empty is stored verbatim.
-                // EF Core convention for Guid PKs is ValueGenerated.OnAdd, which substitutes Guid.Empty.
-                // The Default project uses Guid.Empty as its stable key.
-                var idProp = entityType.FindProperty("Id");
-                if (idProp != null && idProp.ClrType == typeof(Guid))
-                {
-                    idProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
-                }
             }
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
