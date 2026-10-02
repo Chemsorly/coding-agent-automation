@@ -153,6 +153,19 @@ public sealed class PipelineStepContext
     public IReadOnlyList<ReviewerConfiguration>? PreResolvedReviewerConfigs { get; set; }
 
     /// <summary>
+    /// The project's reviewers, which <see cref="ReviewCodeStep"/> adds to the code review (see
+    /// <see cref="ProjectReview"/>). Empty when the project review is off.
+    /// </summary>
+    public IReadOnlyList<ReviewAgent> ProjectReviewers { get; set; } = [];
+
+    /// <summary>
+    /// The project's other repositories, which the project reviewers read.
+    /// <see cref="CloneProjectReviewRepositoriesStep"/> sets the <see cref="RepositoryTarget.LocalPath"/> of each one it
+    /// clones. Null when the project review is off.
+    /// </summary>
+    public IReadOnlyList<RepositoryTarget>? ProjectReviewRepositories { get; set; }
+
+    /// <summary>
     /// Resolved reviewer configurations from the review phase. Populated by <see cref="ReviewCodeStep"/>
     /// after resolving configs, so that <c>PostReviewFindingsStep</c> can access them for per-agent retry
     /// via <see cref="IAgentPhaseExecutor.ExecuteFollowUpAsync"/>. Null when review step hasn't run.

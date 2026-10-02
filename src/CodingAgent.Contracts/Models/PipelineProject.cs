@@ -108,4 +108,42 @@ public sealed record PipelineProject
     /// Null = inherit profile MCPs only. Empty list = explicitly override with no project MCPs (passthrough).
     /// </summary>
     public IReadOnlyList<McpServerConfig>? McpServers { get; init; }
+
+    /// <summary>
+    /// Whether the project review runs. Its reviewers (<see cref="ActiveProjectReviewers"/>) join every code review
+    /// of the project's repositories, in implementation runs and PR review runs, next to the reviewers the
+    /// repository's labels pick. They get read-only clones of the project's other repositories, so they can check a
+    /// change against the whole product. Default false.
+    /// </summary>
+    public bool ProjectReviewEnabled { get; init; }
+
+    /// <summary>
+    /// The project's reviewers. An empty name or prompt means the default one, and an empty list means one default
+    /// reviewer. The settings page edits the first reviewer.
+    /// </summary>
+    public IReadOnlyList<ReviewAgent> ProjectReviewers { get; init; } = [];
+
+    /// <summary>
+    /// The reviewers a code review of this project adds: none while <see cref="ProjectReviewEnabled"/> is off, else
+    /// <see cref="ProjectReviewers"/>, or one reviewer when there are none, with the default name
+    /// (<see cref="PipelineConfigurationDefaults.DefaultProjectReviewerName"/>) and prompt
+    /// (<see cref="PipelineConfigurationDefaults.DefaultProjectReviewPrompt"/>) where they are empty.
+    /// </summary>
+    public IReadOnlyList<ReviewAgent> ActiveProjectReviewers()
+    {
+        if (!ProjectReviewEnabled)
+            return [];
+
+        IEnumerable<ReviewAgent> reviewers = ProjectReviewers.Count > 0
+            ? ProjectReviewers
+            : [new ReviewAgent { Name = "", Prompt = "" }];
+
+        return reviewers
+            .Select(r => new ReviewAgent
+            {
+                Name = string.IsNullOrWhiteSpace(r.Name) ? PipelineConfigurationDefaults.DefaultProjectReviewerName : r.Name.Trim(),
+                Prompt = string.IsNullOrWhiteSpace(r.Prompt) ? PipelineConfigurationDefaults.DefaultProjectReviewPrompt : r.Prompt
+            })
+            .ToList();
+    }
 }

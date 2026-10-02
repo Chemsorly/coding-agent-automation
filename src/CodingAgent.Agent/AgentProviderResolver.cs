@@ -118,13 +118,17 @@ internal sealed class AgentProviderResolver : IAgentProviderResolver
     private List<(string TemplateName, IRepositoryProvider Provider)>? ResolveAdditionalRepoProviders(
         JobAssignmentMessage job, IProviderFactory providerFactory)
     {
-        if (job.ProjectContext is null ||
-            job.RunType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
+        // A project epic's decomposition reads the project's repositories, and so do the project reviewers of a
+        // code review
+        var repositories = job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
+            ? job.ProjectContext?.Repositories
+            : job.ProjectReviewers.Count > 0 ? job.ProjectReviewRepositories : null;
+        if (repositories is null)
             return null;
 
         var additionalProviders = new List<(string TemplateName, IRepositoryProvider Provider)>();
 
-        foreach (var repoTarget in job.ProjectContext.Repositories)
+        foreach (var repoTarget in repositories)
         {
             if (string.IsNullOrEmpty(repoTarget.RepoProviderId) ||
                 repoTarget.RepoProviderId == job.RepoProviderConfigId)

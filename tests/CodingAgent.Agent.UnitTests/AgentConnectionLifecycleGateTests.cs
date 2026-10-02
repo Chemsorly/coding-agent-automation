@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -111,21 +110,7 @@ public class AgentConnectionLifecycleGateTests
 
         sw.ElapsedMilliseconds.Should().BeLessThan(500,
             "gate should be completed after second reconnect");
-        // TODO [WARNING]: This test only verifies the final state (gate completed) after
-        // HandleReconnectedAsync finishes. It does not verify that the gate is actually in an
-        // *incomplete* state during the window between reset and re-registration completion.
-        // A concurrent WaitForRegistrationAsync interleaved during that window should block,
-        // but that ordering invariant is not asserted here. Add an interleaved test that
-        // holds re-registration open, starts a WaitForRegistrationAsync concurrently, and
-        // verifies it blocks until registration completes. (Test Quality Review)
     }
-
-    // TODO [WARNING]: No test covers the `ct` cancellation contract for AgentConnectionLifecycle.
-    // WaitWithTimeoutAsync accepts `ct` but does not include it in Task.WhenAny, so cancelling
-    // `ct` does not promptly unblock the wait. A test that: (1) holds the gate open,
-    // (2) calls WaitForRegistrationAsync(cts.Token), (3) cancels cts, and (4) asserts the
-    // call returns promptly would both cover this contract and reveal the production gap.
-    // Without this test the dead `ct` parameter goes undetected. (Test Quality Review)
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -138,10 +123,7 @@ public class AgentConnectionLifecycleGateTests
         var mockLogger = new Mock<Serilog.ILogger>().Object;
         var initialManager = new FakeHubConnectionManager();
         var factory = new FakeHubConnectionManagerFactory(factoryFunc ?? (() => new FakeHubConnectionManager()));
-        var buffer = new CriticalMessageBuffer();
-        var signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger);
-        var signalRReporter = new SignalRCompletionReporter(initialManager, signalRPipeline, buffer, mockLogger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
+        var slotManager = new ChatSlotManager();
         var lifetimeMock = new Mock<IHostApplicationLifetime>();
         lifetimeMock.Setup(l => l.ApplicationStopping).Returns(appStoppingToken);
         if (stopApplication is not null)
@@ -150,7 +132,6 @@ public class AgentConnectionLifecycleGateTests
         var lifecycle = new AgentConnectionLifecycle(
             initialManager,
             factory,
-            signalRReporter,
             slotManager,
             new AgentId("gate-agent"),
             lifetimeMock.Object,

@@ -63,6 +63,22 @@ helm install coding-agent ./helm/coding-agent-automation \
 
 > **Docker build args:** All service images (`api.Dockerfile`, `web.Dockerfile`, `jobcontroller.Dockerfile`, `scheduler.Dockerfile`) accept a `BUILD_COMMIT_SHA` build arg at image build time. This arg is exposed as the `SERVICE_VERSION` runtime environment variable and is reported in `build-info.json` inside the container for version identification. Pass it via `--build-arg BUILD_COMMIT_SHA=$(git rev-parse HEAD)` in CI. Omitting it defaults to `"local"` (safe for dev builds).
 
+### Verify Images
+
+CI signs every image it pushes to `docker.io/chemsorly/coding-agent` with [cosign](https://github.com/sigstore/cosign) keyless signing: the multi-arch manifest list behind each `-<sha7>`, `-latest` and `-<version>` tag, its platform manifests, and the per-arch `-amd64`/`-arm64` tags. Pushes from `main` and from `vX.Y.Z` release tags are signed; pull requests do not push and are not signed. The manifest list is signed on its immutable `-<sha7>` tag before `-latest` and `-<version>` are moved to it, so those tags never point at an unsigned image. There is no signing key: the certificate is issued by Sigstore's Fulcio for the CI workflow's GitHub OIDC identity, and every signature is recorded in the public Rekor transparency log.
+
+Verify an image before you deploy it (cosign v3 or later):
+
+```bash
+cosign verify \
+  --certificate-identity-regexp '^https://github\.com/Chemsorly/coding-agent-automation/\.github/workflows/ci\.yml@refs/(heads/main|tags/v[0-9]+\.[0-9]+\.[0-9]+)$' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-repository Chemsorly/coding-agent-automation \
+  docker.io/chemsorly/coding-agent:coding-agent-web-latest
+```
+
+A tag is resolved to its digest at verification time, so verifying a mutable tag such as `-latest` checks the image the tag points at now. Signatures are stored as cosign v3 Sigstore bundles attached to the image digest as OCI 1.1 referrers, not as extra tags; cosign v2 without `--new-bundle-format` reports no signatures. The chart does not enforce signatures at admission. If you add a policy engine (for example Kyverno `verifyImages` or the Sigstore policy-controller), use the identity above and first confirm that your version verifies Sigstore bundles stored as OCI referrers.
+
 ### Architecture
 
 The chart deploys:

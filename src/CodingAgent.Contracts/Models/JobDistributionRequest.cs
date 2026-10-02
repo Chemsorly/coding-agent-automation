@@ -140,6 +140,14 @@ public record JobDistributionRequest
     /// <summary>Scope of a decomposition: "project-level" for a project epic, "template-level" for a repo epic.</summary>
     public string? DecompositionSource { get; init; }
 
+    // --- Project review (implementation and PR review runs) ---
+
+    /// <summary>The project's reviewers, which join the code review (see <see cref="PipelineProject.ActiveProjectReviewers"/>). Empty or null when the project review is off.</summary>
+    public IReadOnlyList<ReviewAgent>? ProjectReviewers { get; init; }
+
+    /// <summary>The project's other repositories, which the project reviewers read from read-only clones. Null when the project review is off.</summary>
+    public IReadOnlyList<RepositoryTarget>? ProjectReviewRepositories { get; init; }
+
     // --- Consolidation-specific ---
 
     /// <summary>The consolidation run type (Brain, RefactoringDetection, HarnessSuggestions).</summary>
