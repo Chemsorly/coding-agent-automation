@@ -12,6 +12,20 @@ public static class PipelineStepExtensions
         => step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
                or PipelineStep.ConflictRestart or PipelineStep.PrMerged or PipelineStep.PrClosed;
 
+    /// <summary>
+    /// Returns true if the step is a quality-gate exit state that requires the retry loop to
+    /// stop immediately: <see cref="PipelineStep.Failed"/>, <see cref="PipelineStep.ConflictRestart"/>,
+    /// <see cref="PipelineStep.PrMerged"/>, or <see cref="PipelineStep.PrClosed"/>.
+    /// <para>
+    /// Distinct from <see cref="IsTerminal"/>, which also matches <see cref="PipelineStep.Completed"/>
+    /// and <see cref="PipelineStep.Cancelled"/> — those are valid non-error exits not reachable from
+    /// within <c>QualityGateExecutor</c>'s retry loop.
+    /// </para>
+    /// </summary>
+    public static bool IsQualityGateExitState(this PipelineStep step)
+        => step is PipelineStep.Failed or PipelineStep.ConflictRestart
+               or PipelineStep.PrMerged or PipelineStep.PrClosed;
+
     public static string ToDisplayName(this PipelineStep step) => step switch
     {
         PipelineStep.Created => "Pipeline Created",
