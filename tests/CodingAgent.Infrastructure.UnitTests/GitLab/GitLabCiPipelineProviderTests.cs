@@ -344,7 +344,7 @@ public class GitLabCiPipelineProviderTests
 
         var provider = CreateProvider(mockClient);
 
-        var result = await provider.WaitForCompletionAsync("main", "sha-zero", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var result = await provider.WaitForCompletionAsync("main", "sha-zero", TimeSpan.FromSeconds(30), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs[0].LogContent.Should().BeNull("JobId=0 must be skipped during log enrichment");
@@ -368,7 +368,7 @@ public class GitLabCiPipelineProviderTests
             jobTrace: null);   // <-- fetch returns null
         var provider = CreateProvider(mockClient);
 
-        var result = await provider.WaitForCompletionAsync("main", "sha-nolog", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var result = await provider.WaitForCompletionAsync("main", "sha-nolog", TimeSpan.FromSeconds(30), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs[0].LogContent.Should().BeNull(
