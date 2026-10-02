@@ -91,7 +91,10 @@ public sealed class RunsPage
     // data attribute (e.g. data-issue-id) on the identifier cell and selecting by that instead.
     public async Task<List<string>> GetVisibleIssueIdentifiersAsync()
     {
-        return await _page.EvaluateAsync<List<string>>(@"() => {
+        // Use string[] instead of List<string>: Playwright's EvaluateAsync deserializer throws
+        // NullReferenceException when deserializing an empty JS array into List<T> in some
+        // Playwright versions. string[] deserializes correctly and handles the empty case.
+        var result = await _page.EvaluateAsync<string[]?>(@"() => {
             const rows = document.querySelectorAll('tbody tr');
             const ids = [];
             for (const row of rows) {
@@ -105,6 +108,7 @@ public sealed class RunsPage
             }
             return ids;
         }");
+        return result?.ToList() ?? [];
     }
 
     /// <summary>
@@ -233,7 +237,10 @@ public sealed class RunsPage
         var row = RunRow(issueIdentifier).First;
         await row.WaitForAsync(new() { Timeout = 10_000 });
         await row.ClickAsync();
-        await _page.WaitForLoadStateAsync(LoadState.NetworkIdle, new() { Timeout = 15_000 });
+        // Blazor Server navigation is SignalR-driven: WaitForLoadStateAsync(NetworkIdle) resolves
+        // before the Blazor client applies the URL change, leaving Page.Url still on /runs.
+        // Wait for the URL to change to the run detail route instead.
+        await _page.WaitForURLAsync(url => url.Contains("/runs/"), new() { Timeout = 15_000 });
     }
 
     // ── Links column ──────────────────────────────────────────────────────────
@@ -245,7 +252,10 @@ public sealed class RunsPage
     {
         var row = RunRow(issueIdentifier).First;
         await row.WaitForAsync(new() { Timeout = 10_000 });
-        return await row.Locator("td.runs-links-cell a[title^='Open issue']").GetAttributeAsync("href");
+        // Use timeout:0 so GetAttributeAsync returns null immediately when the link is absent
+        // (e.g. when IssueUrl is null), rather than waiting 30s and throwing a TimeoutException.
+        return await row.Locator("td.runs-links-cell a[title^='Open issue']")
+            .GetAttributeAsync("href", new() { Timeout = 0 });
     }
 
     /// <summary>
@@ -255,7 +265,9 @@ public sealed class RunsPage
     {
         var row = RunRow(issueIdentifier).First;
         await row.WaitForAsync(new() { Timeout = 10_000 });
-        return await row.Locator("td.runs-links-cell a.runs-link-pr").GetAttributeAsync("href");
+        // Use timeout:0 so GetAttributeAsync returns null immediately when the link is absent.
+        return await row.Locator("td.runs-links-cell a.runs-link-pr")
+            .GetAttributeAsync("href", new() { Timeout = 0 });
     }
 
     // ── Empty / filter states ─────────────────────────────────────────────────
