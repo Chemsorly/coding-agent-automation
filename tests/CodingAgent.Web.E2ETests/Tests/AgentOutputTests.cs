@@ -91,7 +91,16 @@ public sealed class AgentOutputTests : E2ETestBase
         await WaitUntilAsync(() =>
             runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId && r.CurrentStep == PipelineStep.GeneratingCode));
 
-        var runId = runService.GetActiveRuns().First(r => r.IssueIdentifier == issueId).RunId;
+        var activeRun = runService.GetActiveRuns().First(r => r.IssueIdentifier == issueId);
+        var runId = activeRun.RunId;
+
+        // Seed the run summary into HistoryService so that RunPage.razor's
+        // RunHistory.GetRunAsync(runId) call succeeds for this active run.
+        // Without this, _run is null → _isLive = false → the "Live output" card
+        // never renders and SubscribeLiveAsync is never called.
+        // Pattern established by RunStateConsistencyTests (line ~81).
+        await Fixture.HistoryService.AddRunSummaryAsync(activeRun.ToSummary());
+
         return (runId, assignment.JobId);
     }
 
