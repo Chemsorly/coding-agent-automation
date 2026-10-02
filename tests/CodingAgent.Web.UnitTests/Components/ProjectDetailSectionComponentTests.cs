@@ -1046,4 +1046,112 @@ public class ProjectDetailSectionMcpTabTests : BunitContext
         // MCP row contains no "key=value" text for env vars (e.g. check an env vars cell is empty).
         Assert.Contains("env-null-server", cut.Markup);
     }
+
+    // ── Project review ────────────────────────────────────────────────────────
+
+    private IRenderedComponent<ProjectDetailSection> RenderProject(PipelineProject project, Action<PipelineProject>? onSave = null)
+    {
+        _mockStore.Setup(s => s.GetProjectByIdAsync(project.Id, It.IsAny<CancellationToken>())).ReturnsAsync(project);
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => onSave?.Invoke(p))
+            .Returns(Task.CompletedTask);
+        return Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, project.Id)
+            .Add(s => s.ConfigClient, _mockStore.Object));
+    }
+
+    private static void OpenTab(IRenderedComponent<ProjectDetailSection> cut, string name) =>
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains(name)).Click();
+
+    private static void ClickButton(IRenderedComponent<ProjectDetailSection> cut, string text) =>
+        cut.FindAll("button").First(b => b.TextContent.Contains(text)).Click();
+
+    [Fact]
+    public void ProjectReviewTab_DefaultProject_IsNotOffered()
+    {
+        var cut = RenderProject(new PipelineProject { Id = WellKnownIds.DefaultProjectId, Name = "Default" });
+
+        Assert.DoesNotContain(cut.FindAll(".tab-btn"), b => b.TextContent.Contains("Project Review"));
+    }
+
+    [Fact]
+    public void ProjectReviewTab_NewReview_ShowsTheDefaultInstructionsAndTheRepositoriesToClone()
+    {
+        _mockStore.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+        [
+            new PipelineJobTemplate { Id = "t1", Name = "api", IssueProviderId = "i1", RepoProviderId = "r1", Enabled = true },
+            new PipelineJobTemplate { Id = "t2", Name = "web", IssueProviderId = "i2", RepoProviderId = "r2", Enabled = true }
+        ]);
+        var cut = RenderProject(new PipelineProject { Id = "p1", Name = "Shop", TemplateIds = ["t1", "t2"] });
+
+        OpenTab(cut, "Project Review");
+
+        Assert.False(cut.Find("#project-review-enabled").HasAttribute("checked"));
+        Assert.Equal(PipelineConfigurationDefaults.DefaultProjectReviewPrompt, cut.Find("#project-review-prompt").GetAttribute("value"));
+        Assert.True(cut.FindAll("button").First(b => b.TextContent.Contains("Reset to default")).HasAttribute("disabled"));
+        Assert.Contains("api, web", cut.Markup);
+    }
+
+    [Fact]
+    public void ProjectReviewTab_SaveWithTheDefaultInstructions_StoresThemEmpty()
+    {
+        // Empty instructions mean the default ones, so the project follows later changes to the default
+        PipelineProject? saved = null;
+        var cut = RenderProject(new PipelineProject { Id = "p1", Name = "Shop" }, p => saved = p);
+        OpenTab(cut, "Project Review");
+
+        cut.Find("#project-review-enabled").Change(true);
+        ClickButton(cut, "Save Project Review");
+
+        Assert.NotNull(saved);
+        Assert.True(saved!.ProjectReviewEnabled);
+        var reviewer = Assert.Single(saved.ProjectReviewers);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultProjectReviewerName, reviewer.Name);
+        Assert.Equal("", reviewer.Prompt);
+    }
+
+    [Fact]
+    public void ProjectReviewTab_SaveWithOwnInstructions_EditsTheFirstReviewerAndKeepsTheOthers()
+    {
+        // The page edits one reviewer; further reviewers, set through the API, stay as they are
+        PipelineProject? saved = null;
+        var cut = RenderProject(new PipelineProject
+        {
+            Id = "p1",
+            Name = "Shop",
+            ProjectReviewEnabled = true,
+            ProjectReviewers =
+            [
+                new ReviewAgent { Name = "Product", Prompt = "Old instructions" },
+                new ReviewAgent { Name = "Contracts", Prompt = "Check the API contracts" }
+            ]
+        }, p => saved = p);
+        OpenTab(cut, "Project Review");
+        Assert.Equal("Old instructions", cut.Find("#project-review-prompt").GetAttribute("value"));
+
+        cut.Find("#project-review-prompt").Change("New instructions");
+        ClickButton(cut, "Save Project Review");
+
+        Assert.Equal(
+            [("Product", "New instructions"), ("Contracts", "Check the API contracts")],
+            saved!.ProjectReviewers.Select(r => (r.Name, r.Prompt)));
+    }
+
+    [Fact]
+    public void SettingsSave_AfterAProjectReviewSave_KeepsTheProjectReview()
+    {
+        // The Settings tab saves its own copy of the project; it must take the project review from the saved project
+        var saves = new List<PipelineProject>();
+        var cut = RenderProject(new PipelineProject { Id = "p1", Name = "Shop" }, saves.Add);
+        OpenTab(cut, "Project Review");
+        cut.Find("#project-review-enabled").Change(true);
+        ClickButton(cut, "Save Project Review");
+
+        OpenTab(cut, "Settings");
+        ClickButton(cut, "Save Settings");
+
+        Assert.Equal(2, saves.Count);
+        Assert.True(saves[1].ProjectReviewEnabled);
+        Assert.Single(saves[1].ProjectReviewers);
+    }
 }

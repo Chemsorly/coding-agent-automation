@@ -15,6 +15,7 @@ The rules a plausible change could break. Details are in the linked entries.
 - Private keys never enter an agent pod; agents get short-lived tokens only. ([Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant))
 - No agent pod receives the master key; each Job gets its own derived key, and an agent can resume only its own run. ([Agent keys](#hmac-key-derivation-for-agent-auth--intentional-simplicity))
 - Agents can't set human-approval labels such as `agent:epic-approved`. ([Gated labels](#dispatchgatedlabels-extensible-set-for-human-approval-required-label-transitions))
+- Clones of a project's other repositories are read-only and never reach the diff or a commit. ([Project review](#project-review-one-project-reviewer-per-project-with-read-only-clones-of-the-projects-other-repositories))
 - Only the API reads or writes PostgreSQL. ([Services](#only-the-api-owns-the-database-each-service-has-one-job))
 - Every background loop runs on one elected leader; the API runs no loops. ([Loops](#dispatch-loop-belongs-in-a-leader-elected-controller-not-the-stateless-api))
 - All images build from one commit and deploy together. Never reorder enum members in hub types or reuse a retired MessagePack key. ([Images](#agent-images-rebuild-with-the-control-plane--no-wire-skew-window), [MessagePack](#messagepack-int-ordinals-for-signalr--homogeneous-deployment-assumed))
@@ -263,7 +264,7 @@ The rules a plausible change could break. Details are in the linked entries.
 
 ### Multi-agent code review: specialized reviewers run in parallel
 <!-- 2026-07-04; defaults updated 2026-10-02 -->
-**Rule:** Several reviewers, each with one focus, run in parallel. By default, correctness, security and test-quality reviewers check every repository, and stack specialists (the .NET reviewer) check repositories with the matching label. The reviewer set is configurable.
+**Rule:** Several reviewers, each with one focus, run in parallel. By default, correctness, security and test-quality reviewers check every repository, and stack specialists (the .NET reviewer) check repositories with the matching label. A project can add its own project reviewer. The reviewer set is configurable.
 **Why:** A reviewer that focuses on one concern catches what a generalist misses.
 **Not:** one thorough generalist; only two reviewers; six or more (diminishing returns, noisy consolidation).
 **Revisit when:** parallel review becomes too expensive; then compare findings per reviewer to see which roles earn their cost.
@@ -510,6 +511,13 @@ A setting's limits are standard `[Range]` attributes, the one source for the API
 **Why:** A 2026-09-27 review found settings that did nothing, working settings without a field, limits that differed between pages, and one bad project override discarding all of the project's overrides. Code review settings now live on one Code Review page.
 **Not:** a settings registry that generates the pages and the docs table (a large UI rewrite that loses the hand-tuned layouts); system settings in Helm (more restarts, no problem solved); project-level label routing (labels also select the agent profile, so it would need project context everywhere labels are resolved).
 **Revisit when:** the guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
+
+### Project review: one project reviewer per project, with read-only clones of the project's other repositories
+<!-- 2026-10-02 -->
+**Rule:** A project can turn on a project review. Its reviewer joins every code review of the project's repositories, in implementation runs and PR review runs, after the reviewers that the repository's labels pick. It shares their findings, inline comments and fix rounds. It reads read-only clones of the project's other repositories, which never reach the diff or a commit. It checks the change against the whole project: cross-repository contracts, decisions in the connected MCP servers, documentation and brain lessons for this project. A fix that belongs in another repository is a `[WARNING]`, so fix rounds don't chase it. The settings page edits one reviewer, and the project stores a list. Project epics use the same clones.
+**Why:** Repository labels choose reviewers, and they describe the tech stack: the same labels pick the agent image and the quality gates. A reviewer that knows the product doesn't fit them. **Accepting:** a GitLab or personal-access-token repository keeps its own token for the clone. The agent strips the token from the clone, blocks pushes and deletes a clone it can't make read-only, but the run still holds the tokens of the project's other GitLab repositories. Use short-lived project access tokens.
+**Not:** "product labels" on repositories (labels route agent images, and a label without a matching agent profile blocks dispatch); a shared reviewer catalog (project instructions are project-specific); letting a project pick label reviewer sets (adds no project knowledge).
+**Revisit when:** projects need several distinct reviewers in the UI, or GitLab tokens can be narrowed to read-only.
 
 ### Project overrides: nested settings deep-merge
 <!-- 2026-07-04; 2026-07-25 -->
