@@ -125,6 +125,11 @@ public sealed class AgentOutputTests : E2ETestBase
         // to the run group, making the "Live output" card visible).
         await detail.WaitForLiveOutputPanelAsync(timeoutMs: 15_000);
 
+        // Wait for SubscribeToRun to complete — confirmed by the RunStateSnapshot response
+        // rendering a pipeline-step element in PipelineSidebar. Without this, ReportOutputAsync
+        // may push lines before the circuit has joined the run-{id} group, and they are lost.
+        await detail.WaitForSubscriptionConfirmedAsync(timeoutMs: 15_000);
+
         // Act: send the first batch of 3 lines.
         await fakeAgent.ReportOutputAsync(jobId, "line-one", "line-two", "line-three");
 
@@ -250,6 +255,10 @@ public sealed class AgentOutputTests : E2ETestBase
         var detail = new RunDetailPage(Page, BaseUrl);
         await detail.NavigateAsync(runId);
         await detail.WaitForLiveOutputPanelAsync(timeoutMs: 15_000);
+
+        // Wait for SubscribeToRun to complete before sending completion events, so the circuit
+        // receives OnCompleted and transitions _isLive → false to show the saved output tail card.
+        await detail.WaitForSubscriptionConfirmedAsync(timeoutMs: 15_000);
 
         // Complete the run.
         await fakeAgent.ReportStepAsync(jobId, PipelineStep.Completed);

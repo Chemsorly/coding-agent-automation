@@ -69,6 +69,24 @@ public sealed class RunDetailPage
     }
 
     /// <summary>
+    /// Waits until the Blazor circuit has completed <c>SubscribeToRun</c> on the hub and received
+    /// the <c>OnRunStateSnapshot</c> response. The snapshot causes <c>PipelineSidebar</c> to render
+    /// a <c>data-testid="pipeline-step-*"</c> element — its presence in the DOM confirms the circuit
+    /// is in the <c>run-{id}</c> SignalR group and will receive subsequent <c>OnOutputLines</c> pushes.
+    ///
+    /// Call this after <see cref="WaitForLiveOutputPanelAsync"/> and before sending output lines via
+    /// <c>FakeAgentClient.ReportOutputAsync</c>, to avoid the race where lines are pushed before
+    /// the circuit has joined the group.
+    /// </summary>
+    public async Task WaitForSubscriptionConfirmedAsync(int timeoutMs = 15_000)
+    {
+        await _page.WaitForFunctionAsync(
+            "() => !!document.querySelector('[data-testid^=\"pipeline-step-\"]')",
+            null,
+            new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
     /// Waits until the live output area contains at least <paramref name="minLines"/> lines.
     /// Polls the DOM for the <c>pre.run-live-log</c> element's text (all lines joined with newline).
     /// Does NOT use a fixed sleep.
