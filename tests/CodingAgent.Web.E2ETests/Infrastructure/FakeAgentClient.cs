@@ -486,6 +486,27 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reports one or more output lines for a job via <c>ReportOutputLines</c>.
+    /// Mirrors what the production agent calls to stream live output to the UI.
+    /// <para>
+    /// Requires the agent to have an active job (i.e. <see cref="AcceptJobAsync"/> was called
+    /// for <paramref name="jobId"/>). The hub's <c>[RequiresActiveJob]</c> attribute will reject
+    /// the call otherwise.
+    /// </para>
+    /// </summary>
+    /// <param name="jobId">The active job / run ID.</param>
+    /// <param name="lines">One or more output lines to report.</param>
+    // TODO [WARNING]: No guard for null or empty `lines`. Calling ReportOutputAsync(jobId) with
+    // zero lines will silently succeed (hub allows empty list). Consider adding
+    // ArgumentNullException.ThrowIfNull(lines) and/or a guard for zero elements to mirror
+    // the defensive posture of other FakeAgentClient public entry points.
+    public async Task ReportOutputAsync(string jobId, params string[] lines)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        await _connection.InvokeAsync(HubMethodNames.ReportOutputLines, jobId, (IReadOnlyList<string>)lines);
+    }
+
+    /// <summary>
     /// Sends a heartbeat to keep the agent alive.
     /// </summary>
     public async Task SendHeartbeatAsync()

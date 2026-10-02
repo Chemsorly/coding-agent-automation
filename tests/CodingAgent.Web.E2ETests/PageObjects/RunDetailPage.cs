@@ -47,6 +47,59 @@ public sealed class RunDetailPage
     public async Task<bool> HasLiveOutputPanelAsync()
         => await _page.Locator(".cockpit-card:has(h2:has-text('Live output'))").IsVisibleAsync();
 
+    /// <summary>
+    /// Returns true when the saved output tail card (<c>data-testid="output-tail-card"</c>) is
+    /// visible on the page. This card renders for completed runs when <c>OutputTail</c> is non-empty.
+    /// </summary>
+    public async Task<bool> HasSavedOutputCardAsync()
+        => await _page.Locator("[data-testid='output-tail-card']").IsVisibleAsync();
+
+    /// <summary>
+    /// Waits for the live output panel to appear on the page (the "Live output" card).
+    /// Polls using a Playwright condition instead of a fixed sleep, consistent with the pattern
+    /// in <see cref="BlazorPageExtensions"/>.
+    /// </summary>
+    public async Task WaitForLiveOutputPanelAsync(int timeoutMs = 15_000)
+    {
+        await _page.WaitForFunctionAsync(
+            "() => !!document.querySelector('.cockpit-card h2') && " +
+            "      Array.from(document.querySelectorAll('.cockpit-card h2')).some(h => h.textContent.trim() === 'Live output')",
+            null,
+            new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
+    /// Waits until the live output area contains at least <paramref name="minLines"/> lines.
+    /// Polls the DOM for the <c>pre.run-live-log</c> element's text (all lines joined with newline).
+    /// Does NOT use a fixed sleep.
+    /// </summary>
+    public async Task WaitForLiveOutputLineCountAsync(int minLines, int timeoutMs = 15_000)
+    {
+        await _page.WaitForFunctionAsync(
+            @"(minLines) => {
+                const pre = document.querySelector('.run-live-log');
+                if (!pre) return false;
+                const text = pre.textContent || '';
+                const lines = text.split('\n').filter(l => l.length > 0);
+                return lines.length >= minLines;
+            }",
+            minLines,
+            new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
+    /// Returns all non-empty lines from the live output <c>pre.run-live-log</c> element.
+    /// For an active run this is the live panel; for a completed run this is the saved tail card —
+    /// both use the same CSS class.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetOutputLinesAsync()
+    {
+        var pre = _page.Locator("pre.run-live-log");
+        if (!await pre.IsVisibleAsync()) return Array.Empty<string>();
+        var text = await pre.TextContentAsync() ?? "";
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    }
+
     /// <summary>Clicks the sidebar's "Cancel Pipeline" button (present only while the run is active).</summary>
     public async Task CancelAsync()
     {
