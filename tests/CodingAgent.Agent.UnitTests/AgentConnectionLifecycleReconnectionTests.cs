@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgent.Agent;
-using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -150,6 +149,13 @@ public class AgentConnectionLifecycleReconnectionTests
 
         var task = lifecycle.HandleReconnectedAsync("conn-id");
 
+        // TODO [WARNING]: The 50 ms delay is a timing assumption — on a loaded CI machine the
+        // initial InvokeAsync attempt may not have completed (or may already have entered the
+        // extended retry loop) by the time the cancellation fires, making this a race.
+        // If the cancel fires before the first InvokeAsync, the early-return path is taken,
+        // which has different semantics. Replace with a ManualResetEventSlim or a
+        // fake-HubManager that signals after the first InvokeAsync invocation to eliminate
+        // the race and make cancellation timing deterministic.
         // Let initial InvokeAsync attempt fail, then cancel before extended retry delay
         await Task.Delay(50);
         cts.Cancel();
@@ -188,10 +194,7 @@ public class AgentConnectionLifecycleReconnectionTests
         var factory = new FakeHubConnectionManagerFactory(
             factoryFunc ?? (() => new FakeHubConnectionManager()));
 
-        var buffer = new CriticalMessageBuffer();
-        var signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger);
-        var signalRReporter = new SignalRCompletionReporter(initialManager, signalRPipeline, buffer, mockLogger);
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
+        var slotManager = new ChatSlotManager();
 
         var lifetimeMock = new Mock<IHostApplicationLifetime>();
         lifetimeMock.Setup(l => l.ApplicationStopping).Returns(appStoppingToken);
@@ -201,7 +204,6 @@ public class AgentConnectionLifecycleReconnectionTests
         var lifecycle = new AgentConnectionLifecycle(
             initialManager,
             factory,
-            signalRReporter,
             slotManager,
             new AgentId("test-agent"),
             lifetimeMock.Object,

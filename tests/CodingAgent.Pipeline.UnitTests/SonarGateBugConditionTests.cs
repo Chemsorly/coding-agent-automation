@@ -110,7 +110,7 @@ public partial class SonarGateBugConditionTests
             ("tests/CodingAgent.Pipeline.UnitTests/Services/AgentHubFacadeProgressTrackingTests.cs",        129, "AgentHubFacadeProgressTrackingTests line 129"),
             ("tests/CodingAgent.Web.UnitTests/Hubs/AgentHubFacadeTransitionTests.cs",                           93,  "AgentHubFacadeTransitionTests line 93"),
             ("tests/CodingAgent.Web.UnitTests/Hubs/AgentHubFacadeTransitionTests.cs",                          100,  "AgentHubFacadeTransitionTests line 100"),
-            ("tests/CodingAgent.Agent.UnitTests/CriticalMessageBufferTests.cs",                            191,  "CriticalMessageBufferTests line 191"),
+            ("tests/CodingAgent.Agent.UnitTests/OpenCode/OpenCodeHealthMonitorTests.cs",                   165,  "OpenCodeHealthMonitorTests line 165"),
             ("tests/CodingAgent.Pipeline.UnitTests/ProviderDisposerTests.cs",                                6,  "ProviderDisposerTests line 6 (DisposeAllAsync_NullProvider_Skips)"),
             ("tests/CodingAgent.Pipeline.UnitTests/ProviderDisposerTests.cs",                               13,  "ProviderDisposerTests line 13 (DisposeAllAsync_NonDisposable_Skips)"),
             ("tests/CodingAgent.Pipeline.UnitTests/ProviderDisposerTests.cs",                               50,  "ProviderDisposerTests line 50 (DisposeAllAsync_EmptyArray_NoOp)"),

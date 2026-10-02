@@ -72,7 +72,7 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
     /// </param>
     /// <param name="afterSuccessfulReconnect">
     ///   Optional callback invoked after a successful reconnect and re-registration.
-    ///   <see cref="AgentConnectionLifecycle"/> passes <c>DrainBufferAsync</c>;
+    ///   <see cref="AgentConnectionLifecycle"/> passes <see langword="null"/> (chat pods no longer need a drain step);
     ///   <see cref="AgentConnectionManager"/> passes <see langword="null"/>.
     /// </param>
     public ConnectionReconnectCoordinator(

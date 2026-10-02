@@ -10,7 +10,7 @@ namespace CodingAgent.Agent.UnitTests;
 /// <summary>
 /// Shared factory for creating <see cref="AgentWorkerService"/> instances in tests.
 /// Encapsulates the construction of <see cref="AgentConnectionLifecycle"/>,
-/// <see cref="AgentJobSlotManager"/>, <see cref="ChatJobExecutor"/>, and the coordinator service.
+/// <see cref="ChatSlotManager"/>, <see cref="ChatJobExecutor"/>, and the coordinator service.
 /// </summary>
 internal static class TestAgentWorkerServiceFactory
 {
@@ -18,7 +18,7 @@ internal static class TestAgentWorkerServiceFactory
     /// Creates an <see cref="AgentWorkerService"/> with default mocks suitable for unit tests.
     /// Returns the service along with its slot manager, connection lifecycle, and chat executor for test manipulation.
     /// </summary>
-    public static (AgentWorkerService Service, AgentJobSlotManager SlotManager, AgentConnectionLifecycle Lifecycle, ChatJobExecutor ChatHandler)
+    public static (AgentWorkerService Service, ChatSlotManager SlotManager, AgentConnectionLifecycle Lifecycle, ChatJobExecutor ChatHandler)
         CreateWithComponents(
             IHostApplicationLifetime? hostLifetime = null,
             KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
@@ -34,16 +34,9 @@ internal static class TestAgentWorkerServiceFactory
         var hm = hubManager ?? CreateTestHubManager(mockLogger);
         var hmFactory = hubManagerFactory ?? CreateTestHubManagerFactory(mockLogger);
 
-        var buffer = new CriticalMessageBuffer();
-        var signalRPipeline = CodingAgent.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger);
-        var signalRReporter = new SignalRCompletionReporter(hm, signalRPipeline, buffer, mockLogger);
-
-        var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
-        // TODO: signalReady callback is always a no-op in tests. This means tests never verify
-        // that ReleaseJobSlotAndSignalReadyAsync actually invokes the callback. Use a mock/spy
-        // that records invocations so tests can assert signalReady was called.
+        var slotManager = new ChatSlotManager();
         var lifecycle = new AgentConnectionLifecycle(
-            hm, hmFactory, signalRReporter, slotManager,
+            hm, hmFactory, slotManager,
             new AgentId("test-agent"),
             lifetime, mockLogger);
 
@@ -81,7 +74,7 @@ internal static class TestAgentWorkerServiceFactory
     /// </summary>
     public static ChatJobExecutor CreateChatJobExecutor(
         AgentConnectionLifecycle connectionLifecycle,
-        AgentJobSlotManager slotManager,
+        ChatSlotManager slotManager,
         KiroCliLib.Core.IKiroCliOrchestrator? orchestrator = null,
         IHostApplicationLifetime? hostLifetime = null,
         Serilog.ILogger? logger = null,

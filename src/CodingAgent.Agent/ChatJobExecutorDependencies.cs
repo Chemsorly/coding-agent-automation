@@ -9,7 +9,7 @@ namespace CodingAgent.Agent;
 /// </summary>
 public sealed record ChatJobExecutorDependencies(
     AgentConnectionLifecycle ConnectionLifecycle,
-    AgentJobSlotManager SlotManager,
+    ChatSlotManager SlotManager,
     IKiroCliOrchestrator Orchestrator,
     System.Net.Http.IHttpClientFactory HttpClientFactory,
     IHostApplicationLifetime HostApplicationLifetime,

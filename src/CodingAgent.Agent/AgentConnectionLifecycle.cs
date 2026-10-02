@@ -14,13 +14,13 @@ namespace CodingAgent.Agent;
 /// <summary>
 /// Manages the SignalR connection lifecycle for long-running (SignalR mode) agents.
 /// Encapsulates connect/reconnect/heartbeat logic, terminal-close recovery with
-/// <see cref="IHostApplicationLifetime.StopApplication"/> on exhaustion, extended
-/// re-registration retry, and critical message buffer drain after reconnection.
+/// <see cref="IHostApplicationLifetime.StopApplication"/> on exhaustion, and extended
+/// re-registration retry.
 /// </summary>
 /// <remarks>
 /// <para>
 /// This class owns the <see cref="HubConnectionManager"/> and <see cref="HubConnectionManagerFactory"/>,
-/// handles the Reconnected/Closed events, and exposes business-level events (AssignChatPrompt, CancelChat, CancelJob, FetchModels)
+/// handles the Reconnected/Closed events, and exposes business-level events (AssignChatPrompt, CancelChat, FetchModels)
 /// for the coordinator (<see cref="AgentWorkerService"/>) to wire its handlers to.
 /// </para>
 /// <para>
@@ -28,16 +28,11 @@ namespace CodingAgent.Agent;
 /// (with <see cref="Interlocked.CompareExchange{T}"/> ownership transfer) are extracted into
 /// <see cref="ConnectionReconnectCoordinator"/> and shared with <see cref="AgentConnectionManager"/>.
 /// </para>
-/// <para>
-/// After successful reconnection, <see cref="DrainBufferAsync"/> replays buffered completion
-/// messages and releases the job slot if the buffer empties.
-/// </para>
 /// </remarks>
 public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
     private readonly ConnectionReconnectCoordinator _coordinator;
-    private readonly SignalRCompletionReporter _completionReporter;
-    private readonly AgentJobSlotManager _slotManager;
+    private readonly ChatSlotManager _slotManager;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
@@ -70,9 +65,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
-    /// <summary>Fired when the orchestrator requests cancellation of the current job.</summary>
-    public event Func<string, Task>? OnCancelJob;
-
     /// <summary>Fired when the orchestrator assigns an interactive chat prompt.</summary>
     public event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
 
@@ -85,8 +77,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     public AgentConnectionLifecycle( // NOSONAR S107 — constructor consolidates all DI-resolved deps for this lifecycle manager
         IHubConnectionManager hubManager,
         IHubConnectionManagerFactory hubManagerFactory,
-        SignalRCompletionReporter completionReporter,
-        AgentJobSlotManager slotManager,
+        ChatSlotManager slotManager,
         AgentId agentId,
         IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger,
@@ -94,12 +85,10 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
-        ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(slotManager);
         ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _completionReporter = completionReporter;
         _slotManager = slotManager;
         _hostApplicationLifetime = hostApplicationLifetime;
         _logger = logger;
@@ -127,9 +116,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         _chatEffort = runtimeOptions?.ChatEffort ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
 
         // Compose the coordinator. It takes ownership of the initial hub manager.
-        // DrainBufferAsync is passed as afterSuccessfulReconnect — safe as a method-group
-        // reference in a sealed class (no virtual dispatch; fields are fully initialised by
-        // the time the delegate is invoked during reconnection).
+        // afterSuccessfulReconnect is null — chat pods no longer need a drain step
+        // (CriticalMessageBuffer was removed; buffer was always empty in chat mode).
         _coordinator = new ConnectionReconnectCoordinator(
             initialHubManager: hubManager,
             agentId: _agentId,
@@ -139,7 +127,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             wireHandlers: WireEventHandlers,
             registerAgent: (mgr, ct) => _signalRPipeline.ExecuteAsync(async token =>
                 await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, BuildRegistrationMessage(), token), ct).AsTask(),
-            afterSuccessfulReconnect: DrainBufferAsync);
+            afterSuccessfulReconnect: null);
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>
@@ -302,7 +290,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     // SafeDisposeAsync would be more defensive and prevent potential GC reference leaks.
     private void WireEventHandlers(IHubConnectionManager hubManager)
     {
-        hubManager.OnCancelJob += jobId => OnCancelJob?.Invoke(jobId) ?? Task.CompletedTask;
         hubManager.OnAssignChatPrompt += msg => OnAssignChatPrompt?.Invoke(msg) ?? Task.CompletedTask;
         hubManager.OnCancelChat += sessionId => OnCancelChat?.Invoke(sessionId) ?? Task.CompletedTask;
         hubManager.OnFetchModels += request => OnFetchModels?.Invoke(request) ?? Task.CompletedTask;
@@ -348,7 +335,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
             // Unblock waiters now that re-registration succeeded
             _coordinator.CompleteRegistrationGate();
-            await DrainBufferAsync();
         }
         catch (Exception ex)
         {
@@ -368,7 +354,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                     _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
                     // Unblock waiters on successful extended retry
                     _coordinator.CompleteRegistrationGate();
-                    await DrainBufferAsync();
                     return;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -397,89 +382,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// Returns <c>true</c> when a buffered message has exhausted its retry budget
-    /// and should be dropped rather than re-buffered.
-    /// </summary>
-    internal static bool ShouldDropBufferedMessage(BufferedCriticalMessage msg, int maxDrainAttempts)
-        => msg.DrainAttempts >= maxDrainAttempts;
-
-    /// <summary>
-    /// Drains the critical message buffer by replaying each buffered message over
-    /// the current SignalR connection. Called after successful reconnection/re-registration.
-    /// </summary>
-    /// <remarks>
-    /// If replay fails for a message, it is re-buffered with an incremented drain attempt
-    /// counter. Messages exceeding max drain attempts are dropped. After drain,
-    /// the job slot is released if the buffer is empty.
-    /// </remarks>
-    internal async Task DrainBufferAsync()
-    {
-        if (!_completionReporter.HasPendingMessages)
-            return;
-
-        var criticalMessageBuffer = _completionReporter.Buffer;
-        const int maxDrainAttempts = 3;
-        var messages = criticalMessageBuffer.DrainAll();
-        _logger.Information("Draining critical message buffer: {Count} message(s) pending", messages.Count);
-
-        for (var i = 0; i < messages.Count; i++)
-        {
-            var msg = messages[i];
-            if (ShouldDropBufferedMessage(msg, maxDrainAttempts))
-            {
-                _logger.Warning(
-                    "Dropping buffered message after {MaxAttempts} drain attempts: {MessageType} for job {JobId}",
-                    maxDrainAttempts, msg.GetType().Name,
-                    (msg as BufferedJobCompleted)?.JobId ?? "unknown");
-                continue;
-            }
-
-            try
-            {
-                var manager = _coordinator.CurrentManager;
-                if (manager is null) return; // Disposed during drain
-
-                switch (msg)
-                {
-                    case BufferedJobCompleted completed:
-                        await _signalRPipeline.ExecuteAsync(async token =>
-                            await manager.Connection.InvokeAsync(
-                                HubMethodNames.ReportJobCompleted, completed.JobId, completed.Payload, token),
-                            // Fire-and-forget: buffer drain after reconnect has no ambient token; messages must be delivered
-                            CancellationToken.None);
-                        _logger.Information("Successfully replayed buffered ReportJobCompleted for job {JobId}", completed.JobId);
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "Failed to replay buffered message {MessageType} for job {JobId}, re-buffering (attempt {Attempt}/{Max})",
-                    msg.GetType().Name,
-                    (msg as BufferedJobCompleted)?.JobId ?? "unknown",
-                    msg.DrainAttempts + 1, maxDrainAttempts);
-
-                var rebuffered = msg with { DrainAttempts = msg.DrainAttempts + 1 };
-                criticalMessageBuffer.Enqueue(rebuffered);
-
-                // Re-buffer all remaining unprocessed messages to prevent data loss.
-                for (var j = i + 1; j < messages.Count; j++)
-                {
-                    criticalMessageBuffer.Enqueue(messages[j]);
-                }
-
-                break; // Stop draining — will retry on next reconnection
-            }
-        }
-
-        // After drain, release slot if buffer is now empty
-        if (!_completionReporter.HasPendingMessages)
-            await _slotManager.ReleaseJobSlotAndSignalReadyAsync();
-        else
-            _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
-    }
-
     private AgentRegistrationMessage BuildRegistrationMessage()
     {
         var labels = _isChatMode
@@ -491,7 +393,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             AgentId = _agentId,
             Hostname = Environment.MachineName,
             Labels = labels,
-            ActiveJob = _slotManager.BuildActiveJobState()
+            ActiveJob = null
         };
     }
 
@@ -516,7 +418,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         {
             AgentId = _agentId,
             Timestamp = DateTimeOffset.UtcNow,
-            CurrentStep = _slotManager.CurrentStep,
+            CurrentStep = null,
             MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
         };
 
