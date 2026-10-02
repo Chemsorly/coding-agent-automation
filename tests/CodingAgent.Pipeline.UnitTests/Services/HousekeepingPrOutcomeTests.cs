@@ -350,7 +350,7 @@ public class HousekeepingPrOutcomeTests
         // If the inner HashSet entry was correctly removed during eviction, a re-seeded
         // PR can have its counter metric fire again. Similarly, if _prCreatedAtCache was
         // cleared, re-seeding with a new CreatedAt allows the histogram to re-fire.
-        var firstCreatedAt  = DateTime.UtcNow.AddHours(-4);
+        var firstCreatedAt = DateTime.UtcNow.AddHours(-4);
         var secondCreatedAt = DateTime.UtcNow.AddHours(-1);
         var fixedNow = DateTimeOffset.UtcNow;
 
@@ -416,10 +416,10 @@ public class HousekeepingPrOutcomeTests
         // other), a broken _prCreatedAtCache eviction could pass undetected. Consider enforcing a
         // minimum gap assertion (e.g. Assert.True(secondCreatedAt - firstCreatedAt > TimeSpan.FromMinutes(1)))
         // or switching to a clock-injected approach that makes the gap explicit and invariant.
-        var expectedSecondsFirst  = (fixedNow - firstCreatedAt).TotalSeconds;
+        var expectedSecondsFirst = (fixedNow - firstCreatedAt).TotalSeconds;
         var expectedSecondsSecond = (fixedNow - secondCreatedAt).TotalSeconds;
         var histogramValues = allHistograms.Select(h => h.Value).ToList();
-        histogramValues.Should().ContainSingle(v => Math.Abs(v - expectedSecondsFirst)  <= 2.0,
+        histogramValues.Should().ContainSingle(v => Math.Abs(v - expectedSecondsFirst) <= 2.0,
             "one histogram emission must use firstCreatedAt (~4 h)");
         histogramValues.Should().ContainSingle(v => Math.Abs(v - expectedSecondsSecond) <= 2.0,
             "one histogram emission must use secondCreatedAt (~1 h), proving _prCreatedAtCache was evicted and repopulated");

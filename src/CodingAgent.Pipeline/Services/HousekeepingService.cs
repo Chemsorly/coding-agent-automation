@@ -184,21 +184,21 @@ public sealed class HousekeepingService : IHousekeepingService
         // Grafana timeline queries; the log line gives per-sweep snapshots in Loki.
         if (agentDonePrs.Count > 0)
         {
-            var behind     = 0;
-            var upToDate   = 0;
+            var behind = 0;
+            var upToDate = 0;
             var conflicted = 0;
-            var blocked    = 0;
-            var unknown    = 0;
+            var blocked = 0;
+            var unknown = 0;
 
             foreach (var status in mergeabilityMap.Values)
             {
                 switch (status)
                 {
-                    case PrMergeabilityStatus.Behind:     behind++;     break;
-                    case PrMergeabilityStatus.UpToDate:   upToDate++;   break;
+                    case PrMergeabilityStatus.Behind: behind++; break;
+                    case PrMergeabilityStatus.UpToDate: upToDate++; break;
                     case PrMergeabilityStatus.Conflicted: conflicted++; break;
-                    case PrMergeabilityStatus.Blocked:    blocked++;    break;
-                    default:                              unknown++;    break;
+                    case PrMergeabilityStatus.Blocked: blocked++; break;
+                    default: unknown++; break;
                 }
             }
 
@@ -718,10 +718,10 @@ public sealed class HousekeepingService : IHousekeepingService
         int behind, int upToDate, int conflicted, int blocked, int unknown,
         KeyValuePair<string, object?> repoTag)
     {
-        if (behind     > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(behind,     repoTag, new KeyValuePair<string, object?>("mergeability_status", "behind"));
-        if (upToDate   > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(upToDate,   repoTag, new KeyValuePair<string, object?>("mergeability_status", "up_to_date"));
+        if (behind > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(behind, repoTag, new KeyValuePair<string, object?>("mergeability_status", "behind"));
+        if (upToDate > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(upToDate, repoTag, new KeyValuePair<string, object?>("mergeability_status", "up_to_date"));
         if (conflicted > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(conflicted, repoTag, new KeyValuePair<string, object?>("mergeability_status", "conflicted"));
-        if (blocked    > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(blocked,    repoTag, new KeyValuePair<string, object?>("mergeability_status", "blocked"));
-        if (unknown    > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(unknown,    repoTag, new KeyValuePair<string, object?>("mergeability_status", "unknown"));
+        if (blocked > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(blocked, repoTag, new KeyValuePair<string, object?>("mergeability_status", "blocked"));
+        if (unknown > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(unknown, repoTag, new KeyValuePair<string, object?>("mergeability_status", "unknown"));
     }
 }
