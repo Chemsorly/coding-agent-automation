@@ -16,7 +16,22 @@ public partial class QualityGateExecutor
     {
         if (context.QualityGateConfigs.Count > 0)
         {
-            // Multi-QGC mode: validate against matched QGCs
+            // Multi-QGC mode: validate against matched QGCs.
+            // Use the server-side reporting overload when a reporter is wired (issue #2979),
+            // so process_timeout events are forwarded to the API instead of only recording
+            // the agent-side quality_gate.process.timeout counter.
+            // TODO [WARNING]: This uses a concrete type-check (_qualityGateValidator is QualityGateValidator).
+            // If IQualityGateValidator is implemented by a decorator or test double that wraps a QualityGateValidator,
+            // the cast silently fails and ValidateAsync is called instead, dropping all process_timeout server-side
+            // reporting without any warning. Consider promoting ValidateWithServerSideReportingAsync to the interface,
+            // or refactoring to avoid the concrete type dependency. (DotNetSpecialist #2979)
+            if (_qualityGateValidator is QualityGateValidator concreteValidator
+                && context.ReportPipelineRunEvent is { } reportEvent)
+            {
+                return await concreteValidator.ValidateWithServerSideReportingAsync(
+                    workspacePath, context.QualityGateConfigs, ct, reportEvent, context.RepoProvider.BaseBranch);
+            }
+
             return await _qualityGateValidator.ValidateAsync(workspacePath, context.QualityGateConfigs, ct, context.RepoProvider.BaseBranch);
         }
 
@@ -135,6 +150,17 @@ public partial class QualityGateExecutor
                 context, commitSha, config, callbacks, linkedCts.Token);
             ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
             ciSpan?.SetTag("pipeline.ci_status", result.ciPassed ? "passed" : result.ciStatus.State.ToString().ToLowerInvariant());
+
+            // Report CI wait duration server-side (issue #2979): replaces the agent-side
+            // _externalCiDuration recording in the finally block.
+            context.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
+            {
+                Kind = PipelineRunEventKind.CiWait,
+                DurationSeconds = ciPollStopwatch.Elapsed.TotalSeconds,
+                Stage = PipelineTelemetry.CiWaitStages.PrePr,
+                Result = result.ciPassed ? "pass" : "fail"
+            });
+
             return result;
         }
         catch
@@ -149,10 +175,10 @@ public partial class QualityGateExecutor
         }
         finally
         {
-            // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration
-            _externalCiDuration.Record(
-                ciPollStopwatch.Elapsed.TotalSeconds,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+            // Duration recording moved to the try block above for server-side reporting (issue #2979).
+            // The finally block is retained (with no-op body) to preserve the two-layer nesting
+            // that the outer WaitForCi span relies on for correct attribute ordering.
+            _ = ciPollStopwatch.Elapsed; // suppress unused-variable warning from compiler
         }
     }
 

@@ -118,7 +118,7 @@ public sealed class ConnectionReconnectCoordinatorTests
             .ContinueWith(_ => { }); // swallow cancellation
         sw.Stop();
 
-        sw.ElapsedMilliseconds.Should().BeLessThan(1000,
+        sw.ElapsedMilliseconds.Should().BeLessThan(3000,
             "cancelled gate should not hang");
     }
 

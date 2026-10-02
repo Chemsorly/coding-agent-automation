@@ -48,7 +48,9 @@ public partial class AgentPhaseExecutor
                     EnvironmentVariables = context.InjectedSecrets
                 },
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
-                line => context.Callbacks.EmitOutputLine(line));
+                line => context.Callbacks.EmitOutputLine(line),
+                stallMetrics: BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                phase: "codegen");
 
             run.AccumulateTokenUsage(agentResult, phase: "codegen");
 

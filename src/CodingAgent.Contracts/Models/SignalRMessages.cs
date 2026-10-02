@@ -581,3 +581,54 @@ public sealed record PhaseUsagePayload
     [Key(5)]
     public string? Model { get; init; }
 }
+
+/// <summary>
+/// Agent → Orchestrator: Reports pipeline run events that should be recorded as metrics in the API.
+/// Used for CI re-triggers, CI wait duration, agent stall events, and process timeouts —
+/// all of which are recorded by the API (not agent pods) to avoid the first-increment Prometheus gap.
+/// </summary>
+[MessagePackObject]
+public sealed record PipelineRunEventReport
+{
+    /// <summary>Kind of event being reported (closed set: see <see cref="PipelineRunEventKind"/>).</summary>
+    [Key(0)]
+    public required PipelineRunEventKind Kind { get; init; }
+
+    /// <summary>
+    /// For <see cref="PipelineRunEventKind.CiWait"/>: elapsed seconds from push to CI conclusion.
+    /// Not used for other event kinds.
+    /// </summary>
+    [Key(1)]
+    public double? DurationSeconds { get; init; }
+
+    /// <summary>
+    /// For <see cref="PipelineRunEventKind.CiWait"/>: CI polling stage (pre_pr or post_pr).
+    /// For <see cref="PipelineRunEventKind.AgentStall"/>: normalized stall phase (see PipelineTelemetry.StallPhases).
+    /// Not used for other event kinds.
+    /// </summary>
+    [Key(2)]
+    public string? Stage { get; init; }
+
+    /// <summary>
+    /// For <see cref="PipelineRunEventKind.CiWait"/>: CI result (pass or fail).
+    /// For <see cref="PipelineRunEventKind.AgentStall"/>: stall kind (stall_kill|process_death|process_timeout).
+    /// Not used for other event kinds.
+    /// </summary>
+    [Key(3)]
+    public string? Result { get; init; }
+}
+
+/// <summary>
+/// Discriminator for <see cref="PipelineRunEventReport"/>.
+/// </summary>
+public enum PipelineRunEventKind
+{
+    /// <summary>CI re-trigger commit (empty push to restart CI that never started).</summary>
+    CiNotStartedRetrigger = 0,
+
+    /// <summary>CI polling concluded — records duration and outcome.</summary>
+    CiWait = 1,
+
+    /// <summary>Agent stall event (stall_kill, process_death, or process_timeout).</summary>
+    AgentStall = 2,
+}
