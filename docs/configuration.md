@@ -25,7 +25,7 @@ How the layers combine:
 - A repository's blacklist replaces the global or project blacklist. `.agent` and `.brain` are always excluded.
 - A repository's labels replace `defaultRequiredAgentLabels`. Every quality gate config and reviewer config whose labels match applies.
 
-A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels only (see [Label Routing](label-routing.md)).
+A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels (see [Label Routing](label-routing.md)); a project can add its own reviewer, the [project review](pr-review.md#project-review).
 
 ### Limits
 
@@ -102,7 +102,7 @@ External CI runs when a Pipeline/CI provider is set on the pipeline job template
 
 ### Code Review
 
-Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository label in [Reviewer Configs](label-routing.md); whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
+Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository label in [Reviewer Configs](label-routing.md), plus the project's reviewer when its [project review](pr-review.md#project-review) is on; whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
 
 | Setting | Default | Range | Project | Description |
 |---------|---------|-------|---------|-------------|

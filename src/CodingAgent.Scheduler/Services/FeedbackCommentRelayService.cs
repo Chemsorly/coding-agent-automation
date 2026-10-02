@@ -20,7 +20,7 @@ namespace CodingAgent.Scheduler.Services;
 ///   <item><see cref="PeriodicTimer"/> sweep every 60 seconds.</item>
 ///   <item>Leader-gated to prevent duplicate delivery across Scheduler replicas.</item>
 ///   <item>At-least-once delivery: if the comment posts but <c>MarkCompleted</c> fails,
-///         the relay will re-post on the next sweep (acceptable per decisions.md).</item>
+///         the relay will re-post on the next sweep.</item>
 /// </list>
 /// </summary>
 public sealed class FeedbackCommentRelayService : BackgroundService
