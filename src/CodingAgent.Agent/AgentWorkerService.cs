@@ -13,7 +13,8 @@ using Polly;
 namespace CodingAgent.Agent;
 
 /// <summary>
-/// Background service that coordinates the agent lifecycle by composing
+/// Background service of a chat-mode agent pod (started without <c>--work-item-id</c>). It coordinates
+/// the agent lifecycle by composing
 /// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection),
 /// <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control), and
 /// <see cref="ChatJobExecutor"/> (chat session and model-fetch handling).
@@ -28,17 +29,13 @@ namespace CodingAgent.Agent;
 ///     to the orchestrator with automatic reconnection and exponential backoff.</item>
 ///   <item><b>Register</b> — The agent sends a registration message (ID, type, labels, capabilities)
 ///     to the orchestrator, which adds it to the agent registry.</item>
-///   <item><b>Receive Job</b> — The orchestrator dispatches a <see cref="Pipeline.Models.JobAssignmentMessage"/>
-///     via the <c>AssignJob</c> hub method, triggering the assign job handler.</item>
-///   <item><b>Execute</b> — <see cref="LocalPipelineExecutor"/> runs the full pipeline locally,
-///     reporting progress back to the orchestrator via hub invocations.</item>
-///   <item><b>Report</b> — On completion (success or failure), the agent sends a
-///     <c>JobCompleted</c> message with the result payload.</item>
-///   <item><b>Idle</b> — The agent returns to idle state, sending periodic heartbeats until
-///     the next job assignment or shutdown signal.</item>
+///   <item><b>Serve</b> — The hub sends chat prompts, chat cancellations and model fetches,
+///     which <see cref="ChatJobExecutor"/> handles.</item>
+///   <item><b>Idle</b> — Between requests the agent sends periodic heartbeats until the shutdown signal.</item>
 /// </list>
 /// <para>
-/// Heartbeats are sent every 30 seconds while idle.
+/// Pipeline runs never come through this service: a work-item pod (<see cref="WorkItemAgentService"/>)
+/// fetches its assignment over HTTP. Heartbeats are sent every 30 seconds while idle.
 /// </para>
 /// </remarks>
 public sealed class AgentWorkerService : BackgroundService, IAgentService
@@ -51,8 +48,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 #pragma warning disable S1450
     private readonly ChatJobExecutor _chatJobHandler;
 #pragma warning restore S1450
-    private readonly IPipelineExecutor _executor;
-    private readonly IJobCompletionReporter _completionReporter;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
 
@@ -62,15 +57,11 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle);
         ArgumentNullException.ThrowIfNull(deps.SlotManager);
         ArgumentNullException.ThrowIfNull(deps.ChatHandler);
-        ArgumentNullException.ThrowIfNull(deps.Executor);
-        ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
         ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _connectionLifecycle = deps.ConnectionLifecycle;
         _slotManager = deps.SlotManager;
         _chatJobHandler = deps.ChatHandler;
-        _executor = deps.Executor;
-        _completionReporter = deps.CompletionReporter;
         _logger = deps.Logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(deps.Logger);
 
@@ -122,25 +113,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         finally
         {
             await ShutdownAsync();
-        }
-    }
-
-    private async Task FinalizeJobAsync(string jobId, JobCompletionPayload? completion)
-    {
-        // Report completion via the unified reporter
-        if (completion is not null)
-            // Fire-and-forget: called in finally block where job token may already be cancelled; completion must always be reported
-            await _completionReporter.ReportCompletionAsync(jobId, completion, CancellationToken.None);
-
-        // Only release slot if buffer is empty — otherwise keep _activeJobId set
-        // so reconnection re-registers with ActiveJob state, allowing replay
-        if (_completionReporter is SignalRCompletionReporter signalRReporter && signalRReporter.HasPendingMessages)
-        {
-            _logger.Warning("Job slot held for {JobId} — buffer has pending messages awaiting replay", jobId);
-        }
-        else
-        {
-            await _slotManager.ReleaseJobSlotAndSignalReadyAsync();
         }
     }
 

@@ -45,4 +45,12 @@ public sealed record QualityGateContext : PipelineContextBase
     /// Null when no secrets were configured for this pipeline run.
     /// </summary>
     public IReadOnlyDictionary<string, string>? InjectedSecrets { get; init; }
+
+    /// <summary>
+    /// Action to report a pipeline run event (CI retrigger, CI wait, agent stall) to the API.
+    /// When non-null, called by <see cref="Services.CiPollingCoordinator"/> and related services
+    /// so metrics are recorded server-side, avoiding the first-increment Prometheus gap in agent pods.
+    /// Null in contexts where no server-side reporting is wired (e.g., tests).
+    /// </summary>
+    public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
 }

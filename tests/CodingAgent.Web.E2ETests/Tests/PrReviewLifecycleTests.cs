@@ -289,11 +289,11 @@ public sealed class PrReviewLifecycleBrowserTests : E2ETestBase
         var assignment1 = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal("103", assignment1.IssueIdentifier);
 
-        // Reset BEFORE AcceptAndCompleteJobAsync to close the race window: if the pipeline emits a
-        // secondary internal message that triggers OnAssignJob after CompleteJobAsync but before
-        // ResetJobAssigned(), the new TCS would replace an already-resolved one and the subsequent
-        // JobAssigned.Task.WaitAsync below would time out. Resetting first ensures the TCS is fresh
-        // when the second assignment arrives. See ConflictRestartIntegrationTests:220 for precedent.
+        // Reset BEFORE AcceptAndCompleteJobAsync to close the race window: if the second assignment
+        // completed JobAssigned after CompleteJobAsync but before ResetJobAssigned(), the reset would
+        // replace an already-resolved TCS and the subsequent JobAssigned.Task.WaitAsync below would
+        // time out. Resetting first ensures the TCS is fresh when the second assignment arrives.
+        // See ConflictRestartIntegrationTests:220 for precedent.
         fakeAgent.ResetJobAssigned();
 
         await fakeAgent.AcceptAndCompleteJobAsync(assignment1.JobId);

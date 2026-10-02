@@ -1248,16 +1248,6 @@ public class PostgresConfigurationStoreTests : IDisposable
                     rowVersionProp.IsConcurrencyToken = false;
                     rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
                 }
-
-                // Disable auto-generation on PK (prevents Guid.Empty from being replaced with a new GUID).
-                // EF Core convention for Guid PKs is ValueGenerated.OnAdd, which substitutes Guid.Empty
-                // at Add time. The Default project uses Guid.Empty as its stable key, so we must disable
-                // this behavior for all entities to ensure Guid.Empty is stored verbatim.
-                var idProp = entityType.FindProperty("Id");
-                if (idProp != null && idProp.ClrType == typeof(Guid))
-                {
-                    idProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
-                }
             }
 
             // Remove filter-based unique indexes (not supported by InMemory)

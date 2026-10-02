@@ -35,8 +35,16 @@ public sealed class WorkItemCountsService : BackgroundService
         _interval = interval ?? TimeSpan.FromSeconds(10);
 
         // Register the gauge callback once at construction — same pattern as WorkItemMetricsBackgroundService.
+        // The closure checks IsLeader at read time so that a non-leader replica emits no measurements
+        // even if _cachedMeasurements still holds data from a previous leadership term.
+        // When _leaderGate is null (single-replica / no leader election), the replica always emits.
+        // Only the first-registered callback wins (Interlocked.CompareExchange guard in
+        // RegisterWorkItemsByStatusCallback), which is correct: regardless of which replica registered
+        // first, its callback will return empty measurements when that replica is not the leader.
         WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback(
-            () => Volatile.Read(ref _cachedMeasurements));
+            () => _leaderGate is null || _leaderGate.IsLeader
+                ? Volatile.Read(ref _cachedMeasurements)
+                : Enumerable.Empty<Measurement<long>>());
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

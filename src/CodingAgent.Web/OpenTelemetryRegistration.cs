@@ -45,6 +45,13 @@ internal static class OpenTelemetryRegistration
                 m.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddMeter(PipelineTelemetry.SourceName)
+                    // Drop low-value built-in ASP.NET Core metrics to reduce OTLP cardinality.
+                    // aspnetcore.components.active_circuits (circuit count) is intentionally kept;
+                    // the other components.* and memory_pool.* instruments are high-volume noise.
+                    .AddView("aspnetcore.components.parameters.count", MetricStreamConfiguration.Drop)
+                    .AddView("aspnetcore.components.wrote_to_client", MetricStreamConfiguration.Drop)
+                    .AddView("aspnetcore.memory_pool.allocated_bytes", MetricStreamConfiguration.Drop)
+                    .AddView("aspnetcore.memory_pool.total_allocated_bytes", MetricStreamConfiguration.Drop)
                     // Prometheus requires Cumulative temporality. The OTLP exporter defaults to Delta
                     // for histograms and counters, which causes Grafana Cloud to silently drop histogram
                     // data (dispatch_queue_wait_time, pipeline_jobs_duration, etc.) while gauges — which
