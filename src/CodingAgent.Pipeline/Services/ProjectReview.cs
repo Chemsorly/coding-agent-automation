@@ -55,7 +55,7 @@ public static class ProjectReview
         sb.AppendLine();
         if (repositories is not { Count: > 0 })
         {
-            sb.Append("This project has no other repositories: check the change against the project's decisions and documentation.");
+            sb.Append("This project has no other repositories: check the change against the project's decisions, its documentation and the lessons in the brain.");
             return sb.ToString();
         }
 

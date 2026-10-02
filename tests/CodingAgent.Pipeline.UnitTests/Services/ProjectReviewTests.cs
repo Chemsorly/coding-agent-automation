@@ -57,11 +57,14 @@ public class ProjectReviewTests
     }
 
     [Fact]
-    public void DefaultProjectReviewPrompt_AsksForCurrentSourcesAndTheMcpServers()
+    public void DefaultProjectReviewPrompt_AsksForCurrentSourcesTheBrainAndTheMcpServers()
     {
         var prompt = PipelineConfigurationDefaults.DefaultProjectReviewPrompt;
 
         prompt.Should().Contain("Project repositories", "the repository list is appended under that heading")
+            .And.Contain("may span several repositories", "a project can have a single repository")
+            .And.Contain("`.brain/`")
+            .And.Contain("One brain can serve several projects", "a lesson may be about another project")
             .And.Contain("MCP servers")
             .And.Contain("git log -1 --format=%cs")
             .And.Contain("[CRITICAL]").And.Contain("[WARNING]").And.Contain("[SUGGESTION]");

@@ -934,7 +934,7 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 
 **Decision:** A project can turn on a project review. Its reviewer joins every code review of the project's repositories, in implementation runs and PR review runs, after the reviewers the repository's labels pick. It runs concurrently with them, through the same findings, inline comments and fix rounds.
 - The reviewer reads read-only clones of the project's other repositories in `.agent/project-repos/`. That folder is inside the agent's metadata directory, so the clones never reach the diff or a commit. Only the project reviewer is told about them.
-- Its default instructions check the change against the whole project: contracts between the repositories, the project's decisions in the connected MCP servers (ticketing system, wiki) and its documentation, weighing how current each source is.
+- Its default instructions check the change against the whole project: contracts between the repositories, the project's decisions in the connected MCP servers (ticketing system, wiki), its documentation and the lessons in the brain, weighing how current each source is. One brain can serve several projects, so the reviewer checks that a lesson concerns this project.
 - A fix that belongs in another repository is a `[WARNING]`, so fix rounds do not chase it.
 - The settings page edits one reviewer. The project stores a list, so more can follow without a model change.
 
