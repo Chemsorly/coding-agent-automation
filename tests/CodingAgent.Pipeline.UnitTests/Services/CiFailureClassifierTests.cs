@@ -91,6 +91,26 @@ public class CiFailureClassifierTests
     }
 
     [Fact]
+    public void Classify_CancelledStateNoFailedJobs_ReturnsInfrastructure()
+    {
+        // A Cancelled CI run with no failed jobs is a preemption (e.g. cancel-in-progress from a
+        // new commit landing while docker-build was still running). This is always transient — the
+        // run was interrupted externally, not because of a code problem. Treat as Infrastructure so
+        // the auto-retry path is taken rather than wasting agent budget on an unfixable "failure".
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "build-and-test", State = PipelineRunState.Passed },
+                new PipelineJobResult { Name = "docker-build", State = PipelineRunState.Cancelled },
+                new PipelineJobResult { Name = "docker-push", State = PipelineRunState.Cancelled },
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
+    }
+
+    [Fact]
     public void Classify_UnrecognizedLogContent_ReturnsUnknown()
     {
         var status = CreateStatus("Some completely unrecognized failure output");

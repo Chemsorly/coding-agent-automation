@@ -64,9 +64,17 @@ public static class CiFailureClassifier
     {
         ArgumentNullException.ThrowIfNull(status);
 
+        // A Cancelled run with no failed jobs is a pure preemption (e.g. cancel-in-progress
+        // triggered by a new commit while docker-build was still running). This is always
+        // transient — nothing in the code caused it. Treat as Infrastructure so the auto-retry
+        // path is taken rather than surfacing it as an unfixable code failure.
         var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
         if (failedJobs.Count == 0)
+        {
+            if (status.State == PipelineRunState.Cancelled)
+                return CiFailureCategory.Infrastructure;
             return CiFailureCategory.Unknown;
+        }
 
         var hasInfrastructure = false;
         var hasCodeFailure = false;
