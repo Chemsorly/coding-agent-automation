@@ -340,4 +340,88 @@ public class HousekeepingPrOutcomeTests
         counters.Should().BeEmpty(
             "counter must not fire for PRs that were never tracked in the in-flight set");
     }
+
+    // ── Dictionary eviction: both shrink when PR leaves in-flight ─────────────
+
+    [Fact]
+    public async Task WhenPrLeavesInFlightSet_BothDictionariesShrink()
+    {
+        // Observable proxy: _recordedPrOutcomes deduplication prevents re-emission.
+        // If the inner HashSet entry was correctly removed during eviction, a re-seeded
+        // PR can have its counter metric fire again. Similarly, if _prCreatedAtCache was
+        // cleared, re-seeding with a new CreatedAt allows the histogram to re-fire.
+        var firstCreatedAt  = DateTime.UtcNow.AddHours(-4);
+        var secondCreatedAt = DateTime.UtcNow.AddHours(-1);
+        var fixedNow = DateTimeOffset.UtcNow;
+
+        var (svc, repo, issues) = Create("merged");
+        svc.UtcNow = () => fixedNow;
+
+        var pr = MakePr(200, firstCreatedAt);
+        var (listener, counters, histograms) = CreateMeterListener();
+
+        // ── Cycle 1 (seed): PR is Behind → enters inFlight ───────────────────
+        await SeedPrInFlight(svc, repo, issues, pr);
+
+        // ── Cycle 2 (eviction): PR absent from list ───────────────────────────
+        // RecordPrOutcomesAsync (Step 2.5) fires the metric and adds the PR to
+        // recordedForRepo. EvictInFlightSlots (Step 3) then removes the PR from
+        // inFlight, _lastTriggeredAt, _prCreatedAtCache, and recordedForRepo —
+        // all within the same ExecuteAsync call.
+        await ExecAsync(svc, repo, issues, []);
+
+        // Positive-count assertion before the eviction check — prevents a vacuous pass.
+        var closedAfterFirstEviction = counters.Where(c => c.Name == "pipeline.pull_requests.closed").ToList();
+        closedAfterFirstEviction.Should().ContainSingle(
+            "counter must fire once when PR first disappears from the agent:done list");
+
+        // ── Cycle 3 (re-seed): re-introduce PR as Behind ─────────────────────
+        // inFlight slot is now free (cleared in cycle 2), so the PR can re-enter.
+        // _prCreatedAtCache is repopulated with the new CreatedAt.
+        var prReseeded = MakePr(200, secondCreatedAt);
+        repo.Setup(p => p.IsPullRequestBehindBaseAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Behind);
+        repo.Setup(p => p.UpdatePullRequestBranchAsync(200, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        await ExecAsync(svc, repo, issues, [prReseeded]);
+
+        // Reset mergeability for the second eviction cycle
+        repo.Setup(p => p.IsPullRequestBehindBaseAsync(200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.UpToDate);
+
+        // ── Cycle 4 (second eviction): PR absent again ────────────────────────
+        // If _recordedPrOutcomes was NOT cleared in cycle 2, recordedForRepo.Add(200)
+        // returns false and the counter does NOT fire → test fails. This is the proof
+        // that the inner HashSet entry was evicted.
+        // If _prCreatedAtCache was NOT cleared in cycle 2, the histogram would still
+        // use firstCreatedAt instead of secondCreatedAt → histogram value would differ.
+        await ExecAsync(svc, repo, issues, []);
+
+        listener.Dispose();
+
+        var allClosed = counters.Where(c => c.Name == "pipeline.pull_requests.closed").ToList();
+        allClosed.Should().HaveCount(2,
+            "counter must fire twice (once per eviction cycle) — proving _recordedPrOutcomes entry was cleared after the first eviction");
+
+        var allHistograms = histograms.Where(h => h.Name == "pipeline.pull_requests.time_to_merge").ToList();
+        allHistograms.Should().HaveCount(2,
+            "histogram must fire twice (once per eviction cycle) — proving _prCreatedAtCache entry was cleared after the first eviction");
+
+        // The histogram values must include one based on firstCreatedAt and one on secondCreatedAt —
+        // proving the cache was re-populated with the new value rather than retaining the old one.
+        // ConcurrentBag has no guaranteed order, so assert on the set of values rather than indices.
+        // TODO: The discriminability of the histogram value assertions relies on firstCreatedAt and
+        // secondCreatedAt being far enough apart (currently ~3 h) to exceed the ±2 s tolerance.
+        // If these constants are ever adjusted to be close together (within a few seconds of each
+        // other), a broken _prCreatedAtCache eviction could pass undetected. Consider enforcing a
+        // minimum gap assertion (e.g. Assert.True(secondCreatedAt - firstCreatedAt > TimeSpan.FromMinutes(1)))
+        // or switching to a clock-injected approach that makes the gap explicit and invariant.
+        var expectedSecondsFirst  = (fixedNow - firstCreatedAt).TotalSeconds;
+        var expectedSecondsSecond = (fixedNow - secondCreatedAt).TotalSeconds;
+        var histogramValues = allHistograms.Select(h => h.Value).ToList();
+        histogramValues.Should().ContainSingle(v => Math.Abs(v - expectedSecondsFirst)  <= 2.0,
+            "one histogram emission must use firstCreatedAt (~4 h)");
+        histogramValues.Should().ContainSingle(v => Math.Abs(v - expectedSecondsSecond) <= 2.0,
+            "one histogram emission must use secondCreatedAt (~1 h), proving _prCreatedAtCache was evicted and repopulated");
+    }
 }

@@ -53,10 +53,6 @@ public sealed class HousekeepingService : IHousekeepingService
     /// <see cref="ExecuteAsync"/> is called sequentially per template — same caveat as
     /// <see cref="_inFlight"/>. Do not add concurrent access paths without also adding locking.
     /// </summary>
-    // TODO: _recordedPrOutcomes inner HashSet grows unboundedly — evicted PR numbers are never
-    // removed. On a long-running leader that processes many PRs this is a slow memory leak.
-    // Entries for PRs that have been evicted from inFlight could be removed in EvictInFlightSlots
-    // alongside the corresponding _lastTriggeredAt cleanup.
     private readonly ConcurrentDictionary<string, HashSet<int>> _recordedPrOutcomes = new();
 
     /// <summary>
@@ -65,9 +61,6 @@ public sealed class HousekeepingService : IHousekeepingService
     /// PR has left the <c>agent:done</c> list (and is therefore absent from <c>agentDonePrs</c>
     /// in the eviction cycle). Updated every poll cycle from the current <c>agentDonePrs</c>.
     /// </summary>
-    // TODO: _prCreatedAtCache also grows unboundedly — entries for evicted PRs are never removed.
-    // Remove the entry keyed by (repoProviderId, prNumber) after RecordPrOutcomesAsync has finished
-    // processing a PR (either emitted or skipped), mirroring _lastTriggeredAt cleanup in EvictInFlightSlots.
     private readonly ConcurrentDictionary<(string repoId, int prNumber), DateTime?> _prCreatedAtCache = new();
 
     /// <summary>
@@ -470,7 +463,10 @@ public sealed class HousekeepingService : IHousekeepingService
             if (!currentPrNumbers.Contains(prNumber))
             {
                 inFlight.Remove(prNumber);
-                _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _); // PR merged/closed — clear cooldown state
+                _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _);  // PR merged/closed — clear cooldown state
+                _prCreatedAtCache.TryRemove((repoProviderId, prNumber), out _); // bound the cache — evict alongside _lastTriggeredAt
+                if (_recordedPrOutcomes.TryGetValue(repoProviderId, out var recordedForRepo))
+                    recordedForRepo.Remove(prNumber); // bound the deduplication set — evict alongside _lastTriggeredAt
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
@@ -500,6 +496,13 @@ public sealed class HousekeepingService : IHousekeepingService
                     || blockedCooldownExpired)
                 {
                     inFlight.Remove(prNumber);
+                    // TODO: Status-path eviction (UpToDate/Conflicted/Blocked+cooldown) does not clean up
+                    // _prCreatedAtCache or the _recordedPrOutcomes inner HashSet, unlike the PR-absent path
+                    // above. A PR evicted here while still present in agentDonePrs retains stale entries in
+                    // both dictionaries. If that PR later re-enters inFlight and is then evicted via the
+                    // PR-absent path, recordedForRepo.Add returns false (entry was never cleared) and the
+                    // pipeline.pull_requests.closed metric is silently suppressed for that second closure.
+                    // Fix: call _prCreatedAtCache.TryRemove and recordedForRepo.Remove here as well.
                     PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
                 }
             }
