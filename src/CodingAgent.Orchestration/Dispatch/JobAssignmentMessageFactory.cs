@@ -51,6 +51,8 @@ public static class JobAssignmentMessageFactory
             QualityGateConfigs = request.QualityGateConfigs ?? [],
             McpServers = request.McpServers ?? [],
             ReviewerConfigs = request.ReviewerConfigs ?? [],
+            ProjectReviewers = request.ProjectReviewers ?? [],
+            ProjectReviewRepositories = request.ProjectReviewRepositories,
             RunType = request.RunType,
             ReviewPrTargetBranch = request.ReviewPrTargetBranch,
             ReviewPrDescription = request.ReviewPrDescription,

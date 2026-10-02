@@ -229,8 +229,19 @@ public class AssignmentEnricher
             }
         }
 
+        // ── Step 2b: The project review: the project's reviewers and its other repositories, which they read ──
+        // Like a decomposition's scope, it is taken from the configuration at claim time.
+        IReadOnlyList<ReviewAgent> projectReviewers =
+            identity.TaskType is WorkItemTaskType.Implementation or WorkItemTaskType.Review
+                ? project.ActiveProjectReviewers()
+                : [];
+        IReadOnlyList<RepositoryTarget>? projectReviewRepositories = projectReviewers.Count > 0
+            ? await _infra.BuildProjectReviewRepositoriesAsync(project, identity.RepoProviderConfigId, _logger, ct)
+            : null;
+
         // ── Step 3: Prepare dispatch core (QGs, reviewers, issue context, provider configs, pipeline config) ──
-        // A project epic's other repositories get clone-only provider configs so the agent can read them.
+        // A project epic's other repositories, or the project review's, get clone-only provider configs so the agent
+        // can read them.
         var coreRequest = new DispatchCoreRequest(
             RequiredLabels: selectorLabels,
             IssueIdentifier: identity.IssueIdentifier,
@@ -241,7 +252,8 @@ public class AssignmentEnricher
             PipelineProviderId: identity.PipelineProviderConfigId,
             Project: project,
             Logger: _logger,
-            AdditionalRepoProviderIds: projectContext?.Repositories.Select(r => r.RepoProviderId).OfType<string>().ToList(),
+            AdditionalRepoProviderIds: (projectContext?.Repositories ?? projectReviewRepositories)?
+                .Select(r => r.RepoProviderId).OfType<string>().ToList(),
             PullRequest: identity.TaskType == WorkItemTaskType.Review ? ReviewedPullRequest(identity) : null);
 
         var core = await _infra.PrepareDispatchCoreAsync(coreRequest, ct);
@@ -265,6 +277,8 @@ public class AssignmentEnricher
             PipelineConfiguration = config,
             QualityGateConfigs = resolvedQgcs,
             ReviewerConfigs = resolvedReviewerConfigs,
+            ProjectReviewers = projectReviewers,
+            ProjectReviewRepositories = projectReviewRepositories,
             McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             ResolvedProfileId = profile.Id,
             AgentProviderConfigId = profile.AgentProviderConfigId,

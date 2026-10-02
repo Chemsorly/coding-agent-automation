@@ -927,6 +927,30 @@ A setting's limits are standard `[Range]` attributes on the property, the one so
 
 ---
 
+### Project review: one project reviewer per project, with read-only clones of the project's other repositories
+
+**Date:** 2026-10-02
+**Category:** configuration
+
+**Decision:** A project can turn on a project review. Its reviewer joins every code review of the project's repositories, in implementation runs and PR review runs, after the reviewers the repository's labels pick. It runs concurrently with them, through the same findings, inline comments and fix rounds.
+- The reviewer reads read-only clones of the project's other repositories in `.agent/project-repos/`. That folder is inside the agent's metadata directory, so the clones never reach the diff or a commit. Only the project reviewer is told about them.
+- Its default instructions check the change against the whole project: contracts between the repositories, the project's decisions in the connected MCP servers (ticketing system, wiki), its documentation and the lessons in the brain, weighing how current each source is. One brain can serve several projects, so the reviewer checks that a lesson concerns this project.
+- A fix that belongs in another repository is a `[WARNING]`, so fix rounds do not chase it.
+- The settings page edits one reviewer. The project stores a list, so more can follow without a model change.
+
+**Clone tokens.** A GitHub App repository gets a read-only token. A GitLab or personal-access-token repository keeps its own token; the agent removes it from the clone (remote URL, `FETCH_HEAD`, reflogs), sets a push URL that is no repository, and deletes a clone it cannot make read-only. The token still reaches the agent pod, so a run then holds the tokens of the project's other GitLab repositories too; the advice of "Token vending: private keys never leave orchestrator or API containers" (short-lived project access tokens) applies to them. Project epics' clones use the same mechanism, so they now include GitLab repositories.
+
+**Context:** This is topic 6.4 of the 2026-09-27 settings review. Reviewers are chosen by repository labels, which describe the tech stack: the same labels pick the agent image and the quality gates. A reviewer that knows the product did not fit them. The same review found that the seeded default reviewer set ran the .NET specialist on every stack; it is split by stack in #3230.
+
+**Alternatives considered:**
+- "Product labels" on repositories: labels route agent images, and a label without a matching agent profile blocks dispatch.
+- A shared catalog of reviewers that projects pick from: project instructions are project-specific.
+- Letting a project pick label reviewer sets: that adds no project knowledge.
+
+**Reassess when:** Projects need several distinct reviewers in the UI, or GitLab tokens can be narrowed to read-only.
+
+---
+
 ### Project overrides: deep-merge semantics implemented (#1044 resolved)
 
 **Date:** 2026-07-04 (updated 2026-07-25)

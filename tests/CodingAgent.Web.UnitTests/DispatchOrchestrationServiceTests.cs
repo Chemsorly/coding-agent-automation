@@ -1755,6 +1755,24 @@ public class DispatchOrchestrationServiceTests
         targets.Select(t => t.IssueProviderId).Should().Equal("issue-3", "issue-1", "issue-4");
     }
 
+    [Fact]
+    public void OtherRepositories_LeavesOutTheRunsOwnRepositoryAndListsEachRepositoryOnce()
+    {
+        // The project review clones the project's other repositories; the run's own one is the workspace itself
+        var project = TestProject with { TemplateIds = ["t1", "t2", "t3", "t4"] };
+        var templates = new[]
+        {
+            ScopeTemplate("t1", "issue-1", "repo-api") with { Name = "api" },
+            ScopeTemplate("t2", "issue-2", "repo-web") with { Name = "web" },
+            ScopeTemplate("t3", "issue-3", "repo-api") with { Name = "api-docs" },   // same repository as t1
+            ScopeTemplate("t4", "issue-4", "repo-old") with { Name = "old", Enabled = false }
+        };
+
+        var others = DispatchInfrastructure.OtherRepositories(project, templates, "repo-web", Serilog.Core.Logger.None);
+
+        others.Select(r => (r.TemplateName, r.RepoProviderId)).Should().Equal(("api", "repo-api"));
+    }
+
     private static PipelineJobTemplate ScopeTemplate(string id, string issueProviderId, string repoProviderId) => new()
     {
         Id = id,

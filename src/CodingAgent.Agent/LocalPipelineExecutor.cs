@@ -246,7 +246,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             stepContext = _contextBuilder.CreateStepContext(buildResult.ExecutionContext, reporter, ct);
             buildResult.StepContext = stepContext;
 
-            // Inject additional repo providers for cross-repo decomposition cloning
+            // Inject additional repo providers: a project epic's decomposition and a project review clone them
             if (additionalRepoProviders is { Count: > 0 })
                 stepContext.AdditionalRepoProviders = additionalRepoProviders;
 

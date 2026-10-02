@@ -102,6 +102,15 @@ Besides overrides, a project holds settings of its own:
 
 This allows projects to selectively override or augment the profile's MCP configuration without redefining the entire list. See [Configuration — Project-Level MCP Servers](configuration.md#project-level-mcp-servers) for merge semantics and examples.
 
+### Project Review
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `ProjectReviewEnabled` | bool | Whether the project review runs. Default `false`. |
+| `ProjectReviewers` | List | The project's reviewers, each a name and instructions. An empty name or prompt means the default, and an empty list means one default reviewer. The settings page edits the first one. |
+
+With the project review on, a project reviewer joins every code review of the project's repositories, in implementation runs and PR review runs. It runs concurrently with the reviewers the repository's labels pick, and its findings go through the same inline comments and fix rounds. It reads read-only clones of the project's other repositories and the connected MCP servers, and checks the change against the whole project: the contracts between the repositories, the project's decisions and its documentation. See [PR Review — Project Review](pr-review.md#project-review) for what it is told and how the clones are kept read-only.
+
 ## The Default Project
 
 On first startup (or upgrade from a pre-projects version), the system automatically creates a **Default** project:
@@ -111,7 +120,7 @@ On first startup (or upgrade from a pre-projects version), the system automatica
 - **Contains:** All existing templates (migrated automatically)
 - **Cannot be deleted** — attempting to delete returns an error
 
-The Default project behaves identically to any other project: you can rename it, disable it, override settings, and move templates in or out. The only restriction is deletion.
+The Default project behaves identically to any other project: you can rename it, disable it, override settings, and move templates in or out. It cannot be deleted, and as it holds templates that belong to no product, the settings page offers it no project review.
 
 ## Template Management
 
@@ -265,7 +274,7 @@ See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-ep
 
 ## UI Management
 
-Projects are managed in the **Settings** page under the "Projects" group in the navigation tree. Each project has five tabs:
+Projects are managed in the **Settings** page under the "Projects" group in the navigation tree. Each project has six tabs (the Default project has no Project Review tab):
 
 | Tab | Contents |
 |-----|----------|
@@ -274,5 +283,6 @@ Projects are managed in the **Settings** page under the "Projects" group in the 
 | **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
 | **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*" |
 | **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
+| **Project Review** | The project review switch and the project reviewer's instructions, prefilled with the default ones; "Reset to default" restores them. Instructions equal to the default are stored empty, so the project follows later changes to the default |
 
 The **Pipelines** page groups templates by project with project name headers. Each template row has a "Move to…" action. Projects with `EpicIssueProviderId` set show a 🧩 indicator.

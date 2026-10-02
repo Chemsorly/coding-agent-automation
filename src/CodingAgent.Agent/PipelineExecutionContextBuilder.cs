@@ -291,6 +291,10 @@ internal sealed class PipelineExecutionContextBuilder
         ctx.StalenessSignal = inputs.Job.StalenessSignal;
         ctx.AnalysisRefreshCount = inputs.Job.AnalysisRefreshCount;
 
+        // The project review: its reviewers join the code review, and its repositories are cloned for them
+        ctx.ProjectReviewers = inputs.Job.ProjectReviewers;
+        ctx.ProjectReviewRepositories = inputs.Job.ProjectReviewRepositories;
+
         return ctx;
     }
 

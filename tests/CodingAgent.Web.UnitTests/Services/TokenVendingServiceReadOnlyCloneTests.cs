@@ -12,8 +12,8 @@ namespace CodingAgent.Web.UnitTests.Services;
 
 /// <summary>
 /// Tests for <see cref="TokenVendingService.PrepareReadOnlyCloneConfigsAsync"/>: the other project
-/// repositories a project epic clones get <c>contents: read</c> tokens and none of their secrets or
-/// setup steps, and repositories that cannot get a read-only token are left out.
+/// repositories a project epic or a project review clones get none of their secrets or setup steps. A GitHub
+/// App repository gets a <c>contents: read</c> token; any other keeps its own token.
 /// </summary>
 public class TokenVendingServiceReadOnlyCloneTests
 {
@@ -96,9 +96,11 @@ public class TokenVendingServiceReadOnlyCloneTests
     }
 
     [Fact]
-    public async Task PrepareReadOnlyCloneConfigsAsync_NoGitHubAppCredentials_IsLeftOut()
+    public async Task PrepareReadOnlyCloneConfigsAsync_NoGitHubAppCredentials_KeepsItsOwnTokenAndNothingElse()
     {
-        // A GitLab access token cannot be narrowed to read-only, so the repository is not cloned
+        // A GitLab access token cannot be narrowed to read-only. The repository keeps its own token, as the job's own
+        // repository does, without its secrets or setup steps; the agent removes the token from the clone and turns
+        // pushing off there.
         var (requestBodies, httpClient) = TokenEndpoint();
         var service = new TokenVendingService(_mockLogger.Object, httpClient);
         var gitLabConfig = new ProviderConfig
@@ -107,13 +109,25 @@ public class TokenVendingServiceReadOnlyCloneTests
             Kind = ProviderKind.Repository,
             ProviderType = "GitLab",
             DisplayName = "gitlab",
-            Settings = new Dictionary<string, string> { [ProviderSettingKeys.AccessToken] = "glpat-secret" }
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "glpat-secret",
+                ["projectId"] = "42"
+            },
+            Secrets = new Dictionary<string, string> { ["DB_PASSWORD"] = "hunter2" },
+            SetupSteps = [new SetupStep { Command = "make deps", Name = "deps" }]
         };
 
         var result = await service.PrepareReadOnlyCloneConfigsAsync([gitLabConfig], CancellationToken.None);
 
-        result.Should().BeEmpty();
-        requestBodies.Should().BeEmpty();
+        var clone = result.Should().ContainSingle().Subject;
+        clone.Id.Should().Be("repo-gitlab");
+        clone.Settings.Should().Contain(ProviderSettingKeys.Token, "glpat-secret")
+            .And.Contain("projectId", "42")
+            .And.NotContainKey(ProviderSettingKeys.AccessToken);
+        clone.Secrets.Should().BeNull();
+        clone.SetupSteps.Should().BeNull();
+        requestBodies.Should().BeEmpty("only a GitHub App gets a token minted");
     }
 
     [Fact]
