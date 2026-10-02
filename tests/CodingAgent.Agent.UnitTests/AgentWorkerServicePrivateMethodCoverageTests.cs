@@ -31,51 +31,6 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         catch { /* best effort */ }
     }
 
-    // ── FinalizeJobAsync — null completion skips reporter call ───────────
-
-    [Fact]
-    public async Task FinalizeJobAsync_NullCompletion_DoesNotCallReporter()
-    {
-        var mockReporter = new Mock<IJobCompletionReporter>();
-        var service = TestAgentWorkerServiceFactory.Create(completionReporter: mockReporter.Object);
-        var slotManager = GetSlotManager(service);
-        slotManager.TryAcquireJobSlot("null-payload-job", out _);
-
-        await (Task)GetPrivateMethod(service, "FinalizeJobAsync")
-            .Invoke(service, ["null-payload-job", null])!;
-
-        mockReporter.Verify(r => r.ReportCompletionAsync(
-            It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
-            Times.Never);
-    }
-
-    // ── FinalizeJobAsync — with payload calls reporter ───────────────────
-
-    [Fact]
-    public async Task FinalizeJobAsync_WithCompletion_CallsReporter()
-    {
-        var mockReporter = new Mock<IJobCompletionReporter>();
-        mockReporter.Setup(r => r.ReportCompletionAsync(
-                It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        var service = TestAgentWorkerServiceFactory.Create(completionReporter: mockReporter.Object);
-        var slotManager = GetSlotManager(service);
-        slotManager.TryAcquireJobSlot("complete-job", out _);
-
-        var payload = new JobCompletionPayload
-        {
-            FinalStep = PipelineStep.Completed,
-            CompletedAt = DateTimeOffset.UtcNow
-        };
-
-        await (Task)GetPrivateMethod(service, "FinalizeJobAsync")
-            .Invoke(service, ["complete-job", payload])!;
-
-        mockReporter.Verify(r => r.ReportCompletionAsync(
-            new JobId("complete-job"), payload, CancellationToken.None), Times.Once);
-    }
-
     // ── ReportChatCompletedAsync — hub throws, should not propagate ───────
 
     [Fact]

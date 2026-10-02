@@ -31,7 +31,12 @@ public interface IAgentHub
     Task ReportQualityGateResult(JobId jobId, QualityGateReport report);
     Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount);
 
-    // Heartbeat
+    /// <summary>
+    /// Reports a discrete pipeline run event (CI re-trigger, CI wait completion, agent stall)
+    /// to the API so metrics are recorded server-side rather than in the ephemeral agent pod.
+    /// </summary>
+    Task ReportPipelineRunEvent(JobId jobId, PipelineRunEventReport report);
+
     Task Heartbeat(HeartbeatMessage message);
 
     // Issue operations (proxied through orchestrator)

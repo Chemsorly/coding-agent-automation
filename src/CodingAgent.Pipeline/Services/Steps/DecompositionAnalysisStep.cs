@@ -90,7 +90,9 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
                     UseResume = false
                 },
                 run, config, "Decomposition analysis agent", context.Callbacks.NotifyChange, logger, ct,
-                line => context.Callbacks.EmitOutputLine(line));
+                line => context.Callbacks.EmitOutputLine(line),
+                stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                phase: "decomposition");
         }, "Agent execution", ct);
 
         if (execResult == StepResult.Stop)

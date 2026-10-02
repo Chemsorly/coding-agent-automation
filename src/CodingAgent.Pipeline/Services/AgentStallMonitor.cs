@@ -14,7 +14,15 @@ namespace CodingAgent.Pipeline.Services;
 internal record StallMonitorMetrics(
     Counter<long> Warnings,
     Counter<long> Kills,
-    Counter<long> ProcessDeaths);
+    Counter<long> ProcessDeaths)
+{
+    /// <summary>
+    /// Optional delegate to report stall events server-side (issue #2979).
+    /// When set, called with (phase, kind) when a stall_kill or process_death event occurs
+    /// so the API records the <c>pipeline.run.agent_stalls</c> counter instead of the agent pod.
+    /// </summary>
+    public Action<string, string>? ReportStallEvent { get; init; }
+}
 
 /// <summary>
 /// Reusable stall detection for agent interactions. Wraps an <see cref="IAgentProvider.ExecuteAsync"/>
@@ -251,8 +259,12 @@ internal static class AgentStallMonitor
             logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
             onChange?.Invoke();
+            var phase = PipelineTelemetry.NormalizeStallPhase(phaseDescription);
             stallMetrics?.ProcessDeaths.Add(1,
-                new KeyValuePair<string, object?>("phase", PipelineTelemetry.NormalizeStallPhase(phaseDescription)));
+                new KeyValuePair<string, object?>("phase", phase));
+
+            // Report server-side (issue #2979)
+            stallMetrics?.ReportStallEvent?.Invoke(phase, PipelineTelemetry.AgentStallKinds.ProcessDeath);
 
             sessionSpan?.AddEvent(new ActivityEvent("agent.process_death",
                 tags: new ActivityTagsCollection { { "pid", health.ProcessId } }));
@@ -290,8 +302,12 @@ internal static class AgentStallMonitor
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = killMsg });
         onChange?.Invoke();
 
+        var phase = PipelineTelemetry.NormalizeStallPhase(phaseDescription);
         stallMetrics?.Kills.Add(1,
-            new KeyValuePair<string, object?>("phase", PipelineTelemetry.NormalizeStallPhase(phaseDescription)));
+            new KeyValuePair<string, object?>("phase", phase));
+
+        // Report server-side (issue #2979)
+        stallMetrics?.ReportStallEvent?.Invoke(phase, PipelineTelemetry.AgentStallKinds.StallKill);
 
         sessionSpan?.AddEvent(new ActivityEvent("agent.stall_kill",
             tags: new ActivityTagsCollection

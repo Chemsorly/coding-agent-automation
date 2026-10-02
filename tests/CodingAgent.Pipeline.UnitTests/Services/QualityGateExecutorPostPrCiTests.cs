@@ -1281,17 +1281,22 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
                 Jobs = [new() { Name = "build", State = PipelineRunState.Passed }]
             });
 
-        // Act
-        await _executor.ProceedToQualityGatesAsync(BuildContext(), CancellationToken.None);
+        // Capture ReportPipelineRunEvent calls (issue #2979: server-side recording)
+        var reportedEvents = new List<PipelineRunEventReport>();
 
-        // Assert: PostPrCiDuration was recorded on the post-PR CI path
-        _instrumentNames.Should().Contain("quality_gate.post_pr_ci.duration",
-            "WaitForPostPrCiAsync must record into PostPrCiDuration (issue #2220 fix)");
-        // NOTE: quality_gate.external_ci.duration is also recorded on this path because
-        // AppendExternalCiIfNeededAsync (the pre-PR CI pass) runs before WaitForPostPrCiAsync and
-        // uses ExternalCiDuration. The dual-recording is from two separate code paths, not from
-        // WaitForPostPrCiAsync itself. The fix for issue #2220 is confirmed: WaitForPostPrCiAsync
-        // records into PostPrCiDuration rather than ExternalCiDuration.
+        // Act
+        await _executor.ProceedToQualityGatesAsync(
+            BuildContext(reportedEvents.Add), CancellationToken.None);
+
+        // Assert: a CiWait event with stage=post_pr was reported server-side (issue #2979).
+        // quality_gate.post_pr_ci.duration is no longer recorded agent-side — the API records it.
+        var postPrCiEvent = reportedEvents.FirstOrDefault(e =>
+            e.Kind == PipelineRunEventKind.CiWait &&
+            e.Stage == PipelineTelemetry.CiWaitStages.PostPr);
+        postPrCiEvent.Should().NotBeNull(
+            "WaitForPostPrCiAsync must report a CiWait/post_pr event server-side (issue #2979 migration from agent-side histogram)");
+        postPrCiEvent!.DurationSeconds.Should().HaveValue("CI wait duration must be reported");
+        postPrCiEvent.Result.Should().Be("pass", "CI passed in this test scenario");
     }
 
     private void SetupDefaultMocks()
@@ -1335,7 +1340,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
             });
     }
 
-    private QualityGateContext BuildContext() => new()
+    private QualityGateContext BuildContext(Action<PipelineRunEventReport>? reportEvent = null) => new()
     {
         Run = _run,
         Config = new PipelineConfiguration
@@ -1354,6 +1359,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
         Callbacks = _mockCallbacks.Object,
         RepoProvider = _mockRepoProvider.Object,
         PipelineProvider = _mockPipelineProvider.Object,
+        ReportPipelineRunEvent = reportEvent,
         QualityGateConfigs = new[]
         {
             new QualityGateConfiguration

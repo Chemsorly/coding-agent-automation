@@ -42,6 +42,7 @@ public static class HubMethodNames
     public const string ReportChatEntry = nameof(IAgentHub.ReportChatEntry);
     public const string ReportQualityGateResult = nameof(IAgentHub.ReportQualityGateResult);
     public const string ReportBrainSyncResult = nameof(IAgentHub.ReportBrainSyncResult);
+    public const string ReportPipelineRunEvent = nameof(IAgentHub.ReportPipelineRunEvent);
 
     // Heartbeat
     public const string Heartbeat = nameof(IAgentHub.Heartbeat);

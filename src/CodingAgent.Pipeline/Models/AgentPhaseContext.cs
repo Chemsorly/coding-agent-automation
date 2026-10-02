@@ -25,4 +25,13 @@ public sealed record AgentPhaseContext : PipelineContextBase
     /// were configured for this pipeline run.
     /// </summary>
     public IReadOnlyDictionary<string, string>? InjectedSecrets { get; init; }
+
+    /// <summary>
+    /// Action to report pipeline run events (agent stalls) server-side (issue #2979).
+    /// When non-null, stall_kill and process_death events from <see cref="Services.AgentStallMonitor"/>
+    /// are forwarded to the API so <c>pipeline.run.agent_stalls</c> is recorded for all phases,
+    /// not just the QGC-retry path.
+    /// Null on orchestrator/test paths where no SignalR reporter is wired.
+    /// </summary>
+    public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
 }
