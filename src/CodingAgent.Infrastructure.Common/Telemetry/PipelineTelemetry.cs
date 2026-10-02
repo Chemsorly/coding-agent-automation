@@ -282,16 +282,6 @@ public static class PipelineTelemetry
         "pipeline.run.agent_stalls", "{stall}",
         "Agent stall events (stall_kill, process_death, process_timeout) recorded by the API");
 
-    public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
-        "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",
-        advice: new InstrumentAdvice<double>
-        {
-            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
-        });
-
-    public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
-        "consolidation.jobs.expired", UnitJob, "Consolidation jobs expired from queue");
-
     public static readonly Counter<long> ConsolidationDispatchPermanentFailures = Meter.CreateCounter<long>(
         "consolidation.dispatch.permanent_failures", UnitFailure,
         "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
@@ -303,8 +293,6 @@ public static class PipelineTelemetry
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
         "token_vending.failures", UnitFailure, "Token vending failures");
-    public static readonly Histogram<double> TokenVendingDuration = Meter.CreateHistogram<double>(
-        "token_vending.duration", "s", "Duration of token vending operations");
 
     // Loop metrics
     public static readonly Counter<long> LoopPolls = Meter.CreateCounter<long>(
@@ -456,10 +444,6 @@ public static class PipelineTelemetry
         "pipeline.queue_sweep.failed", UnitItem, "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
 
     // Agent worker metrics
-    public static readonly Counter<long> AgentJobsReceived = Meter.CreateCounter<long>(
-        "agent.jobs.received", UnitJob, "Jobs received by agent workers");
-    public static readonly Counter<long> AgentJobsRejected = Meter.CreateCounter<long>(
-        "agent.jobs.rejected", UnitJob, "Jobs rejected by agent workers");
     public static readonly Counter<long> AgentHeartbeatFailures = Meter.CreateCounter<long>(
         "agent.heartbeat.failures", UnitFailure, "Agent heartbeat failures");
     public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
@@ -599,10 +583,6 @@ public static class PipelineTelemetry
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());
 
-    /// <summary>Creates a pipeline.project_id tag.</summary>
-    public static KeyValuePair<string, object?> ProjectIdTag(string? projectId) =>
-        new("pipeline.project_id", projectId ?? ActivityTags.Unknown);
-
     /// <summary>Creates a pipeline.project_name tag.</summary>
     public static KeyValuePair<string, object?> ProjectNameTag(string? projectName) =>
         new("pipeline.project_name", projectName ?? ActivityTags.Unknown);
@@ -617,27 +597,19 @@ public static class PipelineTelemetry
     }
 
     /// <summary>
-    /// Builds a <see cref="TagList"/> containing run_type, project_id, and project_name tags.
-    /// Use this when recording metrics that should include project context.
+    /// Builds a <see cref="TagList"/> containing run_type and project_name tags.
+    /// <para>
+    /// The <paramref name="projectId"/> parameter is accepted but no longer emitted as a metric
+    /// tag — <c>pipeline.project_name</c> is 1:1 with it and already present, so the extra tag
+    /// was redundant cardinality. <c>pipeline.project_id</c> is still set on spans via
+    /// <see cref="SetProjectTags"/>. See issue #2980.
+    /// </para>
     /// </summary>
     public static TagList BuildTags(PipelineRunType runType, string? projectId, string? projectName) =>
         new(
         [
             RunTypeTag(runType),
-            ProjectIdTag(projectId),
             ProjectNameTag(projectName)
-        ]);
-
-    /// <summary>
-    /// Builds a <see cref="TagList"/> with an additional phase tag for per-phase attribution.
-    /// </summary>
-    public static TagList BuildTagsWithPhase(PipelineRunType runType, string? projectId, string? projectName, string phase) =>
-        new(
-        [
-            RunTypeTag(runType),
-            ProjectIdTag(projectId),
-            ProjectNameTag(projectName),
-            new KeyValuePair<string, object?>("phase", phase)
         ]);
 
     /// <summary>

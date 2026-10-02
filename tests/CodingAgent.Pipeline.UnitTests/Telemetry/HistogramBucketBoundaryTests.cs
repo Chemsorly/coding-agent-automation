@@ -25,14 +25,6 @@ public class HistogramBucketBoundaryTests
         boundaries.Should().Equal(5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800);
     }
 
-    [Fact]
-    public void QueueWaitTime_HasExpectedBucketBoundaries()
-    {
-        var boundaries = PipelineTelemetry.QueueWaitTime.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull();
-        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600);
-    }
-
     // ── WorkDistributionTelemetry histograms ────────────────────────────────────
     // These guard against removing InstrumentAdvice, which would revert to the SDK default
     // ms-scale boundaries (max = 1000ms) — useless for dispatch durations measured in seconds.

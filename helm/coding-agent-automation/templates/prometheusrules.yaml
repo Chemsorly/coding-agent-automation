@@ -29,7 +29,7 @@ spec:
 
         # Alert when dispatch latency is high.
         # Metric: workdistribution_dispatch_latency_seconds_bucket (histogram).
-        # Source: Job Controller (Spec 043 — moved from orchestrator).
+        # Source: API (DispatchLifecycleService records this when a WorkItem transitions to Dispatched).
         - alert: DispatchLatencyHigh
           expr: |
             histogram_quantile(0.99,
@@ -59,7 +59,7 @@ spec:
 
         # Alert when too many work items are failing.
         # Metric: workdistribution_workitems_terminated (correct — unchanged).
-        # Source pod changes from orchestrator to Job Controller in Spec 043.
+        # Source: API (WorkItemStatusTransitionService records this via LogTerminalStatus, issue #2967).
         - alert: WorkItemFailureRateHigh
           expr: |
             rate(workdistribution_workitems_terminated{status="Failed"}[5m]) > 0.1
@@ -72,7 +72,8 @@ spec:
 
         # Alert when credential pool is exhausted.
         # Metrics: workdistribution_credential_pool_available / workdistribution_credential_pool_claimed.
-        # Source: Job Controller (Spec 043 — moved from orchestrator).
+        # Source: API (WorkItemDispatchEndpoints — UpdateCredentialPoolMetrics called on each dispatch attempt).
+        # These gauges use an owner-only guard: non-API processes emit no measurement (issue #2980).
         - alert: CredentialPoolExhausted
           expr: |
             workdistribution_credential_pool_available == 0
@@ -87,7 +88,8 @@ spec:
 
         # Alert when dispatcher hasn't polled recently.
         # Metric: workdistribution_dispatcher_last_poll_epoch_seconds (gauge).
-        # Source: Job Controller (Spec 043 — moved from orchestrator).
+        # Source: Scheduler (WorkItemDispatchLoop.RecordLastPollEpoch — issue #2980).
+        # The gauge uses an owner-only guard; only the Scheduler emits it.
         - alert: DispatcherStalled
           expr: |
             time() - workdistribution_dispatcher_last_poll_epoch_seconds > 120
@@ -98,10 +100,10 @@ spec:
             summary: "Dispatch service stalled"
             description: "Dispatcher has not polled for pending work items in over 2 minutes."
 
-        # Alert when the dispatcher metric is entirely absent (Job Controller dead or not scraping).
+        # Alert when the dispatcher metric is entirely absent (Scheduler dead or not scraping).
         # Complements DispatcherStalled: a dead process stops exporting the series entirely,
         # so time()-based staleness detection resolves after ~5 min. This rule fires instead.
-        # Scoped to .Release.Namespace to prevent a live Job Controller in another namespace
+        # Scoped to .Release.Namespace to prevent a live Scheduler in another namespace
         # suppressing this alert when multiple releases share a Prometheus instance.
         - alert: DispatcherMetricAbsent
           expr: |
@@ -110,8 +112,8 @@ spec:
           labels:
             severity: critical
           annotations:
-            summary: "Dispatcher metric absent — Job Controller may be down"
-            description: "workdistribution_dispatcher_last_poll_epoch_seconds has not been scraped for 2 minutes in namespace {{ "{{ $labels.namespace }}" }}. The Job Controller may be crashed or not running."
+            summary: "Dispatcher metric absent — Scheduler may be down"
+            description: "workdistribution_dispatcher_last_poll_epoch_seconds has not been scraped for 2 minutes in namespace {{ "{{ $labels.namespace }}" }}. The Scheduler may be crashed or not running."
 
 {{- if .Values.jobController.enabled }}
         # Alert when the Job Controller pod is Running but not Ready.

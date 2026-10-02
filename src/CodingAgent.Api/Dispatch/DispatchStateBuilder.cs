@@ -80,13 +80,11 @@ internal sealed class DispatchStateBuilder
             {
                 // NOTE: RecordLastPollEpoch and DispatcherPollCount are intentionally NOT called here.
                 // WorkDistributionTelemetry uses process-static backing fields — both the API and the
-                // Job Controller export the same metric names (workdistribution.dispatcher_last_poll_epoch_seconds,
-                // workdistribution.credential_pool_available, etc.). The Helm PrometheusRules for
-                // DispatcherStalled / CredentialPoolExhausted designate the Job Controller as the sole
-                // authoritative source. Writing from the API's consolidation path produces a second
-                // conflicting series that causes spurious alerts and masks real stalls.
-                // The Job Controller's DispatchService.cs is the only caller of RecordLastPollEpoch /
-                // UpdateCredentialPoolMetrics.
+                // Scheduler export metric names from the same CodingAgent.WorkDistribution meter.
+                // RecordLastPollEpoch is owned by the Scheduler (WorkItemDispatchLoop.PollAndDispatchAsync);
+                // writing from the API's consolidation path would produce a conflicting second series that
+                // causes spurious DispatcherStalled alerts and masks real dispatch starvation.
+                // The Scheduler's WorkItemDispatchLoop is the sole authoritative caller of RecordLastPollEpoch.
             }
 
             if (pendingItems.Count == 0)
@@ -112,7 +110,11 @@ internal sealed class DispatchStateBuilder
             {
                 // NOTE: UpdateCredentialPoolMetrics is intentionally NOT called here.
                 // See the comment on RecordLastPollEpoch above — same reasoning applies.
-                // The Job Controller's DispatchService.cs is the authoritative writer.
+                // UpdateCredentialPoolMetrics is owned by the API's WorkItemDispatchEndpoints
+                // (DispatchPendingWorkItem), which has the accurate PVC availability snapshot
+                // at the point of actual dispatch. Calling it here (on the consolidation path,
+                // which only reads PVC state but does not dispatch) would emit a second conflicting
+                // series and undercount claimed PVCs.
             }
 
             return new DispatchState
