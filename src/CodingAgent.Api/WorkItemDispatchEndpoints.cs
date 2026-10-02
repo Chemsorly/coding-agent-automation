@@ -324,60 +324,16 @@ public static class WorkItemDispatchEndpoints
         // of the raw values. See also: LogSanitizer in CodingAgent.Pipeline.Services.
         var sanitizedSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(agentSelector);
 
-        // Acquire advisory lock keyed on the normalized selector.
-        // This serialises all concurrent calls to this endpoint for the same selector,
-        // preventing the over-dispatch window where two callers both see capacity available
-        // and each dispatch a different Pending item for the same selector.
-        //
-        // Lock scope: snapshot → gate → CAS (inside ExecuteDispatchLifecycleAsync).
-        // The label swap to agent:in-progress is NOT in scope — it happens in AgentHub.RegisterAgent.
-        //
-        // Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
-        // (collection-level) and WorkItemDispatchLoop (Scheduler background loop) do NOT acquire
-        // this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
-        IAsyncDisposable lockHandle;
-        try
-        {
-            lockHandle = await lockProvider.AcquireAsync($"dispatch-selector:{normalizedSelector}", ct);
-        }
-        catch (TimeoutException)
-        {
-            // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
-            // A timeout means another call has held the lock for that entire window (e.g. a slow
-            // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
-            Log.Warning("DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503", CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(normalizedSelector));
-            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "lock_timeout");
-            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
-        }
-
-        await using var _ = lockHandle;
-
-        // Post-lock status re-read: close the TOCTOU window.
-        // Another dispatch path (WorkItemDispatchLoop, DispatchWorkItem, or a concurrent call
-        // to this endpoint) may have transitioned the item from Pending → Dispatched between
-        // the fast-path check above and lock acquisition. The advisory lock serialises concurrent
-        // callers on this endpoint; without this re-read, the loser enters
-        // ExecuteDispatchLifecycleAsync, finds the item no longer Pending, exits early
-        // (dispatched = false), and the endpoint returns 503. The Scheduler interprets 503 as a
-        // transient error and schedules an unnecessary full-cycle retry. 409 is the correct
-        // signal: the item is already dispatched — no retry needed.
-        //
-        // Nullable projection: a missing row returns null (should not happen — WorkItems use
-        // status transitions, not DELETE) and is treated as non-Pending to avoid dispatching a
-        // ghost. Using a nullable projection avoids the default(WorkItemStatus) == Pending pitfall
-        // that a plain .Select(w => w.Status).FirstOrDefaultAsync() would have if the row vanished.
-        var postLockCheck = await db.WorkItems.AsNoTracking()
-            .Select(w => new { w.Id, w.Status })
-            .FirstOrDefaultAsync(w => w.Id == id, ct);
-
-        if (postLockCheck is null || postLockCheck.Status != WorkItemStatus.Pending)
-        {
-            Log.Information(
-                "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
-                id, postLockCheck?.Status);
-            WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "not_pending");
-            return TypedResults.Ok(new DispatchPendingResponse(false, "not_pending"));
-        }
+        // Acquire advisory lock keyed on the normalized selector and perform the post-lock
+        // TOCTOU re-read. Both are encapsulated in TryEnterSelectorDispatchAsync (issue #3235):
+        // - Lock scope: snapshot → gate → CAS (inside ExecuteDispatchLifecycleAsync).
+        // - Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
+        //   (collection-level) and WorkItemDispatchLoop (Scheduler background loop) do NOT acquire
+        //   this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
+        var (lockHandle, lockEarlyReturn) = await TryEnterSelectorDispatchAsync(lockProvider, normalizedSelector, db, id, ct);
+        if (lockEarlyReturn is not null)
+            return lockEarlyReturn;
+        await using var _ = lockHandle!;
 
         // Build the concurrency snapshot and PVC availability result via the shared preamble.
         // IMPORTANT: this call must remain inside the advisory lock, after the post-lock status
@@ -468,54 +424,41 @@ public static class WorkItemDispatchEndpoints
             lifecycle,
             ct);
 
-        // ── Result interception: convert shared-helper 409 to 200+body (issue #2976) ──
-        // The shared helper (DispatchResolvedWorkItemAsync) may return 409 (as Conflict<string>)
-        // when the concurrency limit is reached inside ApplyGates.
-        // DispatchWorkItem (not in scope) also calls this helper and must continue to see 409 —
-        // so we intercept only at this call site, not inside the helper.
-        // Use IStatusCodeHttpResult (the interface) rather than StatusCodeHttpResult (concrete class)
-        // because ApplyGates returns TypedResults.Conflict(...) which is Conflict<string>,
-        // NOT StatusCodeHttpResult. Both implement IStatusCodeHttpResult.
-        // TODO [WARNING]: The success-path interpretation (fall-through to RecordDispatchAttempt
-        // "dispatched") relies on the implicit assumption that DispatchResolvedWorkItemAsync returns
-        // Ok<Guid> on success. Any future modification that adds a different success-variant status
-        // code from the helper would also fall through to RecordDispatchAttempt("dispatched","none")
-        // without being a real dispatch. Consider asserting the intercepted result is Ok<Guid>
-        // before treating it as a successful dispatch to make the coupling explicit.
-        if (dispatchResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 409 })
-        {
-            WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "concurrency_limit");
-            return TypedResults.Ok(new DispatchPendingResponse(false, "concurrency_limit"));
-        }
+        // ── Result interception: delegate to shared helper (issue #3235) ──
+        // InterpretDispatchResult handles:
+        //   409 → 200+DispatchPendingResponse(false,"concurrency_limit") (rewriteConcurrencyLimitAsDeferred=true)
+        //   503 → PVC/K8s disambiguation telemetry, then pass through
+        //   other → pass through (success fall-through below)
+        // PvcPoolExhaustions.Add(1) is emitted here (exclusive to this path) when the 503 is PVC-gated.
+        // RecordDispatchAttempt("dispatched","none") stays in the success fall-through below.
+        var isKiroAgent = dispatchService.IsKiroAgent(template);
+        var interpretedResult = InterpretDispatchResult(dispatchResult, pvcResult, isKiroAgent, rewriteConcurrencyLimitAsDeferred: true);
+        // TODO [WARNING]: Reference-equality is used to detect the 409→200 rewrite
+        // (InterpretDispatchResult returns a new object only for the rewrite case). This is
+        // correct today because the helper returns rawResult unchanged for all non-409 cases.
+        // If InterpretDispatchResult is ever changed to wrap the 503 or success result in a new
+        // object, this early-exit would fire for those cases too, skipping PvcPoolExhaustions.Add(1).
+        // Consider returning an explicit flag from InterpretDispatchResult to make the rewrite
+        // detection robust. See review finding: DotNetSpecialist @ line 452.
+        if (interpretedResult != dispatchResult)
+            return interpretedResult; // 409→200 rewrite was applied
 
-        // ── PVC exhaustion counter + dispatch attempt telemetry ──
-        // The shared helper returns 503 for two sub-cases: PVC gate (caught by PvcPoolExhaustions check)
-        // and K8s/lifecycle failure. Both are transient; distinguish with pvc_unavailable vs k8s_error.
+        // TODO [WARNING]: The 503 pattern-match re-checks dispatchResult, not interpretedResult.
+        // This is currently harmless because InterpretDispatchResult returns rawResult unchanged
+        // for 503, making the two references equal. If the helper is ever changed to wrap the 503
+        // result, this check should match on interpretedResult instead to stay consistent.
+        // See review finding: DotNetSpecialist @ line 452.
         if (dispatchResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 503 })
         {
-            // Gate ordering: ApplyGates runs the PVC gate before the K8s lifecycle.
-            // The PVC gate fires if AvailablePvcs is empty — same condition that PvcPoolExhaustions
-            // has always checked. Use PVC availability to distinguish the two sub-cases.
-            // TODO [WARNING]: pvcResult was captured before the advisory lock was acquired and before
-            // DispatchResolvedWorkItemAsync ran. If a PVC becomes available between snapshot and
-            // execution, pvcResult.AvailablePvcs may not reflect the state at the time of the 503.
-            // The disambiguation relies on the gate-ordering guarantee (PVC gate before K8s lifecycle)
-            // being a structural invariant — if that ordering ever changes, this heuristic may
-            // misclassify k8s_error as pvc_unavailable or vice versa.
-            if (!pvcResult.AvailablePvcs.Any() && dispatchService.IsKiroAgent(template))
-            {
+            // PvcPoolExhaustions counter belongs exclusively to this path — not inside the helper.
+            if (!pvcResult.AvailablePvcs.Any() && isKiroAgent)
                 WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
-                WorkDistributionTelemetry.RecordDispatchAttempt("transient", "pvc_unavailable");
-            }
-            else
-            {
-                WorkDistributionTelemetry.RecordDispatchAttempt("transient", "k8s_error");
-            }
-            return dispatchResult;
+            return interpretedResult;
         }
 
         // ── Dispatch succeeded (onSuccess returned Ok<Guid>) ──
         // Replace the raw-id 200 response with the structured body the client now expects.
+        // RecordDispatchAttempt("dispatched","none") belongs exclusively to this path.
         WorkDistributionTelemetry.RecordDispatchAttempt("dispatched", "none");
         return TypedResults.Ok(new DispatchPendingResponse(true, "none"));
     }
@@ -662,7 +605,11 @@ public static class WorkItemDispatchEndpoints
         // status when reloading the item after K8s Job creation.
         // SafelyCancelOrphanedDispatchedWorkItemAsync is passed as onDispatchFailure — the item
         // was created as Dispatched; without cleanup it stays orphaned with no running Job.
-        return await dispatchService.DispatchResolvedWorkItemAsync(
+        // InterpretDispatchResult (issue #3235): delegates 409/503 result-interpretation to the
+        // shared helper with rewriteConcurrencyLimitAsDeferred=false — 409 passes through as-is
+        // (the client receives the raw 409). PvcPoolExhaustions and RecordDispatchAttempt("dispatched")
+        // are not emitted here — those belong exclusively to the DispatchPendingWorkItem path.
+        var syncDispatchResult = await dispatchService.DispatchResolvedWorkItemAsync(
             db,
             template,
             projection,
@@ -678,6 +625,15 @@ public static class WorkItemDispatchEndpoints
             callerName: "DispatchWorkItem",
             lifecycle,
             ct);
+        // TODO [WARNING]: InterpretDispatchResult unconditionally emits RecordDispatchAttempt("transient",
+        // "pvc_unavailable"|"k8s_error") for 503 results regardless of the rewriteConcurrencyLimitAsDeferred
+        // flag. On the original DispatchWorkItem path no such telemetry was emitted — the raw 503 was
+        // returned directly. This change adds a new metric emission on the sync-dispatch path that can
+        // double-count transient dispatch attempts when both paths are monitored together.
+        // If this is intentional, document it; otherwise guard the 503 telemetry in InterpretDispatchResult
+        // with the same rewriteConcurrencyLimitAsDeferred flag used for the 409 branch.
+        // See review finding: Correctness @ line 616.
+        return InterpretDispatchResult(syncDispatchResult, pvcResult, dispatchService.IsKiroAgent(template), rewriteConcurrencyLimitAsDeferred: false);
     }
 
     /// <summary>
@@ -727,6 +683,190 @@ public static class WorkItemDispatchEndpoints
         {
             Log.Warning(ex, "DispatchWorkItem: failed to cancel orphaned Dispatched WorkItem {WorkItemId} — item may linger in Dispatched state", workItemId);
         }
+    }
+
+    // ── POST /{id}/dispatch shared helpers (issue #3235) ─────────────────────
+
+    /// <summary>
+    /// Acquires the per-selector advisory lock and performs the post-lock TOCTOU status re-read.
+    /// Extracted from <see cref="DispatchPendingWorkItem"/> (issue #3235).
+    ///
+    /// <para>
+    /// Returns <c>(null, earlyReturn)</c> when the lock timed out (503) or the item is no longer
+    /// <c>Pending</c> after lock acquisition (200/deferred). The caller must return
+    /// <c>earlyReturn</c> immediately without proceeding to the dispatch lifecycle.
+    /// </para>
+    /// <para>
+    /// Returns <c>(lockHandle, null)</c> when the item is <c>Pending</c> and the lock was acquired.
+    /// The caller <b>must</b> <c>await using</c> the returned <paramref name="lockHandle"/> to hold
+    /// the lock for the full dispatch lifecycle scope:
+    /// <code>
+    /// var (lockHandle, earlyReturn) = await TryEnterSelectorDispatchAsync(...);
+    /// if (earlyReturn is not null) return earlyReturn;
+    /// await using var _ = lockHandle!;
+    /// </code>
+    /// </para>
+    /// </summary>
+    /// <param name="lockProvider">The distributed lock provider.</param>
+    /// <param name="normalizedSelector">Normalized (not raw) agent selector, used as the lock key.</param>
+    /// <param name="db">Caller-owned open <see cref="PipelineDbContext"/> for the post-lock re-read.
+    /// Must use <c>AsNoTracking()</c> internally — see Risk 6 in the issue analysis.</param>
+    /// <param name="id">Work-item GUID to re-read after lock acquisition.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// <c>(lockHandle, null)</c> on success (item is Pending, lock held);
+    /// <c>(null, earlyReturn)</c> on lock timeout (503) or post-lock non-Pending (200/deferred).
+    /// </returns>
+    internal static async Task<(IAsyncDisposable? lockHandle, IResult? earlyReturn)> TryEnterSelectorDispatchAsync(
+        IDistributedLockProvider lockProvider,
+        string normalizedSelector,
+        PipelineDbContext db,
+        Guid id,
+        CancellationToken ct)
+    {
+        // TODO [WARNING]: acquiredLock is not wrapped in try/finally after assignment. If
+        // FirstOrDefaultAsync throws (e.g. transient Npgsql.NpgsqlException), the acquired
+        // advisory lock is never disposed, leaving it held until the PostgreSQL connection is
+        // recycled. All subsequent callers for the same selector would then time out (60 s → 503).
+        // Fix: wrap the post-lock query in a try/finally and call acquiredLock.DisposeAsync() in
+        // the finally block on the exceptional path, or restructure using await using from the
+        // point of assignment. See review finding: DotNetSpecialist @ line 737.
+        IAsyncDisposable acquiredLock;
+        try
+        {
+            acquiredLock = await lockProvider.AcquireAsync($"dispatch-selector:{normalizedSelector}", ct);
+        }
+        catch (TimeoutException)
+        {
+            // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
+            // A timeout means another call has held the lock for that entire window (e.g. a slow
+            // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
+            Log.Warning(
+                "DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503",
+                CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(normalizedSelector));
+            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "lock_timeout");
+            return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
+        }
+
+        // Post-lock status re-read: close the TOCTOU window.
+        // Another dispatch path (WorkItemDispatchLoop, DispatchWorkItem, or a concurrent call
+        // to this endpoint) may have transitioned the item from Pending → Dispatched between
+        // the fast-path check and lock acquisition. The advisory lock serialises concurrent
+        // callers on this endpoint; without this re-read, the loser would enter
+        // ExecuteDispatchLifecycleAsync, find the item no longer Pending, exit early
+        // (dispatched = false), and the endpoint would return 503. The Scheduler interprets
+        // 503 as a transient error and schedules an unnecessary full-cycle retry.
+        //
+        // AsNoTracking is mandatory: a tracked query would return the EF first-level cache
+        // snapshot from the fast-path check (which saw Pending), masking the intervening
+        // state transition. Test 15 (DispatchPendingWorkItem_ConcurrentDispatch_LosingCallerReceives409Conflict)
+        // relies on this fresh-query behaviour.
+        //
+        // Nullable projection: a missing row returns null (WorkItems use status transitions, not
+        // DELETE) and is treated as non-Pending to avoid dispatching a ghost.
+        var postLockCheck = await db.WorkItems.AsNoTracking()
+            .Select(w => new { w.Id, w.Status })
+            .FirstOrDefaultAsync(w => w.Id == id, ct);
+
+        if (postLockCheck is null || postLockCheck.Status != WorkItemStatus.Pending)
+        {
+            Log.Information(
+                "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
+                id, postLockCheck?.Status);
+            WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "not_pending");
+            await acquiredLock.DisposeAsync();
+            return (null, TypedResults.Ok(new DispatchPendingResponse(false, "not_pending")));
+        }
+
+        return (acquiredLock, null);
+    }
+
+    /// <summary>
+    /// Interprets the raw <see cref="IResult"/> returned by
+    /// <see cref="CodingAgent.Api.Dispatch.DispatchWorkItemService.DispatchResolvedWorkItemAsync"/>
+    /// and applies path-specific result rewriting and telemetry (issue #3235).
+    ///
+    /// <para>
+    /// Shared by <see cref="DispatchPendingWorkItem"/> (with
+    /// <paramref name="rewriteConcurrencyLimitAsDeferred"/>=<c>true</c>) and
+    /// <see cref="DispatchWorkItem"/> (with <paramref name="rewriteConcurrencyLimitAsDeferred"/>=<c>false</c>).
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>Telemetry boundary — NOT emitted inside this helper:</strong>
+    /// <list type="bullet">
+    ///   <item><c>WorkDistributionTelemetry.PvcPoolExhaustions.Add(1)</c> — belongs exclusively
+    ///     to the <see cref="DispatchPendingWorkItem"/> path; the caller emits it after checking
+    ///     the returned result.</item>
+    ///   <item><c>WorkDistributionTelemetry.RecordDispatchAttempt("dispatched","none")</c> — belongs
+    ///     exclusively to the <see cref="DispatchPendingWorkItem"/> success fall-through; the caller
+    ///     emits it when the returned result is not a 409/503.</item>
+    /// </list>
+    /// </para>
+    ///
+    /// <para>
+    /// <strong>503 disambiguation note:</strong> <paramref name="pvcResult"/> was captured before
+    /// the advisory lock was acquired and before <c>DispatchResolvedWorkItemAsync</c> ran. The
+    /// heuristic relies on gate-ordering (PVC gate before K8s lifecycle) being a structural
+    /// invariant — see the TODO [WARNING] in the original result-interception block.
+    /// </para>
+    /// </summary>
+    /// <param name="rawResult">The result returned by <c>DispatchResolvedWorkItemAsync</c>.</param>
+    /// <param name="pvcResult">PVC availability snapshot taken before dispatch. Used for 503 disambiguation.</param>
+    /// <param name="isKiroAgent"><c>true</c> when the resolved template targets a kiro provider.</param>
+    /// <param name="rewriteConcurrencyLimitAsDeferred">
+    /// <c>true</c> for <see cref="DispatchPendingWorkItem"/>: a 409 result is rewritten to
+    /// <c>200 DispatchPendingResponse(false,"concurrency_limit")</c>.
+    /// <c>false</c> for <see cref="DispatchWorkItem"/>: 409 passes through unchanged.
+    /// </param>
+    /// <returns>
+    /// The rewritten result (for the 409→200 path when <paramref name="rewriteConcurrencyLimitAsDeferred"/> is true),
+    /// or <paramref name="rawResult"/> unchanged (for all other cases).
+    /// </returns>
+    internal static IResult InterpretDispatchResult(
+        IResult rawResult,
+        PvcAvailabilityResult pvcResult,
+        bool isKiroAgent,
+        bool rewriteConcurrencyLimitAsDeferred)
+    {
+        // ── 409: concurrency limit ────────────────────────────────────────────
+        // Use IStatusCodeHttpResult (the interface) rather than StatusCodeHttpResult (concrete class)
+        // because ApplyGates returns TypedResults.Conflict(...) which is Conflict<string>,
+        // NOT StatusCodeHttpResult. Both implement IStatusCodeHttpResult.
+        if (rawResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 409 })
+        {
+            if (rewriteConcurrencyLimitAsDeferred)
+            {
+                WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "concurrency_limit");
+                return TypedResults.Ok(new DispatchPendingResponse(false, "concurrency_limit"));
+            }
+            // DispatchWorkItem path: 409 passes through as-is.
+            return rawResult;
+        }
+
+        // ── 503: PVC exhaustion or K8s failure ───────────────────────────────
+        if (rawResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 503 })
+        {
+            // Gate ordering: ApplyGates runs the PVC gate before the K8s lifecycle.
+            // The PVC gate fires if AvailablePvcs is empty — same condition PvcPoolExhaustions
+            // has always checked. Use PVC availability to distinguish the two sub-cases.
+            // TODO [WARNING]: pvcResult was captured before the advisory lock was acquired and
+            // before DispatchResolvedWorkItemAsync ran. If a PVC becomes available between
+            // snapshot and execution, pvcResult.AvailablePvcs may not reflect the state at the
+            // time of the 503. The disambiguation relies on the gate-ordering guarantee (PVC gate
+            // before K8s lifecycle) being a structural invariant — if that ordering ever changes,
+            // this heuristic may misclassify k8s_error as pvc_unavailable or vice versa.
+            if (!pvcResult.AvailablePvcs.Any() && isKiroAgent)
+                WorkDistributionTelemetry.RecordDispatchAttempt("transient", "pvc_unavailable");
+            else
+                WorkDistributionTelemetry.RecordDispatchAttempt("transient", "k8s_error");
+            return rawResult;
+        }
+
+        // ── Success or any other result ───────────────────────────────────────
+        // Pass through unchanged. The DispatchPendingWorkItem caller checks this and emits
+        // RecordDispatchAttempt("dispatched","none") plus wraps in DispatchPendingResponse(true,"none").
+        return rawResult;
     }
 
     // ── POST /{id}/claim ──────────────────────────────────────────────────
