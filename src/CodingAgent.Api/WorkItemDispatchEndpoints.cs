@@ -129,7 +129,7 @@ public static class WorkItemDispatchEndpoints
             // The unique-violation catch below remains as the race backstop for concurrent inserts.
             // (issue #2956)
             //
-            // TODO: [WARNING] The two pre-check queries are a TOCTOU: a concurrent request can
+            // NOTE (issue #3243): The two pre-check queries are a TOCTOU: a concurrent request can
             // insert a conflicting row between the AnyAsync calls and SaveChangesAsync, causing
             // the unique-violation catch to fire anyway. This only affects log-noise suppression,
             // not correctness (the catch backstop handles it). Additionally, the active-conflict
@@ -169,7 +169,7 @@ public static class WorkItemDispatchEndpoints
         // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
         // can subscribe to hub events and display the run immediately (Req 1a.1 Option A).
         // WorkItem.Id == PipelineRun.RunId for deterministic hub-group routing.
-        // TODO [WARNING]: The comment "Consolidation WorkItems return null" was removed (issue #3023).
+        // NOTE (issue #3243): The comment "Consolidation WorkItems return null" was removed (issue #3023).
         // PipelineRunFactory.CreateFromWorkItem now returns a real PipelineRun for consolidation
         // work items (TaskType == Consolidation || RunType == Consolidation branch). The run is added
         // to IOrchestratorRunService here and removed when RunLifecycleManager reaches a terminal
@@ -424,7 +424,7 @@ public static class WorkItemDispatchEndpoints
         var sanitizedEffectiveSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(effectiveSelector);
 
         // Build the projection for the shared dispatch helper (issue #2988).
-        // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
+        // NOTE (issue #3243): When the profile fallback resolves the template, projection.AgentSelector is
         // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
         // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
         // Active items stored with selector "kiro,dotnet" are counted under a different normalized key
@@ -476,7 +476,7 @@ public static class WorkItemDispatchEndpoints
         // Use IStatusCodeHttpResult (the interface) rather than StatusCodeHttpResult (concrete class)
         // because ApplyGates returns TypedResults.Conflict(...) which is Conflict<string>,
         // NOT StatusCodeHttpResult. Both implement IStatusCodeHttpResult.
-        // TODO [WARNING]: The success-path interpretation (fall-through to RecordDispatchAttempt
+        // NOTE (issue #3243): The success-path interpretation (fall-through to RecordDispatchAttempt
         // "dispatched") relies on the implicit assumption that DispatchResolvedWorkItemAsync returns
         // Ok<Guid> on success. Any future modification that adds a different success-variant status
         // code from the helper would also fall through to RecordDispatchAttempt("dispatched","none")
@@ -496,7 +496,7 @@ public static class WorkItemDispatchEndpoints
             // Gate ordering: ApplyGates runs the PVC gate before the K8s lifecycle.
             // The PVC gate fires if AvailablePvcs is empty — same condition that PvcPoolExhaustions
             // has always checked. Use PVC availability to distinguish the two sub-cases.
-            // TODO [WARNING]: pvcResult was captured before the advisory lock was acquired and before
+            // NOTE (issue #3243): pvcResult was captured before the advisory lock was acquired and before
             // DispatchResolvedWorkItemAsync ran. If a PVC becomes available between snapshot and
             // execution, pvcResult.AvailablePvcs may not reflect the state at the time of the 503.
             // The disambiguation relies on the gate-ordering guarantee (PVC gate before K8s lifecycle)
@@ -562,7 +562,7 @@ public static class WorkItemDispatchEndpoints
 
         // Build the concurrency snapshot and PVC availability result via the shared preamble.
         // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
-        // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
+        // NOTE (issue #3243): This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
         // requests can both observe availablePvcs.Count > 0, pass the gate, create their Dispatched rows,
         // and both enter ExecuteDispatchLifecycleAsync. SelectPvcAsync (inside the lock) dequeues from
         // each caller's in-memory availablePvcs list — it does NOT re-query the database. In a
@@ -588,12 +588,12 @@ public static class WorkItemDispatchEndpoints
         // (called below after entity creation) re-runs the gate; it will pass a second time
         // since capacity cannot shrink between these two calls on the same request.
         // isKiroAgent is computed inside DispatchWorkItemService.IsKiroAgent (no literal here — AC3).
-        // TODO [WARNING]: IsKiroAgent is evaluated here AND again inside DispatchResolvedWorkItemAsync on the same
+        // NOTE (issue #3243): IsKiroAgent is evaluated here AND again inside DispatchResolvedWorkItemAsync on the same
         // template. Both are pure/deterministic today, so results are always consistent. If IsKiroAgent ever
         // becomes context-dependent, the two calls could diverge and produce inconsistent gate decisions without
         // any test catching it. Consider passing the computed value as a parameter to DispatchResolvedWorkItemAsync
         // to make the single-evaluation contract explicit. (TestQualityReviewer, DotNetSpecialist review [WARNING])
-        // TODO [WARNING]: pvcResult.AvailablePvcs is a mutable List<string> passed by reference. The early gate
+        // NOTE (issue #3243): pvcResult.AvailablePvcs is a mutable List<string> passed by reference. The early gate
         // reads its Count here; DispatchResolvedWorkItemAsync → SelectPvcAsync will later mutate/drain that same
         // list. Both calls currently occur on the same request before any PVC selection, so the count is stable
         // in practice. However, if SelectPvcAsync or any future refactor moves list mutation before the second
@@ -645,7 +645,7 @@ public static class WorkItemDispatchEndpoints
 
         // Register PipelineRun so the UI can subscribe to hub events immediately.
         var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
-        // TODO [WARNING]: If PipelineRunFactory.CreateFromWorkItem returns null, the WorkItem will be
+        // NOTE (issue #3243): If PipelineRunFactory.CreateFromWorkItem returns null, the WorkItem will be
         // dispatched (K8s Job running, WorkItem=Dispatched) but no PipelineRun is registered in
         // IOrchestratorRunService. The UI will not receive live run events for this WorkItem. The
         // requirement states registration is mandatory for SignalR hub routing. Add a log warning
