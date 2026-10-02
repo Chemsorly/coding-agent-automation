@@ -31,7 +31,6 @@ internal static class AgentChatModeRegistration
             ResiliencePipelineFactory.CreateSignalRPipeline(logger),
             sp.GetRequiredService<CriticalMessageBuffer>(),
             logger));
-        services.AddSingleton<IJobCompletionReporter>(sp => sp.GetRequiredService<SignalRCompletionReporter>());
         services.AddSingleton<AgentJobSlotManager>(sp =>
         {
             // Use lazy resolution to break the circular dependency:
@@ -106,8 +105,6 @@ internal static class AgentChatModeRegistration
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<ChatJobExecutor>(),
-            sp.GetRequiredService<IPipelineExecutor>(),
-            sp.GetRequiredService<IJobCompletionReporter>(),
             logger)));
         services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
         services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<AgentWorkerService>());

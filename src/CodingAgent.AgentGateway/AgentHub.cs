@@ -13,7 +13,7 @@ namespace CodingAgent.AgentGateway;
 /// SignalR hub hosted at <c>/hubs/agent</c>. Agents connect as clients and invoke
 /// server-side methods for registration, status reporting, issue operations, and job lifecycle.
 /// Implements <see cref="Hub{T}"/> with <see cref="IAgentHubClient"/> for strongly-typed
-/// client method invocations (AssignJob, CancelJob).
+/// client method invocations (CancelJob, AssignChatPrompt, CancelChat, RequestFetchModels, ForceDisconnect).
 /// </summary>
 public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 {
