@@ -41,14 +41,12 @@ public partial class QualityGateExecutor
             var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
-                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+            if (run.CurrentStep.IsQualityGateExitState()) return;
 
             LogAndRecordReport(context, report, "quality gates");
 
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
-                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+            if (run.CurrentStep.IsQualityGateExitState()) return;
 
             if (report.AllPassed)
                 await RunPostRetryCleanupAndFinalizeAsync(context, linkedCt);
@@ -188,19 +186,11 @@ public partial class QualityGateExecutor
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
         var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
-        // TODO: [WARNING] ConflictRestart is missing from this guard — same bug class as #3045 (fixed in
-        // ProceedToQualityGatesAsync) but on the RunPostRetryCleanupAndFinalizeAsync post-cleanup path.
-        // If AppendExternalCiIfNeededAsync sets ConflictRestart here (conflicted PR detected on the final
-        // quality gate pass after cleanup), execution falls through to RunRetryLoopAsync, the fix agent
-        // is invoked, and run.RetryCount is incremented — wasting a retry slot on a branch GitHub cannot
-        // build. Fix: add PipelineStep.ConflictRestart to this guard, matching the pattern used on lines
-        // above (ProceedToQualityGatesAsync pre-retry guard) and below (post-RunRetryLoopAsync guard).
-        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+        if (run.CurrentStep.IsQualityGateExitState()) return;
 
         LogAndRecordReport(context, report, "final quality gates");
         report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
-        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
-                or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+        if (run.CurrentStep.IsQualityGateExitState()) return;
 
         if (report.AllPassed)
         {
@@ -260,14 +250,12 @@ public partial class QualityGateExecutor
         // regardless of what follows within the same FinalizePullRequest invocation.
         var notBefore = run.PrMarkedReadyAt ?? prReadyFallback;
         report = await WaitForPostPrCiAsync(context, report, notBefore, linkedCt);
-        if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
-                or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+        if (run.CurrentStep.IsQualityGateExitState()) return;
 
         if (!report.AllPassed)
         {
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
-                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return;
+            if (run.CurrentStep.IsQualityGateExitState()) return;
 
             if (!report.AllPassed)
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
@@ -467,8 +455,7 @@ public partial class QualityGateExecutor
             report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
-            if (run.CurrentStep is PipelineStep.Failed or PipelineStep.ConflictRestart
-                    or PipelineStep.PrMerged or PipelineStep.PrClosed) return report;
+            if (run.CurrentStep.IsQualityGateExitState()) return report;
 
             LogAndRecordReport(context, report, "retry quality gates");
         }
