@@ -810,22 +810,9 @@ public class PullRequestFinalizationServiceTests
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
 
-            // File content is used, not OutputLines
-            capturedBody.Should().NotBeNull();
-            // TODO: Strengthen these assertions — use capturedBody.Should().Be($"{fileContent}\n\n---\n\nexisting body")
-            // (or at minimum StartWith(fileContent)) to verify exact round-trip fidelity. The current Contain checks
-            // would pass even if StripBlockquotePrefix corrupted the content. Also, the NotContain assertions for
-            // OutputLines content could spuriously pass if the file content happened to contain those substrings —
-            // an exact-match assertion makes them redundant and the test immune to content coincidences.
-            capturedBody.Should().Contain("### Summary");
-            capturedBody.Should().Contain("This PR fixes the bug.");
-            capturedBody.Should().Contain("### Approach");
-            capturedBody.Should().NotContain("I will run: git diff");
-            capturedBody.Should().NotContain("diff --git a/");
-
-            // run.PullRequestBody is updated
-            run.PullRequestBody.Should().NotBe("existing body");
-            run.PullRequestBody.Should().Contain("### Summary");
+            // File content is used verbatim above the existing body, not OutputLines
+            capturedBody.Should().Be($"{fileContent}\n\n---\n\nexisting body");
+            run.PullRequestBody.Should().Be($"{fileContent}\n\n---\n\nexisting body");
         }
         finally
         {
@@ -833,16 +820,26 @@ public class PullRequestFinalizationServiceTests
         }
     }
 
-    [Fact]
-    public async Task GeneratePrDescriptionAsync_WhenFileAbsentAndOutputLinesNonEmpty_UsesFallbackDescription()
+    /// <summary>Agent output the pipeline must ignore when the description file is missing.</summary>
+    public static TheoryData<string[]> AgentOutputWhenFileAbsent => new()
     {
+        new[] { "### Summary", "Some output" },
+        new[] { "> ### Summary", "> Some content", ">" },
+        Array.Empty<string>(),
+        new[] { "   ", "\n" },
+    };
+
+    [Theory]
+    [MemberData(nameof(AgentOutputWhenFileAbsent))]
+    public async Task GeneratePrDescriptionAsync_WhenFileAbsent_KeepsExistingBodyAndIgnoresAgentOutput(string[] outputLines)
+    {
+        // decisions.md: the PR narrative never comes from the agent's stdout. Without
+        // .agent/pr-description.md the PR keeps the generated body.
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
+            // The .agent/ directory exists, so ReadAllTextAsync throws FileNotFoundException.
             Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
-            // Do NOT create .agent/pr-description.md — tests the OutputLines fallback path.
-            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
-            // (missing file) rather than DirectoryNotFoundException (missing directory).
 
             var run = CreateRun();
             run.PullRequestNumber = "42";
@@ -851,33 +848,57 @@ public class PullRequestFinalizationServiceTests
             var agentProvider = new Mock<IAgentProvider>();
             var repoProvider = new Mock<IRepositoryProvider>();
             var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-            string? capturedBody = null;
+
+            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = outputLines });
+
+            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
+            run.PullRequestBody.Should().Be("existing body");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenAgentDirectoryAbsent_LogsFileNotFoundAndKeepsBody()
+    {
+        // Without the .agent/ directory, ReadAllTextAsync throws DirectoryNotFoundException, not
+        // FileNotFoundException. It is the same condition (no description file), so it must take the
+        // same path and not the unexpected-failure handler.
+        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+
+            var run = CreateRun();
+            run.PullRequestNumber = "42";
+            run.PullRequestBody = "existing body";
+            run.WorkspacePath = tempDir;
+            var agentProvider = new Mock<IAgentProvider>();
+            var repoProvider = new Mock<IRepositoryProvider>();
+            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
                 .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["### Summary", "Some output"] });
-            repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
-                .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
-                .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
 
-            // UpdatePullRequestAsync must have been called once with the fallback content
-            repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), null, It.IsAny<CancellationToken>()), Times.Once);
-
-            // Body contains both OutputLines values
-            capturedBody.Should().NotBeNull();
-            capturedBody.Should().Contain("### Summary");
-            capturedBody.Should().Contain("Some output");
-
-            // Existing body is preserved after the separator
-            capturedBody.Should().Contain("existing body");
-            // TODO: The separator between fallback text and the existing body ("---") is not explicitly
-            // asserted. Add: capturedBody.Should().Match("*\n\n---\n\nexisting body*") to pin the
-            // formatting contract defined in the production code ($"{fallbackText}\n\n---\n\n{currentBodyFallback}").
-
-            // run.PullRequestBody is updated (no longer the original value)
-            run.PullRequestBody.Should().NotBe("existing body");
-            run.PullRequestBody.Should().Contain("### Summary");
+            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
+            run.PullRequestBody.Should().Be("existing body");
+            _logger.Verify(l => l.Warning(
+                It.Is<string>(s => s.Contains("PR description file not found")),
+                It.Is<string>(s => s == run.RunId),
+                It.IsAny<string>()),
+                Times.Once);
+            _logger.Verify(l => l.Warning(
+                It.IsAny<Exception>(),
+                It.Is<string>(s => s.Contains("generation failed")),
+                It.IsAny<string>()),
+                Times.Never);
         }
         finally
         {
@@ -885,20 +906,20 @@ public class PullRequestFinalizationServiceTests
         }
     }
 
-    [Fact]
-    public async Task GeneratePrDescriptionAsync_WhenFileAbsentAndOutputLinesAreBlockquoted_StripsPrefixBeforeUpdate()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    public async Task GeneratePrDescriptionAsync_WhenExistingBodyEmpty_UsesDescriptionWithoutSeparator(string? existingBody)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
-            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
-            // Do NOT create .agent/pr-description.md.
-            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
-            // (missing file) rather than DirectoryNotFoundException (missing directory).
+            Directory.CreateDirectory(tempDir);
+            WritePrDescriptionFile(tempDir, "### Summary\n\nFixes the bug.");
 
             var run = CreateRun();
             run.PullRequestNumber = "42";
-            run.PullRequestBody = "existing body";
+            run.PullRequestBody = existingBody;
             run.WorkspacePath = tempDir;
             var agentProvider = new Mock<IAgentProvider>();
             var repoProvider = new Mock<IRepositoryProvider>();
@@ -906,120 +927,21 @@ public class PullRequestFinalizationServiceTests
             string? capturedBody = null;
 
             agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary", "> Some content", ">"] });
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
             repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
                 .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
                 .Returns(Task.CompletedTask);
 
             await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
 
-            repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), null, It.IsAny<CancellationToken>()), Times.Once);
-
-            // Blockquote prefixes are stripped
-            capturedBody.Should().NotBeNull();
-            capturedBody.Should().Contain("### Summary");
-            capturedBody.Should().Contain("Some content");
-            capturedBody.Should().NotContain("> ### Summary");
-            capturedBody.Should().NotContain("> Some content");
-            // TODO: run.PullRequestBody is not verified to be updated after the call. Add:
-            //   run.PullRequestBody.Should().NotBe("existing body");
-            //   run.PullRequestBody.Should().Contain("### Summary");
-            // to detect a regression where the run.PullRequestBody = newBodyFallback assignment is removed.
+            capturedBody.Should().Be("### Summary\n\nFixes the bug.");
+            run.PullRequestBody.Should().Be("### Summary\n\nFixes the bug.");
         }
         finally
         {
             Directory.Delete(tempDir, recursive: true);
         }
     }
-
-    [Fact]
-    public async Task GeneratePrDescriptionAsync_WhenFileAbsentAndOutputLinesEmpty_SkipsUpdateAndLogsWarning()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        try
-        {
-            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
-            // Do NOT create .agent/pr-description.md.
-            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
-            // (missing file) rather than DirectoryNotFoundException (missing directory).
-
-            var run = CreateRun();
-            run.PullRequestNumber = "42";
-            run.PullRequestBody = "unchanged body";
-            run.WorkspacePath = tempDir;
-            var agentProvider = new Mock<IAgentProvider>();
-            var repoProvider = new Mock<IRepositoryProvider>();
-            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-
-            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
-
-            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
-
-            // UpdatePullRequestAsync must NOT have been called — empty OutputLines also produces no update
-            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
-
-            // run.PullRequestBody is unchanged
-            run.PullRequestBody.Should().Be("unchanged body");
-
-            // Secondary warning logged confirming the empty-fallback skip.
-            // Pin the second argument to run.RunId to unambiguously target the single-arg Warning at
-            // PullRequestFinalizationService.cs:344 ("OutputLines also empty, description skipped", run.RunId)
-            // and not accidentally match the first Warning at line 324 which takes two args (RunId + filePath).
-            _logger.Verify(l => l.Warning(
-                It.Is<string>(s => s.Contains("OutputLines also empty")),
-                It.Is<string>(s => s == run.RunId)),
-                Times.Once);
-            // TODO: The first Warning call (file-not-found, two args: RunId + filePath) is not explicitly
-            // verified here. Add a verify for It.Is<string>(s => s.Contains("PR description file not found"))
-            // with It.Is<string>(s => s == run.RunId) and It.Is<string>(s => ...) for the path argument
-            // to ensure that warning is also reliably logged in the empty-fallback path.
-        }
-        finally
-        {
-            Directory.Delete(tempDir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task GeneratePrDescriptionAsync_WhenFileAbsentAndOutputLinesWhitespaceOnly_SkipsUpdate()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-        try
-        {
-            Directory.CreateDirectory(Path.Combine(tempDir, ".agent"));
-            // Do NOT create .agent/pr-description.md.
-            // The .agent/ directory must exist so ReadAllTextAsync throws FileNotFoundException
-            // (missing file) rather than DirectoryNotFoundException (missing directory).
-
-            var run = CreateRun();
-            run.PullRequestNumber = "42";
-            run.PullRequestBody = "unchanged body";
-            run.WorkspacePath = tempDir;
-            var agentProvider = new Mock<IAgentProvider>();
-            var repoProvider = new Mock<IRepositoryProvider>();
-            var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
-
-            agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
-                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["   ", "\n"] });
-
-            await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
-
-            // Whitespace-only OutputLines treated as empty — no update
-            repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Never);
-
-            run.PullRequestBody.Should().Be("unchanged body");
-        }
-        finally
-        {
-            Directory.Delete(tempDir, recursive: true);
-        }
-    }
-
-    // TODO: Add a test for the branch where run.PullRequestNumber is not a valid integer in the file-absent
-    // fallback path (e.g., run.PullRequestNumber = "not-a-number" with non-empty OutputLines). The production
-    // code logs a warning and returns early; without a test, a regression that throws instead of returning
-    // gracefully would go undetected.
 
     [Fact]
     public async Task GeneratePrDescriptionAsync_WhenFileAbsent_LogsFileNotFoundWarningDistinctFromUnexpectedFailure()
@@ -1027,11 +949,6 @@ public class PullRequestFinalizationServiceTests
         // Verifies that a missing pr-description file logs the "file not found" Warning (no exception
         // argument) rather than the outer handler's Warning(ex, "generation failed") path.
         // This pins the acceptance criterion: the 'absent' condition is logged distinctly from unexpected failures.
-        // TODO: This test exercises only the empty-OutputLines sub-path of the FileNotFoundException catch block
-        // (OutputLines = [], which skips UpdatePullRequestAsync and logs "OutputLines also empty"). The
-        // non-empty-OutputLines sub-path (which calls UpdatePullRequestAsync) is not verified for the logging
-        // distinctness criterion. Add a companion test with non-empty OutputLines to confirm the file-not-found
-        // warning still fires (and the outer failure handler still does not) when the fallback update path runs.
         var tempDir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
         try
         {
@@ -1060,11 +977,12 @@ public class PullRequestFinalizationServiceTests
                 It.IsAny<string>()),
                 Times.Once);
 
-            // The outer unexpected-failure handler must NOT have fired — no Warning(ex, ...) call.
+            // The outer unexpected-failure handler must NOT have fired — no Warning(ex, template, runId) call.
+            // Match the generic Warning<string> overload the handler uses; an object[] matcher never matches it.
             _logger.Verify(l => l.Warning(
                 It.IsAny<Exception>(),
                 It.Is<string>(s => s.Contains("generation failed")),
-                It.IsAny<object[]>()),
+                It.IsAny<string>()),
                 Times.Never);
         }
         finally

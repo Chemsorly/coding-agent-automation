@@ -1213,9 +1213,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip.
-        // Use a 15-second deadline: under full parallel test suite load (~10 000 concurrent tests)
-        // the loop thread can be CPU-starved, making the poll cycle significantly slower.
-        var deadline = DateTime.UtcNow.AddSeconds(15);
+        // Use a 30-second deadline: under full parallel test suite load (~10 000 concurrent tests)
+        // the loop thread can be CPU-starved, making the poll cycle (which includes SnapshotCycleConfigAsync
+        // with several mock round-trips) significantly slower than the 50ms poll interval suggests.
+        // Previous 15s deadline proved insufficient in CI and caused a flaky failure.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
             await Task.Delay(50);
         Assert.True(svc.IsCircuitBroken);

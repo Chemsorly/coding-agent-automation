@@ -186,10 +186,12 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
             // OnAfterRenderAsync reads localStorage asynchronously after the default 60s timer starts.
             // Poll until the select reflects the stored "10" value.
+            // Timeout raised to 20s: slow CI runners can take >10s for OnAfterRenderAsync to fire
+            // and update the select — this is the known flaky site (see TODO [WARNING] above).
             await Page.WaitForFunctionAsync(
                 "() => document.querySelector('.refresh-bar-select')?.value === '10'",
                 null,
-                new() { Timeout = 10_000 });
+                new() { Timeout = 20_000 });
             Assert.Equal("10", await Page.InputValueAsync(".refresh-bar-select"));
 
             // --- Reload Runs page and verify persisted value is Off (0) ---
@@ -199,7 +201,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.WaitForFunctionAsync(
                 "() => document.querySelector('.refresh-bar-select')?.value === '0'",
                 null,
-                new() { Timeout = 10_000 });
+                new() { Timeout = 20_000 });
             Assert.Equal("0", await Page.InputValueAsync(".refresh-bar-select"));
         }
         finally

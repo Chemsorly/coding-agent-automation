@@ -2565,6 +2565,317 @@ public sealed class UniqueViolationIdempotentRetryTests
 // adding tests analogous to Tests 15–16 above for the DispatchWorkItem concurrency-conflict
 // path, and optionally for the 422 log-only path.
 
+// ── Isolation tests for extracted helpers (issue #3235) ──────────────────────
+
+/// <summary>
+/// Isolation tests for <see cref="WorkItemDispatchEndpoints.TryEnterSelectorDispatchAsync"/>
+/// and <see cref="WorkItemDispatchEndpoints.InterpretDispatchResult"/>, extracted from
+/// <c>DispatchPendingWorkItem</c> by issue #3235.
+///
+/// <para>
+/// These tests target the helpers directly. The handler-level behaviour is covered by the
+/// existing tests in <see cref="DispatchPendingWorkItemEndpointTests"/> and
+/// <see cref="SynchronousDispatchEndpointTests"/>, which continue to exercise the full
+/// dispatch pipeline through both callers.
+/// </para>
+/// </summary>
+public sealed class ExtractedHelperIsolationTests
+{
+    private readonly string _dbName = $"helper-isolation-{Guid.NewGuid():N}";
+
+    private IDbContextFactory<PipelineDbContext> CreateDbFactory()
+    {
+        var opts = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(_dbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        return new SimpleInMemoryDbContextFactory(opts);
+    }
+
+    private static JobTemplateStore CreateTemplateStore(
+        string labels = "kiro,dotnet",
+        int maxConcurrent = 5,
+        string providerType = "kiro") =>
+        JobTemplateStore.LoadFromYaml($"""
+            - labels: "{labels}"
+              image: "test-image:latest"
+              imagePullPolicy: "Always"
+              providerType: "{providerType}"
+              maxConcurrent: {maxConcurrent}
+            """);
+
+    private static IDistributedLockProvider CreateNoOpLockProvider()
+    {
+        var mock = new Mock<IDistributedLockProvider>();
+        var handle = new Mock<IAsyncDisposable>();
+        handle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mock.Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(handle.Object);
+        return mock.Object;
+    }
+
+    private static PvcAvailabilityResult MakePvcResult(int available, int claimed = 0) =>
+        new PvcAvailabilityResult(
+            Enumerable.Range(0, available).Select(i => $"pvc-{i}").ToList(),
+            claimed);
+
+    private static JobTemplate ResolveTemplate(JobTemplateStore store, string selector = "kiro,dotnet") =>
+        store.Resolve(JobTemplateStore.NormalizeLabels(selector))!;
+
+    private async Task<WorkItemEntity> SeedPendingItemAsync(IDbContextFactory<PipelineDbContext> dbFactory)
+    {
+        var entity = new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            TaskType = WorkItemTaskType.Implementation,
+            IssueIdentifier = $"issue-{Guid.NewGuid():N}",
+            IssueProviderConfigId = "prov-1",
+            Status = WorkItemStatus.Pending,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            CreatedAt = DateTimeOffset.UtcNow,
+            Payload = "{}"
+        };
+        await using var db = await dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(entity);
+        await db.SaveChangesAsync();
+        return entity;
+    }
+
+    // ── TryEnterSelectorDispatchAsync ─────────────────────────────────────────
+
+    /// <summary>
+    /// When the lock provider throws <see cref="TimeoutException"/>, the helper must return
+    /// <c>(null, 503)</c>. The earlyReturn must be a 503 Status Code result.
+    /// </summary>
+    [Fact]
+    public async Task TryEnterSelectorDispatch_LockTimeout_ReturnsNull_And_503EarlyReturn()
+    {
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory);
+
+        var lockMock = new Mock<IDistributedLockProvider>();
+        lockMock.Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("lock timed out"));
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        var (lockHandle, earlyReturn) = await WorkItemDispatchEndpoints.TryEnterSelectorDispatchAsync(
+            lockMock.Object, "kiro,dotnet", db, entity.Id, CancellationToken.None);
+
+        lockHandle.Should().BeNull("on lock timeout the handle must be null");
+        earlyReturn.Should().NotBeNull("on lock timeout an earlyReturn result must be provided");
+        var statusResult = earlyReturn as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("lock timeout earlyReturn must be a status code result");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable,
+            "lock timeout must produce a 503");
+        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","lock_timeout") was
+        // emitted. A regression that silently drops this telemetry call would not be caught here.
+        // Add a mock/spy for WorkDistributionTelemetry or refactor the helper to accept a telemetry
+        // delegate so the emission can be verified. See review finding: TestQualityReviewer @ line 2636.
+    }
+
+    /// <summary>
+    /// When the item is no longer Pending after the lock is acquired (TOCTOU: another caller
+    /// dispatched it between the fast-path check and lock acquisition), the helper must:
+    /// <list type="bullet">
+    ///   <item>Dispose the lock handle (release the lock)</item>
+    ///   <item>Return <c>(null, 200/deferred not_pending)</c></item>
+    /// </list>
+    /// </summary>
+    [Fact]
+    public async Task TryEnterSelectorDispatch_PostLockItemNotPending_DisposesLock_And_ReturnsDeferredEarlyReturn()
+    {
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory);
+
+        // Simulate concurrent dispatch: transition the item to Dispatched DURING lock acquisition.
+        var handle = new Mock<IAsyncDisposable>();
+        var disposeCount = 0;
+        handle.Setup(h => h.DisposeAsync())
+            .Callback(() => disposeCount++)
+            .Returns(ValueTask.CompletedTask);
+
+        var lockMock = new Mock<IDistributedLockProvider>();
+        lockMock.Setup(lp => lp.AcquireAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, CancellationToken ct) =>
+            {
+                // Simulate concurrent dispatch: mark item Dispatched while "acquiring" the lock
+                await using var db2 = await dbFactory.CreateDbContextAsync(ct);
+                var item = await db2.WorkItems.FindAsync([entity.Id], ct);
+                if (item is { Status: WorkItemStatus.Pending })
+                {
+                    item.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await db2.SaveChangesAsync(ct);
+                }
+                return (IAsyncDisposable)handle.Object;
+            });
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        var (lockHandle, earlyReturn) = await WorkItemDispatchEndpoints.TryEnterSelectorDispatchAsync(
+            lockMock.Object, "kiro,dotnet", db, entity.Id, CancellationToken.None);
+
+        lockHandle.Should().BeNull("lock must be released (disposed) and null returned when item is no longer Pending");
+        earlyReturn.Should().NotBeNull("a non-Pending post-lock item must produce an earlyReturn");
+
+        var ok = earlyReturn as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        ok.Should().NotBeNull("post-lock non-Pending earlyReturn must be 200 Ok<DispatchPendingResponse>");
+        ok!.Value!.Dispatched.Should().BeFalse();
+        ok.Value.Reason.Should().Be("not_pending");
+
+        disposeCount.Should().Be(1, "the lock handle must have been disposed exactly once when the item is no longer Pending");
+        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("deferred","not_pending") was
+        // emitted. A regression dropping that telemetry call would not be caught here. Additionally,
+        // only the Dispatched status is simulated — the null-row path (postLockCheck is null) is not
+        // tested. A regression changing `is null ||` to `is null &&` in TryEnterSelectorDispatchAsync
+        // would not be caught. Add a companion test seeding no matching row, and add telemetry
+        // assertion for the deferred/not_pending emit. See review finding: TestQualityReviewer @ line 2676.
+    }
+
+    /// <summary>
+    /// Happy path: when the item is still Pending after lock acquisition, the helper must return
+    /// a non-null lock handle and a null earlyReturn so the caller can proceed to dispatch.
+    /// </summary>
+    [Fact]
+    public async Task TryEnterSelectorDispatch_PostLockItemStillPending_ReturnsLockHandle_And_NullEarlyReturn()
+    {
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory);
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        var (lockHandle, earlyReturn) = await WorkItemDispatchEndpoints.TryEnterSelectorDispatchAsync(
+            CreateNoOpLockProvider(), "kiro,dotnet", db, entity.Id, CancellationToken.None);
+
+        lockHandle.Should().NotBeNull("when item is still Pending the lock handle must be returned");
+        earlyReturn.Should().BeNull("when item is still Pending there must be no earlyReturn");
+
+        // Dispose the returned handle to avoid a resource leak in the test.
+        await lockHandle!.DisposeAsync();
+    }
+
+    // ── InterpretDispatchResult ────────────────────────────────────────────────
+
+    /// <summary>
+    /// On the pending-dispatch path (rewriteConcurrencyLimitAsDeferred=true), a 409 input must
+    /// be rewritten to 200 DispatchPendingResponse(false, "concurrency_limit").
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_409Input_PendingPath_Returns200Deferred()
+    {
+        var rawResult = TypedResults.Conflict("limit reached");
+        var pvcResult = MakePvcResult(available: 1);
+
+        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        var ok = interpreted as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        ok.Should().NotBeNull("409 on the pending path must be rewritten to 200 Ok<DispatchPendingResponse>");
+        ok!.Value!.Dispatched.Should().BeFalse();
+        ok.Value.Reason.Should().Be("concurrency_limit");
+        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("deferred","concurrency_limit")
+        // was emitted. If that call is removed from InterpretDispatchResult this test still passes.
+        // Add telemetry assertion to verify the side effect. See review finding: TestQualityReviewer @ line 2660.
+    }
+
+    /// <summary>
+    /// On the sync-dispatch path (rewriteConcurrencyLimitAsDeferred=false), a 409 input must
+    /// pass through unchanged — the client sees the raw 409.
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_409Input_SyncPath_PassesThrough()
+    {
+        var rawResult = TypedResults.Conflict("limit reached");
+        var pvcResult = MakePvcResult(available: 1);
+
+        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: false);
+
+        interpreted.Should().BeSameAs(rawResult, "409 on the sync path must be returned unchanged");
+    }
+
+    /// <summary>
+    /// A 503 input with an empty PVC pool and isKiroAgent=true must cause the helper to
+    /// emit RecordDispatchAttempt("transient", "pvc_unavailable") and return the raw 503.
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_503Input_PvcUnavailable_Returns503_Unchanged()
+    {
+        var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var pvcResult = MakePvcResult(available: 0); // empty pool → pvc_unavailable
+
+        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        interpreted.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
+        var statusResult = interpreted as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","pvc_unavailable")
+        // was emitted (rather than "k8s_error"). The telemetry branch is the only observable
+        // difference between the pvc_unavailable and k8s_error code paths inside the helper.
+        // Without this assertion, the test would pass even if the two RecordDispatchAttempt
+        // calls were swapped or the isKiroAgent guard removed. Add telemetry verification.
+        // See review finding: TestQualityReviewer @ line 2693.
+    }
+
+    /// <summary>
+    /// A 503 input where PVCs are available (or isKiroAgent=false) must cause the helper to
+    /// emit RecordDispatchAttempt("transient", "k8s_error") and return the raw 503.
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_503Input_K8sError_Returns503_Unchanged()
+    {
+        var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var pvcResult = MakePvcResult(available: 1); // PVC available → k8s_error disambiguation
+
+        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        interpreted.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
+        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","k8s_error")
+        // was emitted (rather than "pvc_unavailable"). See the companion TODO in
+        // InterpretDispatchResult_503Input_PvcUnavailable_Returns503_Unchanged — the same telemetry
+        // verification gap applies here. See review finding: TestQualityReviewer @ line 2693.
+    }
+
+    /// <summary>
+    /// A 503 input with isKiroAgent=false must always take the k8s_error branch (PVC pool
+    /// availability is irrelevant for non-kiro agents).
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_503Input_NonKiroAgent_EmptyPool_Returns503_Unchanged()
+    {
+        var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var pvcResult = MakePvcResult(available: 0); // empty pool but non-kiro → k8s_error
+
+        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: true);
+
+        interpreted.Should().BeSameAs(rawResult, "503 must be returned unchanged for non-kiro agent");
+        // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","k8s_error")
+        // was emitted for the non-kiro path. Same telemetry verification gap as the companion
+        // 503 tests above. See review finding: TestQualityReviewer @ line 2693.
+    }
+
+    /// <summary>
+    /// A success result (200 Ok) must pass through unchanged — the helper does not rewrite success.
+    /// Both rewriteConcurrencyLimitAsDeferred values produce the same pass-through for success.
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_SuccessInput_PassesThrough()
+    {
+        var rawResult = TypedResults.Ok(Guid.NewGuid());
+        var pvcResult = MakePvcResult(available: 1);
+
+        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        interpreted.Should().BeSameAs(rawResult, "a success result must pass through the helper unchanged");
+    }
+}
+
 // ── Test infrastructure helpers ──────────────────────────────────────────────
 
 file sealed class SimpleInMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
