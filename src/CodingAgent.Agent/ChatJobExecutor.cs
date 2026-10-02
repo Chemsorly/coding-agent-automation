@@ -16,13 +16,13 @@ namespace CodingAgent.Agent;
 /// </summary>
 /// <remarks>
 /// Receives job assignments via <see cref="AgentConnectionLifecycle"/> events wired in
-/// <see cref="AgentWorkerService"/>. Uses <see cref="AgentJobSlotManager"/> for single-slot
-/// concurrency control shared with pipeline and consolidation job executors.
+/// <see cref="AgentWorkerService"/>. Uses <see cref="ChatSlotManager"/> for single-slot
+/// concurrency control.
 /// </remarks>
 public sealed class ChatJobExecutor
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
-    private readonly AgentJobSlotManager _slotManager;
+    private readonly ChatSlotManager _slotManager;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly System.Net.Http.IHttpClientFactory _httpClientFactory;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
