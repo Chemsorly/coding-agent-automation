@@ -67,37 +67,38 @@ public class PipelineConfigurationOverridePropertyTests
     }
 
     /// <summary>
-    /// Override dominance: when a project specifies a non-null value, it ALWAYS
+    /// Override dominance: when a project specifies a value within the setting's range, it ALWAYS
     /// appears in the result regardless of the base config value.
     /// </summary>
     [Property(MaxTest = 20)]
     public bool NonNullOverride_AlwaysDominates(PositiveInt baseRetries, PositiveInt overrideRetries)
     {
+        var overrideValue = overrideRetries.Get % 11; // MaxRetries allows 0-10
         var baseConfig = TestPipelineConfig.Default() with { MaxRetries = baseRetries.Get };
         var project = new PipelineProject
         {
             Id = Guid.NewGuid().ToString(),
             Name = "Override",
-            MaxRetries = overrideRetries.Get
+            MaxRetries = overrideValue
         };
 
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, project);
 
-        return result.MaxRetries == overrideRetries.Get;
+        return result.MaxRetries == overrideValue;
     }
 
     /// <summary>
     /// Sequential composition: applying two non-overlapping overrides in sequence
     /// produces a config that has both overrides applied (no interference).
     /// ApplyProjectOverrides(ApplyProjectOverrides(base, A), B) has both A's and B's values.
-    /// Uses values within valid ranges to avoid ArgumentOutOfRangeException fallback.
+    /// Uses values within the settings' ranges, because an out-of-range override is skipped.
     /// </summary>
     [Property(MaxTest = 20)]
     public bool SequentialNonOverlappingOverrides_BothApplied(
         PositiveInt retriesRaw,
         PositiveInt subIssuesRaw)
     {
-        // Constrain to valid ranges: MaxRetries has no upper bound documented,
+        // Constrain to valid ranges: MaxRetries must be in [0, 10],
         // MaxDecompositionSubIssues must be in [1, 20]
         var retriesOverride = Math.Max(1, retriesRaw.Get % 10 + 1); // 1-10
         var subIssuesOverride = Math.Max(1, subIssuesRaw.Get % 20 + 1); // 1-20
@@ -138,19 +139,18 @@ public class PipelineConfigurationOverridePropertyTests
     {
         var baseConfig = TestPipelineConfig.Default();
 
-        var projectA = new PipelineProject { Id = "proj-a", Name = "A", MaxRetries = retriesA.Get };
-        var projectB = new PipelineProject { Id = "proj-b", Name = "B", MaxRetries = retriesB.Get };
+        var projectA = new PipelineProject { Id = "proj-a", Name = "A", MaxRetries = retriesA.Get % 11 }; // MaxRetries allows 0-10
+        var projectB = new PipelineProject { Id = "proj-b", Name = "B", MaxRetries = retriesB.Get % 11 };
 
         var afterA = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, projectA);
         var afterBoth = PipelineConfigurationResolver.ApplyProjectOverrides(afterA, projectB);
 
-        return afterBoth.MaxRetries == retriesB.Get;
+        return afterBoth.MaxRetries == retriesB.Get % 11;
     }
 
     /// <summary>
     /// Crash-freedom: ApplyProjectOverrides never throws for any combination of override values.
-    /// The method has a try/catch for ArgumentOutOfRangeException — this verifies it handles
-    /// edge cases gracefully.
+    /// An out-of-range override is skipped rather than applied — this verifies edge cases are handled gracefully.
     /// </summary>
     [Property(MaxTest = 20)]
     public bool ApplyProjectOverrides_NeverThrows(

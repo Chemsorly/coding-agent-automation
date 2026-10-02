@@ -292,8 +292,8 @@ public sealed class ApiStartupSeedingTests : IDisposable
     /// <summary>
     /// PipelineDbContext subclass for InMemory tests.
     /// Disables RowVersion concurrency tokens and filtered indexes (InMemory provider limitations).
-    /// Also sets ValueGenerated.Never on Guid PKs so Guid.Empty is stored verbatim as the
-    /// Default project ID (EF's ValueGenerated.OnAdd convention would substitute a new GUID otherwise).
+    /// Keys keep the production configuration: the Default project's Guid.Empty ID must be stored as is by
+    /// <see cref="PipelineDbContext"/> itself, not by a test override.
     /// </summary>
     private sealed class InMemoryPipelineDbContext : PipelineDbContext
     {
@@ -312,11 +312,6 @@ public sealed class ApiStartupSeedingTests : IDisposable
                     rowVersionProp.IsConcurrencyToken = false;
                     rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
                 }
-
-                // Disable Guid PK auto-generation so Guid.Empty is stored verbatim.
-                var idProp = entityType.FindProperty("Id");
-                if (idProp != null && idProp.ClrType == typeof(Guid))
-                    idProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
             }
 
             // Remove filtered (partial) indexes — not supported by InMemory provider.

@@ -91,7 +91,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         else
             await CollapseExistingReviewsAsync(context, prNumber, ct);
 
-        // Step 2: Determine the body and review type
+        // Step 2: Determine the body and review type. When no reviewer ran, the body says why, as the review step recorded it.
         var body = context.Run.CodeReviewAgentsRun.Count == 0
             ? $"{CommentMarkers.PrReview}\n{context.Run.CodeReviewSkipReason ?? NoReviewerMessage}"
             : ReviewFindingsFormatter.Format(context.Run);

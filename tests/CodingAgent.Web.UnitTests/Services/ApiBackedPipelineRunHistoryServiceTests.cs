@@ -403,14 +403,6 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
         act.Should().NotThrow("orchestrator has no local workspace — must be a no-op");
     }
 
-    [Fact]
-    public void CleanupExpiredWorkspaces_DoesNotThrow()
-    {
-        var sut = CreateSut();
-        var act = () => sut.CleanupExpiredWorkspaces(new PipelineConfiguration());
-        act.Should().NotThrow("orchestrator has no local workspace — must be a no-op");
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static PipelineRun MakeRun(

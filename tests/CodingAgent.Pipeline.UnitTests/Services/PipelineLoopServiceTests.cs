@@ -530,7 +530,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2),
                 ClosedLoopAutoStart = true
             });
 
@@ -872,7 +871,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         Assert.Equal(TimeSpan.FromSeconds(60), config.ClosedLoopPollInterval);
         Assert.Equal(0, config.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(5, config.ClosedLoopMaxConsecutivePollFailures);
-        Assert.Equal(TimeSpan.FromMinutes(15), config.ClosedLoopMaxBackoffInterval);
         Assert.Equal(10, config.ClosedLoopMaxPagesToFetch);
     }
 
@@ -884,20 +882,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
             ClosedLoopMaxRunsPerCycle = 5,
             ClosedLoopMaxConsecutivePollFailures = 10,
-            ClosedLoopMaxBackoffInterval = TimeSpan.FromMinutes(30),
             ClosedLoopMaxPagesToFetch = 20
         };
-        // TODO: This `with` expression is a no-op — it creates a copy of `config` with MaxRetries
-        // set to the value it already has. The original used `config with { LastUsedProviderIds = ... }`
-        // which mutated one field and proved the other fields survive a `with`-copy. Replace this with
-        // a mutation of a non-closed-loop field (e.g. `MaxRetries = config.MaxRetries + 1`) so the
-        // test is non-vacuous: as-is the assertions pass unconditionally because `copy` is identical
-        // to `config`. (Review finding: TestQualityReviewer WARNING)
-        var copy = config with { MaxRetries = config.MaxRetries };
+        var copy = config with { DefaultRequiredAgentLabels = "kiro" };
         Assert.Equal(TimeSpan.FromSeconds(120), copy.ClosedLoopPollInterval);
         Assert.Equal(5, copy.ClosedLoopMaxRunsPerCycle);
         Assert.Equal(10, copy.ClosedLoopMaxConsecutivePollFailures);
-        Assert.Equal(TimeSpan.FromMinutes(30), copy.ClosedLoopMaxBackoffInterval);
         Assert.Equal(20, copy.ClosedLoopMaxPagesToFetch);
     }
 
@@ -914,7 +904,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 10, // High threshold so circuit breaker doesn't trip
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(10),
                 ClosedLoopAutoStart = true,
             });
 
@@ -959,7 +948,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 20,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(300),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1014,7 +1002,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 10,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1053,7 +1040,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1110,7 +1096,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1163,7 +1148,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1218,7 +1202,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopCircuitBreakerCooldown = TimeSpan.FromSeconds(1),
                 ClosedLoopAutoStart = true,
             });
@@ -1290,7 +1273,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(5),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1343,7 +1325,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopMaxConsecutivePollFailures = 5,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromSeconds(2),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1383,7 +1364,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(100),
                 ClosedLoopMaxConsecutivePollFailures = 3,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopAutoStart = true,
             });
 
@@ -1424,7 +1404,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
                 ClosedLoopMaxConsecutivePollFailures = 2,
-                ClosedLoopMaxBackoffInterval = TimeSpan.FromMilliseconds(200),
                 ClosedLoopAutoStart = true,
             });
 

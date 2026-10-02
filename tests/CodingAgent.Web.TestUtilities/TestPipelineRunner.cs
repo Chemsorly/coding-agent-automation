@@ -100,7 +100,6 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         var linkedCt = _lifecycle.CancellationTokenSource!.Token;
 
         var config = await _configStore.LoadPipelineConfigAsync(linkedCt);
-        _historyService.CleanupExpiredWorkspaces(config, ActiveRun?.RunId);
 
         // Resolve provider configs
         var providerManager = new PipelineProviderManager(_configStore, _providerFactory, _logger);

@@ -130,14 +130,6 @@ public class TestOrchestrationFactoryTests
         act.Should().NotThrow();
     }
 
-    [Fact]
-    public void NullHistoryService_CleanupExpiredWorkspaces_DoesNotThrow()
-    {
-        var svc = new TestOrchestrationFactory.NullHistoryService();
-        var act = () => svc.CleanupExpiredWorkspaces(new PipelineConfiguration());
-        act.Should().NotThrow();
-    }
-
     // ── CreateMinimalOptions ──────────────────────────────────────────────
 
     [Fact]

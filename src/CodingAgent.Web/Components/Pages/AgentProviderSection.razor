@@ -143,9 +143,9 @@
                 }
                 @if (IsKubernetesMode && _form.ProviderType == "KiroCli")
                 {
-                    <div class="form-group">
+                    <div class="form-group" data-setting="@nameof(PipelineConfiguration.ModelFetchTimeoutSeconds)">
                         <label>Fetch Models Timeout (seconds)</label>
-                        <input type="number" @bind="_modelFetchTimeoutSeconds" min="30" max="600" />
+                        <input type="number" @bind="_modelFetchTimeoutSeconds" min="@SettingLimits.Min(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" max="@SettingLimits.Max(nameof(PipelineConfiguration.ModelFetchTimeoutSeconds))" />
                         <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s.</span>
                     </div>
                 }

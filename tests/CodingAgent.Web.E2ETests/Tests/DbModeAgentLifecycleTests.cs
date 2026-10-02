@@ -309,13 +309,6 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
     [Fact]
     public async Task AgentLifecycle_HeartbeatKeepsAlive_NeverDisconnected()
     {
-        // Arrange: configure aggressive heartbeat timeout
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149
-        }, CancellationToken.None);
-
         await using var agent = new FakeAgentClient("lifecycle-heartbeat", "disabled-test");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
@@ -476,13 +469,6 @@ public sealed class DbModeAgentLifecycleTests : HeadlessE2ETestBase
     [Fact]
     public async Task AgentLifecycle_AgentDisconnects_RemovedFromIdlePool()
     {
-        // Arrange: configure short heartbeat
-        var config = await Fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        await Fixture.ConfigStore.SavePipelineConfigAsync(config with
-        {
-            // Timing settings removed in #3149
-        }, CancellationToken.None);
-
         var agent = new FakeAgentClient("lifecycle-disconnect-pool", "pool-test");
         await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 

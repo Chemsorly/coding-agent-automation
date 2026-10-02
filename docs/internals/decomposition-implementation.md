@@ -164,7 +164,7 @@ All paths defined as constants in `AgentWorkspacePaths`.
 ### Cleanup
 
 - **Success**: Workspace deleted recursively
-- **Failure**: Retained for `FailedWorkspaceRetentionDays`
+- **Failure**: Kept until the agent pod ends; the workspace lives on the pod's disk
 - **Deletion failure**: Logged as warning, execution continues
 
 ## Comment Markers

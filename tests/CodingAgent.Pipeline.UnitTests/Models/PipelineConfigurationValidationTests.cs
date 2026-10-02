@@ -5,87 +5,76 @@ using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Pipeline.UnitTests.Models;
 
+/// <summary>
+/// Range checks of single settings. The setters accept any value so stored configurations always load;
+/// <see cref="PipelineSettingsValidator"/> refuses values outside a setting's range when settings are saved.
+/// </summary>
 public class PipelineConfigurationValidationTests
 {
+    private static IReadOnlyList<string> Errors(PipelineConfiguration config) => PipelineSettingsValidator.Validate(config);
+
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    [InlineData(-100)]
-    public void ClosedLoopMaxConsecutivePollFailures_RejectsValuesLessThanOne(int value)
+    [InlineData(51)]
+    public void ClosedLoopMaxConsecutivePollFailures_OutsideOneToFifty_IsRejected(int value)
     {
-        var act = () => new PipelineConfiguration { ClosedLoopMaxConsecutivePollFailures = value };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("ClosedLoopMaxConsecutivePollFailures");
+        Errors(new PipelineConfiguration { ClosedLoopMaxConsecutivePollFailures = value })
+            .Should().ContainSingle().Which.Should().StartWith("ClosedLoopMaxConsecutivePollFailures must be between 1 and 50");
     }
 
     [Theory]
     [InlineData(1)]
     [InlineData(5)]
-    [InlineData(100)]
-    public void ClosedLoopMaxConsecutivePollFailures_AcceptsValidValues(int value)
+    [InlineData(50)]
+    public void ClosedLoopMaxConsecutivePollFailures_ValidValues_AreAccepted(int value)
     {
-        var config = new PipelineConfiguration { ClosedLoopMaxConsecutivePollFailures = value };
-        config.ClosedLoopMaxConsecutivePollFailures.Should().Be(value);
+        Errors(new PipelineConfiguration { ClosedLoopMaxConsecutivePollFailures = value }).Should().BeEmpty();
     }
 
     [Theory]
     [InlineData(0)]
     [InlineData(-1)]
-    [InlineData(-100)]
-    public void ClosedLoopMaxPagesToFetch_RejectsValuesLessThanOne(int value)
+    [InlineData(101)]
+    public void ClosedLoopMaxPagesToFetch_OutsideOneToHundred_IsRejected(int value)
     {
-        var act = () => new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("ClosedLoopMaxPagesToFetch");
+        Errors(new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value })
+            .Should().ContainSingle().Which.Should().StartWith("ClosedLoopMaxPagesToFetch must be between 1 and 100");
     }
 
     [Theory]
     [InlineData(1)]
     [InlineData(10)]
     [InlineData(100)]
-    public void ClosedLoopMaxPagesToFetch_AcceptsValidValues(int value)
+    public void ClosedLoopMaxPagesToFetch_ValidValues_AreAccepted(int value)
     {
-        var config = new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value };
-        config.ClosedLoopMaxPagesToFetch.Should().Be(value);
+        Errors(new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value }).Should().BeEmpty();
     }
 
     [Theory]
     [InlineData(-1)]
-    [InlineData(-100)]
-    public void AnalysisCommitThreshold_RejectsNegativeValues(int value)
+    [InlineData(1001)]
+    public void AnalysisCommitThreshold_OutsideZeroToThousand_IsRejected(int value)
     {
-        var act = () => new PipelineConfiguration { AnalysisCommitThreshold = value };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("AnalysisCommitThreshold");
+        Errors(new PipelineConfiguration { AnalysisCommitThreshold = value })
+            .Should().ContainSingle().Which.Should().StartWith("AnalysisCommitThreshold must be between 0 and 1000");
     }
 
     [Theory]
-    [InlineData(1001)]
-    [InlineData(5000)]
-    public void AnalysisCommitThreshold_RejectsValuesAbove1000(int value)
+    [InlineData(0)]
+    [InlineData(30)]
+    [InlineData(1000)]
+    public void AnalysisCommitThreshold_ValidValues_AreAccepted(int value)
     {
-        var act = () => new PipelineConfiguration { AnalysisCommitThreshold = value };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("AnalysisCommitThreshold");
+        Errors(new PipelineConfiguration { AnalysisCommitThreshold = value }).Should().BeEmpty();
     }
 
     [Fact]
-    public void AnalysisCommitThreshold_AcceptsZero()
+    public void OutOfRangeValue_IsStored_SoAStoredConfigurationStillLoads()
     {
-        var config = new PipelineConfiguration { AnalysisCommitThreshold = 0 };
-        config.AnalysisCommitThreshold.Should().Be(0);
-    }
+        var config = new PipelineConfiguration { AnalysisCommitThreshold = 5000 };
 
-    [Theory]
-    [InlineData(1)]
-    [InlineData(30)]
-    [InlineData(100)]
-    [InlineData(500)]
-    [InlineData(1000)]
-    public void AnalysisCommitThreshold_AcceptsValidValues(int value)
-    {
-        var config = new PipelineConfiguration { AnalysisCommitThreshold = value };
-        config.AnalysisCommitThreshold.Should().Be(value);
+        config.AnalysisCommitThreshold.Should().Be(5000);
     }
 
     // ── AgentTimeout validation ─────────────────────────────────────────────────
@@ -93,9 +82,7 @@ public class PipelineConfigurationValidationTests
     [Fact]
     public void AgentTimeout_Zero_NormalizesToDefault()
     {
-        // Zero was a legal persisted value before the validation guard was added.
-        // Direct construction with zero must clamp to the default rather than throw,
-        // so that deserialization of stale DB rows does not crash config loading.
+        // Zero was a legal persisted value before validation existed; it becomes the default, so stored rows keep working.
         var config = new PipelineConfiguration { AgentTimeout = TimeSpan.Zero };
         config.AgentTimeout.Should().Be(PipelineConstants.DefaultAgentTimeout,
             "a zero AgentTimeout must be normalized to the default (30 minutes)");
@@ -104,9 +91,7 @@ public class PipelineConfigurationValidationTests
     [Fact]
     public void AgentTimeout_Zero_JsonDeserialization_NormalizesToDefault()
     {
-        // Exercises the exact deserialization path used by PostgresConfigurationStore:
-        // JsonSerializer.Deserialize<PipelineConfiguration> with PipelineJsonOptions.Default
-        // invokes the init setter, which previously threw on "00:00:00".
+        // Exercises the deserialization path used by PostgresConfigurationStore.
         const string json = """{"AgentTimeout":"00:00:00"}""";
 
         var config = JsonSerializer.Deserialize<PipelineConfiguration>(json, PipelineJsonOptions.Default);
@@ -119,48 +104,32 @@ public class PipelineConfigurationValidationTests
     [Fact]
     public void AgentTimeout_NullJson_NormalizesToDefault()
     {
-        // TODO [WARNING]: This test cannot distinguish between "the init setter received TimeSpan.Zero
-        // and clamped it to the default" and "the setter was never called and the field initializer
-        // default was used." If TimeSpanJsonConverter is ever changed to skip the setter (e.g., returns
-        // null and STJ falls back to the field default rather than calling init), this test would still
-        // pass vacuously even if the zero-clamping logic were removed. The real normalization via
-        // zero-input is already covered by AgentTimeout_Zero_NormalizesToDefault and
-        // AgentTimeout_Zero_JsonDeserialization_NormalizesToDefault; consider whether this test adds
-        // net coverage or only tests the converter's null-handling behavior.
-        // (Correctness review [WARNING] @ PipelineConfigurationValidationTests.cs:117 |
-        //  TestQualityReviewer review [WARNING] @ PipelineConfigurationValidationTests.cs:113)
-        // TimeSpanJsonConverter.Read returns TimeSpan.Zero (default) for a null JSON value.
-        // The init setter receives zero and must clamp it to the default rather than throw.
+        // TimeSpanJsonConverter.Read returns TimeSpan.Zero for a null JSON value, which the setter turns into the default.
         const string json = """{"AgentTimeout":null}""";
 
         var config = JsonSerializer.Deserialize<PipelineConfiguration>(json, PipelineJsonOptions.Default);
 
         config.Should().NotBeNull();
-        config!.AgentTimeout.Should().Be(PipelineConstants.DefaultAgentTimeout,
-            "a null AgentTimeout in JSON produces TimeSpan.Zero via TimeSpanJsonConverter.Read " +
-            "and must be normalized to the default rather than throwing");
+        config!.AgentTimeout.Should().Be(PipelineConstants.DefaultAgentTimeout);
     }
 
-    [Fact]
-    public void AgentTimeout_Negative_ThrowsArgumentOutOfRangeException()
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(59)]
+    [InlineData(86_401)]
+    public void AgentTimeout_OutsideOneMinuteToOneDay_IsRejected(int seconds)
     {
-        var act = () => new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(-1) };
-        act.Should().Throw<ArgumentOutOfRangeException>()
-            .WithParameterName("AgentTimeout");
+        Errors(new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(seconds) })
+            .Should().ContainSingle().Which.Should().StartWith("AgentTimeout must be between 00:01:00 and 1.00:00:00");
     }
 
     [Fact]
     public void AgentTimeout_PositiveValue_Accepted()
     {
         var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(30) };
-        config.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
-    }
 
-    [Fact]
-    public void AgentTimeout_SmallPositiveValue_Accepted()
-    {
-        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromSeconds(1) };
-        config.AgentTimeout.Should().Be(TimeSpan.FromSeconds(1));
+        config.AgentTimeout.Should().Be(TimeSpan.FromMinutes(30));
+        Errors(config).Should().BeEmpty();
     }
 
     [Fact]

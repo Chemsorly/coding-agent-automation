@@ -104,6 +104,36 @@ public class DatabaseMaintenanceServiceTests : IDisposable
         _mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task RetentionSweeps_ZeroOrMinusOne_KeepEveryRowWithoutOpeningTheDatabase(int count)
+    {
+        // Both values keep every row. A sweep that let 0 through would run its DELETE keeping no rows per project.
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { PipelineRunRetentionCount = count, WorkItemRetentionCount = count });
+        var service = CreateService();
+
+        (await service.SweepPipelineRunRetentionAsync(CancellationToken.None)).Should().Be(0);
+        (await service.SweepWorkItemRetentionAsync(CancellationToken.None)).Should().Be(0);
+
+        _dbFactory.Created.Should().Be(0, "a retention count of {0} must not reach the DELETE", count);
+    }
+
+    [Fact]
+    public async Task RetentionSweep_PositiveCount_OpensTheDatabase()
+    {
+        // Counterpart of the test above: the factory count does see the sweep's DELETE attempt.
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { PipelineRunRetentionCount = 10 });
+
+        await CreateService().SweepPipelineRunRetentionAsync(CancellationToken.None);
+
+        _dbFactory.Created.Should().Be(1);
+    }
+
     [Fact]
     public async Task BothSweepsDisabled_MaintenanceCycleCompletesWithoutError()
     {
@@ -254,7 +284,16 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     {
         private readonly DbContextOptions<PipelineDbContext> _options;
         public TestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
-        public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(_options);
+
+        /// <summary>How many contexts the code under test opened.</summary>
+        public int Created { get; private set; }
+
+        public PipelineDbContext CreateDbContext()
+        {
+            Created++;
+            return new TestPipelineDbContext(_options);
+        }
+
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
     }
 }

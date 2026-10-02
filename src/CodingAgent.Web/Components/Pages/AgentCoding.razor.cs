@@ -241,6 +241,14 @@ public partial class AgentCoding : IDisposable
         _showAddForm = true;
     }
 
+    private void EditTemplate(PipelineJobTemplate template)
+    {
+        var projectId = _projects.FirstOrDefault(p => p.TemplateIds.Contains(template.Id))?.Id ?? WellKnownIds.DefaultProjectId;
+        _addForm = TemplateTableSection.TemplateFormModel.ForEdit(template, projectId);
+        _formError = null;
+        _showAddForm = true;
+    }
+
     private void CancelAddForm() { _showAddForm = false; _formError = null; }
     private void CancelDelete() => _showDeleteConfirm = false;
     private void ConfirmRemoveTemplate(PipelineJobTemplate template) { _deletingTemplate = template; _showDeleteConfirm = true; }
@@ -341,13 +349,17 @@ public partial class AgentCoding : IDisposable
         });
     }
 
+    /// <summary>Saves the template form: a new template, or an edit when the form was opened from a template's Edit button.</summary>
     private async Task AddTemplate()
     {
         _formError = null;
-        var (valid, formError) = PageService.ValidateAddTemplate(_addForm);
+        var editing = _addForm.EditingTemplateId is not null;
+        var (valid, formError) = editing ? PageService.ValidateEditTemplate(_addForm) : PageService.ValidateAddTemplate(_addForm);
         if (!valid) { _formError = formError; return; }
 
-        var (success, error, successMessage) = await PageService.AddTemplateAsync(_addForm);
+        var (success, error, successMessage) = editing
+            ? await PageService.UpdateTemplateAsync(_addForm)
+            : await PageService.AddTemplateAsync(_addForm);
         if (!success) { _errorMessage = error; return; }
         _showAddForm = false;
         _successMessage = successMessage;
