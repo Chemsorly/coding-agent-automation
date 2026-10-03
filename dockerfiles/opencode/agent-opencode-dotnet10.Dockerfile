@@ -39,15 +39,24 @@ ARG TARGETARCH
 # Pin OpenCode version via build ARG for reproducible builds
 ARG OPENCODE_VERSION=1.18.21
 
-# Install runtime dependencies: tini (PID 1), curl (health checks), git (workspace ops)
+# Install runtime dependencies: tini (PID 1), curl (health checks), git (workspace ops),
+# unzip (Playwright install below)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         tini \
         curl \
+        unzip \
         ca-certificates \
         git \
         libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
+
+# Playwright Chromium for Playwright E2E tests (e.g. tests/CodingAgent.Web.E2ETests), so an agent
+# can run the test class it is writing instead of waiting a full CI round per attempt.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY Directory.Packages.props dockerfiles/install-playwright-chromium.sh /tmp/playwright/
+RUN sh /tmp/playwright/install-playwright-chromium.sh /tmp/playwright/Directory.Packages.props ubuntu:ubuntu \
+    && rm -rf /tmp/playwright
 
 # Download and install OpenCode binary (pinned version, architecture-aware)
 RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \

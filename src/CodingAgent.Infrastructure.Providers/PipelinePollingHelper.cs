@@ -20,8 +20,9 @@ internal static class PipelinePollingHelper
 {
     /// <summary>
     /// Polls the CI provider until a terminal state is reached, a timeout fires, or the caller
-    /// cancels. On a terminal <see cref="PipelineRunState.Failed"/> state the failed-job log
-    /// enrichment delegate is invoked before returning.
+    /// cancels. On a terminal <see cref="PipelineRunState.Failed"/> or
+    /// <see cref="PipelineRunState.Cancelled"/> state the log enrichment delegate is invoked
+    /// before returning.
     /// </summary>
     /// <param name="getRunStatusAsync">Provider-specific status fetch.</param>
     /// <param name="enrichFailedJobsAsync">Provider-specific log-enrichment for failed jobs.</param>
@@ -70,7 +71,9 @@ internal static class PipelinePollingHelper
                         logger.Information("{LogPrefix} completed: {State} after {PollCount} poll(s)",
                             logPrefix, status.State, pollCount);
 
-                        if (status.State == PipelineRunState.Failed)
+                        // Cancelled too: a job that hits its timeout ends Cancelled, and its log
+                        // holds the test failures or the hung test the agent has to fix.
+                        if (status.State is PipelineRunState.Failed or PipelineRunState.Cancelled)
                         {
                             // TODO: enrichFailedJobsAsync receives linkedCt (the timeout-linked token), not the
                             // caller's ct. This matches the behaviour of the original inlined code and is not a
@@ -104,7 +107,8 @@ internal static class PipelinePollingHelper
     }
 
     /// <summary>
-    /// Fetches full log content for each failed job in <paramref name="status"/> and returns a
+    /// Fetches full log content for each failed or cancelled job in <paramref name="status"/>
+    /// (<see cref="PipelineJobResult.EndedUnsuccessfully"/>) and returns a
     /// new <see cref="PipelineRunStatus"/> with <see cref="PipelineJobResult.LogContent"/> injected.
     /// Jobs with <see cref="PipelineJobResult.JobId"/> equal to zero are skipped (no valid API ID).
     /// If no logs are successfully retrieved the original status is returned unchanged.
@@ -126,22 +130,22 @@ internal static class PipelinePollingHelper
         ArgumentNullException.ThrowIfNull(logPrefix);
         ArgumentNullException.ThrowIfNull(logger);
 
-        var failedJobIds = status.Jobs
-            .Where(j => j.State == PipelineRunState.Failed && j.JobId > 0)
+        var unsuccessfulJobIds = status.Jobs
+            .Where(j => j.EndedUnsuccessfully() && j.JobId > 0)
             .Select(j => j.JobId)
             .ToHashSet();
 
-        if (failedJobIds.Count == 0)
+        if (unsuccessfulJobIds.Count == 0)
             return status;
 
         var logsByJobId = new Dictionary<long, string>();
-        foreach (var jobId in failedJobIds)
+        foreach (var jobId in unsuccessfulJobIds)
         {
             var logContent = await getJobLogsAsync(jobId, ct);
             if (logContent is not null)
             {
                 logsByJobId[jobId] = logContent;
-                logger.Debug("Fetched {Length} chars of logs for failed {LogPrefix} (id={JobId})",
+                logger.Debug("Fetched {Length} chars of logs for unsuccessful {LogPrefix} (id={JobId})",
                     logContent.Length, logPrefix, jobId);
             }
         }
