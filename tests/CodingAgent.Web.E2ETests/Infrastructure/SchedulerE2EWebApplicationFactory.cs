@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Api.Client.Stores;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure;
 using CodingAgent.Kubernetes;
@@ -12,7 +13,6 @@ using CodingAgent.Scheduler.Services;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -132,9 +132,9 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
     /// Resets per-test state owned by this factory. The shared fakes are reset by
     /// <see cref="E2EFixture.ResetAll"/>; nothing additional is needed here because
     /// the Scheduler's API-backed stores (ApiProjectStore, ApiPipelineConfigStore,
-    /// ApiProviderConfigStore, ApiConfigurationStore) are configured with
-    /// <c>CacheTtlSeconds = 0</c> via the "PipelineLoop:ConfigCacheTtlSeconds" setting
-    /// injected in <see cref="ConfigureWebHost"/>, so they never serve stale data across tests.
+    /// ApiProviderConfigStore, ApiConfigurationStore) are replaced in
+    /// <see cref="ConfigureWebHost"/> with instances that have <c>CacheTtlSeconds = 0</c>,
+    /// so every load fetches fresh data from the reset <c>InMemoryConfigurationStore</c>.
     /// </summary>
     // TODO [WARNING]: ResetAll() is called after loop.StopLoop() and a busy-wait up to 10s.
     // If that 10s deadline expires before IsLoopActive becomes false, this is still called,
@@ -161,17 +161,6 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
         E2ETestDefaults.ResetSerilogBootstrapLogger();
 
         builder.UseEnvironment("Development");
-
-        // Disable the TTL cache on all ApiXxxStore instances (ApiPipelineConfigStore,
-        // ApiProviderConfigStore, ApiProjectStore, ApiConfigurationStore) so that each
-        // test sees fresh data from the reset InMemoryConfigurationStore immediately.
-        // Without this, caches hold previous-test data for up to 60 s, causing stale
-        // template, project, and config reads that break test isolation.
-        builder.ConfigureAppConfiguration(config =>
-            config.AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PipelineLoop:ConfigCacheTtlSeconds"] = "0"
-            }));
 
         builder.ConfigureServices(services =>
         {
@@ -202,6 +191,48 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
             var configClient = new InMemoryPipelineApiConfigClient(_configStore);
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton<IPipelineApiConfigClient>(configClient);
+
+            // ── Disable TTL caching on all Scheduler-side config stores ────────────────────────
+            // ApiProjectStore, ApiPipelineConfigStore, ApiProviderConfigStore and ApiConfigurationStore
+            // all cache results for 60 s by default. When the shared InMemoryConfigurationStore is
+            // reset between tests, these caches still serve the previous test's templates, projects,
+            // provider configs and agent profiles. Setting CacheTtlSeconds = 0 ensures every load
+            // fetches fresh data from the InMemoryPipelineApiConfigClient above without any TTL delay.
+            // The stores are replaced here rather than via ConfigureAppConfiguration so that no new
+            // configuration source is introduced (which caused a hang by racing with Program.cs's
+            // AutoStartSchedulerLoopAsync in earlier fix attempts).
+            services.RemoveAll<ApiPipelineConfigStore>();
+            services.AddSingleton<ApiPipelineConfigStore>(_ =>
+                new ApiPipelineConfigStore(configClient) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IPipelineConfigStore>();
+            services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<ApiPipelineConfigStore>());
+
+            services.RemoveAll<ApiProviderConfigStore>();
+            services.AddSingleton<ApiProviderConfigStore>(_ =>
+                new ApiProviderConfigStore(configClient) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IProviderConfigStore>();
+            services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<ApiProviderConfigStore>());
+
+            services.RemoveAll<ApiProjectStore>();
+            services.AddSingleton<ApiProjectStore>(_ =>
+                new ApiProjectStore(configClient) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IProjectStore>();
+            services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<ApiProjectStore>());
+
+            services.RemoveAll<ApiConfigurationStore>();
+            services.AddSingleton<ApiConfigurationStore>(sp => new ApiConfigurationStore(
+                configClient,
+                sp.GetRequiredService<ApiPipelineConfigStore>(),
+                sp.GetRequiredService<ApiProviderConfigStore>(),
+                sp.GetRequiredService<ApiProjectStore>()) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IConfigurationStore>();
+            services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+            services.RemoveAll<IAgentProfileStore>();
+            services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+            services.RemoveAll<IQualityGateConfigStore>();
+            services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+            services.RemoveAll<IReviewerConfigStore>();
+            services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
 
             // ── Provider factory and Kubernetes job client ────────────────────────────────────────
             services.RemoveAll<IProviderFactory>();
