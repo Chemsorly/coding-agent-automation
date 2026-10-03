@@ -1,4 +1,5 @@
 using CodingAgent.Pipeline;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Health;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;

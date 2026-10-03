@@ -47,6 +47,7 @@
     <ProjectReference Include="..\..\src\CodingAgent.Agent.OpenCode\CodingAgent.Agent.OpenCode.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Common\CodingAgent.Infrastructure.Common.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Providers\CodingAgent.Infrastructure.Providers.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Persistence\CodingAgent.Infrastructure.Persistence.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.JobController\CodingAgent.JobController.csproj" />

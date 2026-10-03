@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
