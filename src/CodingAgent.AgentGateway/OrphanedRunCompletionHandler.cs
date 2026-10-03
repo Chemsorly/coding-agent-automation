@@ -91,6 +91,14 @@ internal sealed class OrphanedRunCompletionHandler
         // apply the provenance label as a pipeline status, stripping every real status label. SwapTargets
         // excludes agent:generated and is the correct validator for the set of acceptable final labels.
         // The same exposure exists in SwapLabelAndPostCommentAsync — fix both together. See review findings.
+        // TODO: [WARNING] AC3 migration gap (issue #3261): this inline `AgentLabels.All.Contains` guard
+        // duplicates the FinalLabel-validation half of CompletionOutcomeResolver.ResolveAgentLabel, which was
+        // extracted to centralise this pattern. A straight swap to ResolveAgentLabel is NOT behaviour-preserving
+        // here because this method uses a task-type-dependent fallback (Review→agent:next, else→agent:done)
+        // rather than the status-based fallback (Succeeded→agent:done). A faithful migration would call
+        // ResolveAgentLabel only for the FinalLabel validation (pass the knownLabel guard result) and keep the
+        // task-type switch for the fallback. The issue description notes this site as "should be migrated if it
+        // fits within scope"; it was left out of scope for issue #3261. Track in a follow-up.
         var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
             ? payload.FinalLabel
             : null;
