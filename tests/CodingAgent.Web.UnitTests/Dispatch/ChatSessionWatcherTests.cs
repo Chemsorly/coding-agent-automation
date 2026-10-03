@@ -61,7 +61,7 @@ public class ChatSessionWatcherTests
     {
         cts ??= new CancellationTokenSource();
         var identity = new ChatJobDispatcher.WatcherIdentity(
-            new AgentId(agentId), jobName, selector, pvc);
+            new AgentId(agentId), jobName, selector, pvc, "kiro");
         return new ChatJobDispatcher.WatcherEntry(identity, DateTimeOffset.UtcNow, cts);
     }
 
