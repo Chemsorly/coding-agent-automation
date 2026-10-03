@@ -180,6 +180,10 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             WorkflowJobConclusion.Success => PipelineRunState.Passed,
             WorkflowJobConclusion.Failure => PipelineRunState.Failed,
             WorkflowJobConclusion.Cancelled => PipelineRunState.Cancelled,
+            // A skipped job (an `if:` that did not match, e.g. docker-push on a PR) or a neutral
+            // one did not fail. Mapping it to Failed reported it to the agent as the failure and,
+            // having no log, made the classifier treat the run as an infrastructure failure.
+            WorkflowJobConclusion.Skipped or WorkflowJobConclusion.Neutral => PipelineRunState.Passed,
             _ => PipelineRunState.Failed
         };
     }

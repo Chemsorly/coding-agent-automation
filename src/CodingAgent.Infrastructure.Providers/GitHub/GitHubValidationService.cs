@@ -109,7 +109,7 @@ public class GitHubValidationService
                 {
                     Id = "validation-temp",
                     Kind = Pipeline.Models.ProviderKind.Issue,
-                    ProviderType = "GitHub",
+                    ProviderType = Pipeline.Models.ProviderTypes.GitHub,
                     DisplayName = "Validation",
                     Settings = new Dictionary<string, string>
                     {

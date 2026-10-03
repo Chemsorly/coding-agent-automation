@@ -17,7 +17,7 @@ public sealed class CiLogWriter
     }
 
     /// <summary>
-    /// Writes log content for failed jobs to .agent/quality-gates/ and returns
+    /// Writes log content for failed and cancelled jobs to .agent/quality-gates/ and returns
     /// a dictionary mapping jobId to the workspace-relative file path.
     /// </summary>
     public IReadOnlyDictionary<long, string> WriteJobLogs(
@@ -30,7 +30,7 @@ public sealed class CiLogWriter
         var result = new Dictionary<long, string>();
 
         var failedJobs = ciStatus.Jobs
-            .Where(j => j.State == PipelineRunState.Failed && !string.IsNullOrEmpty(j.LogContent))
+            .Where(j => j.EndedUnsuccessfully() && !string.IsNullOrEmpty(j.LogContent))
             .ToList();
 
         if (failedJobs.Count == 0)

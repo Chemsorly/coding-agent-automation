@@ -29,7 +29,7 @@ public sealed class ProviderConfig
     public required ProviderKind Kind { get; init; }
 
     [Key(4)]
-    public required string ProviderType { get; init; }  // Matches enum value name: "GitHub", "KiroCli"
+    public required string ProviderType { get; init; }  // See ProviderTypes for valid values
 
     /// <summary>
     /// Role of this repository provider. Only meaningful when Kind == Repository.

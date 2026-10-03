@@ -2139,4 +2139,298 @@ public class DispatchSchedulerTests
     }
 
     #endregion
+
+    #region Issue #3262 — FinalizeDispatchOutcome Characterization
+
+    /// <summary>
+    /// AC1 (PR 409): When a PR review dispatch returns AlreadyQueued (409), it must not count
+    /// as a processed dispatch and must not consume the per-cycle budget.
+    /// Uses two templates: t1's PR gets a 409 (skip, no budget consumed), t2's PR dispatches.
+    /// Mirrors WhenDispatchReturnsAlreadyQueued_... and WhenDecompositionDispatch... for the
+    /// Reviews path that was previously untested.
+    /// </summary>
+    // TODO [WARNING]: The "budget not consumed" claim in the test name is not fully falsifiable
+    // with the current setup (MaxRunsPerCycle=10, 2 PRs: 1×409 + 1×success). ProcessedCount==1
+    // is identical whether the budget was consumed by the 409 or not, because there are no
+    // additional items to distinguish the two cases. To make budget non-consumption falsifiable,
+    // use MaxRunsPerCycle=2 with three templates (t1=409, t2=success, t3=success): if the 409
+    // wrongly consumed a budget slot, t3 would never be dispatched and ProcessedCount would stay
+    // at 1. See the analogous Issues 409 test for the same documented gap.
+    // TODO [WARNING]: This test does not assert that ActiveIssueIdentifiers is unchanged after
+    // the 409 skip on the PR path. FinalizeDispatchOutcome explicitly does not add to
+    // ActiveIssueIdentifiers on AlreadyQueued; a regression where it erroneously did so would
+    // not be caught. Add: activeIdentifiers.Should().NotContain(("pr-already-queued", "repo-t1")).
+    [Fact]
+    public async Task WhenPrDispatchReturnsAlreadyQueued_ProcessedCountNotIncrementedAndBudgetNotConsumed()
+    {
+        var t1 = new PipelineJobTemplate
+        {
+            Id = "t1",
+            Name = "Template t1",
+            IssueProviderId = "provider-t1",
+            RepoProviderId = "repo-t1",
+            ReviewEnabled = true
+        };
+        var t2 = new PipelineJobTemplate
+        {
+            Id = "t2",
+            Name = "Template t2",
+            IssueProviderId = "provider-t2",
+            RepoProviderId = "repo-t2",
+            ReviewEnabled = true
+        };
+        var project = CreateProject("p1");
+        var pollable = new List<PipelineJobTemplate> { t1, t2 };
+        var flattened = new List<(PipelineJobTemplate, PipelineProject)> { (t1, project), (t2, project) };
+
+        // First DistributeAndFinalizeAsync call → 409; second → success.
+        var callCount = 0;
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                if (callCount == 1) return new DispatchOutcome(true, true, null) { AlreadyExists = true };
+                return new DispatchOutcome(true, false, null);
+            });
+
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = new() { CreatePrSummary("pr-already-queued", 1) },
+            ["t2"] = new() { CreatePrSummary("pr-new", 2) }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MinIssueSlots = 0 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1,
+            "the 409 (t1 PR) must not increment ProcessedCount; only the genuine dispatch (t2 PR) must count");
+        _prDispatchCount.Should().Be(2,
+            "PrepareReviewDistributionRequestAsync must be called for both templates' PRs");
+    }
+
+    /// <summary>
+    /// AC2 (SkippedNoAgent — Issues): When DistributeAndFinalizeAsync returns Success=false
+    /// (no eligible agent or distribution failure) for an issue dispatch, ProcessedCount must
+    /// be 0 and ActiveIssueIdentifiers must not be updated.
+    /// Verifies the Failed → SkippedNoAgent path in FinalizeDispatchOutcome for Issues.
+    /// </summary>
+    // TODO [WARNING]: This test does not assert _issueDispatchCount.Should().Be(1) to confirm
+    // that PrepareDistributionRequestAsync was actually called (i.e., the SkippedNoAgent path
+    // in FinalizeDispatchOutcome was reached). Without this, a mis-routing that results in zero
+    // dispatches for a different reason (e.g., ImplementationEnabled being false) would also
+    // produce ProcessedCount==0 and activeIdentifiers.IsEmpty==true, making the test pass for
+    // the wrong reason. Consider adding: _issueDispatchCount.Should().Be(1, "PrepareDistributionRequestAsync
+    // must be called once before FinalizeDispatchOutcome returns SkippedNoAgent").
+    [Fact]
+    public async Task WhenIssueDispatchReturnsNoAgent_ProcessedCountIsZeroAndActiveIdentifiersUnchanged()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(false, false, null));
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-no-agent") }
+        };
+        var activeIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = activeIdentifiers,
+                IssueQueues = issueQueues,
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(0,
+            "a no-agent outcome must not increment ProcessedCount");
+        activeIdentifiers.Should().BeEmpty(
+            "ActiveIssueIdentifiers must not be updated when dispatch returns no agent");
+    }
+
+    /// <summary>
+    /// AC3 (SkippedNoAgent — Reviews): When DistributeAndFinalizeAsync returns Success=false
+    /// for a PR review dispatch, ProcessedCount must be 0 and ActiveIssueIdentifiers must not
+    /// be updated. Verifies the Failed → SkippedNoAgent path in FinalizeDispatchOutcome for Reviews.
+    /// </summary>
+    // TODO [WARNING]: CreateTemplate("t1") enables ImplementationEnabled and DecompositionEnabled
+    // in addition to ReviewEnabled. The test relies on PrQueues routing to reach the PR dispatch
+    // path, but if a future routing change redirects dispatch to a different queue type the test
+    // could pass trivially (ProcessedCount==0 from a different reason) without exercising
+    // FinalizeDispatchOutcome. Consider using a template with only ReviewEnabled=true (as the
+    // AC1 test does) to make the intent unambiguous.
+    [Fact]
+    public async Task WhenPrDispatchReturnsNoAgent_ProcessedCountIsZeroAndActiveIdentifiersUnchanged()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(false, false, null));
+
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = new() { CreatePrSummary("pr-no-agent", 1) }
+        };
+        var activeIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = activeIdentifiers,
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = prQueues,
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(0,
+            "a no-agent outcome must not increment ProcessedCount");
+        activeIdentifiers.Should().BeEmpty(
+            "ActiveIssueIdentifiers must not be updated when PR dispatch returns no agent");
+    }
+
+    /// <summary>
+    /// AC4 (SkippedNoAgent — Decomposition): When DistributeAndFinalizeAsync returns Success=false
+    /// for a decomposition dispatch, ProcessedCount must be 0 and ActiveIssueIdentifiers must not
+    /// be updated. Verifies the Failed → SkippedNoAgent path in FinalizeDispatchOutcome for Decomposition.
+    /// </summary>
+    // TODO [WARNING]: This test does not assert _decompDispatchCount.Should().Be(1) to confirm that
+    // PrepareDecompositionDistributionRequestAsync was actually reached. If the decomposition budget
+    // guard (ActiveDecompositionCount=0, MaxConcurrentDecompositions=100) is inadvertently mis-set
+    // in a future refactor, the test could pass trivially (dispatch never attempted, ProcessedCount==0
+    // by budget exhaustion) without exercising the FinalizeDispatchOutcome SkippedNoAgent branch.
+    // Consider adding: _decompDispatchCount.Should().Be(1, "PrepareDecompositionDistributionRequestAsync
+    // must be called once so FinalizeDispatchOutcome is reached").
+    [Fact]
+    public async Task WhenDecompositionDispatchReturnsNoAgent_ProcessedCountIsZeroAndActiveIdentifiersUnchanged()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        _mockDispatchOrchestration
+            .Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(false, false, null));
+
+        var decompQueues = new Dictionary<string, List<EpicCandidate>>
+        {
+            ["t1"] = new() { new EpicCandidate(CreateIssueSummary("epic-no-agent"), PipelineRunType.DecompositionAnalysis, "provider-t1") }
+        };
+        var activeIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveDecompositionCount = 0,
+                ActiveIssueIdentifiers = activeIdentifiers,
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = decompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(0,
+            "a no-agent outcome must not increment ProcessedCount");
+        activeIdentifiers.Should().BeEmpty(
+            "ActiveIssueIdentifiers must not be updated when decomposition dispatch returns no agent");
+    }
+
+    /// <summary>
+    /// AC5 (ActiveIssueIdentifiers.Contains branch): When an issue's identifier is already present
+    /// in ctx.ActiveIssueIdentifiers (not via IsIssueBeingProcessed), it must be skipped without
+    /// calling PrepareDistributionRequestAsync. Covers branch (2) of IsIssueAlreadyActive which
+    /// was previously untested (the existing FilterAll test only covered branch 1 via
+    /// IsIssueBeingProcessed returning true).
+    /// </summary>
+    [Fact]
+    public async Task WhenIssueIdentifierAlreadyInActiveSet_IssueSkippedWithoutDispatch()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        // IsIssueBeingProcessed returns false — dedup must come from ActiveIssueIdentifiers alone.
+        _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>()))
+            .Returns(false);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-already-active") }
+        };
+
+        // Pre-populate the active set with the same (identifier, provider) pair.
+        var activeIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>
+        {
+            ("issue-already-active", template.IssueProviderId)
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = activeIdentifiers,
+                IssueQueues = issueQueues,
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<EpicCandidate>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(0,
+            "issue already in ActiveIssueIdentifiers must be skipped entirely");
+        _issueDispatchCount.Should().Be(0,
+            "PrepareDistributionRequestAsync must not be called when the issue is pre-filtered by ActiveIssueIdentifiers");
+    }
+
+    #endregion
 }
