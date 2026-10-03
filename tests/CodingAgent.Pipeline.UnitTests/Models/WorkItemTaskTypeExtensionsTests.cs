@@ -13,9 +13,9 @@ public sealed class WorkItemTaskTypeExtensionsTests
 
     [Theory]
     [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
-    [InlineData(WorkItemTaskType.Review,         PipelineRunType.Review)]
-    [InlineData(WorkItemTaskType.Decomposition,  PipelineRunType.DecompositionAnalysis)]
-    [InlineData(WorkItemTaskType.Consolidation,  PipelineRunType.Consolidation)]
+    [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
+    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
     public void ToDefaultRunType_KnownValues_ReturnExpectedRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {
@@ -52,9 +52,9 @@ public sealed class WorkItemTaskTypeExtensionsTests
 
     [Theory]
     [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
-    [InlineData(WorkItemTaskType.Review,         PipelineRunType.Review)]
-    [InlineData(WorkItemTaskType.Decomposition,  PipelineRunType.DecompositionAnalysis)]
-    [InlineData(WorkItemTaskType.Consolidation,  PipelineRunType.Consolidation)]
+    [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
+    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
     public void ToDefaultRunTypeOrNull_KnownValues_ReturnExpectedRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {
@@ -71,11 +71,6 @@ public sealed class WorkItemTaskTypeExtensionsTests
 
         var act = () => unknownTaskType.ToDefaultRunTypeOrNull();
 
-        // TODO: The lambda `act` assertion below is redundant with the direct call on the next line.
-        // If the direct call throws, the test fails with an unhandled exception rather than the
-        // meaningful no-throw assertion message. Consider consolidating to a single assertion:
-        // either capture the result via `act.Invoke()` and assert on it, or drop the lambda
-        // and assert directly. As written the no-throw check adds false confidence.
         act.Should().NotThrow(because: "an unrecognised WorkItemTaskType must not throw — null is the intended fallback");
         unknownTaskType.ToDefaultRunTypeOrNull().Should().BeNull(
             because: "ToDefaultRunTypeOrNull must return null for unrecognised values, not throw");

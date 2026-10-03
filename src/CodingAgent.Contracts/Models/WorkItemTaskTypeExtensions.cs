@@ -35,9 +35,9 @@ public static class WorkItemTaskTypeExtensions
     public static PipelineRunType? ToDefaultRunTypeOrNull(this WorkItemTaskType taskType) => taskType switch
     {
         WorkItemTaskType.Implementation => PipelineRunType.Implementation,
-        WorkItemTaskType.Review         => PipelineRunType.Review,
-        WorkItemTaskType.Decomposition  => PipelineRunType.DecompositionAnalysis,
-        WorkItemTaskType.Consolidation  => PipelineRunType.Consolidation,
-        _                               => null
+        WorkItemTaskType.Review => PipelineRunType.Review,
+        WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
+        WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+        _ => null
     };
 }
