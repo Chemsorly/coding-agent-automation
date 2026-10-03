@@ -221,10 +221,10 @@ internal sealed class ConsolidationProviderResolver
     private static IIssueProvider CreateIssueProviderForConsolidation(
         ProviderConfig issueConfig, OrchestratorProxy? orchestratorProxy)
     {
-        if (issueConfig.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
+        if (issueConfig.ProviderType.Equals(ProviderTypes.GitHub, StringComparison.OrdinalIgnoreCase))
             return CreateGitHubIssueProvider(issueConfig, orchestratorProxy);
 
-        if (issueConfig.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
+        if (issueConfig.ProviderType.Equals(ProviderTypes.GitLab, StringComparison.OrdinalIgnoreCase))
             return CreateGitLabIssueProvider(issueConfig);
 
         Serilog.Log.Error("Unsupported issue provider type for consolidation: '{ProviderType}'", issueConfig.ProviderType);

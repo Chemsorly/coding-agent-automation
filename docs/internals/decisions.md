@@ -319,8 +319,8 @@ The rules a plausible change could break. Details are in the linked entries.
 **Revisit when:** infrastructure failure covers several causes that need different recovery.
 
 ### RequestGetIssue double-retry tier: intentional resilience
-<!-- 2026-09-22; updated 2026-10-03 -->
-**Rule:** Provider calls that agents make through the hub get a second, longer retry tier on top of the provider's own short retry budget, capped at about two minutes. The CI waiting loop calls the GitHub API directly and does not go through this tier.
+<!-- 2026-09-22; gap found 2026-09-25; fixed 2026-10-03 (#3279) -->
+**Rule:** Provider calls that agents make through the hub get a second, longer retry tier on top of the provider's own short retry budget, capped at about two minutes.
 **Why:** GitHub blips (short outages, rate-limit surges) outlast the inner budget. An outer tier gives a longer recovery window without inflating every call's inner retries.
 **Not:** one tier with a longer inner budget; no outer tier.
 **Revisit when:** GitHub becomes measurably more reliable, or the outer tier hides failures that should surface.

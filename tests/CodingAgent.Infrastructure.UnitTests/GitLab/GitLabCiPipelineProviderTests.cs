@@ -72,6 +72,18 @@ public class GitLabCiPipelineProviderTests
     }
 
     /// <summary>
+    /// A skipped job did not fail and has no log. Cancelled jobs are reported to the agent as
+    /// unsuccessful (a timed-out job ends cancelled), so Skipped must not map to Cancelled.
+    /// </summary>
+    [Fact]
+    public void MapStatus_Skipped_MapsToPassed()
+    {
+        var result = GitLabCiPipelineProvider.MapStatus(JobStatus.Skipped);
+
+        result.Should().Be(PipelineRunState.Passed);
+    }
+
+    /// <summary>
     /// Property 17: Pipeline status mapping — Cancelled statuses.
     /// All GitLab statuses that represent cancellation map to PipelineRunState.Cancelled.
     /// **Validates: Requirements 14.4, 27.4**
@@ -401,7 +413,7 @@ public static class PendingJobStatusArbitrary
 
 /// <summary>
 /// Generates JobStatus values that should map to PipelineRunState.Cancelled.
-/// Includes: Canceled, Canceling, Skipped.
+/// Includes: Canceled, Canceling.
 /// </summary>
 public static class CancelledJobStatusArbitrary
 {
@@ -409,8 +421,7 @@ public static class CancelledJobStatusArbitrary
     {
         var gen = Gen.Elements(
             NGitLab.JobStatus.Canceled,
-            NGitLab.JobStatus.Canceling,
-            NGitLab.JobStatus.Skipped);
+            NGitLab.JobStatus.Canceling);
         return gen.ToArbitrary();
     }
 }

@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using CodingAgent.Pipeline;
 using CodingAgent.AgentGateway;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
@@ -61,6 +62,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // Keyed by jobName (== agentId for chat pods — see invariant note on TerminateChatSessionAsync).
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
+    // TODO [WARNING]: The _stopped flag is never reset by DisposeAsync, so once StopAsync has run
+    // (either explicitly or via the internal StopAsync call inside DisposeAsync), it cannot be
+    // re-armed. This is intentional: IHostedService semantics do not require restart after stop.
+    // Callers that invoke StopAsync first and then DisposeAsync will have the internal StopAsync
+    // inside DisposeAsync short-circuit harmlessly; _shutdownCts.Dispose() still runs as expected.
+    private int _stopped; // 0 = not stopped; 1 = stop in progress or complete. Used with Interlocked.
 
     /// <summary>
     /// Groups the co-travelling identity and selector fields that flow from
@@ -538,8 +545,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        // TODO [WARNING]: StopAsync is no longer idempotent after removal of the _stopCompleted guard.
-        // See pre-existing issue documented in earlier TODOs. Do not fix in this refactor.
+        if (Interlocked.CompareExchange(ref _stopped, 1, 0) != 0)
+            return; // idempotent — already stopped or stopping
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 
