@@ -590,10 +590,23 @@ public class QualityGateValidator : IQualityGateValidator
         PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
     {
         var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
-        var jobNames = failedJobs.Count > 0
-            ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
-            : "unknown";
-        return $"CI {status.State}. {failedJobs.Count} job(s) failed: {jobNames}.";
+        var cancelledJobs = status.Jobs.Where(j => j.State == PipelineRunState.Cancelled).ToList();
+
+        var details = new System.Text.StringBuilder($"CI {status.State}.");
+        if (failedJobs.Count > 0 || cancelledJobs.Count == 0)
+        {
+            var jobNames = failedJobs.Count > 0
+                ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))
+                : "unknown";
+            details.Append($" {failedJobs.Count} job(s) failed: {jobNames}.");
+        }
+        if (cancelledJobs.Count > 0)
+        {
+            var jobNames = string.Join(", ", cancelledJobs.Select(j => $"'{j.Name}'"));
+            details.Append($" {cancelledJobs.Count} job(s) cancelled before finishing: {jobNames}.");
+            details.Append(" A cancelled job usually exceeded its timeout or hung on a test; its log shows how far it got.");
+        }
+        return details.ToString();
     }
 
     /// <summary>

@@ -175,6 +175,47 @@ public class CiFailureClassifierTests
         CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.CodeFailure);
     }
 
+    [Fact]
+    public void Classify_TimedOutJobCancelledWithTestFailuresInLog_ReturnsCodeFailure()
+    {
+        // GitHub reports a job that exceeds timeout-minutes as cancelled. Its log still lists the
+        // failed tests, so the agent must get a code-failure retry, not an empty-commit infra retry.
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new[]
+            {
+                new PipelineJobResult
+                {
+                    Name = "e2e", State = PipelineRunState.Cancelled,
+                    LogContent = "Failed AgentOutputTests.LiveOutput [21 s]\n  Error Message:\n   System.TimeoutException\n##[error]The operation was canceled."
+                },
+                new PipelineJobResult { Name = "docker-push", State = PipelineRunState.Passed }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.CodeFailure);
+    }
+
+    [Fact]
+    public void Classify_CancelledJobWithHangOnlyLog_ReturnsUnknownNotInfrastructure()
+    {
+        // A hung test leaves no failure lines; the log still exists, so this is not the
+        // log-unavailable infrastructure case. Unknown goes to the agent like a code failure.
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new[]
+            {
+                new PipelineJobResult
+                {
+                    Name = "e2e", State = PipelineRunState.Cancelled,
+                    LogContent = "Starting test execution, please wait...\ncontext canceled\n##[error]The operation was canceled."
+                }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Unknown);
+    }
+
     private static PipelineRunStatus CreateStatus(string logContent) => new()
     {
         State = PipelineRunState.Failed,

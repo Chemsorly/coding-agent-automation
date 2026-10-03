@@ -71,6 +71,24 @@ public class CiLogWriterTests : IDisposable
     }
 
     [Fact]
+    public void WriteJobLogs_CancelledJobWithLog_WritesFile()
+    {
+        // A job that exceeded its timeout ends Cancelled; the agent needs its log.
+        var status = CreateStatus(new PipelineJobResult
+        {
+            JobId = 7,
+            Name = "e2e",
+            State = PipelineRunState.Cancelled,
+            LogContent = "Failed SomeE2ETest"
+        });
+
+        var result = _writer.WriteJobLogs(status, _tempDir, "run-1");
+
+        result.Should().ContainKey(7);
+        File.ReadAllText(Path.Combine(_tempDir, result[7])).Should().Be("Failed SomeE2ETest");
+    }
+
+    [Fact]
     public void WriteJobLogs_MultipleFailedJobs_WritesAllFiles()
     {
         var status = CreateStatus(
