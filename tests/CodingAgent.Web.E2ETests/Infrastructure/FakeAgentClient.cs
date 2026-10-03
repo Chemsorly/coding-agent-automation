@@ -495,11 +495,6 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public async Task ReportOutputAsync(string jobId, params string[] lines)
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
-        // TODO: [WARNING] ArgumentNullException.ThrowIfNull(lines) is unreachable dead code on a
-        // params parameter — the compiler supplies an empty array when the caller uses params
-        // syntax, so lines is never null. The guard misleadingly implies the null path is
-        // reachable. Remove it; the length check below already handles the empty-call case.
-        ArgumentNullException.ThrowIfNull(lines);
         if (lines.Length == 0) return;
         await _connection.InvokeAsync("ReportOutputLines", jobId, (IReadOnlyList<string>)lines);
     }
