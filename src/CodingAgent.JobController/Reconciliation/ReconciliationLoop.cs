@@ -57,6 +57,7 @@ public sealed class ReconciliationLoop
     private const string JobPhaseSucceeded = "Succeeded";
     private const string JobPhaseFailed = "Failed";
     private const string JobPhaseComplete = "Complete"; // the condition type Kubernetes sets on success
+    private const string JobReasonDeadlineExceeded = "DeadlineExceeded"; // Failed condition reason when activeDeadlineSeconds fires
 
     /// <summary>
     /// Minimum execution age (seconds) before timeout is enforced.
@@ -608,10 +609,7 @@ public sealed class ReconciliationLoop
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
-                var errorMsg = GetFailureMessage(job);
-                // Classify the failure reason: if the WorkItem was never claimed (still Dispatched),
-                // no agent ran — record as InfrastructureFailure, not AgentError (issue #2956).
-                var failureReason = await ClassifyJobFailureReasonAsync(workItemId.Value, ct);
+                var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
                 // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
                 // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
                 // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
@@ -632,36 +630,69 @@ public sealed class ReconciliationLoop
     }
 
     /// <summary>
-    /// Returns the appropriate failure reason string for a failed K8s Job.
-    /// Calls <see cref="IPipelineApiWorkItemClient.GetStatusAsync"/> to determine whether the
-    /// WorkItem was ever claimed by an agent. A WorkItem still in <c>Dispatched</c> state means
-    /// no agent successfully accepted it — the failure is infrastructure-level.
-    /// A claimed (<c>Running</c> or later) WorkItem is an agent error.
-    /// Returns <c>AgentError</c> when the status is null (item not found or already cleaned up).
+    /// Maps a Job that Kubernetes marked Failed to the work item's failure reason and message.
+    /// The agent records every run outcome itself, so a failed Job only means its pods gave out:
+    /// <list type="bullet">
+    ///   <item>WorkItem still <c>Dispatched</c>: no agent ever claimed it — <c>InfrastructureFailure</c> (issue #2956).</item>
+    ///   <item>Job condition reason <c>DeadlineExceeded</c>: <c>activeDeadlineSeconds</c> fired — <c>Timeout</c>.</item>
+    ///   <item>Otherwise every counted pod failed (crash or OOM; drains and evictions are not counted,
+    ///     see <see cref="JobSpecBuilder"/>) — <c>ExitCodeFailure</c>, with the last pod's termination
+    ///     in the message so the operator can tell an OOM from a crash.</item>
+    /// </list>
     /// </summary>
-    private async Task<string> ClassifyJobFailureReasonAsync(Guid workItemId, CancellationToken ct)
+    private async Task<(string FailureReason, string? ErrorMessage)> ClassifyJobFailureAsync(
+        Guid workItemId, V1Job job, CancellationToken ct)
     {
+        var condition = job.Status?.Conditions?.FirstOrDefault(c => c.Type == JobPhaseFailed && c.Status == "True");
+
         try
         {
-            var status = await _workItemClient.GetStatusAsync(workItemId, ct);
-            // Dispatched means the K8s Job was created but no agent ever called JobAccepted
-            // (which transitions the WorkItem to Running). The failure happened before any agent ran.
-            if (status == WorkItemStatus.Dispatched)
-                return nameof(FailureReason.InfrastructureFailure);
-
-            // TODO: [WARNING] When status is null (item not found or already cleaned up) the method
-            // silently falls through to AgentError with no log entry. Operators diagnosing a failed
-            // Job whose WorkItem has already been deleted will see AgentError with no indication it
-            // is a fallback due to a missing item. Consider adding a Debug-level log here:
-            // if (status is null) _log.Debug("ClassifyJobFailureReasonAsync: status null for {WorkItemId}, defaulting to AgentError", workItemId);
+            if (await _workItemClient.GetStatusAsync(workItemId, ct) == WorkItemStatus.Dispatched)
+                return (nameof(FailureReason.InfrastructureFailure), condition?.Message);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.Warning(ex, "ClassifyJobFailureReasonAsync: failed to query status for WorkItem {WorkItemId}, defaulting to AgentError", workItemId);
+            _log.Warning(ex, "ClassifyJobFailureAsync: failed to query status for WorkItem {WorkItemId}, classifying from the Job alone", workItemId);
         }
 
-        return nameof(FailureReason.AgentError);
+        if (condition?.Reason == JobReasonDeadlineExceeded)
+            return (nameof(FailureReason.Timeout), condition.Message);
+
+        var lastPod = await DescribeLastFailedPodAsync(job, ct);
+        var message = string.Join(" ", new[] { condition?.Message, lastPod }.Where(s => !string.IsNullOrEmpty(s)));
+        return (nameof(FailureReason.ExitCodeFailure), message.Length > 0 ? message : null);
     }
+
+    /// <summary>
+    /// Describes how the Job's most recent failed agent container ended, e.g.
+    /// "Last pod caa-1234abcd-x7k2p: OOMKilled (exit code 137).". Best effort: returns null when the
+    /// pods cannot be listed or none has a failed agent container.
+    /// </summary>
+    private async Task<string?> DescribeLastFailedPodAsync(V1Job job, CancellationToken ct)
+    {
+        var jobName = job.Metadata?.Name;
+        if (string.IsNullOrEmpty(jobName)) return null;
+
+        try
+        {
+            var pods = await _k8sClient.ListPodsAsync(_options.Namespace, $"batch.kubernetes.io/job-name={jobName}", ct);
+            var lastFailed = (pods?.Items ?? [])
+                .Where(p => AgentTermination(p) is { ExitCode: not 0 })
+                .MaxBy(p => AgentTermination(p)!.FinishedAt);
+            if (lastFailed is null) return null;
+
+            var terminated = AgentTermination(lastFailed)!;
+            return $"Last pod {lastFailed.Metadata?.Name}: {terminated.Reason ?? "Error"} (exit code {terminated.ExitCode}).";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warning(ex, "Failed to list the pods of K8s Job {JobName}; the failure message has no pod detail", jobName);
+            return null;
+        }
+    }
+
+    private static V1ContainerStateTerminated? AgentTermination(V1Pod pod) =>
+        pod.Status?.ContainerStatuses?.FirstOrDefault(s => s.Name == JobSpecBuilder.AgentContainerName)?.State?.Terminated;
 
     /// <summary>
     /// Posts a terminal status update for a completed K8s Job and records telemetry.
@@ -704,20 +735,14 @@ public sealed class ReconciliationLoop
                 ErrorMessage = errorMessage
             }, ct);
 
+            // A real transition (200) and an idempotent no-op on an already-terminal item (204) both
+            // mean "handled, don't retry". The agent records its own outcome before its pod ends, so
+            // the no-op is the normal case and only a real transition is logged as marking the item.
+            // Metrics are recorded by the API's WorkItemStatusTransitionService (issues #2802, #2967).
             if (transitioned)
-            {
-                // Record terminal metrics — only when a real state transition occurred.
-                // Skip for idempotent no-ops (already-terminal items, e.g. Cancelled→Failed late
-                // callback) to avoid double-counting. PostStatus returns HTTP 204 No Content for
-                // no-ops and HTTP 200 for real transitions; PipelineApiWorkItemClient maps these
-                // to false/true respectively. (Issue #2802)
-                // Metrics are recorded by the API's WorkItemStatusTransitionService when it
-                // processes the POST above — no metric recording needed here. (Issue #2967)
-            }
-
-            // Log and mark as succeeded for BOTH transitioned and no-op paths: both represent
-            // "this item is handled, don't retry" and neither is a transient error.
-            _log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
+                _log.Information("WorkItem {Id} marked {Status} from K8s Job {Job}", workItemId, status, job.Metadata?.Name);
+            else
+                _log.Debug("WorkItem {Id} already terminal; K8s Job {Job} ended {Status}", workItemId, job.Metadata?.Name, status);
             succeeded = true;
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.BadRequest)
@@ -803,33 +828,19 @@ public sealed class ReconciliationLoop
         return Guid.TryParse(idStr, out var id) ? id : null;
     }
 
+    /// <summary>
+    /// Only the Job's own terminal conditions are final. Pod counters are not: between a failed
+    /// pod and its replacement the Job shows Failed &gt; 0 and Active == 0 for the whole backoff
+    /// delay, and treating that as final failed the work item and deleted the Job before its
+    /// retry pod started.
+    /// </summary>
     private static string GetJobPhase(V1Job job)
     {
-        var conditions = job.Status?.Conditions;
-        if (conditions is not null)
-        {
-            if (conditions.Any(c => c.Type == JobPhaseComplete && c.Status == "True"))
-                return JobPhaseSucceeded;
-            if (conditions.Any(c => c.Type == JobPhaseFailed && c.Status == "True"))
-                return JobPhaseFailed;
-        }
-
-        // Fall back to counters
-        if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
-        // Guard Active == 0: a retrying job has Failed=1 while Active=1 (Kubernetes creates a
-        // retry pod after each failed attempt). The "Failed" condition type is only set once all
-        // retries are exhausted. Returning JobPhaseFailed while Active > 0 would prematurely mark
-        // a running work item as failed and cancel the live K8s Job (data-corruption under the
-        // default backoffLimit >= 1). This guard matches the equivalent counter-fallback check
-        // that was previously in DispatchLoopHelpers.IsJobTerminal (deleted in issue #2323).
-        if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
+        var conditions = job.Status?.Conditions ?? [];
+        if (conditions.Any(c => c.Type == JobPhaseComplete && c.Status == "True"))
+            return JobPhaseSucceeded;
+        if (conditions.Any(c => c.Type == JobPhaseFailed && c.Status == "True"))
+            return JobPhaseFailed;
         return "Active";
-    }
-
-    private static string? GetFailureMessage(V1Job job)
-    {
-        var conditions = job.Status?.Conditions;
-        var failedCondition = conditions?.FirstOrDefault(c => c.Type == JobPhaseFailed && c.Status == "True");
-        return failedCondition?.Message;
     }
 }
