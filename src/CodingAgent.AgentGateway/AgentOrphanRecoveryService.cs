@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
