@@ -272,6 +272,36 @@ public sealed class RunLifecycleManagerTests
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task FailRunAsync_WithInvalidFinalLabel_FallsBackToAgentError()
+    {
+        // Characterization test (issue #3261): a run.FinalLabel that is not in AgentLabels.All
+        // must not be used as the target label — the outcome-based fallback (agent:error) applies.
+        // Before extraction this was an inline ternary; after extraction it is handled by
+        // CompletionOutcomeResolver.ResolveAgentLabel.
+        var run = CreateRun("run-invalid-finallabel-fail", PipelineRunType.Implementation);
+        run.FinalLabel = "not-a-valid-agent-label";
+        _runService.AddRun(run);
+
+        await _sut.FailRunAsync("run-invalid-finallabel-fail", "Something went wrong", CancellationToken.None);
+
+        // Must fall back to agent:error, NOT the invalid label
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), "not-a-valid-agent-label",
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // TODO: [WARNING] Missing characterization test: FailRunAsync_WithValidFinalLabel_HonorsFinalLabel
+    // (issue #3261, TestQualityReviewer). The symmetric counterpart to the invalid-label test above is
+    // missing: a test where run.FinalLabel = AgentLabels.NeedsRefinement and the swap target is
+    // agent:needs-refinement (not agent:error). The CompleteRunAsync path has
+    // CompleteRunAsync_WithFinalLabel_UsesRunFinalLabel covering this case; FailRunAsync does not.
+    // A regression dropping the FinalLabel check in ResolveAgentLabel(WorkItemStatus.Failed, …) would
+    // not be caught. Add this test to close the coverage gap.
+
     // ── CompleteRunAsync ────────────────────────────────────────────────
 
     [Fact]
@@ -598,6 +628,23 @@ public sealed class RunLifecycleManagerTests
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), "some-unknown-label",
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_Cancelled_WithNoFinalLabel_SwapsToAgentCancelled()
+    {
+        // Characterization test (issue #3261): WorkItemStatus.Cancelled arm of the label switch.
+        // Before extraction this arm was inline in CompleteRunAsync; after extraction it is
+        // handled by CompletionOutcomeResolver.ResolveAgentLabel.
+        var run = CreateRun("run-cancelled-complete", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Cancelled;
+        _runService.AddRun(run);
+
+        await _sut.CompleteRunAsync("run-cancelled-complete", WorkItemStatus.Cancelled, CancellationToken.None);
+
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── CancelRunAsync ─────────────────────────────────────────────────

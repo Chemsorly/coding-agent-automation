@@ -45,8 +45,13 @@ jobs:
       # vstest against the built DLL, not `dotnet test` on the project: with IsTestProject=false
       # the VSTest MSBuild target is a no-op and `dotnet test` exits 0 having discovered zero
       # tests, which is how this job passed for the whole 041–045 arc without running anything.
+      #
+      # --Blame hang timeout: a test with no progress for 5 minutes aborts the run and the log
+      # names it ("The test running when the crash occurred: ..."). Without it a hung test
+      # runs silently into timeout-minutes, GitHub reports the job as cancelled with no test
+      # name, and agents fixing E2E tests get nothing to work from.
       - name: Run E2E Tests
-        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=E2E" --logger:trx --ResultsDirectory:TestResults
+        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=E2E" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:TestResults
         env:
           ASPNETCORE_ENVIRONMENT: Development
 

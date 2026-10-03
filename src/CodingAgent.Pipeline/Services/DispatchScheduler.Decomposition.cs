@@ -88,35 +88,12 @@ internal sealed partial class DispatchScheduler
                 ct),
             stopToken);
 
-        if (dispatchOutcome == DispatchAttemptOutcome.AlreadyQueued)
-        {
-            // 409 — live WorkItem already exists. Do not count as dispatched, do not consume budget.
-            // TODO [WARNING]: ActiveIssueIdentifiers is not updated here, so if a second template
-            // in the same cycle also queues this epic, it will reach PrepareDecompositionDistributionRequestAsync
-            // and call the API again, receiving a second 409. This is safe (handled correctly) but
-            // results in an extra prepare+distribute round-trip per duplicate per cycle. Consider
-            // adding the identifier to ctx.ActiveIssueIdentifiers on AlreadyQueued to short-circuit
-            // the redundant API call in the second template's turn.
-            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-                PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-            return (DispatchAttemptResult.Skip, false);
-        }
-
-        var dispatched = dispatchOutcome == DispatchAttemptOutcome.Dispatched;
-
-        if (dispatched)
-        {
+        if (dispatchOutcome == DispatchAttemptOutcome.Dispatched)
             _logger.Information("Dispatched epic #{EpicIdentifier} in tracker {IssueProviderId} ({Phase}) from template '{Template}'",
                 epicItem.Issue.Identifier, epicItem.IssueProviderId, epicItem.Phase, template.Name);
-            // Add to the in-cycle active set so a second template queuing the same epic
-            // in this cycle sees it as already active and skips it.
-            ctx.ActiveIssueIdentifiers.Add((epicItem.Issue.Identifier, epicItem.IssueProviderId));
-        }
 
-        PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-            dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
-
-        return (new DispatchAttemptResult(dispatched), dispatched);
+        var result = FinalizeDispatchOutcome(dispatchOutcome, epicItem.Issue.Identifier, epicItem.IssueProviderId, ctx);
+        return (result, result.Dispatched);
     }
 
     /// <summary>

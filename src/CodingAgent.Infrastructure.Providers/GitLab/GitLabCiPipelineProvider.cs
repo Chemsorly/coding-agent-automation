@@ -215,9 +215,10 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
             JobStatus.Failed => PipelineRunState.Failed,
             JobStatus.Canceled => PipelineRunState.Cancelled,
             JobStatus.Canceling => PipelineRunState.Cancelled,
-            // Skipped maps to Cancelled because PipelineRunState has no Skipped variant,
-            // and skipped jobs don't block the pipeline (they are non-blocking like cancelled jobs).
-            JobStatus.Skipped => PipelineRunState.Cancelled,
+            // PipelineRunState has no Skipped variant. A skipped job did not fail and has no log,
+            // so it maps to Passed, as on GitHub. Cancelled jobs are reported to the agent as
+            // unsuccessful (a timed-out job ends cancelled), which skipped jobs must not be.
+            JobStatus.Skipped => PipelineRunState.Passed,
             _ => PipelineRunState.Pending
         };
     }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Octokit;
 using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline;
@@ -283,7 +284,11 @@ public partial class GitHubRepositoryProvider
                         // (isGraphQL=true is never passed anywhere in production). To fix, wrap GraphQL mutations
                         // in ExecuteWithResilienceAsync with isGraphQL:true. Blocked by the lack of a
                         // CancellationToken overload on IConnection.Post in the current Octokit version.
-                        var graphqlBody = $"{{\"query\":\"mutation {{ markPullRequestReadyForReview(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
+                        var graphqlBody = JsonSerializer.Serialize(new
+                        {
+                            query = "mutation($pullRequestId: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) { pullRequest { isDraft } } }",
+                            variables = new { pullRequestId = pr.NodeId }
+                        });
                         await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
                         Log.Information("Marked PR #{PrNumber} as ready for review", pullRequestNumber);
                     }
@@ -317,11 +322,11 @@ public partial class GitHubRepositoryProvider
                         // (isGraphQL=true is never passed anywhere in production). To fix, wrap GraphQL mutations
                         // in ExecuteWithResilienceAsync with isGraphQL:true. Blocked by the lack of a
                         // CancellationToken overload on IConnection.Post in the current Octokit version.
-                        // TODO: pr.NodeId is embedded via string interpolation without JSON escaping. GitHub-issued
-                        // node IDs are safe in practice, but a proper JSON serializer or GraphQL variable binding
-                        // should be used here (and in the markPullRequestReadyForReview branch above) to eliminate
-                        // the theoretical risk of a malformed mutation if NodeId ever contains '"' or '\'.
-                        var graphqlBody = $"{{\"query\":\"mutation {{ convertPullRequestToDraft(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
+                        var graphqlBody = JsonSerializer.Serialize(new
+                        {
+                            query = "mutation($pullRequestId: ID!) { convertPullRequestToDraft(input: {pullRequestId: $pullRequestId}) { pullRequest { isDraft } } }",
+                            variables = new { pullRequestId = pr.NodeId }
+                        });
                         // TODO: CancellationToken is not propagated to IConnection.Post — the Octokit overload used
                         // here has no CT parameter. Track for a future Octokit upgrade that adds CT support.
                         await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload

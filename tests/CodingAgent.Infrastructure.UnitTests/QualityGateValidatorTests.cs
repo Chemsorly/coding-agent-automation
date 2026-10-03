@@ -358,6 +358,51 @@ public class QualityGateValidatorTests
         details.Should().Contain("unknown");
     }
 
+    [Fact]
+    public void BuildCiFailureDetails_OnlyCancelledJob_NamesItAsCancelledWithoutUnknownFailure()
+    {
+        // The e2e job hit its timeout-minutes: GitHub reports it cancelled, the skipped deploy
+        // jobs map to Passed. The agent must be pointed at e2e, not at "0 job(s) failed: unknown".
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new List<PipelineJobResult>
+            {
+                new() { Name = "e2e", State = PipelineRunState.Cancelled },
+                new() { Name = "docker-push", State = PipelineRunState.Passed },
+                new() { Name = "publish-chart", State = PipelineRunState.Passed }
+            }
+        };
+
+        var details = QualityGateValidator.BuildCiFailureDetails(status);
+
+        details.Should().StartWith("CI Cancelled.");
+        details.Should().Contain("1 job(s) cancelled before finishing: 'e2e'.");
+        details.Should().Contain("timeout");
+        details.Should().NotContain("job(s) failed");
+        details.Should().NotContain("docker-push");
+        details.Should().NotContain("publish-chart");
+    }
+
+    [Fact]
+    public void BuildCiFailureDetails_FailedAndCancelledJobs_ListsBoth()
+    {
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new List<PipelineJobResult>
+            {
+                new() { Name = "build", State = PipelineRunState.Failed },
+                new() { Name = "e2e", State = PipelineRunState.Cancelled }
+            }
+        };
+
+        var details = QualityGateValidator.BuildCiFailureDetails(status);
+
+        details.Should().Contain("1 job(s) failed: 'build'.");
+        details.Should().Contain("1 job(s) cancelled before finishing: 'e2e'.");
+    }
+
     // --- Helpers ---
 
     private static string CreateTempDir()
