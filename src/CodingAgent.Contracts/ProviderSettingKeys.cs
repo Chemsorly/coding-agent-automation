@@ -71,9 +71,6 @@ public static class ProviderSettingKeys
     /// <summary>Default GitLab API URL.</summary>
     public const string DefaultGitLabApiUrl = "https://gitlab.com";
 
-    /// <summary>Username for GitLab HTTPS clone URL credentials.</summary>
-    public const string GitLabTokenUsername = "oauth2";
-
     // ── Token vending (written by orchestrator) ──────────────────────────
 
     /// <summary>
