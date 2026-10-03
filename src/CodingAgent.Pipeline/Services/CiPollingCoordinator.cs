@@ -161,8 +161,6 @@ internal sealed class CiPollingCoordinator
                 // No state-mutating operations occur between the two calls, so the second call can only differ under an
                 // extremely narrow race window. It wastes one extra provider API request on every exhaustion path.
                 // Consider removing the inner call and relying on the per-iteration check above.
-                // Note: if removed, also verify MarkCompleted double-call risk (BuildPrMergedStatus/BuildPrClosedStatus call
-                // run.MarkCompleted(), and MarkCompleted is not idempotent — it overwrites CompletedAt on each call).
                 var prStateBeforeExhaustion = await CheckPullRequestStillOpenAsync(context, callbacks, ct);
                 if (prStateBeforeExhaustion is not null)
                     return prStateBeforeExhaustion;
@@ -714,11 +712,6 @@ internal sealed class CiPollingCoordinator
     /// Builds a terminal <see cref="PipelineRunStatus"/> for a run whose PR was merged.
     /// Marks the run completed and transitions to <see cref="PipelineStep.PrMerged"/>.
     /// </summary>
-    // TODO [WARNING] (DotNetSpecialist): run.MarkCompleted() is not idempotent — it overwrites CompletedAt/CompletedAtOffset
-    // on every call. CheckPullRequestStillOpenAsync may be invoked twice in the same loop iteration (once at the per-iteration
-    // check and again inside the attempt >= maxRetries block), so MarkCompleted() could be called twice for the same run,
-    // causing CompletedAt to be reset to a later timestamp. Resolving the redundant double-call (see TODO above in
-    // PollCiWithNotStartedRetryAsync) eliminates this risk entirely.
     private PipelineRunStatus BuildPrMergedStatus(PipelineRun run, int prNum, IPipelineCallbacks callbacks)
     {
         run.FinalLabel = null;    // Run succeeds — no error label

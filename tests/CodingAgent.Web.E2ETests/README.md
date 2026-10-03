@@ -26,16 +26,19 @@ dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E
 ```
 
 - Classes that derive from `HeadlessE2ETestBase` need no browser.
-- Classes that derive from `E2ETestBase` need Playwright Chromium. The .NET 10 agent images ship
-  it in `$PLAYWRIGHT_BROWSERS_PATH`. If Playwright reports that the browser executable does not
-  exist, the repository's `Microsoft.Playwright` is newer than the image. Install the matching
-  browser (no root needed):
+- Classes that derive from `E2ETestBase` drive Chromium through Playwright. They need the browser
+  and its system libraries. The agent images do not include them, so in an agent pod run only the
+  headless classes and let the pipeline's CI round run the Playwright classes.
+- On a Linux dev machine, install the system libraries (needs root) and the browser that matches
+  the repository's `Microsoft.Playwright` (as your own user) once:
 
   ```bash
-  tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/.playwright/node/linux-*/node tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/.playwright/package/cli.js install --only-shell chromium
+  PW=tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/.playwright
+  sudo $PW/node/linux-*/node $PW/package/cli.js install-deps chromium
+  $PW/node/linux-*/node $PW/package/cli.js install --only-shell chromium
   ```
 
-  On a machine without Chromium's system libraries, add `--with-deps` and run it as root.
+  On Windows, run `pwsh tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/playwright.ps1 install chromium`.
 - In an agent pod, do not run the whole suite. It is long and memory-heavy. Run the classes you
   changed, and let the pipeline's CI round run the rest.
 - The `--Blame` option aborts a test that makes no progress for 5 minutes and prints its name
