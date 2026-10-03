@@ -51,13 +51,6 @@ RUN apt-get update && \
         libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
-# Playwright Chromium for Playwright E2E tests (e.g. tests/CodingAgent.Web.E2ETests), so an agent
-# can run the test class it is writing instead of waiting a full CI round per attempt.
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-COPY Directory.Packages.props dockerfiles/install-playwright-chromium.sh /tmp/playwright/
-RUN sh /tmp/playwright/install-playwright-chromium.sh /tmp/playwright/Directory.Packages.props ubuntu:ubuntu \
-    && rm -rf /tmp/playwright
-
 # Download and install OpenCode binary (pinned version, architecture-aware)
 RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
@@ -71,6 +64,13 @@ RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
 # Reuse existing ubuntu user (UID 1000) from the base image
 RUN mkdir -p /home/ubuntu/.config/opencode /home/ubuntu/.local/share/opencode && \
     chown -R ubuntu:ubuntu /home/ubuntu
+
+# Playwright Chromium for Playwright E2E tests (e.g. tests/CodingAgent.Web.E2ETests), so an agent
+# can run the test class it is writing instead of waiting a full CI round per attempt.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+COPY Directory.Packages.props dockerfiles/install-playwright-chromium.sh /tmp/playwright/
+RUN sh /tmp/playwright/install-playwright-chromium.sh /tmp/playwright/Directory.Packages.props ubuntu:ubuntu \
+    && rm -rf /tmp/playwright
 
 WORKDIR /app
 

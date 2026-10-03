@@ -26,7 +26,7 @@ case "$(uname -m)" in
 esac
 
 WORK=$(mktemp -d)
-curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+curl --proto '=https' --tlsv1.2 -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
     "https://api.nuget.org/v3-flatcontainer/microsoft.playwright/${VERSION}/microsoft.playwright.${VERSION}.nupkg" \
     -o "$WORK/playwright.nupkg"
 unzip -q "$WORK/playwright.nupkg" '.playwright/package/*' ".playwright/node/${NODE_DIR}/*" -d "$WORK"
