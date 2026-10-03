@@ -386,16 +386,9 @@ public sealed partial class WorkItemStatusTransitionService
             ? row.CompletedAt.Value - row.DispatchedAt.Value
             : null;
 
-        // Safe fallback: use a local switch with null default rather than
-        // ToDefaultRunType() which throws UnreachableException for unknown values.
-        var resolvedRunType = row.RunType ?? row.TaskType switch
-        {
-            WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
-            WorkItemTaskType.Review => PipelineRunType.Review,
-            WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
-            WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
-            _ => null
-        };
+        // Safe fallback: use ToDefaultRunTypeOrNull() which returns null for unknown values
+        // rather than ToDefaultRunType() which throws UnreachableException.
+        var resolvedRunType = row.RunType ?? row.TaskType.ToDefaultRunTypeOrNull();
         var runTypeTag = resolvedRunType.HasValue
             ? resolvedRunType.Value.ToString().ToLowerInvariant()
             : UnknownTag;

@@ -25,4 +25,19 @@ public static class WorkItemTaskTypeExtensions
         WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
         _ => throw new UnreachableException($"Unhandled WorkItemTaskType: {taskType}")
     };
+
+    /// <summary>
+    /// Maps a <see cref="WorkItemTaskType"/> to its canonical <see cref="PipelineRunType"/>,
+    /// returning <c>null</c> for any unrecognised value instead of throwing.
+    /// Use this on paths where a graceful unknown-fallback is preferable to a hard failure
+    /// (e.g. telemetry paths where <c>null</c> should produce an <c>"unknown"</c> tag).
+    /// </summary>
+    public static PipelineRunType? ToDefaultRunTypeOrNull(this WorkItemTaskType taskType) => taskType switch
+    {
+        WorkItemTaskType.Implementation => PipelineRunType.Implementation,
+        WorkItemTaskType.Review         => PipelineRunType.Review,
+        WorkItemTaskType.Decomposition  => PipelineRunType.DecompositionAnalysis,
+        WorkItemTaskType.Consolidation  => PipelineRunType.Consolidation,
+        _                               => null
+    };
 }
