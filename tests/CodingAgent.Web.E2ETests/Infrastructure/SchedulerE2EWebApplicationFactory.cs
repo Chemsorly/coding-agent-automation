@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Api.Client.Stores;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure;
 using CodingAgent.Kubernetes;
@@ -129,16 +130,27 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
 
     /// <summary>
     /// Resets per-test state owned by this factory. The shared fakes are reset by
-    /// <see cref="E2EFixture.ResetAll"/>; nothing additional is needed here.
+    /// <see cref="E2EFixture.ResetAll"/>; the caches on the Scheduler's API-backed stores
+    /// must also be invalidated here so that the next test sees fresh data from the now-reset
+    /// <c>InMemoryConfigurationStore</c> rather than stale TTL-cached results from the prior test.
     /// </summary>
-    // TODO [WARNING]: ResetAll() is intentionally empty because the loop is stopped and reset
-    // via E2EFixture.ResetAllAsync (which calls loop.StopLoop() and busy-waits up to 10s before
-    // calling this). However, if that 10s deadline expires before IsLoopActive becomes false, this
-    // no-op is still called, meaning a stale loop iteration may remain in flight. There is no
-    // warning logged when the deadline is exceeded, so a test isolation failure is invisible until
-    // the next test fails with an unexpected "Stop Loop" button. Consider adding an assertion or
-    // logging when the deadline expires in ResetAllAsync, rather than silently proceeding.
-    public void ResetAll() { }
+    // TODO [WARNING]: ResetAll() is called after loop.StopLoop() and a busy-wait up to 10s.
+    // If that 10s deadline expires before IsLoopActive becomes false, this is still called,
+    // meaning a stale loop iteration may remain in flight. There is no warning logged when the
+    // deadline is exceeded, so a test isolation failure is invisible until the next test fails.
+    // Consider adding an assertion or logging when the deadline expires in ResetAllAsync.
+    public void ResetAll()
+    {
+        // The Scheduler's IPipelineConfigStore, IProviderConfigStore, IProjectStore and
+        // IConfigurationStore are all ApiXxxStore instances backed by ApiConfigurationStore, which
+        // caches results for 60 s (CacheTtlSeconds). When the shared InMemoryConfigurationStore is
+        // reset by E2EWebApplicationFactory.ResetAll(), these caches still hold the previous test's
+        // templates, projects, provider configs, and agent profiles. Without explicit invalidation
+        // here, StartLoopAsync and the first poll cycle read stale data: an enabled template from
+        // the previous test can be visible, a disabled-project template can appear enabled, and
+        // the TypePriority tests see wrong MaxRunsPerCycle/PollInterval values.
+        Services.GetRequiredService<ApiConfigurationStore>().InvalidateCaches();
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
