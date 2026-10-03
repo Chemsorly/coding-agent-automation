@@ -573,8 +573,8 @@ public sealed class ConfigEndpointTests
             Kind = ProviderKind.Issue,
             DisplayName = "Original Provider (should be deleted)",
             ProviderType = "github",
-            Settings = new Dictionary<string, string>(),
-            Secrets = new Dictionary<string, string>()
+            Settings = [],
+            Secrets = []
         };
         var seedResponse = await _client.PutAsJsonAsync("/api/config/provider-configs", originalConfig, PipelineJsonOptions.Default);
         seedResponse.StatusCode.Should().Be(HttpStatusCode.OK, "seeding original provider must succeed");
@@ -595,13 +595,13 @@ public sealed class ConfigEndpointTests
             DisplayName = "Imported Provider",
             ProviderType = "gitlab",
             Settings = new Dictionary<string, string> { ["url"] = "https://gitlab.example.com" },
-            Secrets = new Dictionary<string, string>()
+            Secrets = []
         };
 
         var bundle = new ConfigBundle
         {
-            ProviderConfigs = new List<ProviderConfigDto>
-            {
+            ProviderConfigs =
+            [
                 new ProviderConfigDto
                 {
                     Id = newProviderId,
@@ -611,7 +611,7 @@ public sealed class ConfigEndpointTests
                     Enabled = true,
                     Configuration = JsonSerializer.Serialize(newProvider, PipelineJsonOptions.Default)
                 }
-            }
+            ]
         };
 
         var bundleJson = JsonSerializer.Serialize(bundle, CamelCaseEnumOptions);
@@ -670,7 +670,7 @@ public sealed class ConfigEndpointTests
     {
         // POST with empty file body
         using var content = new MultipartFormDataContent();
-        content.Add(new ByteArrayContent(Array.Empty<byte>()), "file", "empty.json");
+        content.Add(new ByteArrayContent([]), "file", "empty.json");
 
         var response = await _client.PostAsync("/api/config/import", content);
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest,
@@ -1232,7 +1232,7 @@ public sealed class ConfigEndpointTests
             DisplayName = "AllTypes Provider",
             ProviderType = "github",
             Settings = new Dictionary<string, string> { ["url"] = "https://example.com" },
-            Secrets = new Dictionary<string, string>()
+            Secrets = []
         };
         var agentProfile = new AgentProfile
         {
