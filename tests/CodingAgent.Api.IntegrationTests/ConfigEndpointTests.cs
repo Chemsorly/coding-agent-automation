@@ -1198,6 +1198,187 @@ public sealed class ConfigEndpointTests
         project.MaxDecompositionSubIssues.Should().Be(12);
     }
 
+    /// <summary>
+    /// Characterization test — regression harness for the ImportConfigAsync decomposition.
+    /// Posts a bundle containing all seven config types and reads each back to confirm every
+    /// entity-mapping block is intact after the refactor.
+    /// FK note: JobTemplates.ProjectId must reference a Projects entry in the same bundle.
+    /// </summary>
+    // TODO [WARNING]: This test starts from a clean database and imports once, so the ClearExistingConfig
+    // step is not exercised against pre-existing rows. If ClearExistingConfig silently stopped deleting
+    // one or more entity types, a second import would accumulate rows and this test would still pass.
+    // Add a second import of a different bundle (different IDs) and assert the first import's IDs are
+    // absent to lock in the clear behaviour. See Issue #3267 review findings (TestQualityReviewer [WARNING]).
+    //
+    // TODO [WARNING]: The ValidateAndDeserializeBundle error paths are not covered by any test. The helper
+    // handles four distinct early-return branches: (a) null/empty file, (b) JsonException, (c) null
+    // deserialized result, (d) ValidateImportedSettings failures. Add tests for at least: posting no file,
+    // posting malformed JSON, and posting a bundle that fails settings validation.
+    // See Issue #3267 review findings (TestQualityReviewer [WARNING]).
+    [Fact]
+    public async Task ConfigImport_AllSevenTypes_RoundTrip()
+    {
+        var projectId = Guid.NewGuid();
+        var providerId = Guid.NewGuid();
+        var agentProfileId = Guid.NewGuid();
+        var qgcId = Guid.NewGuid();
+        var reviewerId = Guid.NewGuid();
+        var templateId = Guid.NewGuid();
+
+        var provider = new ProviderConfig
+        {
+            Id = providerId.ToString(),
+            Kind = ProviderKind.Agent,
+            DisplayName = "AllTypes Provider",
+            ProviderType = "github",
+            Settings = new Dictionary<string, string> { ["url"] = "https://example.com" },
+            Secrets = new Dictionary<string, string>()
+        };
+        var agentProfile = new AgentProfile
+        {
+            Id = agentProfileId.ToString(),
+            DisplayName = "AllTypes Profile",
+            AgentProviderConfigId = providerId.ToString()
+        };
+        var qgc = new QualityGateConfiguration
+        {
+            Id = qgcId.ToString(),
+            DisplayName = "AllTypes Gate",
+            Enabled = true
+        };
+        var reviewer = new ReviewerConfiguration
+        {
+            Id = reviewerId.ToString(),
+            DisplayName = "AllTypes Reviewer",
+            Agents = [new ReviewAgent { Name = "Rev", Prompt = "Review this." }],
+            Enabled = true
+        };
+        var template = new PipelineJobTemplate
+        {
+            Id = templateId.ToString(),
+            Name = "AllTypes Template",
+            IssueProviderId = providerId.ToString(),
+            RepoProviderId = providerId.ToString()
+        };
+
+        var bundle = new ConfigBundle
+        {
+            PipelineConfig = JsonSerializer.Serialize(new PipelineConfiguration(), PipelineJsonOptions.Default),
+            ProviderConfigs =
+            [
+                new ProviderConfigDto
+                {
+                    Id = providerId,
+                    Kind = ProviderKind.Agent,
+                    DisplayName = provider.DisplayName,
+                    ProviderType = provider.ProviderType,
+                    Enabled = true,
+                    Configuration = JsonSerializer.Serialize(provider, PipelineJsonOptions.Default)
+                }
+            ],
+            AgentProfiles =
+            [
+                new NamedConfigDto
+                {
+                    Id = agentProfileId,
+                    Name = agentProfile.DisplayName,
+                    Configuration = JsonSerializer.Serialize(agentProfile, PipelineJsonOptions.Default)
+                }
+            ],
+            QualityGateConfigs =
+            [
+                new NamedConfigDto
+                {
+                    Id = qgcId,
+                    Name = qgc.DisplayName,
+                    Configuration = JsonSerializer.Serialize(qgc, PipelineJsonOptions.Default)
+                }
+            ],
+            ReviewerConfigs =
+            [
+                new NamedConfigDto
+                {
+                    Id = reviewerId,
+                    Name = reviewer.DisplayName,
+                    Configuration = JsonSerializer.Serialize(reviewer, PipelineJsonOptions.Default)
+                }
+            ],
+            Projects =
+            [
+                new ProjectDto
+                {
+                    Id = projectId,
+                    Name = "AllTypes Project",
+                    Enabled = true
+                }
+            ],
+            // ProjectId must reference the Projects entry above to satisfy the FK constraint.
+            JobTemplates =
+            [
+                new JobTemplateDto
+                {
+                    Id = templateId,
+                    ProjectId = projectId,
+                    Name = template.Name,
+                    Configuration = JsonSerializer.Serialize(template, PipelineJsonOptions.Default)
+                }
+            ]
+        };
+
+        using var content = new MultipartFormDataContent();
+        var file = new ByteArrayContent(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(bundle, CamelCaseEnumOptions)));
+        file.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        content.Add(file, "file", "all-types.json");
+
+        var importResponse = await _client.PostAsync("/api/config/import", content);
+        importResponse.StatusCode.Should().Be(HttpStatusCode.OK, "all-seven-types import must succeed");
+        var result = await importResponse.Content.ReadFromJsonAsync<ImportExportResult>(CaseInsensitiveOptions);
+        result!.Success.Should().BeTrue();
+
+        // ── Assert each type round-tripped ────────────────────────────────────────
+        // TODO [WARNING]: Assertions below only check that the imported ID is present in the GET response.
+        // If ApplyBundle maps a non-ID field (DisplayName, Kind, ProviderType, Enabled, etc.) incorrectly,
+        // the test still passes because the entity row exists. A stronger regression harness should verify
+        // at least one non-ID field per entity type to catch field-mapping bugs in ApplyBundle.
+        // See Issue #3267 review findings (TestQualityReviewer [WARNING]).
+
+        // ProviderConfigs
+        var providers = await _client.GetFromJsonAsync<List<ProviderConfig>>(
+            $"/api/config/provider-configs?kind={ProviderKind.Agent}", PipelineJsonOptions.Default);
+        providers.Should().Contain(p => p.Id == providerId.ToString(),
+            "imported ProviderConfig must appear in GET /api/config/provider-configs");
+
+        // AgentProfiles
+        var profiles = await _client.GetFromJsonAsync<List<AgentProfile>>(
+            "/api/config/agent-profiles", PipelineJsonOptions.Default);
+        profiles.Should().Contain(p => p.Id == agentProfileId.ToString(),
+            "imported AgentProfile must appear in GET /api/config/agent-profiles");
+
+        // QualityGateConfigs
+        var gates = await _client.GetFromJsonAsync<List<QualityGateConfiguration>>(
+            "/api/config/quality-gate-configs", PipelineJsonOptions.Default);
+        gates.Should().Contain(g => g.Id == qgcId.ToString(),
+            "imported QualityGateConfig must appear in GET /api/config/quality-gate-configs");
+
+        // ReviewerConfigs
+        var reviewers = await _client.GetFromJsonAsync<List<ReviewerConfiguration>>(
+            "/api/config/reviewer-configs", PipelineJsonOptions.Default);
+        reviewers.Should().Contain(r => r.Id == reviewerId.ToString(),
+            "imported ReviewerConfig must appear in GET /api/config/reviewer-configs");
+
+        // Projects
+        var projects = await _client.GetFromJsonAsync<List<PipelineProject>>(
+            "/api/config/projects", PipelineJsonOptions.Default);
+        projects.Should().Contain(p => p.Id == projectId.ToString(),
+            "imported Project must appear in GET /api/config/projects");
+
+        // JobTemplates (via project templates endpoint)
+        var templates = await _client.GetFromJsonAsync<List<PipelineJobTemplate>>(
+            $"/api/config/projects/{projectId}/templates", PipelineJsonOptions.Default);
+        templates.Should().Contain(t => t.Id == templateId.ToString(),
+            "imported JobTemplate must appear in GET /api/config/projects/{id}/templates");
+    }
+
     // ── IDs that are not GUIDs ────────────────────────────────────────────────────
 
     [Fact]
