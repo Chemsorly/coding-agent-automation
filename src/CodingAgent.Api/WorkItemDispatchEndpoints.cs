@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Text.Json;
 using CodingAgent.Api.Dispatch;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -321,8 +322,8 @@ public static class WorkItemDispatchEndpoints
         // agentSelector originates from a database column set by POST /api/work-items callers;
         // a crafted value containing \r\n can inject fake log lines (log forging). All log and
         // Conflict call sites below use sanitizedSelector / sanitized normalizedSelector instead
-        // of the raw values. See also: LogSanitizer in CodingAgent.Pipeline.Services.
-        var sanitizedSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(agentSelector);
+        // of the raw values. See also: LogSanitizer in CodingAgent.Infrastructure.Common.
+        var sanitizedSelector = LogSanitizer.SanitizeForLog(agentSelector);
 
         // Acquire advisory lock keyed on the normalized selector and perform the post-lock
         // TOCTOU re-read. Both are encapsulated in TryEnterSelectorDispatchAsync (issue #3235):
@@ -377,7 +378,7 @@ public static class WorkItemDispatchEndpoints
         var effectiveSelector = resolvedSelector is not null
             ? JobTemplateStore.NormalizeLabels(resolvedSelector)
             : normalizedSelector;
-        var sanitizedEffectiveSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(effectiveSelector);
+        var sanitizedEffectiveSelector = LogSanitizer.SanitizeForLog(effectiveSelector);
 
         // Build the projection for the shared dispatch helper (issue #2988).
         // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
@@ -499,7 +500,7 @@ public static class WorkItemDispatchEndpoints
         if (template is null)
         {
             Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
-                CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector));
+                LogSanitizer.SanitizeForLog(request.AgentSelector));
             // 422 Unprocessable Entity — permanent config error (no job template for this selector).
             // Distinct from 409 Conflict (transient capacity limit) so callers can differentiate
             // permanent failures (cascade run to Failed) from transient ones (leave Queued, retry later).
@@ -529,7 +530,7 @@ public static class WorkItemDispatchEndpoints
 
         // Normalize and sanitize the selector for the gate check and log messages.
         var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
-        var sanitizedReqSelector = CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(request.AgentSelector);
+        var sanitizedReqSelector = LogSanitizer.SanitizeForLog(request.AgentSelector);
 
         // Run the gate check BEFORE creating the entity so a 409/503 rejection does not
         // leave an orphaned Dispatched row in the database. DispatchResolvedWorkItemAsync
@@ -748,7 +749,7 @@ public static class WorkItemDispatchEndpoints
             // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
             Log.Warning(
                 "DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503",
-                CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(normalizedSelector));
+                LogSanitizer.SanitizeForLog(normalizedSelector));
             WorkDistributionTelemetry.RecordDispatchAttempt("transient", "lock_timeout");
             return (null, TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable));
         }

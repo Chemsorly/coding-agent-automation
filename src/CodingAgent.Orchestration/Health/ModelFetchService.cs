@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;

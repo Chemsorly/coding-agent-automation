@@ -374,6 +374,10 @@ public class LocalPipelineExecutorTests : IDisposable
         var executor = new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, AgentIdentity: new AgentId("test-agent")));
 
+        // TODO: migrate bare "GitHub" / "KiroCli" string literals in test fixtures to use
+        //       ProviderTypes.GitHub / ProviderTypes.KiroCli so a constant-value rename is
+        //       caught at compile time instead of silently breaking fixture resolution.
+        //       Tracked by correctness review finding (WARNING) on this file and ~20 others.
         var repoConfig = new ProviderConfig
         {
             Id = "repo-config-1",

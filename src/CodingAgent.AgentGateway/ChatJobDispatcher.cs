@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using CodingAgent.Pipeline;
 using CodingAgent.AgentGateway;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;

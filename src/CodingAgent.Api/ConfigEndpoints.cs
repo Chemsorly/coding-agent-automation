@@ -605,26 +605,8 @@ public static class ConfigEndpoints
         IConfigurationStore configStore,
         CancellationToken ct)
     {
-        if (file is null || file.Length == 0)
-            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "No file uploaded" });
-
-        ConfigBundle? bundle;
-        try
-        {
-            using var stream = file.OpenReadStream();
-            bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, ImportOptions, ct);
-        }
-        catch (JsonException ex)
-        {
-            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid JSON: {ex.Message}" });
-        }
-
-        if (bundle is null)
-            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
-
-        var settingsErrors = ValidateImportedSettings(bundle);
-        if (settingsErrors.Count > 0)
-            return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid settings: {string.Join(" ", settingsErrors)}" });
+        var (bundle, error) = await ValidateAndDeserializeBundle(file, ct);
+        if (error is not null) return error;
 
         // Obtain the execution strategy from a short-lived context that is properly disposed.
         // CreateDbContext() checks out a pooled slot — callers must dispose it to return the slot.
@@ -646,98 +628,9 @@ public static class ConfigEndpoints
             await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
 
-            // Clear existing config (not runs, consolidation data, or work items — those are preserved).
-            // TODO [WARNING]: db.PipelineConfig on a freshly created DbContext returns the change-tracker's
-            // local cache, which is empty. RemoveRange(db.PipelineConfig) is therefore a no-op against
-            // tracked state. Verify that EF Core translates RemoveRange(DbSet<T>) into a bulk DELETE SQL
-            // statement rather than relying on tracked entities — if the delete only fires via tracked
-            // state, rows are silently not deleted on retry attempts where the cache starts clean.
-            // See Issue #2576 review findings (Correctness [WARNING], DotNetSpecialist [WARNING]).
-            db.PipelineConfig.RemoveRange(db.PipelineConfig);
-            db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
-            db.AgentProfiles.RemoveRange(db.AgentProfiles);
-            db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
-            db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
-            db.Projects.RemoveRange(db.Projects);
-            db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
-            await db.SaveChangesAsync(cancellationToken);
+            await ClearExistingConfig(db, cancellationToken);
+            await ApplyBundle(db, bundle, cancellationToken);
 
-            if (bundle.PipelineConfig is not null)
-            {
-                db.PipelineConfig.Add(new PipelineConfigEntity
-                {
-                    Id = Guid.NewGuid(),
-                    Configuration = bundle.PipelineConfig
-                });
-            }
-
-            foreach (var p in bundle.ProviderConfigs ?? [])
-            {
-                db.ProviderConfigs.Add(new ProviderConfigEntity
-                {
-                    Id = p.Id,
-                    Kind = p.Kind,
-                    DisplayName = p.DisplayName,
-                    ProviderType = p.ProviderType,
-                    Enabled = p.Enabled,
-                    Configuration = p.Configuration
-                });
-            }
-
-            foreach (var a in bundle.AgentProfiles ?? [])
-            {
-                db.AgentProfiles.Add(new AgentProfileEntity
-                {
-                    Id = a.Id,
-                    Name = a.Name,
-                    Configuration = a.Configuration
-                });
-            }
-
-            foreach (var q in bundle.QualityGateConfigs ?? [])
-            {
-                db.QualityGateConfigs.Add(new QualityGateConfigEntity
-                {
-                    Id = q.Id,
-                    Name = q.Name,
-                    Configuration = q.Configuration
-                });
-            }
-
-            foreach (var r in bundle.ReviewerConfigs ?? [])
-            {
-                db.ReviewerConfigs.Add(new ReviewerConfigEntity
-                {
-                    Id = r.Id,
-                    Name = r.Name,
-                    Configuration = r.Configuration
-                });
-            }
-
-            foreach (var proj in bundle.Projects ?? [])
-            {
-                db.Projects.Add(new ProjectEntity
-                {
-                    Id = proj.Id,
-                    Name = proj.Name,
-                    Enabled = proj.Enabled,
-                    Description = proj.Description,
-                    Settings = proj.Settings
-                });
-            }
-
-            foreach (var t in bundle.JobTemplates ?? [])
-            {
-                db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
-                {
-                    Id = t.Id,
-                    ProjectId = t.ProjectId,
-                    Name = t.Name,
-                    Configuration = t.Configuration
-                });
-            }
-
-            await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
         }, ct);
 
@@ -756,6 +649,157 @@ public static class ConfigEndpoints
                       $"{bundle.Projects?.Count ?? 0} projects, " +
                       $"{bundle.JobTemplates?.Count ?? 0} templates"
         });
+    }
+
+    /// <summary>
+    /// Deserializes and validates the uploaded config bundle.
+    /// Returns a non-null <see cref="ConfigBundle"/> when successful (error is null),
+    /// or a non-null <see cref="IResult"/> error when validation fails (bundle is a stub).
+    /// </summary>
+    // TODO [WARNING]: The return type uses non-nullable ConfigBundle but returns a stub new ConfigBundle()
+    // on every error path. The type system does not enforce that callers check 'error' before using
+    // 'bundle'. If the null-guard at the call site (if (error is not null) return error) is ever removed
+    // or bypassed, the import would proceed with an empty bundle, silently clearing all config and
+    // inserting nothing. Consider returning (ConfigBundle? bundle, IResult? error) to force a null-check,
+    // or using a discriminated union / exception to express the failure state unambiguously.
+    // See Issue #3267 review findings (DotNetSpecialist [WARNING], Correctness [SUGGESTION]).
+    private static async Task<(ConfigBundle bundle, IResult? error)> ValidateAndDeserializeBundle(
+        IFormFile file,
+        CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "No file uploaded" }));
+
+        ConfigBundle? bundle;
+        try
+        {
+            using var stream = file.OpenReadStream();
+            bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, ImportOptions, ct);
+        }
+        catch (JsonException ex)
+        {
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid JSON: {ex.Message}" }));
+        }
+
+        if (bundle is null)
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" }));
+
+        var settingsErrors = ValidateImportedSettings(bundle);
+        if (settingsErrors.Count > 0)
+            return (new ConfigBundle(), TypedResults.BadRequest(new ImportExportResult { Success = false, Message = $"Invalid settings: {string.Join(" ", settingsErrors)}" }));
+
+        return (bundle, null);
+    }
+
+    /// <summary>
+    /// Removes all existing config rows (providers, profiles, quality gates, reviewers, projects,
+    /// templates, and pipeline config) then flushes the deletes.
+    /// Must be called inside the retry execution strategy lambda — <paramref name="ct"/> is the
+    /// per-attempt cancellation token, not the outer request token.
+    /// </summary>
+    private static async Task ClearExistingConfig(PipelineDbContext db, CancellationToken ct)
+    {
+        // Clear existing config (not runs, consolidation data, or work items — those are preserved).
+        // TODO [WARNING]: db.PipelineConfig on a freshly created DbContext returns the change-tracker's
+        // local cache, which is empty. RemoveRange(db.PipelineConfig) is therefore a no-op against
+        // tracked state. Verify that EF Core translates RemoveRange(DbSet<T>) into a bulk DELETE SQL
+        // statement rather than relying on tracked entities — if the delete only fires via tracked
+        // state, rows are silently not deleted on retry attempts where the cache starts clean.
+        // See Issue #2576 review findings (Correctness [WARNING], DotNetSpecialist [WARNING]).
+        db.PipelineConfig.RemoveRange(db.PipelineConfig);
+        db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
+        db.AgentProfiles.RemoveRange(db.AgentProfiles);
+        db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
+        db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
+        db.Projects.RemoveRange(db.Projects);
+        db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
+        await db.SaveChangesAsync(ct);
+    }
+
+    /// <summary>
+    /// Inserts all entities from <paramref name="bundle"/> into <paramref name="db"/> then flushes
+    /// the inserts. Does not commit — the caller owns the transaction boundary.
+    /// Must be called inside the retry execution strategy lambda — <paramref name="ct"/> is the
+    /// per-attempt cancellation token, not the outer request token.
+    /// </summary>
+    private static async Task ApplyBundle(PipelineDbContext db, ConfigBundle bundle, CancellationToken ct)
+    {
+        if (bundle.PipelineConfig is not null)
+        {
+            db.PipelineConfig.Add(new PipelineConfigEntity
+            {
+                Id = Guid.NewGuid(),
+                Configuration = bundle.PipelineConfig
+            });
+        }
+
+        foreach (var p in bundle.ProviderConfigs ?? [])
+        {
+            db.ProviderConfigs.Add(new ProviderConfigEntity
+            {
+                Id = p.Id,
+                Kind = p.Kind,
+                DisplayName = p.DisplayName,
+                ProviderType = p.ProviderType,
+                Enabled = p.Enabled,
+                Configuration = p.Configuration
+            });
+        }
+
+        foreach (var a in bundle.AgentProfiles ?? [])
+        {
+            db.AgentProfiles.Add(new AgentProfileEntity
+            {
+                Id = a.Id,
+                Name = a.Name,
+                Configuration = a.Configuration
+            });
+        }
+
+        foreach (var q in bundle.QualityGateConfigs ?? [])
+        {
+            db.QualityGateConfigs.Add(new QualityGateConfigEntity
+            {
+                Id = q.Id,
+                Name = q.Name,
+                Configuration = q.Configuration
+            });
+        }
+
+        foreach (var r in bundle.ReviewerConfigs ?? [])
+        {
+            db.ReviewerConfigs.Add(new ReviewerConfigEntity
+            {
+                Id = r.Id,
+                Name = r.Name,
+                Configuration = r.Configuration
+            });
+        }
+
+        foreach (var proj in bundle.Projects ?? [])
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = proj.Id,
+                Name = proj.Name,
+                Enabled = proj.Enabled,
+                Description = proj.Description,
+                Settings = proj.Settings
+            });
+        }
+
+        foreach (var t in bundle.JobTemplates ?? [])
+        {
+            db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+            {
+                Id = t.Id,
+                ProjectId = t.ProjectId,
+                Name = t.Name,
+                Configuration = t.Configuration
+            });
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     /// <summary>

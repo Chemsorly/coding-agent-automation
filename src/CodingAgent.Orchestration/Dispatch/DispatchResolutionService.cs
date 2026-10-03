@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
