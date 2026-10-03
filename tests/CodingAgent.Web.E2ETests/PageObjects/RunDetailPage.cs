@@ -24,10 +24,7 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Allow time for Blazor Server circuit to connect and event handlers to attach.
-        // 1500ms is insufficient under CI load; 3000ms matches the convention in SettingsPage
-        // and AgentCodingPage where interactive button clicks (onclick) must work reliably.
-        await _page.WaitForTimeoutAsync(3000);
+        await _page.WaitForTimeoutAsync(1500);
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
