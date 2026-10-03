@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
@@ -234,7 +235,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Strips newline characters from a user-supplied string before it is written to a log entry,
     /// preventing log injection / log forging attacks.
-    /// Delegates to the shared <see cref="CodingAgent.Pipeline.Services.LogSanitizer"/> utility.
+    /// Delegates to the shared <see cref="CodingAgent.Infrastructure.Common.LogSanitizer"/> utility.
     /// </summary>
-    private static string SanitizeForLog(string? value) => CodingAgent.Pipeline.Services.LogSanitizer.SanitizeForLog(value);
+    private static string SanitizeForLog(string? value) => LogSanitizer.SanitizeForLog(value);
 }
