@@ -1,5 +1,5 @@
 using AwesomeAssertions;
-using CodingAgent.Pipeline.Services;
+using CodingAgent.Infrastructure.Common;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 
