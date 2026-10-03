@@ -33,6 +33,7 @@ The rules a plausible change could break. Details are in the linked entries.
 - Dispatch order is Review, Decomposition, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation))
 - A work item stores identity only; config is resolved at assignment, and a failed enrichment returns 503. ([Payload](#workitemspayload-config-snapshot-must-be-at-dispatch-time-not-enqueue-time))
 - `AgentTimeout` is the only agent time limit; chat pods have their own. ([Timeouts](#agenttimeout-is-the-only-agent-time-limit))
+- An agent pod exits 0 exactly when its run's outcome is recorded and never reports SIGTERM; pod retries belong to the Kubernetes Job. ([Agent Jobs](#agent-jobs-kubernetes-retries-pods-the-agent-records-outcomes))
 - Merging is always a human action. ([Refactoring loop](#refactoring-consolidation-loop-autonomous-up-to-pr-creation-merge-is-human-gated))
 - Epics need human approval between the plan and the sub-issues. ([Epics](#epic-decomposition-two-phase-with-human-gate))
 - One enabled template is one repository and one tracker; an epic's tracker decides where its sub-issues go. ([1:1:1](#111-template-binding-one-repo-one-tracker-per-enabled-template--intentional-constraint), [Epic scope](#epic-scope-tracker-of-record-determines-sub-issue-routing--intentional-same-rationale-as-111))
@@ -53,6 +54,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** The Job model proved itself in production (clean pods, autoscaling, no stale state), and the other modes cost test effort without users. **Accepting:** no zero-dependency local mode.
 **Not:** progressive modes for easier onboarding; persistent pull-model agents.
 **Revisit when:** a target without Kubernetes becomes a real requirement.
+
+### Agent Jobs: Kubernetes retries pods, the agent records outcomes
+<!-- 2026-10-03 -->
+**Rule:** An agent pod exits 0 exactly when its run's outcome is recorded (or the work item was already terminal), whatever the outcome, and never reports a status for SIGTERM. Any other exit leaves the retry to the Job: a drain, eviction, preemption or node loss (pod condition `DisruptionTarget`) is replaced without spending `backoffLimit`, while a crash or OOM kill counts against it (2 retries, each a full rerun within the same `AgentTimeout`). While the API gives no HTTP response, the agent waits instead of exiting. The JobController acts only on a Job's `Complete` or `Failed` condition, never on pod counters, and records a failed Job as `InfrastructureFailure` (never claimed), `Timeout` (`DeadlineExceeded`) or `ExitCodeFailure` (with the last pod's termination). Every final failure ends in `agent:error` for a human to requeue.
+**Why:** In production the retry budget went to control-plane outages and nightly node drains instead of agent crashes, a drained run reported itself Cancelled, and a Job still inside its retry backoff was failed early. One owner per failure keeps recovery inside Kubernetes Job semantics. **Accepting:** after a hard node loss the replacement waits until the old pod is gone (the node returns or its node object is deleted); a deterministic OOM reruns up to three times; a rerun starts from scratch.
+**Not:** app-level requeue of infrastructure failures; a remaining-budget check before a rerun; reporting SIGTERM as Cancelled.
+**Revisit when:** reruns from scratch cost too much, or replacements wait long after node losses.
 
 ### Only the API owns the database; each service has one job
 <!-- 2026-07-04; updated 2026-08-28 (specs 041–045) -->

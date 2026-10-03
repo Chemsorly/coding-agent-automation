@@ -514,8 +514,8 @@ public partial class QualityGateExecutor
             var decision = outcome switch
             {
                 RetryOutcome.TransientWait => await HandleTransientAsync(run, config, consecutiveTransientRetries, ct),
-                RetryOutcome.AbortAuth => await HandleAuthAbortAsync(run),
-                RetryOutcome.RestartSession => await HandleSessionRestartAsync(run),
+                RetryOutcome.AbortAuth => await HandleAuthAbortAsync(run, consecutiveTransientRetries),
+                RetryOutcome.RestartSession => await HandleSessionRestartAsync(run, consecutiveTransientRetries),
                 _ => await HandleDefaultRetryAsync(run, agentResult, context.RepoProvider)
             };
             run.RetryCount += decision.RetryCountDelta;
@@ -601,20 +601,10 @@ public partial class QualityGateExecutor
 
     /// <summary>
     /// Handles a <see cref="RetryOutcome.AbortAuth"/> iteration. Breaks the loop immediately.
-    /// Carries <c>RetryCountDelta: 1</c> to preserve the current behavior of incrementing
-    /// <c>run.RetryCount</c> on auth failures.
+    /// Does not consume a retry-budget slot (<c>RetryCountDelta: 0</c>), consistent with
+    /// <see cref="HandleTransientAsync"/> and <see cref="HandleSessionRestartAsync"/>.
     /// </summary>
-    /// <remarks>
-    /// NOTE: Incrementing run.RetryCount here on AbortAuth is semantically inconsistent
-    /// with the stated design intent ("only increment after a real fix-agent attempt runs"). Auth
-    /// failures are permanent errors that immediately break the loop — they are not genuine fix
-    /// attempts that consumed a retry-budget slot. If run.RetryCount is inspected after the loop
-    /// (e.g., to cap draft PR descriptions or display attempt counts), AbortAuth artificially
-    /// inflates the counter by 1. Consider changing RetryCountDelta to 0 (matching the
-    /// TransientWait / RestartSession treatment) in a separate issue.
-    /// See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs:549
-    /// </remarks>
-    private Task<RetryDecision> HandleAuthAbortAsync(PipelineRun run)
+    private Task<RetryDecision> HandleAuthAbortAsync(PipelineRun run, int consecutiveTransientRetries)
     {
         _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeAuthAbort));
         _logger.Error(
@@ -623,16 +613,8 @@ public partial class QualityGateExecutor
         return Task.FromResult(new RetryDecision(
             ShouldBreak: true,
             ShouldContinue: false,
-            // NOTE: ConsecutiveTransientRetries is reset to 0 here rather than passed
-            // through unchanged. Since ShouldBreak: true causes the loop to exit immediately,
-            // the value is never read again in the current code (the caller assigns it to its
-            // loop variable, then immediately breaks). However, the behavior-neutral choice
-            // matching the original code is to return the accumulated value unchanged. If a
-            // future caller inspects the counter after a break (e.g., for telemetry or error
-            // reporting), it will silently see 0 instead of the real count.
-            // See review findings: Correctness WARNING and DotNetSpecialist WARNING.
-            ConsecutiveTransientRetries: 0,
-            RetryCountDelta: 1));
+            ConsecutiveTransientRetries: consecutiveTransientRetries,
+            RetryCountDelta: 0));
     }
 
     /// <summary>
@@ -641,13 +623,12 @@ public partial class QualityGateExecutor
     /// Does not consume a retry-budget slot (<c>RetryCountDelta: 0</c>).
     /// </summary>
     /// <remarks>
-    /// NOTE: RestartSession does not increment run.RetryCount and has no cap analogous
-    /// to MaxConsecutiveTransientRetries. If the fix agent repeatedly returns zero tokens, the
-    /// outer while loop never advances run.RetryCount and runs indefinitely (until cancellation).
-    /// Add a consecutive RestartSession cap or increment run.RetryCount here to bound the loop.
-    /// See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:556
+    /// RestartSession does not increment <c>run.RetryCount</c> and has no dedicated cap.
+    /// If the fix agent repeatedly returns zero tokens, the outer while loop never advances
+    /// <c>run.RetryCount</c> and runs indefinitely (until cancellation). A future improvement
+    /// could add a consecutive RestartSession cap analogous to <c>MaxConsecutiveTransientRetries</c>.
     /// </remarks>
-    private Task<RetryDecision> HandleSessionRestartAsync(PipelineRun run)
+    private Task<RetryDecision> HandleSessionRestartAsync(PipelineRun run, int consecutiveTransientRetries)
     {
         _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeSessionRestart));
         _logger.Warning(
@@ -658,17 +639,7 @@ public partial class QualityGateExecutor
         return Task.FromResult(new RetryDecision(
             ShouldBreak: false,
             ShouldContinue: true,
-            // NOTE: ConsecutiveTransientRetries is reset to 0 here, but the original
-            // code returned the counter unchanged on the RestartSession path. This means that
-            // interleaved TransientWait / RestartSession sequences can never accumulate enough
-            // consecutive transient responses to fire MaxConsecutiveTransientRetries: after each
-            // TransientWait increments the counter, the next RestartSession silently resets it to
-            // 0, preventing the cap from ever being reached. Concrete scenario: alternating
-            // RestartSession / TransientWait indefinitely keeps the counter at 0 or 1 and the
-            // loop runs until CancellationToken fires. Consider passing the accumulated value
-            // through unchanged, or document the reset as intentional.
-            // See review findings: Correctness WARNING and DotNetSpecialist WARNING.
-            ConsecutiveTransientRetries: 0,
+            ConsecutiveTransientRetries: consecutiveTransientRetries,
             RetryCountDelta: 0));
     }
 

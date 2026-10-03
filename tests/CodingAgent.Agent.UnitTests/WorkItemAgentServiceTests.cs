@@ -176,24 +176,20 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     /// which causes K8s to mark the pod as "Completed" instead of "Error".
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_PipelineExecutionFails_SetsNonZeroExitCode()
+    public async Task ExecuteAsync_PipelineFails_OutcomeRecorded_ExitsZero()
     {
-        // Arrange: GET assignment → 200 OK, POST Running → 200 OK
-        // The hub connection will fail (nothing listening on port 1),
-        // which triggers the "Failed to connect SignalR hub" path → returns 1.
-        // This validates the exit code contract for failure scenarios.
+        // Arrange: GET assignment → 200 OK, POST Running → 200 OK; the minimal executor fails the
+        // pipeline and the (mock) reporter records that outcome.
         var assignmentJson = JsonSerializer.Serialize(
             CreateMinimalAssignment("job-fail", "owner/repo#99"), PipelineJsonOptions.Default);
 
         var handler = new FakeSequentialHandler([
             (System.Net.HttpStatusCode.OK, assignmentJson),  // GET assignment
-            (System.Net.HttpStatusCode.OK, "{}"),            // POST Running → accepted
-            (System.Net.HttpStatusCode.OK, "{}")             // POST Failed status (after hub connection failure)
+            (System.Net.HttpStatusCode.OK, "{}")             // POST Running → accepted
         ]);
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
-        // Use a hub manager pointing at non-existent server — StartAsync will throw
         var mockConnectionManager = Mock.Of<IAgentConnectionManager>();
 
         // Capture Environment.ExitCode inside the StopApplication callback — at the exact point
@@ -235,75 +231,137 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         // Read from the captured value (set synchronously before StopApplication returned)
         // rather than from Environment.ExitCode after the await, which is racy in parallel CI.
         var actualExitCode = await capturedExitCode.Task;
-        actualExitCode.Should().NotBe(0,
-            "Pipeline failure (including SignalR connection failure) must set non-zero exit code " +
-            "so K8s marks the pod as Failed, not Completed");
+        actualExitCode.Should().Be(0,
+            "a recorded outcome, Failed included, must exit 0 so the Job starts no further pod " +
+            "(the JobController only reports pod failures, not run outcomes)");
     }
 
     /// <summary>
-    /// Validates that RunWorkItemLifecycleAsync returns a non-zero exit code
-    /// when the pipeline completes with FinalStep != Completed, even after
-    /// successfully posting the "Failed" terminal status to the orchestrator.
-    /// This is the core bug: the method currently always returns 0 after posting terminal status.
+    /// When the outcome cannot be recorded (the API answers the terminal POST with an error), the
+    /// pod must exit non-zero so the Job tries again.
     /// </summary>
     [Fact]
-    public async Task ExecuteAsync_PipelineCompletesWithFailedStep_SetsNonZeroExitCode()
+    public async Task ExecuteAsync_CompletionNotRecorded_ExitsNonZero()
     {
-        // Arrange: Full HTTP sequence for a pipeline that fails after connecting
-        // The pipeline fails because hub connection throws, so we get the SignalR-fail path.
-        var assignmentJson = JsonSerializer.Serialize(
-            CreateMinimalAssignment("job-pipeline-fail", "owner/repo#100"), PipelineJsonOptions.Default);
+        var client = new Mock<IWorkItemLifecycleClient>();
+        client.Setup(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMinimalAssignment("wi-1", "owner/repo#100"));
+        client.Setup(c => c.PostStatusAsync("wi-1", It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var reporter = new Mock<IJobCompletionReporter>();
+        reporter.Setup(r => r.ReportCompletionAsync(It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemStatusPostException("Server error 500 from POST status=Failed (retries exhausted)"));
 
-        var handler = new FakeSequentialHandler([
-            (System.Net.HttpStatusCode.OK, assignmentJson),  // GET assignment
-            (System.Net.HttpStatusCode.OK, "{}"),            // POST Running
-            (System.Net.HttpStatusCode.OK, "{}")             // POST Failed
-        ]);
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
+        var exitCode = await RunUntilStoppedAsync(CreateService(client.Object, reporter: reporter.Object));
 
-        var failingConnectionManager = Mock.Of<IAgentConnectionManager>();
+        exitCode.Should().NotBe(0, "an outcome the API did not record leaves the retry to the Job");
+        reporter.Verify(r => r.ReportCompletionAsync(It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
+            Times.Once, "an HTTP error response is not retried by the agent");
+    }
 
-        // Capture Environment.ExitCode inside the StopApplication callback — at the exact point
-        // the service sets it — to avoid a race condition where parallel test assemblies running
-        // concurrently in CI reset ExitCode between the service setting it and this test reading it.
-        var capturedExitCode = new TaskCompletionSource<int>();
-        var stopCalled = new TaskCompletionSource<bool>();
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() =>
+    // ── Control plane unreachable ────────────────────────────────────────
+
+    /// <summary>
+    /// While the API gives no HTTP response at all, the agent waits instead of exiting: an outage
+    /// must not spend the Job's backoffLimit on a healthy pod.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ControlPlaneUnreachable_RetriesAssignmentFetchUntilItAnswers()
+    {
+        var client = new Mock<IWorkItemLifecycleClient>();
+        client.SetupSequence(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(Unreachable())
+            .ThrowsAsync(Unreachable())
+            .ReturnsAsync((JobAssignmentMessage?)null); // terminal (410 Gone)
+
+        var exitCode = await RunUntilStoppedAsync(CreateService(client.Object));
+
+        client.Verify(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()), Times.Exactly(3));
+        exitCode.Should().Be(0, "an already-terminal work item has its outcome recorded");
+    }
+
+    /// <summary>
+    /// The same wait covers the terminal report, so a finished run is not lost to an outage at its end.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_ControlPlaneUnreachable_RetriesCompletionReportUntilRecorded()
+    {
+        var client = new Mock<IWorkItemLifecycleClient>();
+        client.Setup(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMinimalAssignment("wi-1", "owner/repo#101"));
+        client.Setup(c => c.PostStatusAsync("wi-1", It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var reporter = new Mock<IJobCompletionReporter>();
+        reporter.SetupSequence(r => r.ReportCompletionAsync(It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemStatusPostException("All retries exhausted", new HttpRequestException("Connection refused")))
+            .Returns(Task.CompletedTask);
+
+        var exitCode = await RunUntilStoppedAsync(CreateService(client.Object, reporter: reporter.Object));
+
+        reporter.Verify(r => r.ReportCompletionAsync(It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+        exitCode.Should().Be(0);
+    }
+
+    /// <summary>
+    /// An HTTP error response (here 503 from enrichment) is not an outage: it is not waited out,
+    /// and the pod exits non-zero so the Job's backoffLimit bounds the retries.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_AssignmentErrorResponse_IsNotRetried_ExitsNonZero()
+    {
+        var client = new Mock<IWorkItemLifecycleClient>();
+        client.Setup(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new WorkItemFetchException("Service unavailable (503) (retries exhausted)"));
+
+        var exitCode = await RunUntilStoppedAsync(CreateService(client.Object));
+
+        client.Verify(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()), Times.Once);
+        exitCode.Should().NotBe(0);
+    }
+
+    // ── SIGTERM ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// SIGTERM is never reported as a status. A server-side stop has already written the terminal
+    /// status; any other SIGTERM is a drain or eviction, and a Cancelled report would turn the
+    /// Job's retry into a cancelled run. The pod exits 143 so Kubernetes sees a failed pod.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_Sigterm_PostsNoStatus_ExitsNonZero()
+    {
+        var client = new Mock<IWorkItemLifecycleClient>();
+        client.Setup(c => c.GetAssignmentAsync("wi-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMinimalAssignment("wi-1", "owner/repo#102"));
+        client.Setup(c => c.PostStatusAsync("wi-1", It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var pipelineStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var executor = new Mock<IWorkItemExecutor>();
+        executor.Setup(e => e.ExecuteAsync(
+                It.IsAny<JobAssignmentMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(),
+                It.IsAny<CodingAgent.Infrastructure.OutputBatcher>(), It.IsAny<Action<PipelineStep?>?>(), It.IsAny<CancellationToken>()))
+            .Returns(async (JobAssignmentMessage _, Microsoft.AspNetCore.SignalR.Client.HubConnection _,
+                CodingAgent.Infrastructure.OutputBatcher _, Action<PipelineStep?>? _, CancellationToken ct) =>
+            {
+                pipelineStarted.TrySetResult();
+                await Task.Delay(Timeout.Infinite, ct);
+                return new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+            });
+        var reporter = new Mock<IJobCompletionReporter>();
+        var service = CreateService(client.Object, executor.Object, reporter.Object);
+
+        var exitCode = await RunUntilStoppedAsync(service, async () =>
         {
-            capturedExitCode.TrySetResult(Environment.ExitCode);
-            stopCalled.TrySetResult(true);
+            await pipelineStarted.Task.WaitAsync(TimeSpan.FromSeconds(20));
+            await service.StopAsync(CancellationToken.None); // what the host does on SIGTERM
         });
 
-        var service = new WorkItemAgentService(new WorkItemAgentServiceDependencies(
-            "job-pipeline-fail", client, failingConnectionManager,
-            CreateMinimalWorkItemExecutor(),
-            Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
-
-        // Act
-        var previousExitCode = Environment.ExitCode;
-        try
-        {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            await service.StartAsync(cts.Token);
-
-            var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(20)));
-            completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
-
-            await service.StopAsync(CancellationToken.None);
-        }
-        finally
-        {
-            Environment.ExitCode = previousExitCode; // Restore
-        }
-
-        // Assert: read from the captured value (set synchronously before StopApplication returned)
-        // rather than from Environment.ExitCode after the await, which is racy in parallel CI.
-        var actualExitCode = await capturedExitCode.Task;
-        actualExitCode.Should().NotBe(0,
-            "When pipeline completes with FinalStep=Failed (even after posting terminal status), " +
-            "the process must exit non-zero so K8s marks the pod as Failed");
+        exitCode.Should().Be(143);
+        client.Verify(c => c.PostStatusAsync("wi-1", It.Is<WorkItemStatusUpdate>(u => u.Status != "Running"), It.IsAny<CancellationToken>()),
+            Times.Never, "SIGTERM must not be reported as Cancelled (or any other status)");
+        reporter.Verify(r => r.ReportCompletionAsync(It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     // ── ForceFlush Return Value Handling ─────────────────────────────────
@@ -448,7 +506,8 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     /// <summary>
     /// When ConnectAndRegisterAsync throws an exception whose message contains "404",
     /// the service must log with the hub-route-unreachable wording (not the generic
-    /// "Failed to connect/register" message) and still post Failed + exit non-zero.
+    /// "Failed to connect/register" message) and exit non-zero without posting a status:
+    /// nothing has run, so the Job retries the pod.
     /// </summary>
     [Fact]
     public async Task ExecuteAsync_SignalR404_LogsHubRouteUnreachableAndExitsNonZero()
@@ -509,6 +568,8 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
         capturedExitCode.Should().NotBe(0,
             "Hub 404 is a failure — pod must exit non-zero so K8s marks it as Failed");
+        handler.CallCount.Should().Be(2,
+            "only GET assignment and POST Running are sent; a failed hub connect posts no Failed status");
 
         // Assert: the 404-specific log message was emitted (not the generic one)
         _mockLogger.Verify(
@@ -600,6 +661,51 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             Mock.Of<IJobCompletionReporter>(),
             new AgentId("test-agent"), _mockLifetime.Object, _mockLogger.Object));
     }
+
+    private WorkItemAgentService CreateService(
+        IWorkItemLifecycleClient client,
+        IWorkItemExecutor? executor = null,
+        IJobCompletionReporter? reporter = null) =>
+        new(new WorkItemAgentServiceDependencies(
+            "wi-1", client, Mock.Of<IAgentConnectionManager>(),
+            executor ?? CreateMinimalWorkItemExecutor(),
+            reporter ?? Mock.Of<IJobCompletionReporter>(),
+            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object))
+        {
+            ControlPlaneRetryDelay = TimeSpan.FromMilliseconds(10)
+        };
+
+    /// <summary>
+    /// Starts the service, runs <paramref name="whileRunning"/>, and returns the exit code the service
+    /// set when it called StopApplication. The code is captured inside that callback because parallel
+    /// tests can reset Environment.ExitCode between the service setting it and the test reading it.
+    /// </summary>
+    private async Task<int> RunUntilStoppedAsync(WorkItemAgentService service, Func<Task>? whileRunning = null)
+    {
+        var exitCode = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => exitCode.TrySetResult(Environment.ExitCode));
+
+        var previousExitCode = Environment.ExitCode;
+        try
+        {
+            await service.StartAsync(CancellationToken.None);
+            if (whileRunning is not null)
+                await whileRunning();
+
+            var completed = await Task.WhenAny(exitCode.Task, Task.Delay(TimeSpan.FromSeconds(20)));
+            completed.Should().Be(exitCode.Task, "the service must call StopApplication within the timeout");
+            await service.StopAsync(CancellationToken.None);
+            return await exitCode.Task;
+        }
+        finally
+        {
+            Environment.ExitCode = previousExitCode;
+        }
+    }
+
+    /// <summary>What <see cref="WorkItemHttpClient"/> throws when the API gives no HTTP response.</summary>
+    private static WorkItemFetchException Unreachable() =>
+        new("All retries exhausted for GET assignment", new HttpRequestException("Connection refused"));
 
     private WorkItemExecutorRouter CreateMinimalWorkItemExecutor()
     {
