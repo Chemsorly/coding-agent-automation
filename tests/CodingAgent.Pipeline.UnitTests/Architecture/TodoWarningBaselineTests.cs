@@ -41,9 +41,9 @@ public class TodoWarningBaselineTests
     // + 9 QualityGateExecutor.RetryLoop conversions = 310) is consistent with 310. The value 288
     // is independently verifiable (grep src/**/*.cs) and is correct. Reconcile the issue description
     // or this comment to agree on the pre-change count to avoid misleading future maintainers.
-    // Pinned at: 287 (reduced from pre-change baseline of ~310 by converting QualityGateExecutor.RetryLoop.cs,
+    // Pinned at: 288 (reduced from pre-change baseline of ~310 by converting QualityGateExecutor.RetryLoop.cs,
     // WorkItemDispatchEndpoints.cs, and CreateBranchStep.cs — issue #3243).
-    private const int BaselineCount = 287;
+    private const int BaselineCount = 288;
 
     // ── Repo-root resolution (identical to SonarGateBugConditionTests) ────────
     // TODO (DotNetSpecialist [WARNING]): GetRepoRoot() is called during static property initialization.
