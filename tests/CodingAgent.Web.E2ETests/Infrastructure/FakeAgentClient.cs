@@ -486,6 +486,25 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reports one or more output lines for the active job.
+    /// Invokes <c>ReportOutputLines</c> on the hub — the same method called by the real agent.
+    /// Lines appear in the live output panel on the Run page and are persisted into the run's
+    /// output buffer so late-joining subscribers receive them via the backlog push in
+    /// <c>SubscribeToRun</c>.
+    /// </summary>
+    public async Task ReportOutputAsync(string jobId, params string[] lines)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        // TODO: [WARNING] ArgumentNullException.ThrowIfNull(lines) is unreachable dead code on a
+        // params parameter — the compiler supplies an empty array when the caller uses params
+        // syntax, so lines is never null. The guard misleadingly implies the null path is
+        // reachable. Remove it; the length check below already handles the empty-call case.
+        ArgumentNullException.ThrowIfNull(lines);
+        if (lines.Length == 0) return;
+        await _connection.InvokeAsync("ReportOutputLines", jobId, (IReadOnlyList<string>)lines);
+    }
+
+    /// <summary>
     /// Sends a heartbeat to keep the agent alive.
     /// </summary>
     public async Task SendHeartbeatAsync()

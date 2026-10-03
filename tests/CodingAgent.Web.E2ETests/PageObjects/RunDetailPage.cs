@@ -47,6 +47,67 @@ public sealed class RunDetailPage
     public async Task<bool> HasLiveOutputPanelAsync()
         => await _page.Locator(".cockpit-card:has(h2:has-text('Live output'))").IsVisibleAsync();
 
+    /// <summary>
+    /// Returns the text of all lines currently shown inside the live output panel.
+    /// The panel renders a single <c>&lt;pre&gt;</c> element with lines joined by <c>\n</c>;
+    /// this splits on newlines and trims to return individual non-empty lines.
+    /// Returns an empty list when the "Waiting for output…" placeholder is shown or the panel
+    /// is absent.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetLiveOutputLinesAsync()
+    {
+        var pre = _page.Locator(".cockpit-card:has(h2:has-text('Live output')) pre.run-live-log");
+        if (!await pre.IsVisibleAsync())
+            return [];
+        var text = await pre.TextContentAsync() ?? "";
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Returns true when the "Agent output (last N lines)" card is present — shown for finished
+    /// runs when <c>run.OutputTail</c> is non-empty. Uses <c>data-testid="output-tail-card"</c>.
+    /// </summary>
+    public async Task<bool> HasOutputTailCardAsync()
+        => await _page.Locator("[data-testid='output-tail-card']").IsVisibleAsync();
+
+    /// <summary>
+    /// Returns the text of all lines shown inside the saved output tail card.
+    /// Splits the single <c>&lt;pre&gt;</c> on newlines just like <see cref="GetLiveOutputLinesAsync"/>.
+    /// Returns an empty list when the card is absent or empty.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetOutputTailLinesAsync()
+    {
+        var pre = _page.Locator("[data-testid='output-tail-card'] pre.run-live-log");
+        if (!await pre.IsVisibleAsync())
+            return [];
+        var text = await pre.TextContentAsync() ?? "";
+        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    /// <summary>
+    /// Waits for the live output panel to show at least <paramref name="minimumLineCount"/> lines,
+    /// polling until the count is reached or the timeout expires.
+    /// </summary>
+    public async Task WaitForLiveOutputAsync(int minimumLineCount = 1, int timeoutMs = 15_000)
+    {
+        await _page.WaitForFunctionAsync(
+            @"(args) => {
+                const cards = Array.from(document.querySelectorAll('.cockpit-card'));
+                for (const card of cards) {
+                    const h2 = card.querySelector('h2');
+                    if (h2 && h2.textContent && h2.textContent.includes('Live output')) {
+                        const pre = card.querySelector('pre.run-live-log');
+                        if (!pre) return false;
+                        const lines = pre.textContent.split('\n').filter(l => l.length > 0);
+                        return lines.length >= args.min;
+                    }
+                }
+                return false;
+            }",
+            new { min = minimumLineCount },
+            new() { Timeout = timeoutMs });
+    }
+
     /// <summary>Clicks the sidebar's "Cancel Pipeline" button (present only while the run is active).</summary>
     public async Task CancelAsync()
     {
