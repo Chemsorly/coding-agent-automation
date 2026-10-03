@@ -54,9 +54,12 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
     /// </summary>
     private async Task FocusIssueListAsync()
     {
-        // Click the scrollable list to give it focus, then Playwright keyboard events will fire on it.
+        // FocusAsync directly sets focus to the .agent-history-list element (tabindex="0") without
+        // dispatching a synthetic click that would land on a child issue-row div and move focus away
+        // from the list container. ClickAsync is unreliable here because the click coordinates land
+        // on a child element, leaving the @onkeydown handler on .agent-history-list unreachable.
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 10_000 });
-        await Page.ClickAsync(".agent-history-list");
+        await Page.FocusAsync(".agent-history-list");
     }
 
     // ── Scenario 1: Arrow key navigation ────────────────────────────────────────
@@ -506,7 +509,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
 
         // Focus the list
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
-        await Page.ClickAsync(".agent-history-list");
+        await Page.FocusAsync(".agent-history-list");
 
         // ArrowDown to highlight PR #200 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
@@ -585,7 +588,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
 
         // Focus the list
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
-        await Page.ClickAsync(".agent-history-list");
+        await Page.FocusAsync(".agent-history-list");
 
         // ArrowDown to highlight epic #300 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
