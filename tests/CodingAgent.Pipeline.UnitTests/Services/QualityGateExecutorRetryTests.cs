@@ -436,8 +436,8 @@ public class QualityGateExecutorRetryTests
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
         // Loop broke after 1 attempt — did not exhaust all 3 retries
-        _run.RetryCount.Should().Be(1,
-            "PermanentAuthFailure must abort immediately after the first attempt");
+        _run.RetryCount.Should().Be(0,
+            "PermanentAuthFailure must not consume retry budget (RetryCountDelta: 0) — auth failures are not genuine fix attempts");
 
         // Verify the retry agent was called exactly once (ignoring the feedback/cleanup agents)
         // TODO: [WARNING] This test does not assert that no fix/implementation prompt was sent *after*
