@@ -28,7 +28,7 @@ public class ProviderFactory : IProviderFactory
         _pipelineConfigStore = pipelineConfigStore;
 
         // Register built-in providers
-        RegisterIssueProvider("GitHub", config =>
+        RegisterIssueProvider(ProviderTypes.GitHub, config =>
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
@@ -39,7 +39,7 @@ public class ProviderFactory : IProviderFactory
             return new GitHubIssueProvider(connection, authService.GetTokenAsync);
         });
 
-        RegisterRepositoryProvider("GitHub", config =>
+        RegisterRepositoryProvider(ProviderTypes.GitHub, config =>
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo, ProviderSettingKeys.BaseBranch);
             var authService = GetOrCreateAuthService(config);
@@ -50,7 +50,7 @@ public class ProviderFactory : IProviderFactory
             return new GitHubRepositoryProvider(connection, authService.GetTokenAsync, config.Settings[ProviderSettingKeys.BaseBranch]);
         });
 
-        RegisterPipelineProvider("GitHub", (config, pollInterval) =>
+        RegisterPipelineProvider(ProviderTypes.GitHub, (config, pollInterval) =>
         {
             ValidateRequiredSettings(config, ProviderSettingKeys.ApiUrl, ProviderSettingKeys.ClientId, ProviderSettingKeys.InstallationId, ProviderSettingKeys.PrivateKeyBase64, ProviderSettingKeys.Owner, ProviderSettingKeys.Repo);
             var authService = GetOrCreateAuthService(config);
@@ -62,7 +62,7 @@ public class ProviderFactory : IProviderFactory
         });
 
         // Register GitLab providers
-        RegisterIssueProvider("GitLab", config =>
+        RegisterIssueProvider(ProviderTypes.GitLab, config =>
         {
             ValidateRequiredSettings(config,
                 ProviderSettingKeys.ApiUrl,
@@ -75,7 +75,7 @@ public class ProviderFactory : IProviderFactory
                 projectId);
         });
 
-        RegisterRepositoryProvider("GitLab", config =>
+        RegisterRepositoryProvider(ProviderTypes.GitLab, config =>
         {
             ValidateRequiredSettings(config,
                 ProviderSettingKeys.ApiUrl,
@@ -91,7 +91,7 @@ public class ProviderFactory : IProviderFactory
                 baseBranch);
         });
 
-        RegisterPipelineProvider("GitLab", (config, pollInterval) =>
+        RegisterPipelineProvider(ProviderTypes.GitLab, (config, pollInterval) =>
         {
             ValidateRequiredSettings(config,
                 ProviderSettingKeys.ApiUrl,

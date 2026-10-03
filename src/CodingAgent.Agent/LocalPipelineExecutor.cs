@@ -108,8 +108,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         {
             // The override factory ignores ProviderConfig contents entirely, so we use
             // placeholder values. The only required members are populated to satisfy the compiler.
-            repoConfig = new ProviderConfig { DisplayName = "test-repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" };
-            agentConfig = new ProviderConfig { DisplayName = "test-agent", Kind = ProviderKind.Agent, ProviderType = "KiroCli" };
+            repoConfig = new ProviderConfig { DisplayName = "test-repo", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub };
+            agentConfig = new ProviderConfig { DisplayName = "test-agent", Kind = ProviderKind.Agent, ProviderType = ProviderTypes.KiroCli };
         }
         else
         {
