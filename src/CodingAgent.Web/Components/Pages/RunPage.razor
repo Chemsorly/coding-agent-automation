@@ -401,8 +401,11 @@
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
+        // Fire-and-forget to avoid blocking the circuit render thread on HubConnection.StartAsync,
+        // which can hang if the underlying WebSocket transport is slow to connect and would prevent
+        // Blazor from processing click events while the await is in progress.
         if (_isLive && !_subscribed)
-            await SubscribeLiveAsync();
+            _ = SubscribeLiveAsync();
 
         if (_scrollOnRender)
         {
