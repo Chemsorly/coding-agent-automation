@@ -23,9 +23,20 @@ namespace CodingAgent.Agent;
 /// Uses <see cref="AgentConnectionManager"/> for shared connection lifecycle (heartbeat,
 /// resilience, reconnection, CancelJob handling, deregistration).
 /// Uses <see cref="IWorkItemExecutor"/> for unified task execution (routes by TaskType internally).
+/// <para>
+/// Exit code contract: the pod exits 0 exactly when the run's outcome is recorded (or the work
+/// item was already terminal), whatever that outcome was, so Kubernetes starts no further pod.
+/// Any other exit is non-zero and leaves the retry to the Job: crashes count against its
+/// backoffLimit, drains and evictions do not (see <c>JobSpecBuilder</c>). The agent never reports
+/// a status for SIGTERM; a server-side stop has already written one, and any other SIGTERM is
+/// a disruption the Job retries.
+/// </para>
 /// </remarks>
 public sealed class WorkItemAgentService : BackgroundService, IAgentService
 {
+    /// <summary>128 + SIGTERM: the pod was stopped before the run's outcome was recorded.</summary>
+    private const int ExitCodeTerminated = 143;
+
     private readonly string _workItemId;
     private readonly IWorkItemLifecycleClient _workItemClient;
     private readonly IAgentConnectionManager _connectionManager;
@@ -37,7 +48,9 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     private readonly Serilog.ILogger _logger;
 
     private volatile CancellationTokenSource? _pipelineCts;
-    private volatile bool _terminalStatusPosted;
+
+    /// <summary>Pause between attempts while the control plane gives no HTTP response.</summary>
+    internal TimeSpan ControlPlaneRetryDelay { get; set; } = TimeSpan.FromSeconds(30);
 
     public WorkItemAgentService(WorkItemAgentServiceDependencies deps)
     {
@@ -104,11 +117,10 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         {
             exitCode = await RunWorkItemLifecycleAsync(stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (stoppingToken.IsCancellationRequested)
         {
-            _logger.Information("WorkItemAgentService cancelled via SIGTERM for work item {WorkItemId}", _workItemId);
-            await PostCancelledStatusAsync();
-            exitCode = 0;
+            _logger.Information(ex, "WorkItemAgentService stopped by SIGTERM for work item {WorkItemId}; no status posted", _workItemId);
+            exitCode = ExitCodeTerminated;
         }
         catch (WorkItemFetchException ex)
         {
@@ -205,7 +217,8 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     {
         // Step 1: Fetch assignment
         _logger.Information("Fetching assignment for work item {WorkItemId}", _workItemId);
-        var assignment = await _workItemClient.GetAssignmentAsync(_workItemId, ct);
+        var assignment = await RetryWhileControlPlaneUnreachableAsync(
+            () => _workItemClient.GetAssignmentAsync(_workItemId, ct), "fetch the assignment", ct);
 
         if (assignment is null)
         {
@@ -223,7 +236,8 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             Status = "Running",
             AgentId = _agentId.Value
         };
-        var accepted = await _workItemClient.PostStatusAsync(_workItemId, runningUpdate, ct);
+        var accepted = await RetryWhileControlPlaneUnreachableAsync(
+            () => _workItemClient.PostStatusAsync(_workItemId, runningUpdate, ct), "post Running", ct);
         if (!accepted)
         {
             _logger.Warning("Status transition to Running was rejected for work item {WorkItemId} — aborting (work item already terminal or invalid state)", _workItemId);
@@ -255,6 +269,9 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
+            // Nothing has run yet, so no outcome is reported: the pod exits non-zero and the Job
+            // starts another one. A persistent failure ends in BackoffLimitExceeded, which the
+            // JobController records as the work item's failure.
             // A 404 on the SignalR negotiate endpoint means the hub route is unreachable —
             // either the API pod is mid-rollout, the OrchestratorUrl is wrong, or the hub
             // was never registered (startup ordering issue). Log the hub URL explicitly so
@@ -265,15 +282,14 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
                 _logger.Error(ex,
                     "SignalR hub negotiate returned 404 for work item {WorkItemId} — hub route unreachable. " +
                     "Check that OrchestratorUrl ({OrchestratorUrl}) points to the API service (port 8080) " +
-                    "and that the API pod is fully ready. Posting Failed.",
+                    "and that the API pod is fully ready. Exiting so the Job retries.",
                     _workItemId,
                     Environment.GetEnvironmentVariable("ORCHESTRATOR_URL") ?? "(not set)");
             }
             else
             {
-                _logger.Error(ex, "Failed to connect/register for work item {WorkItemId}, posting Failed", _workItemId);
+                _logger.Error(ex, "Failed to connect/register for work item {WorkItemId}, exiting so the Job retries", _workItemId);
             }
-            await PostFailedStatusAsync($"Connection/registration failed: {ex.Message}");
             return 1;
         }
 
@@ -293,26 +309,50 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             step => _connectionManager.UpdateCurrentStep(step),
             rethrowOnSigterm: ct, ct: pipelineCt);
 
-        // Step 5: Report completion via unified reporter
+        // Step 5: Report completion via unified reporter. Once the outcome is recorded the pod exits 0,
+        // whatever the outcome was, so the Job starts no further pod. Failing to record it exits
+        // non-zero so the Job tries again.
         try
         {
-            _terminalStatusPosted = true;
-            await _completionReporter.ReportCompletionAsync(assignment.JobId, completion, CancellationToken.None);
+            await RetryWhileControlPlaneUnreachableAsync(async () =>
+            {
+                await _completionReporter.ReportCompletionAsync(assignment.JobId, completion, CancellationToken.None);
+                return true;
+            }, "report completion", ct);
         }
-        catch (WorkItemStatusPostException ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Error(ex, "Failed to report completion for work item {WorkItemId}, exiting non-zero", _workItemId);
             return 1;
         }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Non-fatal error during completion reporting for work item {WorkItemId}", _workItemId);
-        }
 
-        // Exit non-zero when pipeline did not complete successfully.
-        // Cancelled exits 0 because it's an intentional termination requested by the orchestrator —
-        // K8s should NOT restart the pod on cancel.
-        return completion.FinalStep is PipelineStep.Completed or PipelineStep.Cancelled ? 0 : 1;
+        return 0;
+    }
+
+    /// <summary>
+    /// Runs a control-plane call, repeating it while the API gives no HTTP response at all. An
+    /// unreachable API is an outage, not a failure of this pod: exiting would spend the Job's
+    /// backoffLimit on a healthy pod. SIGTERM and the Job's activeDeadlineSeconds bound the wait.
+    /// An HTTP error response is not retried here; it propagates as before.
+    /// </summary>
+    private async Task<T> RetryWhileControlPlaneUnreachableAsync<T>(Func<Task<T>> call, string operation, CancellationToken ct)
+    {
+        var attempt = 0;
+        while (true)
+        {
+            attempt++;
+            try
+            {
+                return await call();
+            }
+            catch (Exception ex) when (ex is WorkItemFetchException { IsUnreachable: true } or WorkItemStatusPostException { IsUnreachable: true })
+            {
+                _logger.Warning(ex,
+                    "Control plane unreachable while trying to {Operation} for work item {WorkItemId} (attempt {Attempt}); retrying in {Delay}",
+                    operation, _workItemId, attempt, ControlPlaneRetryDelay);
+                await Task.Delay(ControlPlaneRetryDelay, ct);
+            }
+        }
     }
 
     /// <summary>
@@ -336,48 +376,6 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _logger.Warning("Received ForceDisconnect, cancelling pipeline for graceful shutdown");
         CancelPipeline();
         return Task.CompletedTask;
-    }
-
-    private async Task PostCancelledStatusAsync()
-    {
-        if (_terminalStatusPosted) return;
-
-        try
-        {
-            var cancelUpdate = new WorkItemStatusUpdate
-            {
-                Status = "Cancelled",
-                AgentId = _agentId.Value,
-                ErrorMessage = "Agent received SIGTERM"
-            };
-            await _workItemClient.PostStatusAsync(_workItemId, cancelUpdate, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to POST Cancelled status after SIGTERM (ReconciliationService will handle)");
-        }
-    }
-
-    private async Task PostFailedStatusAsync(string errorMessage)
-    {
-        if (_terminalStatusPosted) return;
-
-        try
-        {
-            var failUpdate = new WorkItemStatusUpdate
-            {
-                Status = "Failed",
-                AgentId = _agentId.Value,
-                ErrorMessage = errorMessage,
-                FailureReason = "AgentError"
-            };
-            await _workItemClient.PostStatusAsync(_workItemId, failUpdate, CancellationToken.None);
-            _terminalStatusPosted = true;
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to POST Failed status (ReconciliationService will handle)");
-        }
     }
 
 }

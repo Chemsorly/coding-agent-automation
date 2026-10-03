@@ -155,7 +155,8 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
     /// Posts a status transition to the orchestrator.
     /// Transient failures (5xx, network errors) are retried transparently by the resilience handler.
     /// </summary>
-    /// <returns>True if the transition was accepted (200); false if rejected (400) or not found (404).</returns>
+    /// <returns>True if the transition was accepted (200); false if it was a no-op on an already-terminal
+    /// item (204), rejected (400) or not found (404).</returns>
     /// <exception cref="WorkItemStatusPostException">Thrown when all retries are exhausted.</exception>
     public async Task<bool> PostStatusAsync(string workItemId, WorkItemStatusUpdate update, CancellationToken ct)
     {
@@ -190,6 +191,12 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
                     _logger.Information("Posted status {Status} for work item {WorkItemId}",
                         update.Status, workItemId);
                     return true;
+
+                case HttpStatusCode.NoContent:
+                    // Idempotent no-op: the item is already at, or past, a terminal status.
+                    _logger.Information("Status {Status} not applied for work item {WorkItemId}: already terminal (204)",
+                        update.Status, workItemId);
+                    return false;
 
                 case HttpStatusCode.BadRequest:
                     _logger.Warning("Status transition to {Status} rejected (400) for work item {WorkItemId}",
@@ -282,6 +289,12 @@ public sealed class WorkItemFetchException : Exception
 {
     public WorkItemFetchException(string message) : base(message) { }
     public WorkItemFetchException(string message, Exception inner) : base(message, inner) { }
+
+    /// <summary>
+    /// True when no HTTP response arrived (connection refused, DNS, timeout, open circuit): the inner
+    /// exception is that failure. An error response is thrown without an inner exception.
+    /// </summary>
+    public bool IsUnreachable => InnerException is not null;
 }
 
 /// <summary>
@@ -292,6 +305,9 @@ public sealed class WorkItemStatusPostException : Exception
 {
     public WorkItemStatusPostException(string message) : base(message) { }
     public WorkItemStatusPostException(string message, Exception inner) : base(message, inner) { }
+
+    /// <inheritdoc cref="WorkItemFetchException.IsUnreachable"/>
+    public bool IsUnreachable => InnerException is not null;
 }
 
 /// <summary>

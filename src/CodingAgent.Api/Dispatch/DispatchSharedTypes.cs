@@ -70,3 +70,41 @@ internal sealed record DispatchLifecycleContext(
     /// </summary>
     public WorkItemStatus ExpectedInitialStatus { get; init; } = WorkItemStatus.Pending;
 }
+
+/// <summary>
+/// Discriminated outcome returned by
+/// <see cref="DispatchWorkItemService.InterpretDispatchResult"/> (issue #3260, moved from
+/// <c>WorkItemDispatchEndpoints</c> to <c>DispatchWorkItemService</c> by issue #3286).
+/// Replaces reference-equality and re-matched status-code signals in
+/// <see cref="CodingAgent.Api.WorkItemDispatchEndpoints.DispatchPendingWorkItem"/>.
+/// </summary>
+internal enum DispatchInterpretOutcome
+{
+    /// <summary>
+    /// Success or any unhandled result — <c>DispatchPendingWorkItemAsync</c>
+    /// emits <c>RecordDispatchAttempt("dispatched","none")</c> and returns the structured success body.
+    /// On the <c>DispatchWorkItem</c> path, also used for a 409 pass-through
+    /// (rewriteConcurrencyLimitAsDeferred=false).
+    /// </summary>
+    PassThrough,
+
+    /// <summary>
+    /// A 409 Conflict was rewritten to 200 DispatchPendingResponse(false,"concurrency_limit").
+    /// Only set when <c>rewriteConcurrencyLimitAsDeferred=true</c>
+    /// (<c>DispatchPendingWorkItemAsync</c> path).
+    /// </summary>
+    ConcurrencyLimitRewritten,
+
+    /// <summary>
+    /// A 503 from the PVC exhaustion gate (empty PVC pool, kiro agent).
+    /// The caller (<c>DispatchPendingWorkItemAsync</c>) must emit
+    /// <c>WorkDistributionTelemetry.PvcPoolExhaustions.Add(1)</c> before returning.
+    /// </summary>
+    PvcExhausted503,
+
+    /// <summary>
+    /// A 503 from a K8s lifecycle failure (PVCs available, or non-kiro agent).
+    /// The caller returns the raw 503 without additional metric emission.
+    /// </summary>
+    K8sError503,
+}

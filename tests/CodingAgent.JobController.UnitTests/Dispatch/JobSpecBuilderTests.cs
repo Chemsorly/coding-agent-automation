@@ -52,6 +52,27 @@ public sealed class JobSpecBuilderTests
         Namespace = "default"
     };
 
+    // ── Pod failures ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Drains, evictions, preemption and node loss (pod condition DisruptionTarget) are replaced
+    /// without spending backoffLimit, which stays for crashes and OOM kills. A replacement waits for
+    /// the old pod to end, so two pods never run the same work item.
+    /// </summary>
+    [Fact]
+    public void Build_DisruptionsDoNotCountAgainstBackoffLimit_AndReplacementWaitsForOldPod()
+    {
+        var job = JobSpecBuilder.Build(KiroTemplate(), BaseCtx(Guid.NewGuid()));
+
+        job.Spec.BackoffLimit.Should().Be(2);
+        job.Spec.PodReplacementPolicy.Should().Be("Failed");
+        var rule = job.Spec.PodFailurePolicy!.Rules.Should().ContainSingle().Subject;
+        rule.Action.Should().Be("Ignore");
+        rule.OnExitCodes.Should().BeNull();
+        rule.OnPodConditions.Should().ContainSingle(c => c.Type == "DisruptionTarget" && c.Status == "True");
+        job.Spec.Template.Spec.RestartPolicy.Should().Be("Never", "podFailurePolicy requires restartPolicy Never");
+    }
+
     // ── Agent key (Spec 043 Req 8a) ──────────────────────────────────────────
 
     /// <summary>

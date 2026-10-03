@@ -119,14 +119,16 @@ public sealed partial class WorkItemStatusTransitionService
 
         // ── Pre-read terminal-idempotency guard (issue #2461) ─────────────────────────────
         // For incoming terminal statuses, read the current DB status and return AlreadyAtTarget
-        // silently when the item is already at Cancelled or Succeeded.
-        // This prevents the "Invalid transition" warning that TransitionCoreAsync would emit
-        // for Cancelled→Failed, Succeeded→Failed, etc. The warning cannot be suppressed after
-        // TransitionCoreAsync returns Rejected, so a pre-read is required.
+        // silently when the item is already terminal: the first terminal report wins and later
+        // ones are no-ops. This prevents the "Invalid transition" warning that TransitionCoreAsync
+        // would emit for Cancelled→Failed, Failed→Succeeded, etc. — the JobController reports
+        // Succeeded for every Job that ended Complete, including runs the agent recorded as Failed.
+        // The warning cannot be suppressed after TransitionCoreAsync returns Rejected, so a
+        // pre-read is required.
         if (request.Status is WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
         {
             var currentStatus = await _transitionService.GetCurrentStatusAsync(id, ct);
-            if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded)
+            if (currentStatus is WorkItemStatus.Cancelled or WorkItemStatus.Succeeded or WorkItemStatus.Failed)
                 return StatusTransitionOutcome.AlreadyAtTarget;
             // null → item not found; fall through so TransitionDetailedAsync returns NotFound.
             // Any non-terminal current status → fall through for normal processing.
@@ -386,16 +388,9 @@ public sealed partial class WorkItemStatusTransitionService
             ? row.CompletedAt.Value - row.DispatchedAt.Value
             : null;
 
-        // Safe fallback: use a local switch with null default rather than
-        // ToDefaultRunType() which throws UnreachableException for unknown values.
-        var resolvedRunType = row.RunType ?? row.TaskType switch
-        {
-            WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
-            WorkItemTaskType.Review => PipelineRunType.Review,
-            WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
-            WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
-            _ => null
-        };
+        // Safe fallback: use ToDefaultRunTypeOrNull() which returns null for unknown values
+        // rather than ToDefaultRunType() which throws UnreachableException.
+        var resolvedRunType = row.RunType ?? row.TaskType.ToDefaultRunTypeOrNull();
         var runTypeTag = resolvedRunType.HasValue
             ? resolvedRunType.Value.ToString().ToLowerInvariant()
             : UnknownTag;
