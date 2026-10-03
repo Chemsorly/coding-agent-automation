@@ -41,19 +41,11 @@ public class TodoWarningBaselineTests
     // + 9 QualityGateExecutor.RetryLoop conversions = 310) was consistent with 310. The value 290
     // is independently verifiable (grep src/**/*.cs) and is correct. The previous pinned value of
     // 288 was computed against a different main HEAD where the WorkItemDispatchEndpoints and
-    // QualityGateExecutor.RetryLoop conversions were not yet merged; after the rebase these
-    // conversions are present in main, raising the effective baseline to 290.
-    // Pinned at: 290 (current count in src/ after merging QualityGateExecutor.RetryLoop.cs,
-    // WorkItemDispatchEndpoints.cs, and CreateBranchStep.cs conversions — issue #3243).
-    // TODO [WARNING]: BaselineCount has no independently reproducible verification anchor.
-    // The constant's correctness cannot be assessed from the test file alone — a reviewer must
-    // re-run `grep -rE "TODO \[WARNING\]|TODO: \[WARNING\]" src --include="*.cs" | wc -l` manually
-    // to confirm the value is accurate. If BaselineCount is off by even one in the permissive direction,
-    // the guard silently permits one extra TODO [WARNING] introduction without failing.
-    // Consider adding a comment of the form: "Verified: grep count = 290 on commit <sha>"
-    // to provide an anchor that future maintainers can cross-check.
+    // Pinned at: 289 (count in src/ after this PR's conversions in QualityGateExecutor.RetryLoop.cs,
+    // WorkItemDispatchEndpoints.cs, CreateBranchStep.cs, and ReconciliationLoop.cs — issue #3243).
+    // Verified: grep -rE "TODO \[WARNING\]|TODO: \[WARNING\]" src --include="*.cs" | wc -l = 289
     // See review finding: TestQualityReviewer @ line 55.
-    private const int BaselineCount = 290;
+    private const int BaselineCount = 289;
 
     // ── Repo-root resolution (identical to SonarGateBugConditionTests) ────────
     // NOTE (issue #3243): GetRepoRoot() is called during static property initialization.
