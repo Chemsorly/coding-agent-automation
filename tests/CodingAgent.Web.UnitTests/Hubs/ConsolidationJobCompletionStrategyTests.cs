@@ -98,27 +98,53 @@ public sealed class ConsolidationJobCompletionStrategyTests
     }
 
     [Fact]
-    public async Task Cancelled_step_calls_FailRunAsync()
+    public async Task Cancelled_step_calls_CancelRunAsync()
     {
-        // TODO: [WARNING] This test validates incorrect behaviour. PipelineStep.Cancelled should route
-        // to CancelRunAsync, not FailRunAsync. CompletionOutcomeResolver returns WorkItemStatus.Cancelled
-        // for Cancelled steps, but the else-branch in ExecuteAsync collapses Cancelled→FailRunAsync,
-        // causing history and DB to record WorkItemStatus.Failed instead of WorkItemStatus.Cancelled.
-        // When ConsolidationJobCompletionStrategy is fixed to call CancelRunAsync for Cancelled steps,
-        // this test must be updated to set up and verify CancelRunAsync instead of FailRunAsync.
-        // Cancelled maps to non-Succeeded WorkItemStatus, which currently routes through FailRunAsync
         var run = MakeRun();
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Cancelled, CompletedAt = DateTimeOffset.UtcNow };
 
         _lifecycleManager
-            .Setup(l => l.FailRunAsync("job-1", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Setup(l => l.CancelRunAsync("job-1", It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(run);
 
         var strategy = CreateStrategy();
         await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
 
+        _lifecycleManager.Verify(l => l.CancelRunAsync(
+            "job-1", It.IsAny<CancellationToken>(), null), Times.Once);
         _lifecycleManager.Verify(l => l.FailRunAsync(
-            "job-1", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Once);
+            It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Never);
+        // TODO: [WARNING] CompleteRunAsync is not verified as Times.Never here. A regression where the
+        // Succeeded branch is accidentally entered in addition to the Cancelled branch (e.g. if/else-if
+        // chain is refactored to independent if-blocks) would call both CancelRunAsync and CompleteRunAsync
+        // but this test would still pass. Add:
+        //   _lifecycleManager.Verify(l => l.CompleteRunAsync(...), Times.Never)
+        // to fully constrain the routing for the Cancelled path.
+    }
+
+    [Fact]
+    public async Task PrClosed_step_calls_CancelRunAsync()
+    {
+        var run = MakeRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.PrClosed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _lifecycleManager
+            .Setup(l => l.CancelRunAsync("job-1", It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(run);
+
+        var strategy = CreateStrategy();
+        await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
+
+        _lifecycleManager.Verify(l => l.CancelRunAsync(
+            "job-1", It.IsAny<CancellationToken>(), null), Times.Once);
+        _lifecycleManager.Verify(l => l.FailRunAsync(
+            It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Never);
+        // TODO: [WARNING] CompleteRunAsync is not verified as Times.Never here. A regression where the
+        // Succeeded branch is accidentally entered in addition to the Cancelled branch (e.g. if/else-if
+        // chain is refactored to independent if-blocks) would call both CancelRunAsync and CompleteRunAsync
+        // but this test would still pass. Add:
+        //   _lifecycleManager.Verify(l => l.CompleteRunAsync(...), Times.Never)
+        // to fully constrain the routing for the PrClosed path.
     }
 
     // ── History is written via lifecycle manager ──────────────────────────
@@ -172,6 +198,26 @@ public sealed class ConsolidationJobCompletionStrategyTests
         _lifecycleManager
             .Setup(l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .ThrowsAsync(new InvalidOperationException("DB failure"));
+
+        var strategy = CreateStrategy();
+        var act = async () => await strategy.ExecuteAsync(new JobId("job-1"), run, payload, null, CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_throws_exception_is_swallowed()
+    {
+        var run = MakeRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Cancelled, CompletedAt = DateTimeOffset.UtcNow };
+
+        // TODO: [WARNING] The third argument matcher uses It.IsAny<string?>() but the production code passes a
+        // concrete null. Narrowing this to (RunId, CancellationToken, (string?)null) would make the test sensitive
+        // to the "no reason string on cancel" invariant and catch a future regression that accidentally passes a
+        // non-null reason. Consistent with the null constraint used in Cancelled_step_calls_CancelRunAsync.
+        _lifecycleManager
+            .Setup(l => l.CancelRunAsync(It.IsAny<RunId>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ThrowsAsync(new InvalidOperationException("DB failure"));
 
         var strategy = CreateStrategy();
