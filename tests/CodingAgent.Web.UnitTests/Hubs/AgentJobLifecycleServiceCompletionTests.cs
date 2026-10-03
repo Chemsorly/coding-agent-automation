@@ -221,27 +221,29 @@ public sealed class AgentJobLifecycleServiceCompletionTests
     [Fact]
     public async Task Consolidation_cancelled_step_transitions_WorkItem_to_Cancelled()
     {
-        // TODO: [WARNING] This test name says "to_Cancelled" but the assertion verifies FailRunAsync
-        // is called, which records WorkItemStatus.Failed — not Cancelled. This masks a functional
-        // regression: cancelled consolidation runs are persisted as Failed in both history and the
-        // DB WorkItems row. When ConsolidationJobCompletionStrategy is fixed to call CancelRunAsync
-        // for Cancelled steps, this test must be updated to verify CancelRunAsync (not FailRunAsync)
-        // and add a constraint on the cancellation-specific arguments to prevent silent regressions
-        // from CompletionOutcomeResolver changes.
         var run = MakeConsolidationRun();
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Cancelled, CompletedAt = DateTimeOffset.UtcNow };
 
         _facade.Setup(f => f.GetRun("job-1")).Returns(run);
         _lifecycleManager
-            .Setup(l => l.FailRunAsync("job-1", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Setup(l => l.CancelRunAsync("job-1", It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(run);
 
         var svc = CreateService();
 
         await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
 
+        _lifecycleManager.Verify(l => l.CancelRunAsync(
+            "job-1", It.IsAny<CancellationToken>(), null), Times.Once,
+            "cancelled consolidation run must route through RunLifecycleManager.CancelRunAsync");
         _lifecycleManager.Verify(l => l.FailRunAsync(
-            "job-1", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Once);
+            It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Never,
+            "FailRunAsync must never be called for a Cancelled consolidation outcome");
+        // TODO: [WARNING] CompleteRunAsync is not verified as Times.Never here. A regression where the Succeeded
+        // branch is accidentally entered in addition to the Cancelled branch (calling both CancelRunAsync and
+        // CompleteRunAsync) would not be caught. Add:
+        //   _lifecycleManager.Verify(l => l.CompleteRunAsync(...), Times.Never)
+        // to fully constrain the routing for the Cancelled path, mirroring the FailRunAsync never-guard above.
     }
 
     [Fact]

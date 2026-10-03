@@ -774,14 +774,7 @@ public sealed class ReconciliationLoop
             _reconciledTerminalIds.Add(workItemId);
             return false;
         }
-        // TODO: [WARNING] This catch is too broad — it swallows OperationCanceledException from the
-        // loop's own CancellationToken. PostStatusAsync receives `ct` (the loop token); if cancelled
-        // mid-flight, the OCE is caught here, logged as an Error, and HandleJobCompletedAsync returns
-        // false, causing the caller to treat the cancellation as a transient failure rather than
-        // propagating. Fix: add `when (ex is not OperationCanceledException)` filter to this catch.
-        // Out of scope for issue #3236 (which targeted the six explicitly named sites), but the same
-        // class of bug as those fixes. (Review finding: DotNetSpecialist [WARNING])
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
         }
