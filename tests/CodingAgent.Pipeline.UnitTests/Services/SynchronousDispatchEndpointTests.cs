@@ -2760,7 +2760,8 @@ public sealed class ExtractedHelperIsolationTests
 
     /// <summary>
     /// On the pending-dispatch path (rewriteConcurrencyLimitAsDeferred=true), a 409 input must
-    /// be rewritten to 200 DispatchPendingResponse(false, "concurrency_limit").
+    /// be rewritten to 200 DispatchPendingResponse(false, "concurrency_limit") with outcome
+    /// <see cref="DispatchInterpretOutcome.ConcurrencyLimitRewritten"/>.
     /// </summary>
     [Fact]
     public void InterpretDispatchResult_409Input_PendingPath_Returns200Deferred()
@@ -2768,13 +2769,15 @@ public sealed class ExtractedHelperIsolationTests
         var rawResult = TypedResults.Conflict("limit reached");
         var pvcResult = MakePvcResult(available: 1);
 
-        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+        var (result, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
             rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
 
-        var ok = interpreted as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
+        var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         ok.Should().NotBeNull("409 on the pending path must be rewritten to 200 Ok<DispatchPendingResponse>");
         ok!.Value!.Dispatched.Should().BeFalse();
         ok.Value.Reason.Should().Be("concurrency_limit");
+        outcome.Should().Be(DispatchInterpretOutcome.ConcurrencyLimitRewritten,
+            "a rewritten 409→200 must carry the ConcurrencyLimitRewritten outcome");
         // TODO [WARNING]: Does not assert that RecordDispatchAttempt("deferred","concurrency_limit")
         // was emitted. If that call is removed from InterpretDispatchResult this test still passes.
         // Add telemetry assertion to verify the side effect. See review finding: TestQualityReviewer @ line 2660.
@@ -2782,7 +2785,7 @@ public sealed class ExtractedHelperIsolationTests
 
     /// <summary>
     /// On the sync-dispatch path (rewriteConcurrencyLimitAsDeferred=false), a 409 input must
-    /// pass through unchanged — the client sees the raw 409.
+    /// pass through unchanged with outcome <see cref="DispatchInterpretOutcome.PassThrough"/>.
     /// </summary>
     [Fact]
     public void InterpretDispatchResult_409Input_SyncPath_PassesThrough()
@@ -2790,15 +2793,18 @@ public sealed class ExtractedHelperIsolationTests
         var rawResult = TypedResults.Conflict("limit reached");
         var pvcResult = MakePvcResult(available: 1);
 
-        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+        var (result, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
             rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: false);
 
-        interpreted.Should().BeSameAs(rawResult, "409 on the sync path must be returned unchanged");
+        result.Should().BeSameAs(rawResult, "409 on the sync path must be returned unchanged");
+        outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
+            "a pass-through 409 on the sync path must carry the PassThrough outcome");
     }
 
     /// <summary>
     /// A 503 input with an empty PVC pool and isKiroAgent=true must cause the helper to
-    /// emit RecordDispatchAttempt("transient", "pvc_unavailable") and return the raw 503.
+    /// emit RecordDispatchAttempt("transient", "pvc_unavailable") and return the raw 503
+    /// with outcome <see cref="DispatchInterpretOutcome.PvcExhausted503"/>.
     /// </summary>
     [Fact]
     public void InterpretDispatchResult_503Input_PvcUnavailable_Returns503_Unchanged()
@@ -2806,12 +2812,14 @@ public sealed class ExtractedHelperIsolationTests
         var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         var pvcResult = MakePvcResult(available: 0); // empty pool → pvc_unavailable
 
-        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+        var (result, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
             rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
 
-        interpreted.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
-        var statusResult = interpreted as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        result.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+        outcome.Should().Be(DispatchInterpretOutcome.PvcExhausted503,
+            "empty PVC pool + kiro agent must carry the PvcExhausted503 outcome");
         // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","pvc_unavailable")
         // was emitted (rather than "k8s_error"). The telemetry branch is the only observable
         // difference between the pvc_unavailable and k8s_error code paths inside the helper.
@@ -2822,7 +2830,8 @@ public sealed class ExtractedHelperIsolationTests
 
     /// <summary>
     /// A 503 input where PVCs are available (or isKiroAgent=false) must cause the helper to
-    /// emit RecordDispatchAttempt("transient", "k8s_error") and return the raw 503.
+    /// emit RecordDispatchAttempt("transient", "k8s_error") and return the raw 503
+    /// with outcome <see cref="DispatchInterpretOutcome.K8sError503"/>.
     /// </summary>
     [Fact]
     public void InterpretDispatchResult_503Input_K8sError_Returns503_Unchanged()
@@ -2830,10 +2839,12 @@ public sealed class ExtractedHelperIsolationTests
         var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         var pvcResult = MakePvcResult(available: 1); // PVC available → k8s_error disambiguation
 
-        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+        var (result, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
             rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
 
-        interpreted.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
+        result.Should().BeSameAs(rawResult, "503 must be returned unchanged by the helper");
+        outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
+            "PVCs available + kiro agent + 503 must carry the K8sError503 outcome");
         // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","k8s_error")
         // was emitted (rather than "pvc_unavailable"). See the companion TODO in
         // InterpretDispatchResult_503Input_PvcUnavailable_Returns503_Unchanged — the same telemetry
@@ -2842,7 +2853,8 @@ public sealed class ExtractedHelperIsolationTests
 
     /// <summary>
     /// A 503 input with isKiroAgent=false must always take the k8s_error branch (PVC pool
-    /// availability is irrelevant for non-kiro agents).
+    /// availability is irrelevant for non-kiro agents) with outcome
+    /// <see cref="DispatchInterpretOutcome.K8sError503"/>.
     /// </summary>
     [Fact]
     public void InterpretDispatchResult_503Input_NonKiroAgent_EmptyPool_Returns503_Unchanged()
@@ -2850,17 +2862,20 @@ public sealed class ExtractedHelperIsolationTests
         var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
         var pvcResult = MakePvcResult(available: 0); // empty pool but non-kiro → k8s_error
 
-        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+        var (result, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
             rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: true);
 
-        interpreted.Should().BeSameAs(rawResult, "503 must be returned unchanged for non-kiro agent");
+        result.Should().BeSameAs(rawResult, "503 must be returned unchanged for non-kiro agent");
+        outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
+            "non-kiro agent with empty pool must carry K8sError503, not PvcExhausted503");
         // TODO [WARNING]: Does not assert that RecordDispatchAttempt("transient","k8s_error")
         // was emitted for the non-kiro path. Same telemetry verification gap as the companion
         // 503 tests above. See review finding: TestQualityReviewer @ line 2693.
     }
 
     /// <summary>
-    /// A success result (200 Ok) must pass through unchanged — the helper does not rewrite success.
+    /// A success result (200 Ok) must pass through unchanged with outcome
+    /// <see cref="DispatchInterpretOutcome.PassThrough"/>.
     /// Both rewriteConcurrencyLimitAsDeferred values produce the same pass-through for success.
     /// </summary>
     [Fact]
@@ -2869,10 +2884,121 @@ public sealed class ExtractedHelperIsolationTests
         var rawResult = TypedResults.Ok(Guid.NewGuid());
         var pvcResult = MakePvcResult(available: 1);
 
-        var interpreted = WorkItemDispatchEndpoints.InterpretDispatchResult(
+        var (result, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
             rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
 
-        interpreted.Should().BeSameAs(rawResult, "a success result must pass through the helper unchanged");
+        result.Should().BeSameAs(rawResult, "a success result must pass through the helper unchanged");
+        outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
+            "a success result must carry the PassThrough outcome");
+    }
+
+    // TODO [WARNING]: Missing boundary case — non-kiro agent with PVCs *available* (isKiroAgent=false,
+    // available>0) is not tested. Both non-kiro permutations (empty pool and non-empty pool) must
+    // produce K8sError503. Without a test for the non-empty-pool case, a regression that drops the
+    // `isKiroAgent` guard from the condition `(!pvcResult.AvailablePvcs.Any() && isKiroAgent)` would
+    // not be caught by the existing non-kiro test (the empty-pool path short-circuits correctly either
+    // way). Add InterpretDispatchResult_503Input_NonKiroAgent_NonEmptyPool_Returns503_Unchanged.
+    // See review finding: TestQualityReviewer @ line 2862.
+
+    // TODO [WARNING]: The five characterization tests below (InterpretDispatchResult_*_ReturnsOutcome*)
+    // are strict subsets of the updated tests above — each asserts only the outcome field and discards
+    // the result, while the updated originals already assert both result shape and outcome for the same
+    // input combination. These tests add no additional coverage. Consider removing them and relying
+    // solely on the updated originals, or merging them into [Theory] parameterized tests to eliminate
+    // the duplication. Any future failure in these scenarios fires twice (once in each test), doubling
+    // noise without adding signal.
+    // See review finding: TestQualityReviewer @ line 2893.
+
+    // ── Outcome-discriminator characterization tests (issue #3260 Prerequisites) ──────
+
+    /// <summary>
+    /// Characterization: a 409 on the pending path must return outcome
+    /// <see cref="DispatchInterpretOutcome.ConcurrencyLimitRewritten"/>.
+    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_409Input_PendingPath_ReturnsOutcomeConcurrencyLimitRewritten()
+    {
+        var rawResult = TypedResults.Conflict("limit reached");
+        var pvcResult = MakePvcResult(available: 1);
+
+        var (_, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        outcome.Should().Be(DispatchInterpretOutcome.ConcurrencyLimitRewritten,
+            "a 409 on the pending-dispatch path (rewriteConcurrencyLimitAsDeferred=true) must produce ConcurrencyLimitRewritten");
+    }
+
+    /// <summary>
+    /// Characterization: a 409 on the sync path must return outcome
+    /// <see cref="DispatchInterpretOutcome.PassThrough"/> (pass-through, no rewrite).
+    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_409Input_SyncPath_ReturnsOutcomePassThrough()
+    {
+        var rawResult = TypedResults.Conflict("limit reached");
+        var pvcResult = MakePvcResult(available: 1);
+
+        var (_, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: false, rewriteConcurrencyLimitAsDeferred: false);
+
+        outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
+            "a 409 on the sync-dispatch path (rewriteConcurrencyLimitAsDeferred=false) must produce PassThrough");
+    }
+
+    /// <summary>
+    /// Characterization: a 503 with empty PVC pool and kiro agent must return outcome
+    /// <see cref="DispatchInterpretOutcome.PvcExhausted503"/>.
+    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_503Input_PvcExhausted_ReturnsOutcomePvcExhausted503()
+    {
+        var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var pvcResult = MakePvcResult(available: 0); // empty pool + kiro → PvcExhausted503
+
+        var (_, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        outcome.Should().Be(DispatchInterpretOutcome.PvcExhausted503,
+            "a 503 with empty PVC pool and kiro agent must produce PvcExhausted503");
+    }
+
+    /// <summary>
+    /// Characterization: a 503 with PVCs available (k8s error path) must return outcome
+    /// <see cref="DispatchInterpretOutcome.K8sError503"/>.
+    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_503Input_K8sError_ReturnsOutcomeK8sError503()
+    {
+        var rawResult = TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        var pvcResult = MakePvcResult(available: 1); // PVCs available → k8s_error, not pvc_unavailable
+
+        var (_, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        outcome.Should().Be(DispatchInterpretOutcome.K8sError503,
+            "a 503 with PVCs available must produce K8sError503 (not PvcExhausted503)");
+    }
+
+    /// <summary>
+    /// Characterization: a success result must return outcome
+    /// <see cref="DispatchInterpretOutcome.PassThrough"/>.
+    /// Written before the refactor as a compile-forcing prerequisite (issue #3260).
+    /// </summary>
+    [Fact]
+    public void InterpretDispatchResult_SuccessInput_ReturnsOutcomePassThrough()
+    {
+        var rawResult = TypedResults.Ok(Guid.NewGuid());
+        var pvcResult = MakePvcResult(available: 1);
+
+        var (_, outcome) = WorkItemDispatchEndpoints.InterpretDispatchResult(
+            rawResult, pvcResult, isKiroAgent: true, rewriteConcurrencyLimitAsDeferred: true);
+
+        outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
+            "a success result must produce PassThrough so the caller emits RecordDispatchAttempt(\"dispatched\",\"none\")");
     }
 }
 
