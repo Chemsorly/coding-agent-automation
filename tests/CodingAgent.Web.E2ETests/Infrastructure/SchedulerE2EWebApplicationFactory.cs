@@ -1,5 +1,4 @@
 using CodingAgent.Api.Client;
-using CodingAgent.Api.Client.Stores;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure;
 using CodingAgent.Kubernetes;
@@ -13,6 +12,7 @@ using CodingAgent.Scheduler.Services;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -130,27 +130,18 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
 
     /// <summary>
     /// Resets per-test state owned by this factory. The shared fakes are reset by
-    /// <see cref="E2EFixture.ResetAll"/>; the caches on the Scheduler's API-backed stores
-    /// must also be invalidated here so that the next test sees fresh data from the now-reset
-    /// <c>InMemoryConfigurationStore</c> rather than stale TTL-cached results from the prior test.
+    /// <see cref="E2EFixture.ResetAll"/>; nothing additional is needed here because
+    /// the Scheduler's API-backed stores (ApiProjectStore, ApiPipelineConfigStore,
+    /// ApiProviderConfigStore, ApiConfigurationStore) are configured with
+    /// <c>CacheTtlSeconds = 0</c> via the "PipelineLoop:ConfigCacheTtlSeconds" setting
+    /// injected in <see cref="ConfigureWebHost"/>, so they never serve stale data across tests.
     /// </summary>
     // TODO [WARNING]: ResetAll() is called after loop.StopLoop() and a busy-wait up to 10s.
     // If that 10s deadline expires before IsLoopActive becomes false, this is still called,
     // meaning a stale loop iteration may remain in flight. There is no warning logged when the
     // deadline is exceeded, so a test isolation failure is invisible until the next test fails.
     // Consider adding an assertion or logging when the deadline expires in ResetAllAsync.
-    public void ResetAll()
-    {
-        // The Scheduler's IPipelineConfigStore, IProviderConfigStore, IProjectStore and
-        // IConfigurationStore are all ApiXxxStore instances backed by ApiConfigurationStore, which
-        // caches results for 60 s (CacheTtlSeconds). When the shared InMemoryConfigurationStore is
-        // reset by E2EWebApplicationFactory.ResetAll(), these caches still hold the previous test's
-        // templates, projects, provider configs, and agent profiles. Without explicit invalidation
-        // here, StartLoopAsync and the first poll cycle read stale data: an enabled template from
-        // the previous test can be visible, a disabled-project template can appear enabled, and
-        // the TypePriority tests see wrong MaxRunsPerCycle/PollInterval values.
-        Services.GetRequiredService<ApiConfigurationStore>().InvalidateCaches();
-    }
+    public void ResetAll() { }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -170,6 +161,17 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
         E2ETestDefaults.ResetSerilogBootstrapLogger();
 
         builder.UseEnvironment("Development");
+
+        // Disable the TTL cache on all ApiXxxStore instances (ApiPipelineConfigStore,
+        // ApiProviderConfigStore, ApiProjectStore, ApiConfigurationStore) so that each
+        // test sees fresh data from the reset InMemoryConfigurationStore immediately.
+        // Without this, caches hold previous-test data for up to 60 s, causing stale
+        // template, project, and config reads that break test isolation.
+        builder.ConfigureAppConfiguration(config =>
+            config.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PipelineLoop:ConfigCacheTtlSeconds"] = "0"
+            }));
 
         builder.ConfigureServices(services =>
         {
