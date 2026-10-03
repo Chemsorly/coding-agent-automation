@@ -240,10 +240,11 @@ public sealed class ProjectSwitcherTests : E2ETestBase
         await switcher.SelectAllProjectsAsync();
         Assert.Equal("", await switcher.GetSelectedValueAsync());
 
-        // Overview stat strip: Active = 2, Queue = 2 (both projects' items).
-        var activeCount = await overview.GetActiveCountAsync();
+        // Overview stat strip: Queue = 2 (both projects' pending items).
+        // NOTE: The "Active" stat counts in-memory orchestrator runs, not DB-persisted
+        // WorkItemEntity rows. E2E tests cannot seed in-memory runs, so only the queue
+        // count (sourced from WorkItems.GetPendingAsync) is asserted here.
         var queueCount = await overview.GetQueueCountAsync();
-        Assert.Equal(2, activeCount);
         Assert.Equal(2, queueCount);
 
         // Work page: both active issues visible.
