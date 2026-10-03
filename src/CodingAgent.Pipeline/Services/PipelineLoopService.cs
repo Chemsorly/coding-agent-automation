@@ -77,13 +77,12 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     /// Reset to zero when the loop stops (<see cref="CleanupAsync"/>).
     /// Used by tests to confirm at least one cycle ran before asserting negative (empty) outcomes.
     /// </summary>
-    // TODO [WARNING]: CycleCount is written by the background loop thread (CycleCount++ in
-    // MultiTemplateLoop.cs) and read by test threads in WaitUntilAsync spin-polls. Without
-    // volatile or Interlocked, the test thread may observe a stale cached value and spin past
-    // the updated count indefinitely, causing a TimeoutException on a cycle that actually
-    // completed. Use Interlocked.Increment on writes and Interlocked.CompareExchange(ref _cycleCount, 0, 0)
-    // on reads to guarantee cross-thread visibility. _stopRequested already uses volatile bool
-    // as the existing pattern; CycleCount should follow the same approach.
+    // TODO [WARNING]: The volatile keyword on _cycleCount is redundant alongside
+    // Interlocked.Increment (MultiTemplateLoop.cs) — Interlocked operations are full
+    // memory barriers, so volatile adds nothing. Both are currently present; removing
+    // volatile would be cleaner but is a low-priority cosmetic change. Reads via
+    // CycleCount => _cycleCount observe fresh values on all .NET platforms because the
+    // field is volatile; no additional Interlocked on reads is necessary.
     private volatile int _cycleCount;
     public int CycleCount => _cycleCount;
 

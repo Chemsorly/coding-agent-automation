@@ -152,6 +152,15 @@ public class GitHubActionsPipelineProviderTests
     // gate to report "CI Cancelled. 2 job(s) failed: 'docker-push', 'publish-chart'" on every
     // PR-branch CI run where concurrency:cancel-in-progress killed the prior workflow run.
     [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Skipped, PipelineRunState.Passed)]
+    // TODO [WARNING]: WorkflowJobConclusion.Neutral and WorkflowJobConclusion.TimedOut are no longer
+    // covered here — their [InlineData] rows were removed in the same change that dropped the explicit
+    // Neutral => Passed mapping from MapJobState. Neutral now falls through to _ => PipelineRunState.Failed.
+    // Some GitHub Actions check runs (e.g. third-party apps, linting jobs that report warnings but no
+    // errors) emit Neutral as their conclusion; mapping it to Failed causes spurious quality-gate failures.
+    // Consider restoring:
+    //   [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.Neutral, PipelineRunState.Passed)]
+    //   [InlineData(WorkflowJobStatus.Completed, WorkflowJobConclusion.TimedOut, PipelineRunState.Failed)]
+    // and adding back Neutral => PipelineRunState.Passed in MapJobState.
     public void MapJobState_MapsCorrectly(WorkflowJobStatus status, WorkflowJobConclusion? conclusion, PipelineRunState expected)
     {
         GitHubActionsPipelineProvider.MapJobState(status, conclusion).Should().Be(expected);

@@ -112,33 +112,6 @@ public class CiFailureClassifierTests
     }
 
     [Fact]
-    public void Classify_CancelledRunState_WithCodeFailureLogs_ReturnsInfrastructure()
-    {
-        // Even if a log happens to contain a code-failure pattern, the overall run cancellation
-        // is the authoritative signal — never treat a cancelled run as a code failure.
-        var status = new PipelineRunStatus
-        {
-            State = PipelineRunState.Cancelled,
-            Jobs = new[]
-            {
-                new PipelineJobResult { Name = "build", State = PipelineRunState.Failed, LogContent = "error CS1002: ; expected" }
-            }
-        };
-        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
-    }
-
-    [Fact]
-    public void Classify_CancelledRunState_NoJobs_ReturnsInfrastructure()
-    {
-        var status = new PipelineRunStatus
-        {
-            State = PipelineRunState.Cancelled,
-            Jobs = Array.Empty<PipelineJobResult>()
-        };
-        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
-    }
-
-    [Fact]
     public void Classify_UnrecognizedLogContent_ReturnsUnknown()
     {
         var status = CreateStatus("Some completely unrecognized failure output");

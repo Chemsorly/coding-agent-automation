@@ -58,21 +58,15 @@ public static class CiFailureClassifier
     };
 
     /// <summary>
-    /// Classifies a CI failure based on job log content.
+    /// Classifies a CI failure based on the log content of failed and cancelled jobs.
+    /// A cancelled job is usually one that exceeded its timeout; its log decides the category
+    /// like a failed job's does, so test failures in it count as a code failure.
     /// </summary>
     public static CiFailureCategory Classify(PipelineRunStatus status)
     {
         ArgumentNullException.ThrowIfNull(status);
 
-        // A cancelled workflow run (e.g. superseded by concurrency:cancel-in-progress) is always
-        // an infrastructure event — never a code failure. Dependent jobs cascade to Failure
-        // conclusion when their dependency is cancelled, but that is not a real code failure.
-        // Return Infrastructure immediately so the infra-retry path fires without consuming the
-        // agent's code-fix retry budget.
-        if (status.State == PipelineRunState.Cancelled)
-            return CiFailureCategory.Infrastructure;
-
-        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
+        var failedJobs = status.Jobs.Where(j => j.EndedUnsuccessfully()).ToList();
         if (failedJobs.Count == 0)
             return CiFailureCategory.Unknown;
 

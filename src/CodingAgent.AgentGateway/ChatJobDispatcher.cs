@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading;
 using CodingAgent.Pipeline;
 using CodingAgent.AgentGateway;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
@@ -61,6 +62,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // Keyed by jobName (== agentId for chat pods — see invariant note on TerminateChatSessionAsync).
     private readonly ConcurrentDictionary<string, WatcherEntry> _activeWatchers = new();
     private readonly CancellationTokenSource _shutdownCts = new();
+    // TODO [WARNING]: The _stopped flag is never reset by DisposeAsync, so once StopAsync has run
+    // (either explicitly or via the internal StopAsync call inside DisposeAsync), it cannot be
+    // re-armed. This is intentional: IHostedService semantics do not require restart after stop.
+    // Callers that invoke StopAsync first and then DisposeAsync will have the internal StopAsync
+    // inside DisposeAsync short-circuit harmlessly; _shutdownCts.Dispose() still runs as expected.
+    private int _stopped; // 0 = not stopped; 1 = stop in progress or complete. Used with Interlocked.
 
     /// <summary>
     /// Groups the co-travelling identity and selector fields that flow from
@@ -74,7 +81,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         AgentId AgentId,
         string JobName,
         string NormalizedSelector,
-        string? ClaimedPvc);
+        string? ClaimedPvc,
+        string? PoolName);
 
     /// <summary>
     /// Tracks per-session watcher state. Must be <c>internal</c> so <see cref="IChatSessionWatcher"/>
@@ -87,6 +95,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         public readonly string JobName;
         public readonly string NormalizedSelector;
         public readonly string? ClaimedPvc;
+        public readonly string? PoolName;
         public readonly DateTimeOffset StartedAt;
         public readonly CancellationTokenSource WatcherCts; // disposed in CleanupSession
         public int Cleaned; // 0 = not yet cleaned; 1 = cleanup done. Used with Interlocked.
@@ -113,6 +122,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             JobName = identity.JobName;
             NormalizedSelector = identity.NormalizedSelector;
             ClaimedPvc = identity.ClaimedPvc;
+            PoolName = identity.PoolName;
             StartedAt = startedAt;
             WatcherCts = watcherCts;
             LastClientHeartbeatTicks = startedAt.UtcTicks;
@@ -198,6 +208,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var dispatchStart = DateTimeOffset.UtcNow;
 
         var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, activeChatJobs);
+        // TODO [WARNING]: poolName derives from template.ProviderType whenever claimedPvc is non-null.
+        // Today ClaimPvcForKiroAgent only returns non-null for Kiro providers, so poolName is always
+        // "kiro" or null. If a future provider introduces its own PVC pool (i.e. ClaimPvcForKiroAgent
+        // or an equivalent returns non-null for non-Kiro types), this derivation will still produce
+        // the correct pool tag — but the coupling between "claimedPvc != null ⟹ use providerType as
+        // pool name" is an implicit assumption. Add an explicit comment or assertion when a second
+        // PVC-capable provider is introduced to keep the intent clear.
+        var poolName = claimedPvc is not null ? template.ProviderType : null;
 
         await BuildAndSubmitChatJobAsync(normalized, selectorLabelValue, model, effort, jobName, dispatchId, claimedPvc, template, cancellationToken);
 
@@ -212,7 +230,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("provider_type", template.ProviderType);
 
         return await PollForAgentConnectionAsync(
-            dispatchId, jobName, claimedPvc, normalized, selectorLabelValue,
+            dispatchId, jobName, claimedPvc, poolName, normalized, selectorLabelValue,
             dispatchStart, activity, cancellationToken);
     }
 
@@ -345,7 +363,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     }
 
     private async Task<string> PollForAgentConnectionAsync( // NOSONAR S107 — private polling helper; params are independent timing/routing inputs
-        Guid dispatchId, string jobName, string? claimedPvc, string normalized,
+        Guid dispatchId, string jobName, string? claimedPvc, string? poolName, string normalized,
         string selectorLabelValue, DateTimeOffset dispatchStart,
         System.Diagnostics.Activity? activity, CancellationToken cancellationToken)
     {
@@ -373,7 +391,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                             connected.AgentId, jobName);
                     }
 
-                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc));
+                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc, poolName));
 
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
@@ -455,7 +473,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, identity.NormalizedSelector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
         if (identity.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", "kiro"));
+            ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", identity.PoolName ?? "unknown"));
 
         _logger.Information("ChatJobDispatcher: watcher registered jobName={JobName}", identity.JobName);
     }
@@ -518,7 +536,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", entry.PoolName ?? "unknown"));
 
         var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
         ChatTelemetry.SessionDuration.Record(
@@ -549,8 +567,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     public async Task StopAsync(CancellationToken cancellationToken)
     {
-        // TODO [WARNING]: StopAsync is no longer idempotent after removal of the _stopCompleted guard.
-        // See pre-existing issue documented in earlier TODOs. Do not fix in this refactor.
+        if (Interlocked.CompareExchange(ref _stopped, 1, 0) != 0)
+            return; // idempotent — already stopped or stopping
         _logger.Information("ChatJobDispatcher: stopping — cancelling {Count} active watcher(s)",
             _activeWatchers.Count);
 

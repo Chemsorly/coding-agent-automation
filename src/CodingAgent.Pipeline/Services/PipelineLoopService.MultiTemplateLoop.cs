@@ -922,13 +922,10 @@ public sealed partial class PipelineLoopService
         // Build lookup for O(1) template resolution
         var templateLookup = templates.ToDictionary(t => t.Id);
 
-        // BUG (issue #3093 AC2): docs/projects.md states templates are polled in list/insertion order,
-        // but this OrderBy sorts alphabetically by project name (StringComparer.Ordinal). This means
-        // a project named "A-Project" is always polled before "Z-Project" regardless of configuration
-        // order, contradicting the documented guarantee.
-        // The E2E test EnabledTemplates_PolledInProjectNameOrder pins the actual (alphabetical) behaviour.
-        // When this bug is fixed (OrderBy removed, insertion order preserved), that test must be
-        // updated to assert list/insertion order instead. A GitHub issue must be filed and linked to #3093.
+        // Order: alphabetical by project name (StringComparer.Ordinal), matching the documented
+        // cross-project ordering in docs/projects.md ("Cross-project ordering: Projects are sorted
+        // alphabetically by name, then templates within each project by name").
+        // The E2E test EnabledTemplates_PolledInProjectNameOrder verifies this ordering.
         foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
         {
             foreach (var templateId in project.TemplateIds)

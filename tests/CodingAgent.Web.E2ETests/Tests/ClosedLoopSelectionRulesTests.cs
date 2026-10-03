@@ -139,6 +139,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // has already happened (the ordering holds today), but if Add is ever moved after
             // the bootstrap call in DispatchOnceAsync, this assertion could transiently see 0.
             Assert.Single(Fixture.JobController.ClaimedWorkItemIds);
+            // TODO [WARNING]: The assertion above confirms only that the one dispatched item is
+            // issue "1". It does not verify that issues "2" and "3" were never dispatched in a
+            // subsequent cycle. A second loop cycle (possible if StopLoop() fires after a new
+            // cycle begins) could still dispatch "2" or "3" without the test noticing, because
+            // the resolved JobAssigned TCS absorbs only the first dispatch and the count assertion
+            // is always 1 regardless of whether the right issue was skipped. To fully discriminate
+            // the skip-label rule, add a DB assertion after the loop stops confirming no WorkItems
+            // exist for identifiers "2" and "3" (analogous to DisabledProject_NothingDispatched).
         }
         finally
         {
@@ -201,6 +209,19 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
             // FIFO: oldest CreatedAt must be dispatched first (ID "10"), NOT insertion order (ID "30")
             Assert.Equal("10", assignment.IssueIdentifier);
+            // TODO [WARNING]: This test asserts only that the first dispatch is issue "10". It does
+            // not verify that the second dispatch is issue "20" (FIFO-second) rather than "30"
+            // (insertion-first). With budget=1 and a 1s poll interval, a second cycle can race in
+            // before StopLoop() fires; a second dispatch to the same fakeAgent is silently dropped
+            // (TCS already resolved). To fully verify FIFO ordering, add a budget=2 variant with a
+            // longer poll interval (e.g. 60s, matching Scenario 3) and assert that the second
+            // dispatch is "20" — this eliminates both the coincidence risk and the silent-drop problem.
+            // TODO [WARNING]: This test does not cover the null-CreatedAt case. IssueDetail.CreatedAt
+            // is DateTime? (nullable). SortByCreatedAtFifo (CreatedAtExtensions.cs) treats nulls as
+            // "sort last" (newest), so an issue with CreatedAt = null would never be dispatched first.
+            // A variant seeding one null-CreatedAt issue alongside dated issues would confirm that
+            // null-timestamp handling is intentional and stable. Consider adding a separate test
+            // (e.g. Fifo_NullCreatedAt_SortsLast) to lock in this behaviour.
         }
         finally
         {
@@ -299,17 +320,23 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // Wait for both budget-2 dispatches using event-driven JobAssigned signals.
-            // Polling ClaimedWorkItemIds.Count was unreliable under CI load because it required
-            // the full orchestration→HTTP→DB→FakeJobController chain to complete within 30s —
-            // two HTTP round-trips to the test API host were slow enough to time out.
-            // JobAssigned fires as soon as FakeJobController bootstraps the agent, which is the
-            // same signal but observed directly rather than through a shared counter.
-            // The 60s poll interval ensures cycle 2 cannot start before StopLoop() fires,
-            // making the snapshot deterministically contain only the cycle-1 dispatches.
-            await Task.WhenAll(
-                agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)),
-                agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)));
+            // Wait for both budget-2 dispatches using ClaimedWorkItemIds count.
+            //
+            // The prior approach used Task.WhenAll(agent1.JobAssigned.Task, agent2.JobAssigned.Task),
+            // but that assumed each dispatch lands on a different agent. FakeJobController.PickIdleAgent
+            // selects the longest-idle agent, so both dispatches can land on the same agent (e.g. if
+            // agent1 is selected twice because agent2 has not yet registered as idle). When that happens
+            // agent1.JobAssigned.TrySetResult succeeds on the first dispatch and silently returns false on
+            // the second (TCS already set); agent2.JobAssigned never fires; Task.WhenAll times out.
+            //
+            // ClaimedWorkItemIds.Add is called BEFORE StartAssignedWorkItemAsync in FakeJobController, so
+            // it fires earlier in the dispatch chain than JobAssigned and is not affected by which agent
+            // receives the work — it counts total claims regardless of distribution. The 60s poll interval
+            // ensures cycle 2 cannot start before StopLoop() fires, so Count >= 2 is deterministically
+            // a cycle-1 signal.
+            await WaitUntilAsync(
+                () => Fixture.JobController.ClaimedWorkItemIds.Count >= 2,
+                timeout: TimeSpan.FromSeconds(30));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
@@ -335,6 +362,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             Assert.Contains(items, i => i.TaskType == WorkItemTaskType.Review);
             Assert.Contains(items, i => i.TaskType == WorkItemTaskType.Decomposition);
             Assert.DoesNotContain(items, i => i.TaskType == WorkItemTaskType.Implementation);
+            // TODO [WARNING]: Assert.DoesNotContain above queries only claimed work items. If the
+            // scheduler created an Implementation WorkItem but FakeJobController did not claim it
+            // before the snapshot (e.g. it was created after the ClaimedWorkItemIds.Count >= 2 wait
+            // but before StopLoop completed the cycle), the assertion passes vacuously. A stronger
+            // check would query ALL WorkItems created during this test (regardless of claim status)
+            // and assert none has TaskType == Implementation. This would catch cases where the
+            // scheduler correctly excluded the implementation from dispatch but still created a
+            // database row for it (e.g. a dedup race or an off-by-one in the budget check).
         }
         finally
         {
@@ -351,6 +386,12 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     [Fact]
     public async Task TypePriority_Budget3_AllThreeTypesDispatched()
     {
+        // TODO [WARNING]: This test duplicates the entire setup from TypePriority_Budget2_PrAndEpicDispatchedIssueWaits
+        // with a different budget and different PR/epic/issue identifiers (43, 201, 301 vs 42, 200, 300).
+        // The shared setup logic is copy-pasted verbatim. If setup requirements change (e.g. the
+        // "do not include agent:next on the PR issue-side seed" constraint), both copies must be
+        // updated in sync. Consider parameterizing these two tests or extracting a shared setup helper.
+
         // Arrange: same as Budget2 test but with budget=3
         Fixture.RepositoryProvider.PullRequests.Add(new PullRequestSummary
         {
@@ -417,14 +458,21 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             var started = await loopService.StartLoopAsync();
             Assert.True(started);
 
-            // Wait for all 3 dispatches using event-driven JobAssigned signals on all 3 agents.
-            // See TypePriority_Budget2 for the rationale: ClaimedWorkItemIds polling was timing
-            // out because two HTTP round-trips to the test API were too slow under CI load.
-            // MaxRunsPerCycle resets every poll interval, so after all 3 fire we stop immediately.
-            await Task.WhenAll(
-                agent1.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)),
-                agent2.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)),
-                agent3.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30)));
+            // Wait for all 3 dispatches using ClaimedWorkItemIds count.
+            //
+            // The prior approach used Task.WhenAll on all 3 agents' JobAssigned TCS, but that
+            // assumed each dispatch lands on a different agent. FakeJobController.PickIdleAgent
+            // selects the longest-idle agent; all three dispatches can land on the same agent if
+            // agents 2 and 3 are not yet registered as idle when dispatch runs. When that happens
+            // only one TCS resolves and Task.WhenAll times out. See TypePriority_Budget2 for the
+            // full explanation.
+            //
+            // ClaimedWorkItemIds.Add fires before StartAssignedWorkItemAsync in FakeJobController,
+            // so Count >= 3 is a faster and agent-distribution-agnostic signal. The 60s poll
+            // interval prevents cycle 2 from starting before StopLoop() fires.
+            await WaitUntilAsync(
+                () => Fixture.JobController.ClaimedWorkItemIds.Count >= 3,
+                timeout: TimeSpan.FromSeconds(30));
             loopService.StopLoop();
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
@@ -479,6 +527,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
 
         // ReviewEnabled=false; no implementation/decomposition work seeded
+        // TODO [WARNING]: Both ReviewEnabled=false AND ImplementationEnabled=false are set here.
+        // This makes Assert.Empty non-discriminating: the assertion would pass even if ReviewEnabled=false
+        // had no effect, because ImplementationEnabled=false alone is sufficient to produce zero dispatches.
+        // A stronger test would seed an implementation issue alongside the PR, keep ImplementationEnabled=true,
+        // and assert that only the PR was skipped while the implementation issue was dispatched — proving
+        // ReviewEnabled=false selectively suppresses review without killing all dispatch. Contrast with
+        // FeatureFlags_DecompositionDisabled_EpicNotDispatched, which uses implementationEnabled: true as
+        // a confounding-variable guard.
         await SaveDefaultTemplateAsync(reviewEnabled: false, implementationEnabled: false);
         await SaveDefaultAgentProfileAsync();
         await SetPollIntervalAsync(maxRunsPerCycle: 1);
@@ -525,6 +581,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         });
 
         await SaveDefaultTemplateAsync(implementationEnabled: false);
+        // TODO [WARNING]: The template above leaves reviewEnabled at its default (false). This means
+        // no work type is enabled, making Assert.Empty non-discriminating: the assertion passes even
+        // if ImplementationEnabled=false logic were completely absent (there is simply nothing to
+        // dispatch). A non-vacuous test would seed a PR alongside the implementation issue, set
+        // reviewEnabled: true, confirm the PR is dispatched, and confirm the implementation issue is
+        // not — proving ImplementationEnabled=false selectively suppresses implementation without
+        // suppressing review dispatch.
         await SaveDefaultAgentProfileAsync();
         await SetPollIntervalAsync(maxRunsPerCycle: 1);
 
@@ -631,6 +694,14 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // This is the correct and expected behaviour for a disabled template — the loop must not start.
         var started = await loopService.StartLoopAsync();
         Assert.False(started, "StartLoopAsync must return false when the only configured template is disabled");
+        // TODO [WARNING]: Assert.Empty here is trivially non-vacuous — the loop never started, so
+        // the assertion passes regardless of whether FlattenTemplates correctly skips disabled
+        // templates. If StartLoopAsync returned false for a different reason (e.g. no agent profiles),
+        // the assertion would still pass while a FlattenTemplates filtering bug would go undetected.
+        // The DisabledProject_NothingDispatched test provides stronger coverage because it seeds both
+        // a disabled and an enabled template, starts the loop, and verifies the disabled template's
+        // issue is never dispatched. This test verifies only that StartLoopAsync refuses to start
+        // when zero enabled templates exist (a necessary precondition, but not sufficient on its own).
         Assert.Empty(Fixture.JobController.ClaimedWorkItemIds);
     }
 
@@ -743,6 +814,16 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             // the second budget slot within cycle 1 would have dispatched "61" from the shared
             // provider (both templates see the same InMemoryIssueProvider). This is the
             // discriminating assertion that budget-count alone cannot provide.
+            // TODO [WARNING]: Both templates share the same InMemoryIssueProvider ("issue-e2e"). If
+            // FlattenTemplates were broken and included the disabled project's template, the combined
+            // polling would see both issues in the same provider and could dispatch "62" twice (once
+            // per template) rather than "62" once and "61" once. The DB assertion catches "61" being
+            // dispatched, but does NOT catch a duplicate dispatch of "62" (two WorkItems for the same
+            // identifier). Using the SecondaryIssueProvider pattern (as in EnabledTemplates_PolledInProjectNameOrder)
+            // — with the disabled project's template pointing at "issue-e2e-2" and issue "61" seeded there —
+            // would make this test a cleaner discriminator: "62" would only appear via the enabled template
+            // and "61" only via the disabled template, so any inclusion of the disabled template is caught
+            // by the "61" assertion without the duplicate-"62" ambiguity.
             await using var db = Fixture.DbContextFactory.CreateDbContext();
             var issue61WorkItems = await db.WorkItems.AsNoTracking()
                 .Where(w => w.IssueIdentifier == "61")
@@ -761,16 +842,9 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
     /// alphabetically-first project ("A-Project") is dispatched before the issue from the
     /// last project ("Z-Project").
     ///
-    /// NOTE: docs/projects.md describes "project order" as list/insertion order, but
-    /// FlattenTemplates currently sorts alphabetically. This test pins the actual product
-    /// behaviour (alphabetical). If FlattenTemplates is corrected to use list order, this
-    /// test will fail and must be updated — that is by design (a failing test reveals the
-    /// rule change). See the TODO below for the outstanding docs/implementation mismatch.
-    ///
-    /// TODO [WARNING]: A bug for the docs/implementation mismatch (FlattenTemplates sorts
-    /// alphabetically instead of by list order) MUST be filed on the issue tracker and
-    /// linked to issue #3093 to satisfy acceptance criterion #2. This test pins the actual
-    /// (alphabetical) behaviour; the bug filing is the required process artefact.
+    /// This matches the documented behaviour in docs/projects.md (Template Ordering section):
+    /// "Cross-project ordering: Projects are sorted alphabetically by name, then templates
+    /// within each project by name." The implementation and docs agree.
     ///
     /// Design: A-Project's template uses IssueProviderId="issue-e2e" (primary provider,
     /// contains only issue "100"). Z-Project's template uses IssueProviderId="issue-e2e-2"
@@ -867,21 +941,9 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Budget=1: only one dispatch per cycle. The alphabetically-first template (A-Project)
         // is polled first and its issue "100" is dispatched. Z-Project's template (and issue "200")
         // waits for the next cycle.
-        // TODO [WARNING]: docs/projects.md says "project order" means list/insertion order, but
-        // FlattenTemplates (PipelineLoopService.MultiTemplateLoop.cs) currently orders by
-        // p.Name alphabetically (StringComparer.Ordinal). This test encodes the actual product
-        // behaviour (alphabetical). The docs/implementation mismatch should be resolved: either
-        // update FlattenTemplates to honour list order, or update the docs to say "alphabetical
-        // by project name". Until that is resolved, a change to FlattenTemplates that corrects
-        // the ordering to match the docs will cause this test to fail — which is the intended
-        // signal that the rule changed.
-        //
-        // REQUIRED (acceptance criterion #2 for issue #3093): this docs/implementation mismatch
-        // MUST be filed as a bug on the issue tracker and linked to issue #3093. Acceptance
-        // criterion #2 states: "Any rule the product does not follow is filed as a bug and linked
-        // here. Do not change the test to match the bug." Filing the bug satisfies AC2; until it
-        // is filed AC2 is NOT met. Do not change this test to assert list/insertion order until
-        // FlattenTemplates is corrected to match the docs.
+        // This ordering (alphabetical by project name) matches the documented behaviour in
+        // docs/projects.md (Template Ordering section): "Cross-project ordering: Projects are
+        // sorted alphabetically by name, then templates within each project by name."
         await SetPollIntervalAsync(maxRunsPerCycle: 1);
 
         await using var fakeAgent = new FakeAgentClient("loop-order-1", "e2e");
@@ -972,6 +1034,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
         // Part B: mark blocker closed and run a second cycle.
         Fixture.IssueProvider.ClosedIssueIdentifiers.Add("100");
+        // TODO [WARNING]: ClosedIssueIdentifiers.Add is performed while the Part A loop is stopped
+        // but while FakeJobController.PollAsync (250ms tick) is still running. If the job controller's
+        // poll fires between this Add and loopService.StartLoopAsync below, and if any in-flight work
+        // item from a prior dispatch attempt exists in Pending state, it could be claimed before Part
+        // B's loop cycle runs. This is harmless for the current scenario (issue 60 was not dispatched
+        // in Part A, so no Pending work item exists), but the setup is fragile if a second issue is
+        // added to the test in the future.
 
         // Use a fresh FakeAgentClient for Part B rather than resetting the one used in Part A.
         // ResetJobAssigned() swaps the TCS reference on the client, but if a residual Part-A
