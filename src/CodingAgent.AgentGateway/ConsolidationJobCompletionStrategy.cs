@@ -54,15 +54,7 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
         // transitioned atomically. RunLifecycleManager.CompleteRunAsync calls _runService.RemoveRun
         // internally — do NOT call _facade.RemoveRun separately.
         // RunLifecycleManager already skips the label swap for consolidation runs
-        // (IssueProviderConfigId == ConsolidationConstants.ProviderConfigId guard in CompleteRunAsync).
-        // TODO: [WARNING] Cancelled step is incorrectly routed through FailRunAsync. CompletionOutcomeResolver
-        // returns WorkItemStatus.Cancelled for PipelineStep.Cancelled, but the else branch below unconditionally
-        // calls FailRunAsync, which persists WorkItemStatus.Failed and PipelineStep.Failed in both history and
-        // the DB WorkItems row. WorkItemStatus.Cancelled should route to CancelRunAsync instead to preserve the
-        // correct terminal state. Concrete scenario: agent pod receives SIGTERM → sends FinalStep=Cancelled →
-        // DB and history record Failed instead of Cancelled. Fix by adding a separate branch:
-        //   if (workItemStatus == WorkItemStatus.Cancelled) await _lifecycleManager.CancelRunAsync(...)
-        // The synthetic error message "Consolidation run failed" also leaks into Cancelled history records.
+        // (IssueProviderConfigId == ConsolidationConstants.ProviderConfigId guard in each terminal method).
         if (workItemStatus == WorkItemStatus.Succeeded)
         {
             try
@@ -73,6 +65,17 @@ internal sealed class ConsolidationJobCompletionStrategy : IJobCompletionStrateg
             catch (Exception ex)
             {
                 _logger.Warning(ex, "ReportJobCompleted: RunLifecycleManager.CompleteRunAsync failed for consolidation run {JobId} (non-fatal)", jobId.Value);
+            }
+        }
+        else if (workItemStatus == WorkItemStatus.Cancelled)
+        {
+            try
+            {
+                await _lifecycleManager.CancelRunAsync(jobId.Value, ct, null);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "ReportJobCompleted: RunLifecycleManager.CancelRunAsync failed for consolidation run {JobId} (non-fatal)", jobId.Value);
             }
         }
         else
