@@ -424,43 +424,48 @@ public static class WorkItemDispatchEndpoints
             lifecycle,
             ct);
 
-        // ── Result interception: delegate to shared helper (issue #3235) ──
-        // InterpretDispatchResult handles:
-        //   409 → 200+DispatchPendingResponse(false,"concurrency_limit") (rewriteConcurrencyLimitAsDeferred=true)
-        //   503 → PVC/K8s disambiguation telemetry, then pass through
-        //   other → pass through (success fall-through below)
-        // PvcPoolExhaustions.Add(1) is emitted here (exclusive to this path) when the 503 is PVC-gated.
-        // RecordDispatchAttempt("dispatched","none") stays in the success fall-through below.
+        // ── Result interception: delegate to shared helper (issue #3235, #3260) ──
+        // InterpretDispatchResult returns an explicit DispatchInterpretOutcome alongside the IResult.
+        //   ConcurrencyLimitRewritten → 409 was rewritten to 200+DispatchPendingResponse
+        //   PvcExhausted503           → 503 from PVC gate; caller emits PvcPoolExhaustions.Add(1)
+        //   K8sError503               → 503 from K8s failure; return as-is
+        //   PassThrough               → success; emit RecordDispatchAttempt("dispatched","none")
         var isKiroAgent = dispatchService.IsKiroAgent(template);
-        var interpretedResult = InterpretDispatchResult(dispatchResult, pvcResult, isKiroAgent, rewriteConcurrencyLimitAsDeferred: true);
-        // TODO [WARNING]: Reference-equality is used to detect the 409→200 rewrite
-        // (InterpretDispatchResult returns a new object only for the rewrite case). This is
-        // correct today because the helper returns rawResult unchanged for all non-409 cases.
-        // If InterpretDispatchResult is ever changed to wrap the 503 or success result in a new
-        // object, this early-exit would fire for those cases too, skipping PvcPoolExhaustions.Add(1).
-        // Consider returning an explicit flag from InterpretDispatchResult to make the rewrite
-        // detection robust. See review finding: DotNetSpecialist @ line 452.
-        if (interpretedResult != dispatchResult)
-            return interpretedResult; // 409→200 rewrite was applied
+        var (interpretedResult, outcome) = InterpretDispatchResult(dispatchResult, pvcResult, isKiroAgent, rewriteConcurrencyLimitAsDeferred: true);
 
-        // TODO [WARNING]: The 503 pattern-match re-checks dispatchResult, not interpretedResult.
-        // This is currently harmless because InterpretDispatchResult returns rawResult unchanged
-        // for 503, making the two references equal. If the helper is ever changed to wrap the 503
-        // result, this check should match on interpretedResult instead to stay consistent.
-        // See review finding: DotNetSpecialist @ line 452.
-        if (dispatchResult is Microsoft.AspNetCore.Http.IStatusCodeHttpResult { StatusCode: 503 })
+        // Branch exclusively on the explicit outcome discriminator (issue #3260).
+        // No reference-equality or re-matched status-code checks remain here.
+        // TODO [WARNING]: The `_` catch-all arm silently delegates to DispatchSuccessFallThrough(),
+        // emitting RecordDispatchAttempt("dispatched","none") and returning 200/DispatchPendingResponse(true,"none")
+        // for any future DispatchInterpretOutcome value not listed here. If a new variant is added
+        // (e.g. RateLimited429) without updating this switch, the caller will misreport an error as
+        // a successful dispatch. Make this switch exhaustive by enumerating PassThrough explicitly and
+        // adding `_ => throw new UnreachableException(...)` as the final arm to surface the bug at
+        // runtime instead of silently producing a wrong response.
+        // See review findings: Correctness @ line 439, DotNetSpecialist @ line 444.
+        return outcome switch
         {
-            // PvcPoolExhaustions counter belongs exclusively to this path — not inside the helper.
-            if (!pvcResult.AvailablePvcs.Any() && isKiroAgent)
-                WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
-            return interpretedResult;
+            DispatchInterpretOutcome.ConcurrencyLimitRewritten => interpretedResult,
+            DispatchInterpretOutcome.PvcExhausted503 => EmitPvcExhaustionAndReturn(interpretedResult),
+            DispatchInterpretOutcome.K8sError503 => interpretedResult,
+            _ => DispatchSuccessFallThrough()
+        };
+
+        // PvcPoolExhaustions counter belongs exclusively to this path — not inside the helper.
+        IResult EmitPvcExhaustionAndReturn(IResult r)
+        {
+            WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
+            return r;
         }
 
         // ── Dispatch succeeded (onSuccess returned Ok<Guid>) ──
         // Replace the raw-id 200 response with the structured body the client now expects.
         // RecordDispatchAttempt("dispatched","none") belongs exclusively to this path.
-        WorkDistributionTelemetry.RecordDispatchAttempt("dispatched", "none");
-        return TypedResults.Ok(new DispatchPendingResponse(true, "none"));
+        IResult DispatchSuccessFallThrough()
+        {
+            WorkDistributionTelemetry.RecordDispatchAttempt("dispatched", "none");
+            return TypedResults.Ok(new DispatchPendingResponse(true, "none"));
+        }
     }
 
     // ── POST /dispatch — synchronous dispatch endpoint ────────────────────
@@ -633,7 +638,7 @@ public static class WorkItemDispatchEndpoints
         // If this is intentional, document it; otherwise guard the 503 telemetry in InterpretDispatchResult
         // with the same rewriteConcurrencyLimitAsDeferred flag used for the 409 branch.
         // See review finding: Correctness @ line 616.
-        return InterpretDispatchResult(syncDispatchResult, pvcResult, dispatchService.IsKiroAgent(template), rewriteConcurrencyLimitAsDeferred: false);
+        return InterpretDispatchResult(syncDispatchResult, pvcResult, dispatchService.IsKiroAgent(template), rewriteConcurrencyLimitAsDeferred: false).Result;
     }
 
     /// <summary>
@@ -820,10 +825,22 @@ public static class WorkItemDispatchEndpoints
     /// <c>false</c> for <see cref="DispatchWorkItem"/>: 409 passes through unchanged.
     /// </param>
     /// <returns>
-    /// The rewritten result (for the 409→200 path when <paramref name="rewriteConcurrencyLimitAsDeferred"/> is true),
-    /// or <paramref name="rawResult"/> unchanged (for all other cases).
+    /// A tuple of the (possibly rewritten) result and an explicit <see cref="DispatchInterpretOutcome"/>
+    /// discriminator. The caller uses the outcome to branch without reference-equality or re-matched
+    /// status-code checks (issue #3260).
+    /// <list type="bullet">
+    ///   <item><see cref="DispatchInterpretOutcome.ConcurrencyLimitRewritten"/> — result is the rewritten
+    ///     200/deferred response; caller should return it immediately.</item>
+    ///   <item><see cref="DispatchInterpretOutcome.PvcExhausted503"/> — result is the raw 503; caller
+    ///     must emit <c>PvcPoolExhaustions.Add(1)</c> and return.</item>
+    ///   <item><see cref="DispatchInterpretOutcome.K8sError503"/> — result is the raw 503; caller
+    ///     returns it without additional metric emission.</item>
+    ///   <item><see cref="DispatchInterpretOutcome.PassThrough"/> — result is success or unhandled;
+    ///     <see cref="DispatchPendingWorkItem"/> emits <c>RecordDispatchAttempt("dispatched","none")</c>
+    ///     and returns the structured success body.</item>
+    /// </list>
     /// </returns>
-    internal static IResult InterpretDispatchResult(
+    internal static (IResult Result, DispatchInterpretOutcome Outcome) InterpretDispatchResult(
         IResult rawResult,
         PvcAvailabilityResult pvcResult,
         bool isKiroAgent,
@@ -838,10 +855,10 @@ public static class WorkItemDispatchEndpoints
             if (rewriteConcurrencyLimitAsDeferred)
             {
                 WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "concurrency_limit");
-                return TypedResults.Ok(new DispatchPendingResponse(false, "concurrency_limit"));
+                return (TypedResults.Ok(new DispatchPendingResponse(false, "concurrency_limit")), DispatchInterpretOutcome.ConcurrencyLimitRewritten);
             }
             // DispatchWorkItem path: 409 passes through as-is.
-            return rawResult;
+            return (rawResult, DispatchInterpretOutcome.PassThrough);
         }
 
         // ── 503: PVC exhaustion or K8s failure ───────────────────────────────
@@ -857,16 +874,19 @@ public static class WorkItemDispatchEndpoints
             // before K8s lifecycle) being a structural invariant — if that ordering ever changes,
             // this heuristic may misclassify k8s_error as pvc_unavailable or vice versa.
             if (!pvcResult.AvailablePvcs.Any() && isKiroAgent)
+            {
                 WorkDistributionTelemetry.RecordDispatchAttempt("transient", "pvc_unavailable");
-            else
-                WorkDistributionTelemetry.RecordDispatchAttempt("transient", "k8s_error");
-            return rawResult;
+                return (rawResult, DispatchInterpretOutcome.PvcExhausted503);
+            }
+
+            WorkDistributionTelemetry.RecordDispatchAttempt("transient", "k8s_error");
+            return (rawResult, DispatchInterpretOutcome.K8sError503);
         }
 
         // ── Success or any other result ───────────────────────────────────────
-        // Pass through unchanged. The DispatchPendingWorkItem caller checks this and emits
-        // RecordDispatchAttempt("dispatched","none") plus wraps in DispatchPendingResponse(true,"none").
-        return rawResult;
+        // Pass through unchanged. The DispatchPendingWorkItem caller emits
+        // RecordDispatchAttempt("dispatched","none") and wraps in DispatchPendingResponse(true,"none").
+        return (rawResult, DispatchInterpretOutcome.PassThrough);
     }
 
     // ── POST /{id}/claim ──────────────────────────────────────────────────
@@ -1314,6 +1334,43 @@ public static class WorkItemDispatchEndpoints
         // This is deterministic and stable across retries.
         return workItemId.ToString();
     }
+}
+
+/// <summary>
+/// Discriminated outcome returned by
+/// <see cref="WorkItemDispatchEndpoints.InterpretDispatchResult"/> (issue #3260).
+/// Replaces reference-equality and re-matched status-code signals in
+/// <see cref="WorkItemDispatchEndpoints.DispatchPendingWorkItem"/>.
+/// </summary>
+internal enum DispatchInterpretOutcome
+{
+    /// <summary>
+    /// Success or any unhandled result — <see cref="WorkItemDispatchEndpoints.DispatchPendingWorkItem"/>
+    /// emits <c>RecordDispatchAttempt("dispatched","none")</c> and returns the structured success body.
+    /// On the <see cref="WorkItemDispatchEndpoints.DispatchWorkItem"/> path, also used for a 409
+    /// pass-through (rewriteConcurrencyLimitAsDeferred=false).
+    /// </summary>
+    PassThrough,
+
+    /// <summary>
+    /// A 409 Conflict was rewritten to 200 DispatchPendingResponse(false,"concurrency_limit").
+    /// Only set when <c>rewriteConcurrencyLimitAsDeferred=true</c>
+    /// (<see cref="WorkItemDispatchEndpoints.DispatchPendingWorkItem"/> path).
+    /// </summary>
+    ConcurrencyLimitRewritten,
+
+    /// <summary>
+    /// A 503 from the PVC exhaustion gate (empty PVC pool, kiro agent).
+    /// The caller (<see cref="WorkItemDispatchEndpoints.DispatchPendingWorkItem"/>) must emit
+    /// <c>WorkDistributionTelemetry.PvcPoolExhaustions.Add(1)</c> before returning.
+    /// </summary>
+    PvcExhausted503,
+
+    /// <summary>
+    /// A 503 from a K8s lifecycle failure (PVCs available, or non-kiro agent).
+    /// The caller returns the raw 503 without additional metric emission.
+    /// </summary>
+    K8sError503,
 }
 
 /// <summary>
