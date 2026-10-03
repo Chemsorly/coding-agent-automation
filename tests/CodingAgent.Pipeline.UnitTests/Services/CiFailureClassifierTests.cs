@@ -90,6 +90,27 @@ public class CiFailureClassifierTests
         CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Unknown);
     }
 
+    // When the overall workflow run was cancelled (e.g. by concurrency:cancel-in-progress),
+    // dependent jobs cascade to Failure conclusion even though no code actually failed.
+    // A cancelled run is always an infrastructure event — it should always be retried,
+    // never treated as a code failure that requires agent intervention.
+    [Fact]
+    public void Classify_CancelledRunState_ReturnsInfrastructure_RegardlessOfJobContent()
+    {
+        // Jobs have Failure state (cascaded from cancelled dependency) but no log content —
+        // the overall run state is Cancelled, which is the authoritative signal.
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "docker-push", State = PipelineRunState.Failed, LogContent = null },
+                new PipelineJobResult { Name = "publish-chart", State = PipelineRunState.Failed, LogContent = null }
+            }
+        };
+        CiFailureClassifier.Classify(status).Should().Be(CiFailureClassifier.CiFailureCategory.Infrastructure);
+    }
+
     [Fact]
     public void Classify_UnrecognizedLogContent_ReturnsUnknown()
     {
