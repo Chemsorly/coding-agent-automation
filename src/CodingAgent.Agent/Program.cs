@@ -152,7 +152,8 @@ try
     {
         app.Lifetime.ApplicationStopping.Register(() =>
         {
-            Log.Information("SIGTERM received, cancelling pipeline for work item {WorkItemId}", startupConfig.WorkItemId);
+            // Fires on every host stop, after a finished run as well as on SIGTERM.
+            Log.Information("Host stopping, cancelling pipeline for work item {WorkItemId}", startupConfig.WorkItemId);
             var workItemService = app.Services.GetService<WorkItemAgentService>();
             workItemService?.CancelPipeline();
         });
