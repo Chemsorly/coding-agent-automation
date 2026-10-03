@@ -828,7 +828,8 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
     [Fact]
     public async Task ReportQualityGateResult_WithQgcResults_RecordsPerQgcGates()
     {
-        var observed = new List<(string gate, string result)>();
+        // Use ConcurrentBag to avoid data races from background-thread MeterListener callbacks.
+        var observed = new System.Collections.Concurrent.ConcurrentBag<(string gate, string result)>();
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -847,6 +848,10 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
             observed.Add((gate, result));
         });
         listener.Start();
+
+        // Capture baseline count after Start() so any pre-existing emissions from prior
+        // tests in the [Collection("Metrics")] group are excluded from the assertion.
+        var baselineCount = observed.Count;
 
         _mockFacade.Setup(f => f.GetRun("job-multiqgc-1")).Returns(CreateRun("job-multiqgc-1"));
         var hub = CreateHub();
@@ -882,7 +887,8 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
         // Stop the listener before asserting so the callback cannot mutate `observed`
         // while the assertion library enumerates it to build failure messages.
         listener.Dispose();
-        var snapshot = observed.ToList();
+        // Take only the records added after the baseline to exclude cross-test bleed.
+        var snapshot = observed.ToList().Skip(baselineCount).ToList();
 
         // Two QGC entries → 4 gate records (compilation+tests per QGC)
         snapshot.Should().HaveCount(4,

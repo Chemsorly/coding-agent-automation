@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;

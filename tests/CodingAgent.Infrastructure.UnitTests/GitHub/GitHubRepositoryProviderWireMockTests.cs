@@ -458,6 +458,108 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
         // WireMock's 500 does not surface as an exception at the act() level.
     }
 
+    [Fact]
+    public async Task UpdatePullRequestAsync_MarkReady_Draft_GraphQLBodyIsValidJsonWithVariables()
+    {
+        // Characterization test: markReady=true on a draft PR must POST a JSON body
+        // where pullRequestId is passed as a GraphQL variable, not interpolated inline.
+        StubPatch(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"),
+            BuildDetailedPullRequestJson(42, "feature/branch", draft: true, mergeable: true));
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"),
+            BuildDetailedPullRequestJson(42, "feature/branch", draft: true, mergeable: true));
+        // GraphQL stub path is /graphql (not /api/v3/graphql) — DeriveGraphQlUri uses raw ApiUrl
+        StubPost("/graphql",
+            new { data = new { markPullRequestReadyForReview = new { pullRequest = new { isDraft = false } } } });
+
+        await using var provider = CreateProvider();
+        // TODO: Wrap this call with Should().NotThrowAsync() (see pre-existing pattern in UpdatePullRequestAsync_MarkReadyTrue_PrIsDraft_CallsMarkReady)
+        // so that a misconfigured WireMock stub surfaces as a clear assertion failure rather than an unhandled exception
+        // propagating through JsonDocument.Parse with a misleading message.
+        await provider.UpdatePullRequestAsync(42, "body", markReady: true, CancellationToken.None);
+
+#pragma warning disable CS8602 // WireMock ILogEntry.RequestMessage is always populated in test stubs
+        var graphqlCalls = Server.LogEntries.Where(e =>
+            e.RequestMessage != null &&
+            e.RequestMessage.Method == "POST" &&
+            (e.RequestMessage.Path ?? "").Contains("graphql")).ToList();
+#pragma warning restore CS8602
+        graphqlCalls.Should().HaveCount(1, "exactly one GraphQL POST must be made for markReady=true on a draft PR");
+
+        // TODO [WARNING]: Body! uses a null-forgiving operator with no prior null guard. If WireMock captures the
+        // request but does not populate the raw body (e.g. due to a content-type mismatch), JsonDocument.Parse
+        // will throw a NullReferenceException rather than a meaningful assertion failure. Add
+        // bodyJson.Should().NotBeNull("GraphQL POST body must be captured") before calling JsonDocument.Parse.
+        var bodyJson = graphqlCalls[0].RequestMessage!.Body!;
+        var doc = JsonDocument.Parse(bodyJson);
+
+        // query field must contain the mutation name and the $pullRequestId variable placeholder (not the literal node ID)
+        var query = doc.RootElement.GetProperty("query").GetString()!;
+        query.Should().Contain("markPullRequestReadyForReview", "the mutation name must appear in the query");
+        // TODO: Also assert query contains "mutation($pullRequestId: ID!)" to verify the full variable type annotation
+        // is present in the mutation signature — the current check for "$pullRequestId" alone would not catch a rename
+        // to a different variable name in the signature (e.g. "$id") while keeping "$pullRequestId" only in the body.
+        query.Should().Contain("$pullRequestId", "pullRequestId must be passed as a GraphQL variable placeholder, not interpolated");
+        // TODO: The NotContain("PR_node_42") assertion below is only meaningful in combination with the
+        // variables.pullRequestId assertion that follows — on its own it would pass even if the query were empty.
+        // Both assertions together form the correctness guarantee.
+        query.Should().NotContain("PR_node_42", "the node ID must not be embedded directly in the query string");
+
+        // variables.pullRequestId must hold the actual node ID value
+        doc.RootElement.GetProperty("variables").GetProperty("pullRequestId").GetString()
+            .Should().Be("PR_node_42", "the node ID must be bound as a GraphQL variable");
+    }
+
+    [Fact]
+    public async Task UpdatePullRequestAsync_MarkReadyFalse_PrIsReadyForReview_GraphQLBodyIsValidJsonWithVariables()
+    {
+        // Characterization test: markReady=false on a ready-for-review PR must POST a JSON body
+        // where pullRequestId is passed as a GraphQL variable, not interpolated inline.
+        StubPatch(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"),
+            BuildDetailedPullRequestJson(42, "feature/branch", draft: false, mergeable: true));
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/42"),
+            BuildDetailedPullRequestJson(42, "feature/branch", draft: false, mergeable: true));
+        // GraphQL stub path is /graphql (not /api/v3/graphql) — DeriveGraphQlUri uses raw ApiUrl
+        StubPost("/graphql",
+            new { data = new { convertPullRequestToDraft = new { pullRequest = new { isDraft = true } } } });
+
+        await using var provider = CreateProvider();
+        // TODO: Wrap this call with Should().NotThrowAsync() (see pre-existing pattern in UpdatePullRequestAsync_MarkReadyTrue_PrIsDraft_CallsMarkReady)
+        // so that a misconfigured WireMock stub surfaces as a clear assertion failure rather than an unhandled exception
+        // propagating through JsonDocument.Parse with a misleading message.
+        await provider.UpdatePullRequestAsync(42, "body", markReady: false, CancellationToken.None);
+
+#pragma warning disable CS8602 // WireMock ILogEntry.RequestMessage is always populated in test stubs
+        var graphqlCalls = Server.LogEntries.Where(e =>
+            e.RequestMessage != null &&
+            e.RequestMessage.Method == "POST" &&
+            (e.RequestMessage.Path ?? "").Contains("graphql")).ToList();
+#pragma warning restore CS8602
+        graphqlCalls.Should().HaveCount(1, "exactly one GraphQL POST must be made for markReady=false on a ready-for-review PR");
+
+        // TODO [WARNING]: Body! uses a null-forgiving operator with no prior null guard. If WireMock captures the
+        // request but does not populate the raw body (e.g. due to a content-type mismatch), JsonDocument.Parse
+        // will throw a NullReferenceException rather than a meaningful assertion failure. Add
+        // bodyJson.Should().NotBeNull("GraphQL POST body must be captured") before calling JsonDocument.Parse.
+        var bodyJson = graphqlCalls[0].RequestMessage!.Body!;
+        var doc = JsonDocument.Parse(bodyJson);
+
+        // query field must contain the mutation name and the $pullRequestId variable placeholder (not the literal node ID)
+        var query = doc.RootElement.GetProperty("query").GetString()!;
+        query.Should().Contain("convertPullRequestToDraft", "the mutation name must appear in the query");
+        // TODO: Also assert query contains "mutation($pullRequestId: ID!)" to verify the full variable type annotation
+        // is present in the mutation signature — the current check for "$pullRequestId" alone would not catch a rename
+        // to a different variable name in the signature (e.g. "$id") while keeping "$pullRequestId" only in the body.
+        query.Should().Contain("$pullRequestId", "pullRequestId must be passed as a GraphQL variable placeholder, not interpolated");
+        // TODO: The NotContain("PR_node_42") assertion below is only meaningful in combination with the
+        // variables.pullRequestId assertion that follows — on its own it would pass even if the query were empty.
+        // Both assertions together form the correctness guarantee.
+        query.Should().NotContain("PR_node_42", "the node ID must not be embedded directly in the query string");
+
+        // variables.pullRequestId must hold the actual node ID value
+        doc.RootElement.GetProperty("variables").GetProperty("pullRequestId").GetString()
+            .Should().Be("PR_node_42", "the node ID must be bound as a GraphQL variable");
+    }
+
     #endregion
 
     #region Helpers
