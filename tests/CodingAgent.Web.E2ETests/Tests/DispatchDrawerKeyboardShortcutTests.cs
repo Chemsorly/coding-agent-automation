@@ -58,8 +58,11 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // dispatching a synthetic click that would land on a child issue-row div and move focus away
         // from the list container. ClickAsync is unreliable here because the click coordinates land
         // on a child element, leaving the @onkeydown handler on .agent-history-list unreachable.
+        // The 500ms wait allows the Blazor Server SignalR circuit to settle after focus before
+        // keyboard events are sent.
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 10_000 });
         await Page.FocusAsync(".agent-history-list");
+        await Page.WaitForTimeoutAsync(500);
     }
 
     // ── Scenario 1: Arrow key navigation ────────────────────────────────────────
@@ -510,6 +513,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // Focus the list
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
         await Page.FocusAsync(".agent-history-list");
+        await Page.WaitForTimeoutAsync(500);
 
         // ArrowDown to highlight PR #200 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
@@ -589,6 +593,9 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // Focus the list
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
         await Page.FocusAsync(".agent-history-list");
+        // Allow Blazor Server's SignalR circuit to settle after focus so the @onkeydown
+        // handler is registered before we send keyboard events.
+        await Page.WaitForTimeoutAsync(500);
 
         // ArrowDown to highlight epic #300 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
