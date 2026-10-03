@@ -49,43 +49,21 @@ internal sealed partial class DispatchScheduler
                     ct),
                 stopToken);
 
-            if (dispatchOutcome == DispatchAttemptOutcome.AlreadyQueued)
-            {
-                // 409 — live WorkItem already exists. Do not count as dispatched, do not consume budget.
-                // TODO [WARNING]: ActiveIssueIdentifiers is not updated here, so if a second template
-                // in the same cycle also queues this issue, it will reach PrepareDistributionRequestAsync
-                // and call the API again, receiving a second 409. This is safe (handled correctly) but
-                // results in an extra prepare+distribute round-trip per duplicate per cycle. Consider
-                // adding the identifier to ctx.ActiveIssueIdentifiers on AlreadyQueued to short-circuit
-                // the redundant API call in the second template's turn.
-                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-                    PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                return DispatchAttemptResult.Skip;
-            }
-
-            var dispatched = dispatchOutcome == DispatchAttemptOutcome.Dispatched;
-
-            if (dispatched)
-            {
+            if (dispatchOutcome == DispatchAttemptOutcome.Dispatched)
                 _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
                     issue.Identifier, template.Name);
-                // Add to the in-cycle active set so a second template queuing the same issue
-                // in this cycle sees it as already active and skips it.
-                ctx.ActiveIssueIdentifiers.Add((issue.Identifier, template.IssueProviderId));
-            }
 
-            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-                dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
+            var result = FinalizeDispatchOutcome(dispatchOutcome, issue.Identifier, template.IssueProviderId, ctx);
 
             // Emit Loop.Enqueue span only when a WorkItem was actually created — no span on skips.
-            if (dispatched)
+            if (result.Dispatched)
             {
                 using var enqueueActivity = PipelineTelemetry.ActivitySource.StartActivity("Loop.Enqueue");
                 enqueueActivity?.SetTag("issue_identifier", issue.Identifier);
                 enqueueActivity?.SetTag("template_name", template.Name);
             }
 
-            return new DispatchAttemptResult(dispatched);
+            return result;
         }, ctx.RemainingBudget, ctx.GetCurrentIssueIdentifier, stoppingToken, ct);
     }
 

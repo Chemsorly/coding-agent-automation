@@ -413,12 +413,13 @@ public static class ApiServiceCollectionExtensions
     /// <summary>
     /// Registers lifecycle, consolidation, agent communication, and run management services.
     ///
-    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 6 required
-    /// arguments only (no <c>IConsolidationFeedbackCache</c>, <c>IWorkDistributor</c>, selector resolver
-    /// or settings store). The Web host's <c>AddConsolidationServices</c> passes those too. These are
+    /// NOTE: <see cref="ConsolidationServiceDependencies"/> is constructed here with its 5 required
+    /// arguments only (no <c>IWorkDistributor</c>, <c>IConsolidationSelectorResolver</c> or
+    /// <c>IPipelineConfigStore</c>). The Web host's <c>AddConsolidationServices</c> passes those too. These are
     /// intentionally different — do NOT unify them.
     // TODO [WARNING]: The required-argument count in this comment was "7" before IPipelineRunHistoryService
-    // and IConsolidationFeedbackCache were removed from ConsolidationServiceDependencies in issue #3030.
+    // and IConsolidationFeedbackCache were removed from ConsolidationServiceDependencies in issue #3030,
+    // then "6" before the count was corrected to "5" in issue #3264.
     // Update this count if ConsolidationServiceDependencies gains or loses required parameters in future.
     /// </summary>
     private static void AddLifecycleAndConsolidation(IServiceCollection services)
