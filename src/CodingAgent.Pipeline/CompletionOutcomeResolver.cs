@@ -70,4 +70,48 @@ public static class CompletionOutcomeResolver
 
         return (status, errorMsg, failureEnum);
     }
+
+    /// <summary>
+    /// Resolves the agent label for a terminal run outcome.
+    /// </summary>
+    /// <remarks>
+    /// Returns <paramref name="finalLabel"/> when it is a known agent label (present in
+    /// <see cref="AgentLabels.All"/>); otherwise falls back to the outcome-based mapping:
+    /// <list type="bullet">
+    ///   <item><see cref="WorkItemStatus.Succeeded"/> → <see cref="AgentLabels.Done"/></item>
+    ///   <item><see cref="WorkItemStatus.Failed"/> → <see cref="AgentLabels.Error"/></item>
+    ///   <item><see cref="WorkItemStatus.Cancelled"/> → <see cref="AgentLabels.Cancelled"/></item>
+    /// </list>
+    /// Returns <c>null</c> for any other status value.
+    /// <para>
+    /// This centralises the "honour FinalLabel iff it is in AgentLabels.All, else map the terminal
+    /// outcome to Done/Error/Cancelled" pattern that was previously duplicated across
+    /// <c>RunLifecycleManager.FailRunCoreAsync</c>, <c>RunLifecycleManager.CompleteRunAsync</c>,
+    /// and <c>AgentJobLifecycleService.SwapLabelAndPostCommentAsync</c> (issue #3261).
+    /// </para>
+    /// <para>
+    /// Note: <see cref="AgentLabels.All"/> is used (not <see cref="AgentLabels.SwapTargets"/>) to
+    /// preserve existing behaviour at all call sites. Migrating to <c>SwapTargets</c> (which
+    /// excludes <c>agent:generated</c>) should be tracked as a separate issue.
+    /// </para>
+    /// </remarks>
+    /// <param name="terminalStatus">The terminal <see cref="WorkItemStatus"/> for the run.</param>
+    /// <param name="finalLabel">
+    /// An optional label override set by the agent or pipeline (e.g. <c>agent:needs-refinement</c>).
+    /// Honoured only when it is a member of <see cref="AgentLabels.All"/>.
+    /// </param>
+    /// <returns>The resolved agent label string, or <c>null</c> when <paramref name="terminalStatus"/> is unrecognised.</returns>
+    public static string? ResolveAgentLabel(WorkItemStatus terminalStatus, string? finalLabel)
+    {
+        if (finalLabel is not null && AgentLabels.All.Contains(finalLabel))
+            return finalLabel;
+
+        return terminalStatus switch
+        {
+            WorkItemStatus.Succeeded => AgentLabels.Done,
+            WorkItemStatus.Failed    => AgentLabels.Error,
+            WorkItemStatus.Cancelled => AgentLabels.Cancelled,
+            _ => null
+        };
+    }
 }

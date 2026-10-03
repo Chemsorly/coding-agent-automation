@@ -499,6 +499,101 @@ public sealed class AgentJobLifecycleServiceTests
     }
 
     [Fact]
+    public async Task HandleJobCompletedAsync_Failed_WithValidFinalLabel_HonorsFinalLabel()
+    {
+        // Characterization test (issue #3261): FinalLabel override must work for the Failed step,
+        // not only for Completed. Before extraction this was the inline two-variable pattern;
+        // after extraction it is handled by CompletionOutcomeResolver.ResolveAgentLabel.
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // FinalLabel = agent:needs-refinement overrides the Failed-step default (agent:error)
+        var payload = MakePayload(PipelineStep.Failed, finalLabel: AgentLabels.NeedsRefinement);
+
+        await _sut.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
+
+        // TODO: [WARNING] These assertions are only meaningful when CompleteRunAsync returns a non-null run
+        // (runWasAlive=true, skipLabelSwap=false). If CompleteRunAsync were to return null, SwapLabelAsync
+        // would be silently skipped and the Times.Once assertion would never fire, making this test vacuously
+        // pass. Consider adding: _lifecycle.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed,
+        // It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once)
+        // to catch a null-return regression. See review findings (TestQualityReviewer).
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_Cancelled_WithValidFinalLabel_HonorsFinalLabel()
+    {
+        // Characterization test (issue #3261): FinalLabel override must work for the Cancelled step.
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        // FinalLabel = agent:needs-refinement overrides the Cancelled-step default (agent:cancelled)
+        var payload = MakePayload(PipelineStep.Cancelled, finalLabel: AgentLabels.NeedsRefinement);
+
+        await _sut.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
+
+        // TODO: [WARNING] These assertions are only meaningful when CompleteRunAsync returns a non-null run
+        // (runWasAlive=true, skipLabelSwap=false). If CompleteRunAsync were to return null, SwapLabelAsync
+        // would be silently skipped and the Times.Once assertion would never fire, making this test vacuously
+        // pass. Consider adding: _lifecycle.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Cancelled,
+        // It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once)
+        // to catch a null-return regression. See review findings (TestQualityReviewer).
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Cancelled, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleJobCompletedAsync_Failed_WithUnknownFinalLabel_FallsBackToAgentError()
+    {
+        // Characterization test (issue #3261): an unknown FinalLabel must not be used —
+        // the outcome-based fallback (agent:error for Failed) applies.
+        var agent = MakeAgent();
+        var jobId = new JobId("job-1");
+        var run = MakeRun("job-1");
+
+        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
+        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
+        _lifecycle.Setup(l => l.CompleteRunAsync(
+            "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
+        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+
+        var payload = MakePayload(PipelineStep.Failed, finalLabel: "not-an-agent-label");
+
+        await _sut.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
+
+        // TODO: [WARNING] These assertions are only meaningful when CompleteRunAsync returns a non-null run
+        // (runWasAlive=true, skipLabelSwap=false). If CompleteRunAsync were to return null, SwapLabelAsync
+        // would be silently skipped and the Times.Once assertion would never fire, making this test vacuously
+        // pass. Consider adding: _lifecycle.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed,
+        // It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once)
+        // to catch a null-return regression. See review findings (TestQualityReviewer).
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, "not-an-agent-label" as string, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task HandleJobCompletedAsync_WhenRunNotFound_TriesDbRecovery()
     {
         var agent = MakeAgent();

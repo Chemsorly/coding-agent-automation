@@ -104,9 +104,13 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         string? errorLabel = null;
         if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
-            errorLabel = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
-                ? run.FinalLabel
-                : AgentLabels.Error;
+            // ResolveAgentLabel(Failed, _) always returns a non-null value (either FinalLabel or
+            // AgentLabels.Error), so the ?? fallback is purely defensive.
+            // Note: run.FinalLabel may have been set above (from resolvedFinalLabel) or earlier by
+            // AgentPhaseExecutor. ResolveAgentLabel re-validates it against AgentLabels.All, which is
+            // intentional — the double-check is harmless and guards against concurrent mutations.
+            errorLabel = CompletionOutcomeResolver.ResolveAgentLabel(WorkItemStatus.Failed, run.FinalLabel)
+                ?? AgentLabels.Error;
         }
 
         // 6. Shared terminal cleanup: history-persist → span-finalize → label-swap
@@ -187,15 +191,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         string? label = null;
         if (run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
-            label = run.FinalLabel is not null && AgentLabels.All.Contains(run.FinalLabel)
-                ? run.FinalLabel
-                : terminalStatus switch
-                {
-                    WorkItemStatus.Succeeded => AgentLabels.Done,
-                    WorkItemStatus.Failed => AgentLabels.Error,
-                    WorkItemStatus.Cancelled => AgentLabels.Cancelled,
-                    _ => null
-                };
+            label = CompletionOutcomeResolver.ResolveAgentLabel(terminalStatus, run.FinalLabel);
         }
 
         // 3. Shared terminal cleanup: history-persist → span-finalize → label-swap
