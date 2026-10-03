@@ -364,17 +364,34 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // error handling, but that call can race with this handler (run already removed).
         // This is the authoritative swap that guarantees correctness — unless skipLabelSwap
         // is true, in which case the HTTP Failed path already set the authoritative label.
-        // Only accept FinalLabel if it is a known agent label; ignore arbitrary values.
-        var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
-            ? payload.FinalLabel
-            : null;
-        var label = finalLabel ?? payload.FinalStep switch
+        //
+        // Map only the three terminal steps this path handles to their WorkItemStatus equivalents.
+        // Other steps (ConflictRestart, PrMerged, PrClosed) map to null → no label swap, preserving
+        // current behaviour: those completions are handled by the HTTP primary path, not this
+        // SignalR path. Using CompletionOutcomeResolver.Resolve() here would change behaviour for
+        // those steps (e.g. ConflictRestart → Succeeded → agent:done), which is out of scope.
+        var stepStatus = payload.FinalStep switch
         {
-            PipelineStep.Failed => AgentLabels.Error,
-            PipelineStep.Completed => AgentLabels.Done,
-            PipelineStep.Cancelled => AgentLabels.Cancelled,
+            PipelineStep.Completed => (WorkItemStatus?)WorkItemStatus.Succeeded,
+            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+            PipelineStep.Failed => WorkItemStatus.Failed,
             _ => null
         };
+        // FinalLabel is honoured iff it is a known agent label (AgentLabels.All); otherwise the
+        // outcome-based fallback applies. Both rules are encapsulated in ResolveAgentLabel (issue #3261).
+        // TODO: [WARNING] Behavioral change from pre-refactor: an unknown PipelineStep (e.g. ConflictRestart,
+        // PrMerged, PrClosed) that carries a valid FinalLabel (in AgentLabels.All) previously performed the
+        // label swap (old code: `label = finalLabel ?? step-switch`), because finalLabel was evaluated before
+        // the step switch. New code maps those steps to stepStatus=null and short-circuits before calling
+        // ResolveAgentLabel, discarding the FinalLabel entirely. The inline comment above asserts those steps
+        // are handled by the HTTP primary path (not this SignalR path), but this reachability assumption is not
+        // guarded by a test. If a ConflictRestart payload with a valid FinalLabel (e.g. agent:next) ever reaches
+        // this path, the label swap is silently skipped, leaving the stale label until OrphanedLabelRecoveryService
+        // sweeps. To fix: either add a test proving unknown-step payloads never carry a FinalLabel on this path,
+        // or route unknown steps through ResolveAgentLabel (preserving original behaviour). See review findings.
+        var label = stepStatus is not null
+            ? CompletionOutcomeResolver.ResolveAgentLabel(stepStatus.Value, payload.FinalLabel)
+            : null;
 
         try
         {

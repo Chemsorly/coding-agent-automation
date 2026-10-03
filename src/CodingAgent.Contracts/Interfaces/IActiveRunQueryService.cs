@@ -29,9 +29,9 @@ public sealed record ActiveRunSummary
     public required DateTimeOffset StartedAt { get; init; }
     public required string? ProjectName { get; init; }
 
-/// <summary>
-/// Current pipeline step. Maps from WorkItemStatus (Dispatched→Running step)
-/// for active runs queried from the database.
-/// </summary>
+    /// <summary>
+    /// Current pipeline step. Maps from WorkItemStatus (Dispatched→Running step)
+    /// for active runs queried from the database.
+    /// </summary>
     public required PipelineStep CurrentStep { get; init; }
 }
