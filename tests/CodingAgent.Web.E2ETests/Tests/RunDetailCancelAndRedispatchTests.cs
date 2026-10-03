@@ -339,7 +339,9 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
 
         // Connect a fresh agent to receive the re-dispatched job.
         // The original agent's JobAssigned TCS is already resolved, so use a new client.
-        await using var newAgent = new FakeAgentClient("redispatch-agent-3b", "e2e");
+        // Use a unique label ("e2e-redispatch-3b") so AgentSelector can route exclusively
+        // to this agent, avoiding the FakeJobController selecting the still-idle first agent.
+        await using var newAgent = new FakeAgentClient("redispatch-agent-3b", "e2e-redispatch-3b");
         await newAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Navigate to the failed run's detail page
@@ -355,6 +357,10 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // Dispatch via the API — the same path the UI "Confirm re-dispatch" button takes.
         // Avoids the brittle two-step browser confirm flow (redispatch-btn → redispatch-confirm-btn)
         // which is sensitive to Blazor Server re-renders in CI.
+        // Uses IWorkDistributor.DistributeAsync (→ POST /api/work-items, Pending path) so the
+        // FakeJobController picks it up via the Pending poll.
+        // AgentSelector targets "e2e-redispatch-3b" so only the new agent receives the job.
+        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
             IssueIdentifier = failedRun.IssueIdentifier,
@@ -364,12 +370,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             PipelineProviderConfigId = failedRun.PipelineProviderConfigId,
             InitiatedBy = InitiatedByConstants.Manual,
             TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "",
+            AgentSelector = "e2e-redispatch-3b",
             TimeoutSeconds = 0,
             RunType = PipelineRunType.Implementation,
             PayloadSchemaVersion = 1,
         };
-        await Fixture.WorkItems.DispatchAsync(request, CancellationToken.None);
+        var dispatchResult = await distributor.DistributeAsync(request, CancellationToken.None);
+        Assert.True(dispatchResult.Success, $"Re-dispatch failed: {dispatchResult.ErrorMessage}");
 
         // Assert: a new WorkItem was created for the same issue
         await WaitUntilAsync(async () =>
@@ -628,9 +635,11 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             await dbInject.SaveChangesAsync();
         }
 
-        // Attempt dispatch via the API — expects a conflict (409) because a Pending WorkItem exists.
-        // Avoids the brittle two-step browser confirm flow (redispatch-btn → redispatch-confirm-btn)
-        // which is sensitive to Blazor Server re-renders in CI.
+        // Attempt dispatch via the API — expects AlreadyExists because a Pending WorkItem exists.
+        // Uses IWorkDistributor.DistributeAsync (→ POST /api/work-items) which returns
+        // DistributionResult.AlreadyExists=true on 409 rather than throwing, and uses the same
+        // dedup guard as the UI confirm button path.
+        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
             IssueIdentifier = failedRun.IssueIdentifier,
@@ -645,19 +654,8 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             RunType = PipelineRunType.Implementation,
             PayloadSchemaVersion = 1,
         };
-
-        bool conflictThrown;
-        try
-        {
-            await Fixture.WorkItems.DispatchAsync(request, CancellationToken.None);
-            conflictThrown = false;
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            conflictThrown = true;
-        }
-
-        Assert.True(conflictThrown, "Dispatch should fail with 409 Conflict when an active WorkItem exists");
+        var result = await distributor.DistributeAsync(request, CancellationToken.None);
+        Assert.True(result.AlreadyExists, "Dispatch should be blocked (AlreadyExists=true) when an active WorkItem exists");
 
         // Assert: no new WorkItem was created (still exactly 2: original failed + injected Pending)
         await using var dbAfter = await Fixture.DbContextFactory.CreateDbContextAsync();
