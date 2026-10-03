@@ -132,6 +132,12 @@ public sealed class AgentOutputTests : E2ETestBase
         Assert.True(await detail.HasLiveOutputPanelAsync(),
             "Live output card should be present for an active run");
 
+        // Wait until SubscribeToRun has completed on the server — the data-hub-subscribed attribute
+        // on the live output card flips to "true" only after the round-trip. Without this, output
+        // lines sent below can be pushed to the hub group before the page has joined it (they are
+        // not buffered in the ring buffer and are lost forever), causing a 15 s timeout in CI.
+        await detail.WaitForHubSubscribedAsync(timeoutMs: 15_000);
+
         // Act: agent sends first batch of 3 lines
         await agent.ReportOutputAsync(assignment.JobId, "line-one", "line-two", "line-three");
 
@@ -180,14 +186,15 @@ public sealed class AgentOutputTests : E2ETestBase
         // Send backlog lines BEFORE the page is opened
         await agent.ReportOutputAsync(assignment.JobId, "backlog-line-1", "backlog-line-2");
 
-        // TODO: [WARNING] Task.Delay(200) is an arbitrary timing assumption. On a heavily loaded
-        // CI runner the two ReportOutputLines hub invocations may not have been written to the
-        // in-memory ring buffer within 200 ms, causing SubscribeToRun to receive an empty backlog
-        // and the test to fail. Replace with a deterministic WaitUntilAsync poll that checks the
-        // ring buffer (e.g. via a RunService helper or GetOutputBacklog wrapper) contains at least
-        // 2 lines before navigating.
-        // Small delay to ensure the ring buffer write settles before the subscribe
-        await Task.Delay(200);
+        // Wait deterministically for the ring buffer to contain both backlog lines before
+        // navigating. Task.Delay(200) was too short on CI: ReportOutputLines writes to the buffer
+        // via the hub InvokeAsync call, but the write is dispatched asynchronously inside the hub
+        // and may not have settled within 200 ms on a loaded runner, causing SubscribeToRun to
+        // push an empty backlog and the test to fail. Polling the in-process buffer is exact.
+        var runService = Fixture.RunService;
+        await WaitUntilAsync(
+            () => runService.GetOutputBuffer(new CodingAgent.Pipeline.Models.RunId(runId)).Count >= 2,
+            TimeSpan.FromSeconds(10));
 
         // Navigate to the run detail page — SubscribeToRun delivers the backlog immediately
         var detail = new RunDetailPage(Page, BaseUrl);
@@ -268,15 +275,12 @@ public sealed class AgentOutputTests : E2ETestBase
         await detail.NavigateAsync(runId);
 
         // Wait for the page to fully render the terminal state
-        // (RunPage reloads the summary via OnRunCompleted, or the initial load already has terminal step)
-        // TODO: [WARNING] The async lambda passed here is coerced to Func<bool> by the compiler
-        // (returning Task<bool> cast to bool, which is always truthy), so the wait completes
-        // immediately regardless of whether the live output panel is still visible. Use the async
-        // WaitUntilAsync(Func<Task<bool>>, ...) overload explicitly to make polling actually work.
-        // As written, the subsequent Assert.False is a direct assertion with no retry, which can
-        // fail intermittently if Blazor's OnRunCompleted hasn't yet set _isLive = false.
+        // (RunPage reloads the summary via OnRunCompleted, or the initial load already has terminal step).
+        // Uses the async WaitUntilAsync overload (Func<Task<bool>>) explicitly to avoid the compiler
+        // silently coercing the async lambda to Func<bool> (which always returns a truthy Task<bool>
+        // object and exits immediately without polling).
         await WaitUntilAsync(
-            async () => !await detail.HasLiveOutputPanelAsync(),
+            (Func<Task<bool>>)(async () => !await detail.HasLiveOutputPanelAsync()),
             TimeSpan.FromSeconds(20));
 
         // Assert: no live output panel for a finished run

@@ -85,6 +85,30 @@ public sealed class RunDetailPage
     }
 
     /// <summary>
+    /// Waits for the hub subscription round-trip to complete after <see cref="NavigateAsync"/>.
+    /// The live output card's <c>data-hub-subscribed</c> attribute transitions from <c>"false"</c>
+    /// to <c>"true"</c> only after <c>SubscribeToRun</c> returns on the server — i.e., after the
+    /// connection has been added to the run's hub group. Calling this before sending output lines
+    /// ensures they are not missed because the page isn't yet in the group.
+    /// </summary>
+    public async Task WaitForHubSubscribedAsync(int timeoutMs = 15_000)
+    {
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const cards = Array.from(document.querySelectorAll('.cockpit-card'));
+                for (const card of cards) {
+                    const h2 = card.querySelector('h2');
+                    if (h2 && h2.textContent && h2.textContent.includes('Live output')) {
+                        return card.getAttribute('data-hub-subscribed') === 'true';
+                    }
+                }
+                return false;
+            }",
+            null,
+            new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
     /// Waits for the live output panel to show at least <paramref name="minimumLineCount"/> lines,
     /// polling until the count is reached or the timeout expires.
     /// </summary>
