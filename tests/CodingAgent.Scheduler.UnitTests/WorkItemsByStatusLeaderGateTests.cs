@@ -83,13 +83,12 @@ public sealed class WorkItemsByStatusLeaderGateTests : IDisposable
 
         using var cts = new CancellationTokenSource();
         await svc.StartAsync(cts.Token);
-        // TODO [WARNING]: Task.Delay(200) is a time-based synchronisation with no fallback for slow
-        // CI runners. If the system is under load, 200 ms may elapse before _cachedMeasurements is
-        // populated (poll interval is 50 ms, but scheduling jitter can delay the first tick).
-        // This causes readingsWhileLeader to be empty and the first assertion fails non-deterministically.
-        // Fix: use SpinWait.SpinUntil(() => InvokeRegisteredCallback().Any(), timeout: TimeSpan.FromSeconds(5))
-        // or a similar polling helper to wait for the cache to be populated before asserting.
-        await Task.Delay(200, CancellationToken.None); // allow at least one poll tick while leader
+        // Wait until the cache is populated (at least one poll tick has fired) rather than using a
+        // fixed Task.Delay, which was non-deterministic on slow CI runners (issue #2980 / TODO).
+        // SpinWait.SpinUntil polls every ~10 ms internally and gives up after 5 s, which is far
+        // more generous than a single 200 ms sleep while still being deterministic.
+        var cachePopulated = SpinWait.SpinUntil(() => InvokeRegisteredCallback().Any(), TimeSpan.FromSeconds(5));
+        cachePopulated.Should().BeTrue("the cache must be populated within 5 s of the service starting");
 
         // Act (part 1): verify gauge emits measurements while leader
         var readingsWhileLeader = InvokeRegisteredCallback();
