@@ -60,9 +60,9 @@ public class CiLogWriterPropertyTests : IDisposable
         // Act
         var result = writer.WriteJobLogs(input.Status, workspacePath, runId);
 
-        // Identify which jobs should have entries: failed with non-null/non-empty LogContent
+        // Identify which jobs should have entries: failed or cancelled with non-null/non-empty LogContent
         var expectedJobs = input.Status.Jobs
-            .Where(j => j.State == PipelineRunState.Failed && !string.IsNullOrEmpty(j.LogContent))
+            .Where(j => j.EndedUnsuccessfully() && !string.IsNullOrEmpty(j.LogContent))
             .ToList();
 
         // (a) Every failed job with LogContent has an entry keyed by its JobId
@@ -86,7 +86,7 @@ public class CiLogWriterPropertyTests : IDisposable
 
         // (c) No entries exist for jobs without LogContent
         var jobsWithoutContent = input.Status.Jobs
-            .Where(j => j.State != PipelineRunState.Failed || string.IsNullOrEmpty(j.LogContent))
+            .Where(j => !j.EndedUnsuccessfully() || string.IsNullOrEmpty(j.LogContent))
             .Select(j => j.JobId)
             .ToHashSet();
 
@@ -121,7 +121,7 @@ public sealed class PipelineRunStatusWithLogs
 
 /// <summary>
 /// FsCheck arbitrary that generates PipelineRunStatus instances with a mix of:
-/// - Failed jobs with non-null LogContent (should produce dictionary entries)
+/// - Failed or cancelled jobs with non-null LogContent (should produce dictionary entries)
 /// - Failed jobs with null LogContent (should NOT produce entries)
 /// - Non-failed jobs with or without LogContent (should NOT produce entries)
 /// Uses unique JobIds to avoid collisions.
@@ -187,10 +187,11 @@ public static class PipelineRunStatusArbitrary
         return
             from name in SafeNameGen()
             from content in LogContentGen()
+            from state in Gen.Elements(PipelineRunState.Failed, PipelineRunState.Cancelled)
             select new PipelineJobResult
             {
                 Name = name,
-                State = PipelineRunState.Failed,
+                State = state,
                 FailureReason = "Test failure",
                 LogContent = content,
                 JobId = 0 // Will be reassigned

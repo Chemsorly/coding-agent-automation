@@ -909,6 +909,70 @@ public class QualityGateExecutorBranchMovedCancellationTests
     }
 
     /// <summary>
+    /// Regression for the E2E agent runs of 2026-10-01/02: the e2e job exceeded its
+    /// timeout-minutes, so GitHub reported it cancelled, and the skipped deploy jobs were
+    /// reported as failed. With no logs on the skipped jobs the run was classified as an
+    /// infrastructure failure, got empty re-trigger commits, and the agent never saw the
+    /// e2e log. Now the cancelled job's log decides: test failures in it go to the agent.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobCancelledByTimeoutAndBranchNotMoved_WritesItsLogAndSkipsInfraRetry()
+    {
+        var run = CreateRun();
+        const long e2eJobId = 7;
+
+        _mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-fixed");
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(RunningStatus);
+        _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Cancelled,
+                Jobs = new List<PipelineJobResult>
+                {
+                    new()
+                    {
+                        Name = "e2e", State = PipelineRunState.Cancelled, JobId = e2eJobId,
+                        LogContent = "Failed AgentOutputTests.LiveOutput [21 s]\n  Error Message:\n   System.TimeoutException : Timeout 15000ms exceeded.\n##[error]The operation was canceled."
+                    },
+                    new() { Name = "docker-push", State = PipelineRunState.Passed, JobId = 8 },
+                    new() { Name = "publish-chart", State = PipelineRunState.Passed, JobId = 9 }
+                }
+            });
+
+        try
+        {
+            var context = BuildContext(run, maxInfraRetries: 5);
+            var result = await _executor.AppendExternalCiIfNeededAsync(context, PassingReport, false, CancellationToken.None);
+
+            result.ExternalCi!.Passed.Should().BeFalse();
+            result.ExternalCi.Details.Should().Contain("cancelled before finishing: 'e2e'");
+            result.ExternalCi.Details.Should().NotContain("docker-push");
+            result.ExternalCi.IsInfrastructureFailure.Should().NotBe(true);
+            run.InfrastructureRetryCount.Should().Be(0, "test failures in the log are a code failure");
+
+            _mockRepoProvider.Verify(r => r.CommitAllAsync(
+                    It.IsAny<WorkspacePath>(), It.Is<string>(s => s.Contains("re-trigger CI after infrastructure failure")),
+                    It.IsAny<IReadOnlyList<string>?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(),
+                    It.IsAny<IReadOnlyList<string>?>()),
+                Times.Never);
+
+            var logPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.QualityGatesOutputDirectory, $"ci-e2e_{e2eJobId}.log");
+            File.Exists(logPath).Should().BeTrue("the agent's retry prompt points at .agent/quality-gates/");
+            (await File.ReadAllTextAsync(logPath)).Should().Contain("AgentOutputTests.LiveOutput");
+        }
+        finally
+        {
+            if (Directory.Exists(run.WorkspacePath))
+                Directory.Delete(run.WorkspacePath, recursive: true);
+        }
+    }
+
+    /// <summary>
     /// Acceptance criterion: Branch-moved re-polls are bounded by <c>CiCancelledMoveMaxRetries</c>.
     /// When the branch keeps moving (new SHA on every check), the loop stops after the configured
     /// maximum and returns the final Cancelled result without looping infinitely.
