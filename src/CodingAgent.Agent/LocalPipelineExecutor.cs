@@ -108,8 +108,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         {
             // The override factory ignores ProviderConfig contents entirely, so we use
             // placeholder values. The only required members are populated to satisfy the compiler.
-            repoConfig = new ProviderConfig { DisplayName = "test-repo", Kind = ProviderKind.Repository, ProviderType = "GitHub" };
-            agentConfig = new ProviderConfig { DisplayName = "test-agent", Kind = ProviderKind.Agent, ProviderType = "KiroCli" };
+            repoConfig = new ProviderConfig { DisplayName = "test-repo", Kind = ProviderKind.Repository, ProviderType = ProviderTypes.GitHub };
+            agentConfig = new ProviderConfig { DisplayName = "test-agent", Kind = ProviderKind.Agent, ProviderType = ProviderTypes.KiroCli };
         }
         else
         {
@@ -246,7 +246,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             stepContext = _contextBuilder.CreateStepContext(buildResult.ExecutionContext, reporter, ct);
             buildResult.StepContext = stepContext;
 
-            // Inject additional repo providers for cross-repo decomposition cloning
+            // Inject additional repo providers: a project epic's decomposition and a project review clone them
             if (additionalRepoProviders is { Count: > 0 })
                 stepContext.AdditionalRepoProviders = additionalRepoProviders;
 

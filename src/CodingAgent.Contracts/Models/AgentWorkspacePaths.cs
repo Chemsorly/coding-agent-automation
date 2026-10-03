@@ -28,6 +28,13 @@ public static class AgentWorkspacePaths
     public const string ReviewFindingsFilePath = ".agent/review-findings.md";
 
     /// <summary>
+    /// The directory (relative to workspace) with the read-only clones of the project's other repositories, which the
+    /// project reviewers read. It is inside <see cref="MetadataDirectory"/>, so the clones never show up in the diff
+    /// or a commit.
+    /// </summary>
+    public const string ProjectReviewRepositoriesDirectory = ".agent/project-repos";
+
+    /// <summary>
     /// The directory (relative to workspace) where quality gate output files are written.
     /// Each gate writes its stdout/stderr here; the agent discovers files by listing the directory.
     /// </summary>

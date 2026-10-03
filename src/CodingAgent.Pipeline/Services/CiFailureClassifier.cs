@@ -58,13 +58,15 @@ public static class CiFailureClassifier
     };
 
     /// <summary>
-    /// Classifies a CI failure based on job log content.
+    /// Classifies a CI failure based on the log content of failed and cancelled jobs.
+    /// A cancelled job is usually one that exceeded its timeout; its log decides the category
+    /// like a failed job's does, so test failures in it count as a code failure.
     /// </summary>
     public static CiFailureCategory Classify(PipelineRunStatus status)
     {
         ArgumentNullException.ThrowIfNull(status);
 
-        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
+        var failedJobs = status.Jobs.Where(j => j.EndedUnsuccessfully()).ToList();
         if (failedJobs.Count == 0)
             return CiFailureCategory.Unknown;
 

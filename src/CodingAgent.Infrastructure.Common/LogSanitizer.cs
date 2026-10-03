@@ -1,4 +1,4 @@
-namespace CodingAgent.Pipeline.Services;
+namespace CodingAgent.Infrastructure.Common;
 
 /// <summary>
 /// Escapes control characters from user-supplied strings before they are written to

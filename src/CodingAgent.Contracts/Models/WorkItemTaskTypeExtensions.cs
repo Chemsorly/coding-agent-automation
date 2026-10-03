@@ -20,9 +20,9 @@ public static class WorkItemTaskTypeExtensions
     public static PipelineRunType ToDefaultRunType(this WorkItemTaskType taskType) => taskType switch
     {
         WorkItemTaskType.Implementation => PipelineRunType.Implementation,
-        WorkItemTaskType.Review         => PipelineRunType.Review,
-        WorkItemTaskType.Decomposition  => PipelineRunType.DecompositionAnalysis,
-        WorkItemTaskType.Consolidation  => PipelineRunType.Consolidation,
-        _                               => throw new UnreachableException($"Unhandled WorkItemTaskType: {taskType}")
+        WorkItemTaskType.Review => PipelineRunType.Review,
+        WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
+        WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
+        _ => throw new UnreachableException($"Unhandled WorkItemTaskType: {taskType}")
     };
 }

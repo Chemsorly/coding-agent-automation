@@ -1,2454 +1,626 @@
 # Design Decisions
 
-Human-authored intent behind non-obvious design choices. This file is the authoritative source for "why" questions that can't be inferred from code or genre patterns alone. Generated via the intent-extraction hook.
+Why the system behaves as it does where the code can't tell you. Each entry is a rule the owner decided, with the reason and the cost accepted. Entries state intent, not implementation: read the code for how it works.
 
-**Usage:** Agents MUST read this file before proposing changes to understand constraints and deliberate choices. If a decision here contradicts what seems "obvious," the decision wins — the human made it for a reason.
+**Agents:** read the [Invariants](#invariants) before you change behavior, and search this file for the area you touch. If a change would break a rule, say so in the PR instead of rewriting the rule. Don't edit a Rule or Why line unless the issue asks for it.
 
-<!-- Intent Extraction Sessions -->
-<!-- Session: 12 | Last run: 2026-08-14 | Decisions captured: 64 -->
-<!-- Session: 14 | Last run: 2026-08-22 | Updates: T12 audit — marked #2027/#2028/#2025/#1058/#1059 resolved; fixed ConsolidationDispatchHandler→ConsolidationWorkItemDispatchService; T10 decision added; T11 decisions added -->
-<!-- Session: 15 | Last run: 2026-08-22 | Updates: T22 — AgentSelectorKey.From() extracted; ScanPagedAsync private helper extracted in PostgresPipelineRunHistoryService; T6/T15/T16/T20 closed; LabelStateMachine.cs stale path fixed -->
-<!-- Session: 16 | Last run: 2026-08-28 | Decisions added: 4 (soft anti-affinity, AgentJobTimeoutSeconds backstop, Redis required for multi-replica keepalive, ExternalCiDuration split); issue created: #2133; helm templates fixed (required→preferred anti-affinity, all 4 deployments); stale audit: monolith decision updated (4-service split), DatabaseMaintenanceService migration closed (Spec 047 superseded), SignalR reconnect Reassess-when updated, MessagePack/MaxRunsPerCycle docker-compose refs removed, Decision Map cleaned -->
-<!-- Session: 17 | Last run: 2026-08-29 | Decisions added: 5 (WorkItems.Payload dispatch-time snapshot, EmitOutputLine→Serilog, AgentJobTimeoutSeconds hierarchy, PriorityWeight secondary sort, Grafana Faro CDN-only); issues created: #2178; stale audit: Chat keepalive Redis #2133 text updated (warning now implemented) -->
-<!-- Session: 18 | Last run: 2026-08-29 | Decisions added: 3 (PR description via file, FeedbackTimeoutSeconds config, single AgentTimeout); no-opinions: 3 (registration race, terminal guard pattern, concurrency map filter); issues created: #2179; stale: AgentJobTimeoutSeconds decision superseded by #2179 -->
-<!-- Session: 19 | Last run: 2026-08-31 | Decisions added: 6 (DistributedAgentRegistry cache staleness, Payload null-discriminator, PostPrCiDuration metric, live K8s dual ListJobsAsync correctness, AssignmentEnricher 503 semantics, traceparent bidirectional); issues created: #2219/#2220/#2221/#2222/#2223 -->
-<!-- Session: 20 | Last run: 2026-09-06 | Decisions added: 6 (SecurityScan zombie removal, dead parser removal, HousekeepingTriggerCooldown config, cleanup prompt budget, RetryErrors transient-enqueue, PostPrCiDuration panel still pending); issues created: #2400/#2401 -->
-<!-- Session: 21 | Last run: 2026-09-06 | Decisions added: 6 (AgentTimeout chain verified, FeedbackTimeoutSeconds stale log #2403, PostPrCiDuration panel added, HousekeepingTriggerCooldown #2404, TimeoutSeconds zero-sentinel #2405, Q6 constructor injection pattern); issues created: #2403/#2404/#2405; Grafana panel 57 added -->
-<!-- Session: 22 | Last run: 2026-09-21 | Decisions added: 6 (catch(Exception) MarkCompleted gap #2851, DirectoryNotFoundException fallback no-opinion, ProviderConfigId Phase 2 no-opinion, AgentWorkspacePaths → Contracts #2852, ReconcileOrphanedPipelineRuns load-all no-opinion, OCE swallowing no-opinion); issues created: #2851/#2852 -->
-<!-- Session: 23 | Last run: 2026-09-21 | Decisions added: 6 (StallMonitor kill=AgentTimeout intentional, StallPollInterval not overridable, flat warnings intentional, OpenCode session-status polling, AgentCodingPageService 460 lines stable no-opinion, EnsureSessionAsync coverage complete); no bugs found; Q3 corrected (OpenCode DOES have polling health) -->
-<!-- Session: 24 | Last run: 2026-09-21 | Decisions added: 5 (conflict rework re-queues agent:done intentional, StaleBranchCleaner double-scan #2880, HousekeepingMaxSlotAgeMinutes dead config #2881, DispatchWorkItemService sanitizedSelector no-opinion, HousekeepingActiveLabels set intentional); issues created: #2880/#2881 -->
-<!-- Session: 27 | Audit: 2026-09-30 | Stale-status sweep — 11 decisions updated from "currently broken"/"open issue" to "fixed": #2178 EmitOutputLine, #2161 PR description, #2171 WorkItems.Payload, #2400 SecurityScan, #2401 CoberturaParser/JacocoParser, #2881 HousekeepingMaxSlotAgeMinutes, #2404 HousekeepingTriggerCooldownMinutes, #2403 FeedbackTimeoutSeconds stale log, #2880 StaleBranchCleaner double-scan, dispatch priority TODO (#2563 deployed), #2405 zero-sentinel (resolved via loop removal). #2852 AgentWorkspacePaths updated to partial (4/5 done, ProcessWrapper.cs literal remains). -->
-<!-- Session: 26 | Last run: 2026-09-22 | Decisions added: 3 (PvcPoolExhaustions KISS/DRY no-opinion, advisory lock asymmetry no-opinion, ChatHeartbeatTracker null-tracker no-opinion); issues created: #2883 -->
-<!-- Session: 27 | Last run: 2026-09-30 | Decisions added: 5 (agent:done ordering full pipeline+CI, 1:1:1 template binding intentional, epic scope tracker-of-record intentional, Kiro token gap = provider limitation, MaxConcurrentDecompositions global-only); no issues created; queued closed: RequestGetIssue double-retry verified (CiNotStartedRetries config covers CI loop) -->
-<!-- Manual correction 2026-09-25 (not an intent-extraction session): session-25 entries "Zero open-issue context" and "RequestGetIssue double-retry tier" had wrong causes and implementation facts, found in the #2927 RCA; both decisions kept, facts corrected -->
-<!-- Queued for next session: automated calibration design (when clear mechanism emerges), housekeeping feature calibration (after 50+ runs), AgentCodingPageService razor component decomposition, Faro CSP script-src when CSP added, TimeoutSeconds end-to-end after #2179 -->
+**Maintainers:** add or change an entry in the same PR that changes the policy. A changed decision replaces its entry; git history keeps the old text. Bugs go to GitHub issues, not here. Areas without a preference are listed under [Flexible areas](#flexible-areas).
 
----
+**Fields:** **Rule** is what the system does or refuses. **Why** is the owner's reason. **Accepting** is the cost we live with. **Not** lists rejected alternatives. **Revisit when** is the trigger to reconsider. A **Gap** line marks a decision whose implementation falls short while the owner's choice is pending.
 
-<!-- Decisions are grouped by category, alphabetical within each group. -->
-<!-- Categories: architecture | scope | configuration | ux | integration | future-direction -->
+## Invariants
 
-## Architecture
+The rules a plausible change could break. Details are in the linked entries.
 
-<!-- Decisions about system structure, patterns, and component boundaries -->
+- Private keys never enter an agent pod; agents get short-lived tokens only. ([Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant))
+- No agent pod receives the master key; each Job gets its own derived key, and an agent can resume only its own run. ([Agent keys](#hmac-key-derivation-for-agent-auth--intentional-simplicity))
+- Agents can't set human-approval labels such as `agent:epic-approved`. ([Gated labels](#dispatchgatedlabels-extensible-set-for-human-approval-required-label-transitions))
+- Clones of a project's other repositories are read-only and never reach the diff or a commit. ([Project review](#project-review-one-project-reviewer-per-project-with-read-only-clones-of-the-projects-other-repositories))
+- Only the API reads or writes PostgreSQL. ([Services](#only-the-api-owns-the-database-each-service-has-one-job))
+- Every background loop runs on one elected leader; the API runs no loops. ([Loops](#dispatch-loop-belongs-in-a-leader-elected-controller-not-the-stateless-api))
+- All images build from one commit and deploy together. Never reorder enum members in hub types or reuse a retired MessagePack key. ([Images](#agent-images-rebuild-with-the-control-plane--no-wire-skew-window), [MessagePack](#messagepack-int-ordinals-for-signalr--homogeneous-deployment-assumed))
+- Configuration evolves append-only: new fields get defaults; no renames or repurposing. ([Schema](#no-schema-versioning--append-only-config-evolution-via-nullable-properties))
+- Agent-produced JSON is read leniently; orchestrator JSON is written strictly. ([JSON](#dual-json-options-strict-write-default-lenient-read-lenient))
+- Every new pipeline enum gets a JSON roundtrip test. ([Enum test](#enum-roundtrip-test-is-a-mandatory-invariant-for-new-pipeline-enums))
+- The confidence gate fails closed. ([Confidence gate](#confidence-gate-is-intentionally-fail-closed))
+- Critical-path failures are fatal, enrichment failures are not; new steps are non-fatal unless a later step needs their output. ([Partial failure](#partial-failure-contract-enrichment-steps-are-non-fatal-critical-path-steps-are-fatal))
+- Exhausted retries end in a draft PR labeled `agent:error`. ([Draft PR](#draft-pr-is-the-retry-exhausted-fallback))
+- `agent:done` means every step finished and post-PR CI passed. ([agent:done](#agentdone-ordering-full-pipeline--post-pr-ci-before-label-is-set))
+- A label swap adds the new label before it removes the old one. ([Label swap](#label-swap-add-first-ordering-for-crash-safety))
+- Reviewers run in isolated sessions. ([Isolated review](#code-review-always-uses-isolated-sessions-no-shared-mode))
+- Durable agent output gets an adversarial review step with its own switch. ([Adversarial review](#adversarial-review-is-a-default-pattern-for-all-durable-agent-outputs))
+- Only CRITICAL findings trigger another review round; non-compliant acceptance criteria count as CRITICAL. ([Review iteration](#code-review-iteration-critical-only-triggers-re-review-warnings-get-one-fix-pass), [Acceptance criteria](#noncompliant-acceptance-criteria-as-critical-hard-contract-retry-budget-bounds-cost))
+- Dispatch order is Review, Decomposition, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation))
+- A work item stores identity only; config is resolved at assignment, and a failed enrichment returns 503. ([Payload](#workitemspayload-config-snapshot-must-be-at-dispatch-time-not-enqueue-time))
+- `AgentTimeout` is the only agent time limit; chat pods have their own. ([Timeouts](#agenttimeout-is-the-only-agent-time-limit))
+- Merging is always a human action. ([Refactoring loop](#refactoring-consolidation-loop-autonomous-up-to-pr-creation-merge-is-human-gated))
+- Epics need human approval between the plan and the sub-issues. ([Epics](#epic-decomposition-two-phase-with-human-gate))
+- One enabled template is one repository and one tracker; an epic's tracker decides where its sub-issues go. ([1:1:1](#111-template-binding-one-repo-one-tracker-per-enabled-template--intentional-constraint), [Epic scope](#epic-scope-tracker-of-record-determines-sub-issue-routing--intentional-same-rationale-as-111))
+- Every setting is read by code, shown on a settings page, documented and range-checked. ([Settings](#settings-are-read-offered-and-range-checked--one-record-four-scopes))
+- Context reaches agents as workspace files, and agents return structured output as files. ([Files](#filesystem-as-context-workspace-files-are-the-context-delivery-mechanism))
+- Runs only append to the brain; only consolidation rewrites it; read-only brains are never written. ([Brain](#brain-runs-append-consolidation-curates))
+- Prompt structure (scope fences, calibration, verification) is not configurable. ([Prompts](#prompt-architecture-layered-composition-with-non-overridable-structural-guardrails))
+- Nothing calibrates itself: feedback is collected and shown, and the operator decides. ([Feedback](#feedback-loop-data-collection-only-automated-calibration-explicitly-deferred))
+- Conflicted PRs are reworked unless the issue is `agent:wont-do` or `agent:cancelled`; missing active-run data skips all rework that cycle. ([Conflict rework](#conflict-rework-re-queues-issues-regardless-of-current-label--only-abandonment-labels-block), [Fail-closed rework](#issuereworkservice-fail-closed-on-missing-active-run-data-is-intentional))
+- Every pipeline progress line is also a structured log entry with the run ID. ([Telemetry](#telemetry-philosophy-instrument-every-decision-point-for-full-run-traceability))
+- One operator, no RBAC. ([Target user](#target-user-single-operatorpower-user--no-rbac-for-now))
 
-### Agent images rebuild with the control plane — no wire skew window
+## Deployment and topology
 
-**Date:** 2026-08-22
-**Category:** architecture
+### Kubernetes and PostgreSQL are the only deployment target
+<!-- 2026-08-16 (spec 041) -->
+**Rule:** The system runs only on Kubernetes, with agents as one-shot Jobs, and it requires PostgreSQL. The Docker Compose, in-memory and long-lived SignalR agent modes are gone.
+**Why:** The Job model proved itself in production (clean pods, autoscaling, no stale state), and the other modes cost test effort without users. **Accepting:** no zero-dependency local mode.
+**Not:** progressive modes for easier onboarding; persistent pull-model agents.
+**Revisit when:** a target without Kubernetes becomes a real requirement.
 
-**Decision:** Agent images (`kiro-*`, `opencode-*`) are built from the **same git commit** as the control-plane images (orchestrator, api, jobcontroller) in the same CI run (`docker-build` job depends on `build-and-test` in `.github/workflows/ci.yml`). All images share the same `BUILD_COMMIT_SHA`. This means the 27 MessagePack `[Key(n)]` wire types are always in sync between agents and the control plane — no skew window exists. A separate wire-contract snapshot test is therefore unnecessary.
-
-**Verification (2026-08-22):** `.github/workflows/ci.yml` `docker-build` job includes all agent image Dockerfiles (`dockerfiles/kiro/agent-kiro-*.Dockerfile`, `dockerfiles/opencode/agent-opencode-*.Dockerfile`) alongside control-plane Dockerfiles, all with `needs: [build-and-test]`. They are built from `${{ github.sha }}` — the same commit.
-
-**Reassess when:** If agent images are pinned separately (e.g., a `capability` tag that CI does NOT overwrite on every release commit). At that point add a `[Key(n)]` snapshot test as described in the architecture audit.
-
-### agent:done ordering: full pipeline + post-PR CI before label is set
-
-**Date:** 2026-09-30
-**Category:** architecture
-
-**Decision:** `agent:done` is set only after ALL pipeline steps finish — including post-PR enrichment (brain sync, PR description upload) — AND post-PR CI passes on the PR HEAD commit. A PR can exist in ready-for-review state while post-PR enrichment steps are still running; this window is normal. `agent:done` = full pipeline completion, not PR creation. A CI failure on the PR HEAD commit after promotion to ready-for-review is treated as a run error (`agent:error`), not success. Before #3139, post-PR CI was not checked — the pipeline declared success at PR creation regardless.
-
-**Context:** Comparable systems (Devin, OpenHands, Copilot CCA) declare success at PR creation. This system is stricter: it waits for CI and enrichment before signaling completion, reflecting that a reviewer seeing `agent:done` on a PR should be able to trust that CI is green.
-
-**Alternatives considered:** agent:done at PR creation (old behavior — incorrect; leaves failing PRs marked done); agent:done after CI but before enrichment (partial — brain sync is also part of a complete run).
-
-**Reassess when:** Post-PR enrichment becomes so slow that the agent:done delay creates operational confusion, or if post-PR CI is intentionally expected to fail (e.g., feature flags CI doesn't know about).
-
----
-
-### AgentHub consolidation cluster extracted into IHubConsolidationOperations (T10)
-
-**Date:** 2026-08-22
-**Category:** architecture
-
-**Decision:** `AgentHubDependencies` reduced from 13 to 11 members by extracting the consolidation cluster (`ModelFetchService`, `IConsolidationService`, `ConsolidationBadgeService`) into `IHubConsolidationOperations`. `AgentHub.Consolidation.cs` now delegates to one method on `_consolidationOps` instead of calling three services directly. Registered as singleton; scoped `AgentHubDependencies` still contains `IChangeNotifier` (shared with consolidation).
-
-**Payoff:** `AgentHubConsolidationTests` can now test `HubConsolidationOperations` directly without requiring `null!` for `ModelFetchService` (which was sealed/unmockable).
-
-**Reassess when:** If the remaining 11 deps prove unwieldy, apply the same Facade Service pattern to the IssueOps or Lifecycle clusters.
-
-### Environment variable options binding (T11)
-
-**Date:** 2026-08-22
-**Category:** architecture
-
-**Decision:** Created two options classes to replace scattered `Environment.GetEnvironmentVariable` calls:
-- `AgentRuntimeOptions` (Agent host): consolidates `AGENT_CHAT_MODE` (×3), `AGENT_LABELS` (×2), `AGENT_CHAT_SESSION_ID`, `AGENT_CHAT_MODEL`, `AGENT_CHAT_EFFORT`, `AGENT_PROVIDER_TYPE`, `OPENCODE_BASE_URL`, `OPENCODE_SERVER_PASSWORD`, `KIRO_CLI_PATH`. Registered via `AgentRuntimeOptionsSetup : IConfigureOptions<AgentRuntimeOptions>`. `AgentConnectionLifecycle` now accepts optional `AgentRuntimeOptions` and uses field-based access.
-- `MonolithRuntimeOptions` (Orchestrator host): consolidates `READINESS_DRAIN_DELAY_SECONDS`, `PIPELINE_LOOP_STARTUP_DELAY_SECONDS`, `AGENT_API_KEY`. Bound with `ValidateDataAnnotations().ValidateOnStart()` — misconfigured host fails at startup with a named error. `ReadinessDrainService` registration uses the options value.
-
-Special cases kept as direct env reads (justified): Serilog bootstrap reads (`LOG_LEVEL`, `DB_LOG_LEVEL`), OTel standard vars, K8s Downward API (`POD_NAME`, `POD_NAMESPACE`), EF Core design-time factory.
-
-**Reassess when:** If a new env var is added for config, it must go into the appropriate options class rather than a new `GetEnvironmentVariable` call.
-
-### LoopStatePersistenceService: no leader guard needed — loop gate + 90s delay is sufficient
-
-### PipelineLoopService: full loop must be leader-gated in multi-replica deployments
-
-**Date:** 2026-08-14
-**Category:** architecture
-
-**Decision:** In K8s multi-replica deployments, `PipelineLoopService` MUST only run its poll loop when `ILeaderElectionService.IsLeader` is true. This applies to the entire loop — not just the housekeeping sub-step. The rationale: `LoopStatePersistenceService` auto-resumes the loop on pod restart, meaning all replicas would independently start polling if the loop were not leader-gated. Operations that bypass the WorkItem dedup pipeline (most immediately, the housekeeping auto-branch-updater calling `UpdatePullRequestBranchAsync` directly) have no dedup at all and WILL fire concurrently on non-gated replicas. `ILeaderElectionService` is registered unconditionally in `WorkDistributionRegistration.Consolidation.cs` (Kubernetes path); when the gate resolves to null (test environments with no DI registration), the loop runs unconditionally as before.
-
-**Status (2026-08-20):** Implemented. `PipelineLoopService` uses a `_leaderGate` field (`ILeaderGate?`) sourced from `deps.LeaderElection` (= `sp.GetService<ILeaderElectionService>()`). On startup, the loop spins on `_leaderGate is { IsLeader: false }` before entering the activation loop, and links `_leaderGate.LeaderToken` into the run's `CancellationTokenSource` so the loop stops immediately on leadership loss. When `ILeaderElectionService` is not registered (test environments), `_leaderGate` is null and the loop runs unconditionally as before. Issue #1987 is complete.
-
-**Context:** `PipelineLoopService` predates the multi-replica deployment model. `LeaderElectedPollingService` was extracted in #1912 and is used by `DispatchService` and `ReconciliationService`. `PipelineLoopService` was not migrated to use `LeaderElectedPollingService` as its base — it has its own `_leaderGate` integration instead.
-
-**Alternatives considered:** Gate only direct API callers like housekeeping (partial gating) — rejected because WorkItem dedup is not a hard guarantee and auto-resume makes full loop gating necessary.
-
-**Reassess when:** Never for the principle. If the activation model changes (e.g., loop is never auto-resumed), revisit whether leader-gating is still needed.
-
----
-
-### DatabaseMaintenanceService: Spec 047 superseded the LeaderElectedPollingService migration
-
-**Date:** 2026-08-14 · **Closed:** 2026-08-28 (superseded by Spec 047, not migrated as originally planned)
-**Category:** architecture
-
-**Decision:** The planned migration of `DatabaseMaintenanceService` to extend `LeaderElectedPollingService` was superseded by Spec 047. Instead of migrating to a BackgroundService pattern, `DatabaseMaintenanceService` was converted to a **plain singleton with no `ExecuteAsync`**. Sweeps are triggered exclusively by the Scheduler via `POST /api/scheduler/maintenance/retention-sweep`. The leader-gate moved to the Scheduler's `RetentionSweepSchedulerService`, which holds the lease before calling the endpoint.
-
-**Why this approach was chosen over the migration:** The Scheduler microservice (Spec 047) was introduced as the designated owner of all scheduled/periodic background work. Migrating `DatabaseMaintenanceService` to `LeaderElectedPollingService` would have put periodic logic in the API service, which contradicts the Scheduler's role. The plain-singleton + HTTP-trigger pattern is simpler, more testable, and keeps scheduling concerns exclusively in the Scheduler. The original DI resolution race and missing `LeaderToken` integration are both moot — the service has no background loop at all.
-
-**Context:** The original decision documented two correctness defects: (1) DI resolution race when resolving `ILeaderElectionService` at startup, (2) missing `LeaderToken` integration. Both are resolved by Spec 047's approach without requiring any changes to the service itself.
-
-**Reassess when:** Never — the Spec 047 plain-singleton approach is the stable final form. If sweeps ever need to run on a schedule without the Scheduler, the correct path is extending the Scheduler, not reverting to a BackgroundService.
-
----
-
-### AgentCodingPageService: razor component is the current decomposition target
-
-**Date:** 2026-08-14 · **Updated:** 2026-08-22
-**Category:** ux
-
-**Decision:** `AgentCodingPageService` is now 449 lines (down from ~747). The service decomposition was partially completed. However, `AgentCoding.razor.cs` grew to 572 lines (was ~501, target was timer/dismiss-only) — logic landed in the component rather than leaving it. The razor component is now the higher-priority decomposition target: business logic should be extracted back into services on the next touch.
-
-**Context:** Same growth pattern as `LocalPipelineExecutor` (which was also flagged as an incidental monolith and decomposed). The `DrawerStateService<T>` generic was already extracted from the page service. The known `DrawerCancellationToken` bug (#2028) is a symptom of tight coupling between drawer instances and the parent service.
-
-**Alternatives considered:** Keep as-is (coherent vertical slices are readable), service decomposition only (accomplished; next step is the component).
-
-**Reassess when:** After the razor component's business logic is extracted, verify that the per-drawer split is the right granularity or reconsider.
-
----
-
-### Monolithic orchestrator was intentional — now split into 4 services (specs 041–045)
-
-**Date:** 2026-07-04 · **Updated:** 2026-08-28 (post-041–045 service split)
-**Category:** architecture
-
-**Decision:** We kept all dispatch logic, reconciliation, leader election, and lifecycle management inside the single web application process (Blazor UI + orchestration + dispatch in one binary). Splitting into a standalone operator/controller was on the roadmap but was not justified by scale at the time.
-
-**Status (2026-08-28 — Reassess-when condition met and resolved):** The monolith was split into **4 separate services** in specs 041–045:
-- `CodingAgent.Web` (orchestrator) — Blazor UI + pipeline orchestration. **No direct DB access.** Connects to API via HTTP/SignalR for all state reads and writes.
-- `CodingAgent.Api` — sole owner of the Postgres database, `/hubs/agent`, `/api/work-items/*`, and all agent-facing endpoints.
-- `CodingAgent.JobController` — owns the reconciliation loop. Leader-elected; one leader runs it, others idle as hot standbys. _Dispatch loops were removed from the JobController in #2322/#2323 — see the "Dispatch loop belongs in a leader-elected controller" decision below for where dispatch lives now and where it is moving._
-- `CodingAgent.Scheduler` — owns all scheduled/periodic background work (retention sweeps, maintenance). No direct DB access; triggers work via HTTP.
-
-Leader election continues to handle multi-replica safety. The split was driven by: (a) the orchestrator needing to be a UI-only consumer of the API rather than the source of truth, (b) dispatch/reconciliation needing a separate leader lease from the pipeline loop, and (c) scheduled maintenance needing isolation from both.
-
-**Context:** Spec 036 explored a standalone CRD controller, but spec 035 (Postgres-based work distribution) was implemented instead. Specs 041–045 delivered the actual split — not via CRDs but via separate microservices each with their own leader election. Comparable systems (Argo Workflows, Tekton, Flux) separate controllers from UIs; this system now follows that pattern.
-
-**Alternatives considered at the time:** Standalone K8s operator (spec 036), sidecar extraction, microservice split. All were deferred for deployment complexity reasons. Specs 041–045 eventually delivered the microservice split.
-
-**Reassess when:** Independent scaling of the dispatch or API layer is needed (scale-out now possible — each service scales independently). Or if the JobController and Scheduler should be merged back for operational simplicity.
-
----
+### Only the API owns the database; each service has one job
+<!-- 2026-07-04; updated 2026-08-28 (specs 041–045) -->
+**Rule:** The web app (UI and pipeline orchestration) has no database access. The API is the sole owner of PostgreSQL and of all agent-facing endpoints. The JobController runs reconciliation, and the Scheduler runs periodic work. Web and Scheduler change state only through the API.
+**Why:** The UI must consume the API, not be the source of truth; dispatch and reconciliation need their own leader lease; scheduled maintenance is isolated from both.
+**Not:** a Kubernetes operator with CRDs; one monolith.
+**Revisit when:** a layer needs scaling it can't get, or the JobController and Scheduler should merge back for simplicity.
 
 ### Dispatch loop belongs in a leader-elected controller, not the stateless API
-
-**Date:** 2026-09-12
-**Category:** architecture
-
-**Decision:** WorkItem dispatch — the poll loop that turns `Pending` WorkItems into `Dispatched` + K8s Jobs — MUST run as a single leader-elected loop, never on every API replica. The API is stateless request/response only: it holds no background dispatch loop and no leader election. Only loop-controllers hold leader leases. The dispatch loop belongs in a leader-elected controller (the Scheduler, per the DatabaseMaintenanceService / Spec 047 pattern) that drives a **stateless** `POST /api/work-items/{id}/dispatch` endpoint; K8s Job creation stays in the API because that is where the `batch/jobs` RBAC lives.
-
-**Context — regression being corrected:** #2322/#2323 relocated dispatch out of the JobController into the API's `WorkItemDispatchService`, registered on all replicas via `AlwaysLeaderService`. Because each replica builds its own concurrency snapshot from the DB, per-selector `maxConcurrent` is not enforced across replicas — observed live: 4 active pods for a cap of 3. This contradicts two recorded principles: "PipelineLoopService: full loop must be leader-gated in multi-replica deployments" (loops fire concurrently on non-gated replicas) and "the Scheduler is the designated owner of all scheduled/periodic background work; putting periodic logic in the API contradicts the Scheduler's role" (DatabaseMaintenanceService, Spec 047). `AlwaysLeaderService`'s own doc calls the gap "an accepted trade-off for the single-process deployment target" — but production runs the API multi-replica.
-
-**Status (2026-09-13):** Complete — epic #2541 fully resolved. `WorkItemDispatchService` and `AlwaysLeaderService` removed from the API in issue #2547. The `WorkItemDispatchLoop` in the Scheduler is now the sole dispatcher (renamed from `WorkItemDispatchPoller` in issue #2844). The `WorkDistribution:Dispatch:Enabled` flag and its Helm wiring have been removed; `Scheduler:Dispatch:Enabled` remains the control flag.
-
-**Reassess when:** No longer needs reassessment — the correct architecture is in place.
-
----
-
-### Agent provider abstraction supports N backends as first-class citizens
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Both Kiro (primary) and OpenCode are first-class agent backends. The `IAgentProvider` abstraction exists to support any number of backends. Kiro was the initial implementation and remains the primary development focus, but OpenCode is maintained as a full peer, not "best effort."
-
-**Context:** The system has 6 agent Docker images (2 backends × 3 stacks). The `AgentProviderFactory` routes to either `KiroCliAgentProvider` or `OpenCodeAgentProvider`. Provider diversity enables competitive evaluation and model/runtime flexibility.
-
-**Alternatives considered:** Single backend (simpler but locks out provider diversity), Kiro-primary with OpenCode as "proof of extensibility" only.
-
-**Reassess when:** A third backend is added (e.g., Claude Code native), or if maintaining both backends creates disproportionate test burden.
-
----
-
-### RetryErrors.Enqueue on transient iterations: known noise, bounded by transient cap
-
-**Date:** 2026-09-06
-**Category:** architecture
-
-**Decision:** `run.RetryErrors.Enqueue(errorSummary)` fires at the top of every `RunRetryLoopAsync` iteration, including `TransientWait` iterations (rate limit, network error). This means `RetryErrors` accumulates entries for iterations where no fix was attempted, producing stale content in the failure-feedback prompt and draft PR body. This is known noise, not intentional design. The `MaxConsecutiveTransientRetries = 10` cap bounds the blast radius — at most 10 stale entries can accumulate before the loop breaks.
-
-The practical impact is low: draft PRs are rare (require retry exhaustion), and the agent reading the failure history gets some noise entries alongside real fix-attempt summaries. A correct fix would gate `Enqueue` on `ClassifyRetryOutcome(agentResult) == RetryOutcome.Retry` (i.e., only after a real fix attempt). However, this is low-priority given the bounded noise and rarity of the scenario.
-
-**Do NOT** unilaterally move `Enqueue` before the outcome classification is confirmed to be `Retry` — the ordering invariant documented in the code (Enqueue MUST precede `BuildQualityGateRetryPrompt` snapshot) must be preserved if the gating is ever added.
-
-**Context:** `ClassifyRetryOutcome` was extracted in #2342, making the fix boundary structurally clear. The underlying issue was noted as a TODO in `QualityGateExecutor.RetryLoop.cs`.
-
-**Alternatives considered:** Enqueue only on non-transient outcomes (correct but requires care around the ordering invariant and `run.RetryCount` rollback interaction) — deferred, low priority.
-
-**Reassess when:** If failure-feedback prompt quality becomes a measurable accuracy concern, or if the `MaxConsecutiveTransientRetries` cap is ever removed (at which point unbounded stale entries become a real problem).
-
----
-
-### Confidence gate is intentionally fail-closed
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** The confidence gate treats unknown assessment values as `not_ready` (fail-closed). Non-empty `blockingIssues` forces `not_ready` regardless of recommendation. False negatives (missed valid work) cost less than false positives (broken PRs that waste reviewer time). The `maxAnalysisRetries=2` buffer handles transient model issues.
-
-**Context:** Comparable systems (Devin, OpenHands, Copilot CCA) default to proceeding optimistically. Our conservative design reflects that this pipeline creates real PRs on real repos, and reviewer time is the bottleneck — wasted reviews cost more than wasted agent compute.
-
-**Alternatives considered:** Fail-open with early quality gate check, configurable conservatism per-project.
-
-**Reassess when:** Agent analysis accuracy improves to the point where false-negative rate becomes a measurable productivity drag (tracked via `agent:needs-refinement` label frequency).
-
----
-
-### Adversarial review is a default pattern for all durable agent outputs
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Adversarial review (discriminator pattern) is the default for any pipeline step where an agent produces durable output — committed code, created issues, modified knowledge, posted comments. Each adversarial review has a feature toggle (`*ReviewEnabled`). Ephemeral outputs (logs, status messages) don't need it. New features that write to repos, create issues, or modify persistent state should include an adversarial review step with a toggle.
-
-**Context:** Empirical experience shows adversarial reviewers ALWAYS find something to correct, including critical bugs. Multi-agent verification improves accuracy by +39.7pp over single-agent (arXiv:2511.16708). The TriAdReview architecture (arXiv:2606.15074) demonstrates systematic quality improvement through triangular adversarial review. The GAN-inspired pattern (generator + discriminator) eliminates self-attribution bias that occurs when the same context evaluates its own output.
-
-**Alternatives considered:** Selective application (only code review), case-by-case per feature, no review for internal artifacts (brain, harness suggestions).
-
-**Reassess when:** Token costs become prohibitive AND quality improvement from review drops below measurable threshold. Currently, the cost-to-quality ratio strongly favors review.
-
----
-
-### Partial failure contract: enrichment steps are non-fatal, critical path steps are fatal
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Steps whose output is required by a downstream step on the critical path (clone → branch → codegen → quality gates → PR) are fatal on failure. Steps that produce optional enrichment (brain sync, PR description generation, feedback collection, review posting) are non-fatal — they log a warning and the pipeline continues. New steps default to non-fatal unless they produce artifacts consumed downstream.
-
-**Context:** The pipeline has explicit non-fatal annotations: brain sync failure doesn't kill the run, PR description failure continues, posting failure in review pipeline is non-fatal. Comparable systems (Argo `continueOn`, GitHub Actions `continue-on-error`) offer per-step configuration. Our pattern is simpler: the classification follows from whether the step is on the critical path or is enrichment.
-
-**Alternatives considered:** All failures fatal by default (strict), configurable per-step fatality, retry-first with eventual non-fatality.
-
-**Reassess when:** Non-fatal failures accumulate silently and mask real problems. If a "non-fatal" step's absence causes consistent downstream quality drops, it should be reclassified as fatal.
-
----
-
-### Token vending: private keys never leave orchestrator or API containers (security invariant)
-
-**Date:** 2026-07-04 · **Updated:** 2026-08-22 (post-041–045 topology correction)
-**Category:** architecture
-
-**Decision:** Private keys (GitHub App PEM, GitLab access tokens) NEVER leave the API or orchestrator containers. Agents only receive short-lived tokens via the `TokenVendingService`. This is a hard security invariant — the motivation is that if an agent goes haywire (prompt injection, hallucination, malicious input), it cannot access secrets that would allow persistent harm. Neither container runs an AI agent.
-
-**Topology (verified 2026-08-22):**
-- GitHub App PEM and GitLab access tokens live exclusively in the database (`ProviderConfig.Settings["privateKeyBase64"]` / `Settings["accessToken"]`). No K8s Secret in the Helm chart contains these credentials — the chart manages only `agent-api-key` (the HMAC master key).
-- `TokenVendingService` is registered in `CodingAgent.Api`, `CodingAgent.Web` (Orchestrator), and `CodingAgent.Scheduler`. All three processes read `ProviderConfig` from Postgres and perform the GitHub JWT exchange in-process.
-- Agent pods receive only: (a) the per-job derived key (`HMAC-SHA256(masterKey, jobName)`, stored in a per-job K8s Secret that the dispatcher creates — `DispatchLifecycleService` for work items and consolidation, `ChatJobDispatcher`, `ModelFetchJobService`), and (b) short-lived GitHub installation access tokens (1-hour expiry) vended via SignalR `RefreshToken` calls handled by `AgentTokenRefreshService` in the API hub. The raw master key and the raw PEM/GitLab PATs never enter the agent container.
-- Every dispatched pod gets its key as `AGENT_API_KEY` (env var, pre-derived); `AgentStartupConfig` sets `KeyIsPreDerived=true` and `HubConnectionManager` / `WorkItemHttpClient` use the key directly without re-deriving it. The `AGENT_API_KEY_FILE` path (raw master key, `KeyIsPreDerived=false`, in-process derivation) remains only for agents started by hand; no dispatcher mounts the master key.
-- Assembly boundary: NetArchTest rules in `LayerBoundaryTests.cs` prevent `CodingAgent.Agent`, `Agent.KiroCli`, and `Agent.OpenCode` from depending on `CodingAgent.Orchestration` (where `TokenVendingService` and `ProviderSettingKeys.PrivateKeyBase64` live). This is structural enforcement, not a named invariant test.
-
-**Known limitation — GitLab PATs:** GitLab access tokens are passed through in plaintext (no vending). Unlike GitHub App tokens (short-lived and scoped), GitLab PATs are long-lived. Recommend project access tokens with ≤1-day expiry to minimize exposure if an agent is compromised.
-
-**Per-job key flow (all agent Jobs, 2026-09-26):** After creating a Job, its dispatcher calls `AgentJobKeySecret.CreateForJobAsync`, which stores `HMAC-SHA256(masterKey, jobName)` in a K8s Secret `caa-key-{jobName}` with an OwnerReference pointing to the Job (auto-GC). `JobSpecBuilder` always injects `AGENT_API_KEY` from that Secret and never mounts the chart's `agent-api-key` Secret (pods read only its `otel-headers` entry). The pod's `HubConnectionManager` uses the key directly (`keyIsPreDerived=true`) — no further derivation occurs. `AgentApiKeyAuthHandler` validates by computing `HMAC(masterKey, agentId)` with the same `AgentKeyDerivation` helper and comparing, which matches the pre-derived value. The master key never enters pod memory. There is no fallback: without a configured master key the dispatch fails before any Job is created, and if the key Secret cannot be created the Job is deleted and the dispatch fails (a pod without its key could never authenticate).
-
-**Context:** The `TokenVendingService` generates GitHub installation tokens (1-hour expiry). `AgentTokenRefreshService` handles mid-job refresh requests from agents over SignalR — agents call `RequestTokenRefresh` unconditionally before each token-requiring provider operation (git push, PR creation, etc.); there is no age-based or timer-based proactive refresh on the agent side. `TokenExpiresAt` is written into the initial `ProviderConfig.Settings` snapshot at dispatch time (`TokenVendingService.PrepareAgentConfigsAsync`) but is not read by agent code — the server-side `GitHubAppAuthService` (5-minute renewal buffer, `_renewalBuffer = TimeSpan.FromMinutes(5)`) ensures the orchestrator never vends an expired token, making per-call refresh safe in practice. The SignalR dependency for refresh is acceptable because agents already depend on SignalR for lifecycle management. This pattern mirrors GitHub Actions' per-job `GITHUB_TOKEN` injection.
-
-**Alternatives considered:** Direct credential injection via K8s secrets (eliminates SignalR dependency but exposes long-lived keys), projected volumes with short-lived tokens (K8s only), environment-dependent strictness.
-
-**Reassess when:** Never for the isolation principle. If GitLab short-lived project access tokens become available, migrate to those to match GitHub App token lifetime.
-
----
-
-### Code review always uses isolated sessions (no Shared mode)
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Review agents ALWAYS run in isolated sessions (fresh context, no access to codegen conversation history). The `Shared` mode (legacy) has been removed — #1042 resolved in #2233. Self-attribution bias is a proven phenomenon (arXiv:2603.04582): models evaluate their own output as more correct when they can see their own reasoning chain. Cross-context review (arXiv:2603.12123) demonstrates that fresh-session review catches significantly more errors.
-
-**Context:** `Isolated` was already the default; `Shared` existed as a legacy backward-compat option. The decision to remove `Shared` reflects that there is no valid use case for it — it actively harms review quality. Isolated mode also enables parallel execution (multiple review agents running concurrently), which is faster.
-
-**Alternatives considered:** Shared with a different model (reduces self-attribution but loses parallelism), configurable per-issue-complexity, keep Shared as escape hatch.
-
-**Reassess when:** Never for the isolation principle. If a future research paper demonstrates that context-aware review outperforms isolated review with appropriate debiasing techniques, reconsider — but current evidence strongly favors isolation.
-
-**Status (2026-09-02):** Resolved. `ReviewIsolation.Shared` removed in #2233. Field retained at Key(4) with `Isolated`-only enum; stored configs containing `"Shared"` map to `Isolated` via `ReviewIsolationJsonConverter` (registered at the enum type level).
-
-**Status (2026-09-29):** The `ReviewIsolation` field is removed, because its only value was `Isolated` and nothing read it; `CodeReviewConfiguration` Keys 3 and 4 are retired. Review agents still always run isolated. Stored configs that contain the field load normally.
-
----
-
-### HMAC key derivation for agent auth — intentional simplicity
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Agent authentication uses `HMAC-SHA256(master_key, agent_id)` to derive per-agent keys from a single master secret. This eliminates the need to manage individual secrets per agent. Legacy agents without an ID fall back to raw master key comparison. Per-agent revocation is not needed because agents are ephemeral containers — if one is compromised, rotate the master key (K8s Secret update + rolling restart).
-
-**Context:** GitHub Actions uses per-job ephemeral tokens. Kubernetes uses per-SA individual credentials. The HMAC pattern is common in IoT device provisioning (AWS IoT). For our system, agents are cattle not pets — individual identity matters for routing and logging, not for granular access control.
-
-**Alternatives considered:** Per-agent individual secrets (enables granular revocation but multiplies secret management), HMAC with scoped master keys per label group.
-
-**Reassess when:** If the system needs per-agent revocation without rotating the master key (e.g., a compromised agent that must be isolated without restarting others). This would require individual secrets or a revocation list.
-
-**Status (2026-09-26, issue #3034):** Implemented for every agent Job. Issue #3034 moved work-item pods (and with them consolidation, which is dispatched as a work item) onto a per-job K8s Secret (`caa-key-{jobName}`) with an OwnerReference for auto-GC. A follow-up moved chat and model-fetch pods onto the same Secret (`AgentJobKeySecret`) and removed the master-key file mount from `JobSpecBuilder` altogether, so no agent pod can receive the master key. `HubConnectionManager` and `WorkItemHttpClient` use `AGENT_API_KEY` directly when `keyIsPreDerived=true` (no further derivation).
-
-**Security invariant:** An agent pod's credential `HMAC(master, podA-name)` cannot be used to impersonate `podB` — or the operator, whose credential is the master key itself — because computing any other credential requires the master key, which is never distributed to pods.
-
-**Run restoration on re-registration (2026-09-26):** An agent that registers with an `ActiveJob` gets that run restored — and with it the run-scoped `[RequiresActiveJob]` hub methods (token refresh, labels, comments) — only when the work item is its own: `K8sJobName` or `AssignedAgentId` equals its agent ID, the ownership rule the work-item HTTP endpoints already apply. The restored run's issue, provider configs, project and run type come from the WorkItem row (`IWorkItemTransitionStore.GetWorkItemRunRecordAsync`); the rest — progress and descriptive fields such as the current step, title, start time and model, which no hub method derives credentials or targets from — comes from the agent's report. Nothing about a tracked run changes before that check: `AgentOrphanRecoveryService` records the agent on the run (`run.AgentId`) only for an accepted claim, and `RegisterAgent` swaps the issue to `agent:in-progress` only for the first pickup it reports. Orphan detection — re-attaching a run that records the agent when the agent registers without an `ActiveJob` — applies the same ownership check. A claim that cannot be verified is logged and ignored, leaving the agent registered but idle; if the WorkItem cannot be read, registration fails with a `Failed to …` error that the agent's SignalR retry pipeline retries. Hosts without a WorkItem store (in-memory and unit-test hosts) keep restoring from the report; the API host, which serves the agent hub, always has one.
-
----
-
-### Telemetry philosophy: instrument every decision point for full run traceability
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** The telemetry goal is full run traceability in Grafana Cloud — every step an agent took can be retraced via logs and traces. If a step takes non-trivial time or makes a branching decision, it gets a span. If a countable event matters for operational health, it gets a counter. The purpose is debugging ("the system did A, but I want B — use Grafana to investigate"), not just alerting.
-
-**Context:** Two OTel meters (`CodingAgent.Pipeline`, `CodingAgent.WorkDistribution`), one ActivitySource with spans for every pipeline step, every code review iteration, individual review agents, quality gate sub-steps, all consolidation phases, token vending, drain cycles, hub operations. Custom histogram buckets are tuned for agent run durations (30s to 6h). This depth is closer to production infrastructure services than typical agent platforms.
-
-**Alternatives considered:** Minimal instrumentation (only job-level counters), selective instrumentation (only critical path). Both were rejected because they make post-hoc debugging of agent behavior impossible.
-
-**Reassess when:** OTLP storage costs become disproportionate to debugging value. Mitigation: reduce trace sampling rate rather than removing spans.
-
-### Dual JSON options: strict write (Default), lenient read (Lenient)
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** `PipelineJsonOptions.Default` (camelCase, indented, string enums) is the canonical format for all orchestrator-controlled persistence. `PipelineJsonOptions.Lenient` (case-insensitive) is used for deserializing agent-produced JSON, because LLM output is not guaranteed to match strict casing or formatting. The asymmetry is intentional: the system is authoritative on what it writes, but lenient on what it reads from untrusted sources (agent output files, user-edited configs). New deserialization of agent-produced content MUST use `Lenient`. New serialization of orchestrator state MUST use `Default`.
-
-**Context:** SWE-agent and OpenHands use YAML with no strict read/write split. Most systems have a single serialization path. This system's dual-path reflects the reality that LLMs produce unpredictable JSON formatting — lenient parsing prevents data loss from minor casing differences.
-
-**Alternatives considered:** Single option for both (simpler but forces agents to produce exact-format JSON — unreliable with LLMs), strict parsing with explicit error messages guiding agents to correct format.
-
-**Reassess when:** If a standardized agent output schema with enforced formatting becomes viable (e.g., structured outputs with guaranteed casing), the lenient path could be tightened.
-
----
-
-### Enum serialization: self-annotation is flexible, agent parsability is mandatory
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** No strong preference on whether enums self-annotate with `[JsonConverter(typeof(JsonStringEnumConverter))]` or rely on `PipelineJsonOptions.Default` providing the converter globally. The hard requirement is: any enum value that appears in LLM-produced JSON MUST parse correctly regardless of approach. Current practice: 4 enums self-annotate (defense-in-depth for agent-boundary/satellite-assembly usage), 12 rely on global options. Either pattern is acceptable — agents may choose whichever is simpler for the context.
-
-**Context:** .NET guidance recommends global options for consistency. Self-annotation is recommended for library types consumed by external callers. This project's mixed approach evolved organically and both patterns work.
-
-**Alternatives considered:** Mandate all enums self-annotate (belt-and-suspenders), mandate global-only (consistent but fragile).
-
-**Reassess when:** If a deserialization bug is traced to a missing converter (enum parsed as integer), tighten the rule toward mandatory self-annotation for agent-facing enums.
-
----
+<!-- 2026-09-12; includes the 2026-08-14 leader-gating decisions -->
+**Rule:** Every background loop runs on exactly one elected leader: dispatch in the Scheduler, reconciliation in the JobController, maintenance sweeps triggered by the Scheduler, and the web app's pipeline loop only on its leader. The API holds no loops and no leases. Kubernetes Job creation stays in the API because that is where the RBAC lives.
+**Why:** Loops on every replica break per-selector concurrency caps (seen live: 4 pods for a cap of 3) and fire side effects such as branch updates twice. The pipeline loop resumes after a restart, so every replica would start polling.
+**Not:** gating only the calls that reach external APIs; dispatch on every API replica.
+**Revisit when:** never for the principle.
+
+### Agent images rebuild with the control plane — no wire skew window
+<!-- 2026-08-22 -->
+**Rule:** CI builds every image, control plane and agents, from the same commit in the same run.
+**Why:** Agents and control plane share MessagePack wire types, so building them together removes version skew; a wire-contract snapshot test is unnecessary.
+**Revisit when:** agent images are pinned or released separately; then add a wire-contract snapshot test.
 
 ### MessagePack int ordinals for SignalR — homogeneous deployment assumed
+<!-- 2026-07-04 -->
+**Rule:** Hub messages use MessagePack with integer enum ordinals and numbered keys, so member order and key numbers are a wire contract. Never reorder enum members in hub types. A retired key stays tombstoned; never reuse its number.
+**Why:** The orchestrator and agents always run the same build (one Helm release), so ordinals are safe. Stored data still carries retired keys, so a reused number would read old data as the new field. **Accepting:** no compile-time guard beyond the hub serialization tests.
+**Not:** string enum serialization; explicit ordinal annotations.
+**Revisit when:** rolling upgrades with mixed versions become a goal.
 
-**Date:** 2026-07-04
-**Category:** architecture
+### Pod anti-affinity: soft (preferred) spreading, not hard (required)
+<!-- 2026-08-28 -->
+**Rule:** Control-plane Deployments with more than one replica spread over nodes with preferred (soft) anti-affinity.
+**Why:** Hard anti-affinity leaves pods Pending forever on clusters with fewer nodes than replicas. The services are stateless, so co-location lowers availability but never corrupts state.
+**Not:** required anti-affinity; none.
+**Revisit when:** a deployment needs hard node isolation; the chart's `affinity` override covers that.
 
-**Decision:** SignalR hub communication uses MessagePack with integer ordinal enum serialization. This means enum member ordering is an implicit wire contract. This is acceptable because deployment is homogeneous — orchestrator and agents are always deployed together from the same build. No multi-version scenario exists. Enum members in hub-transmitted types should not be reordered, but no explicit compile-time enforcement exists beyond the `HubMessageSerializationTests` test class.
+### Chat keepalive Redis: required for multi-replica deployments
+<!-- 2026-08-28 -->
+**Rule:** Redis is required when the API or the web app runs more than one replica. It holds chat heartbeats across replicas, as it already backs SignalR.
+**Why:** Without it, a keepalive that lands on another replica is invisible to the watcher, and an active chat pod is killed after the idle timeout. **Accepting:** a single replica falls back to in-process heartbeats.
+**Not:** Redis everywhere (breaks local dev); a separate on/off switch.
+**Revisit when:** never for the principle.
 
-**Context:** gRPC and Protobuf use explicit numbering to avoid ordinal coupling. Kubernetes handles multi-version compat. This system's simpler approach reflects its deployment model (single Helm release upgrades all components simultaneously). All images are built from the same git SHA in CI.
+## Security
 
-**Alternatives considered:** String-based MessagePack enum serialization (safer for multi-version, increases payload size), explicit ordinal value annotations.
+### Token vending: private keys never leave orchestrator or API containers (security invariant)
+<!-- 2026-07-04; updated 2026-09-26 -->
+**Rule:** GitHub App private keys stay in the API, web and Scheduler processes. Agents get only short-lived installation tokens, which they request before each provider operation. No container that runs an AI agent holds a private key.
+**Why:** A hijacked agent (prompt injection, hallucination, malicious input) must not reach secrets that allow lasting harm. **Accepting:** token refresh depends on the agent's SignalR connection. GitLab has no token vending, so the GitLab token reaches the agent; use project access tokens that expire within a day.
+**Not:** long-lived credentials as Kubernetes Secrets; projected volumes.
+**Revisit when:** never for the principle; move GitLab to short-lived tokens when they are available.
 
-**Reassess when:** If the system ever supports rolling upgrades where orchestrator and agents run different versions simultaneously. Currently not planned.
-
----
-
-### Snake_case `JsonStringEnumMemberName` for LLM-produced enum values
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Enums that appear in agent-produced JSON use `[JsonStringEnumMemberName("snake_case")]` (e.g., `AnalysisGateResult.NotReady` → `"not_ready"`, `CriterionStatus.NonCompliant` → `"non_compliant"`). Enums in orchestrator-controlled JSON use PascalCase (the default). The boundary is: "does an LLM produce this value?" Combined with lenient parsing (Q1), this provides belt-and-suspenders for agent output: explicit snake_case mapping PLUS lenient case-insensitive fallback.
-
-**Context:** OpenAI and Anthropic APIs universally use snake_case for enum values. LLMs are more reliable at producing snake_case than PascalCase. The attribute maps between LLM-natural format and C#-natural naming.
-
-**Alternatives considered:** PascalCase everywhere (consistent but increases LLM parsing failures), snake_case everywhere (alienates .NET conventions).
-
-**Reassess when:** If structured output guarantees from model providers make casing enforcement reliable, the snake_case attributes become less critical (but harmless to keep).
-
----
-
-### Circuit breaker is an infrastructure safeguard, not a provider health check
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** The global circuit breaker (`CheckCircuitBreakerAsync`) is an infrastructure-level safeguard that trips ONLY when ALL enabled templates are failing simultaneously (e.g., network outage, DNS failure, shared API gateway down). It is NOT a per-provider health check. Individual provider failures (e.g., GitHub API down) don't trip it — the loop simply skips that provider's items and continues with others. Per-template failure tracking (`ConsecutiveFailures`) handles rate-limiting and back-off for individual providers. The two mechanisms are complementary tiers: rate-limiting (fine-grained, per-template) and circuit breaker (coarse-grained, system-wide).
-
-**Context:** Argo Workflows has no circuit breaker. Tekton pipelines fail independently. The circuit breaker with auto-resume after 5-minute cooldown reflects the expectation of transient infrastructure outages that self-heal.
-
-**Alternatives considered:** Per-template circuit breaking (isolates failures but adds complexity for a scenario that rarely occurs in practice), no circuit breaker (rely on rate-limiting alone).
-
-**Reassess when:** If the system serves multiple teams with independent infrastructure, per-template circuit breaking may be needed to prevent one team's broken provider from affecting global throughput.
-
----
-
-### Agent lifetime: pull-model (docker-compose) was initial design, push-model (K8s) is the future
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** Two distinct agent lifetime models exist by deployment mode. Docker Compose: agents are persistent containers using a pull-model (connect via SignalR, receive jobs, execute, return to idle). K8s mode: agents are ephemeral pods using a push-model (one K8s Job per WorkItem, container destroyed after completion). The pull-model was the original design. The K8s push-model is the production-scale future. Docker-compose mode may eventually be deprecated once K8s-mode proves itself. `IWorkDistributor` abstracts the difference from the pipeline layer.
-
-**Status (2026-08-16):** Spec 041 removed the docker-compose deployment target and the Legacy/SignalR work distribution modes. Kubernetes Jobs are now the only work distribution mechanism. The pull-model (docker-compose) is gone; the push-model (K8s) is now the only runtime. The `IWorkDistributor` abstraction was retained — `KubernetesWorkDistributor` is the sole implementation.
-
-**Context:** GitHub Actions uses ephemeral runners. Argo uses ephemeral pods. The pull-model works well for developer/small-team deployments (low-latency, session affinity for resume). K8s ephemeral is better for production (clean-slate isolation, autoscaling, no stale state). The PVC pool in K8s manages credential persistence across ephemeral pods.
-
-**Alternatives considered:** Single model (always ephemeral — locks out non-K8s users), converge immediately (premature — K8s mode is still maturing).
-
-**Reassess when:** K8s-mode dispatch + reconciliation is production-proven. At that point, deprecating docker-compose mode becomes viable.
-
----
-
-### Helm values: `agents` and `jobTemplates` are separate concerns
-
-**Date:** 2026-07-07
-**Category:** architecture
-
-**Decision:** The Helm `values.yaml` separates `agents[]` (SignalR mode Deployments) from `jobTemplates[]` (Kubernetes mode Job pod specs). These serve fundamentally different purposes: `agents` creates persistent Deployments with PVCs, health probes, and rolling update strategies; `jobTemplates` defines ephemeral Job pod specs (image, resources, securityContext, initContainers) rendered into a ConfigMap consumed by `DispatchService`. The ConfigMap template falls back to `agents[]` when `jobTemplates` is empty for backward compatibility.
-
-**Status (2026-08-16):** Spec 041 removed `agents[]` from `values.yaml`. `jobTemplates[]` is now the sole definition for agent pod specs. The ConfigMap fallback to `agents[]` is gone. The separation rationale is now historical — the two values sections have been collapsed to one.
-
-**Context:** Originally a single `agents[]` field served both modes. In SignalR mode it creates Deployments; in K8s mode it only produced a ConfigMap (no Deployments). The dual-purpose design caused confusion: K8s-only fields (maxConcurrent, initContainers for permission fixers) mixed with Deployment-only fields (persistence, strategy, affinity). The split clarifies: `agents` for what runs persistently, `jobTemplates` for what ephemeral Job pods look like.
-
-**Alternatives considered:** Keep unified `agents[]` with mode-conditional rendering (confusing for users — fields that do nothing in one mode), rename `agents` to `jobTemplates` globally (breaks existing SignalR deployments).
-
-**Reassess when:** If docker-compose/SignalR mode is deprecated entirely (per "Agent lifetime" decision above), `agents[]` becomes dead config and can be removed — only `jobTemplates[]` would remain.
-
----
-
-### Kiro token/cost telemetry: provider subscription limitation, not a permanent design choice
-
-**Date:** 2026-09-30
-**Category:** architecture
-
-**Decision:** Kiro token and cost data are absent because the Amazon Developer Q subscription does not currently expose token usage through the Kiro CLI. This is a provider subscription limitation, not a deliberate policy. If Amazon Q (or any Kiro-supported provider) exposes token usage via the CLI, it should be captured. Until confirmed otherwise, Kiro runs record session count and elapsed time only; token/cost fields remain zero. The UI conditionally hides token/cost tiles and columns when no token data is present. `KiroCliAgentProvider.ExecuteAsync` returns `AgentResult` with no `Usage` field; `AccumulateTokenUsage` early-returns on null `Usage`. `AccumulateAgentSession` still records session count and elapsed time for Kiro runs.
-
-**Context:** OpenCode reports tokens via `GET /session/:id` (HTTP polling against a local server). Kiro CLI is a subprocess with text-only stdout — no token API is currently consumed. A follow-up investigation should confirm whether Amazon Q exposes metrics in any parseable form.
-
-**Alternatives considered:** Estimate tokens from output line count or elapsed time (rejected — misleading; show nothing rather than a rough proxy). Always show token/cost columns with N/A (rejected — clutters the UI with no actionable value for Kiro-only operators).
-
-**Reassess when:** Amazon Q or Kiro CLI exposes token usage in any parseable form (stdout JSON, workspace metadata file, etc.). At that point, populate `AgentResult.Usage` in `KiroCliAgentProvider` and the telemetry pipeline flows automatically.
-
----
-
-### 1:1:1 template binding: one repo, one tracker per enabled template — intentional constraint
-
-**Date:** 2026-09-30
-**Category:** architecture
-
-**Decision:** Each enabled template is permanently bound to exactly one repository and one issue tracker. Two enabled templates cannot share a repo or tracker. This is an intentional architectural invariant, not a current technical limitation. The constraint ensures a 1:1:1 mapping between issue → template → PR: each issue in a tracker is owned by exactly one template, which produces exactly one PR in that repo. Without this, an agent receiving a shared repo/tracker would need to decide what to implement where — that is out of scope. Multi-repo work is handled via project epics dispatching to multiple single-repo templates. Disabled templates are exempt so two conflicting templates can coexist with one disabled.
-
-**Context:** `TemplateBindingRules.Validate` enforces the constraint at save time. GitHub Actions allows matrix builds across multiple repos; this system's 1:1:1 is intentionally stricter. Same rationale as the epic scope boundary decision: keep routing ownership unambiguous.
-
-**Alternatives considered:** Multi-repo templates where the agent decides per-issue what to implement where (out of scope), shared tracker with multiplexing (ambiguous ownership), no binding enforcement (would silently allow duplicate dispatch).
-
-**Reassess when:** A concrete multi-repo use case arises that cannot be served by project epics. A new "multi-repo template" concept is needed — not a relaxation of the 1:1:1 rule.
-
----
-
-### GitHub mergeability mapping: correctness-driven, conservative null for unknown states
-
-**Date:** 2026-08-14
-**Category:** architecture
-
-**Decision:** In `GitHubRepositoryProvider.IsPullRequestBehindBaseAsync`, the `mergeable_state` values `"blocked"` and `"unstable"` map to `null` (CI in-flight, keep concurrency slot), NOT `false` (done). All unrecognized future states also default to `null`. This is a correctness requirement, not a preference: GitHub returns `"blocked"` for the entire CI run duration when required status checks are configured — mapping it to `false` would free the housekeeping concurrency slot immediately after initial mergeability computation (seconds), before CI runs at all, defeating the concurrency gate. The `null` semantic means "outcome unknown, slot remains in-flight until provider state resolves." No strong opinion on the internal representation; the behavior being correct is the only requirement.
-
-**Context:** `"clean"` (CI passed, up-to-date), `"dirty"` (merge conflict), `"draft"`, and `"has_hooks"` map to `false` (slot free). Slot semantics: `true` = update needed, `false` = done/unupdatable, `null` = CI running. Documented in spec 040 design.md decision table.
-
-**Alternatives considered:** Map `"blocked"` → `false` (incorrect — defeats the concurrency gate), map unknowns → `false` (aggressive slot-free, risks race conditions on new GitHub states).
-
-**Reassess when:** GitHub changes `mergeable_state` semantics, or a new state is added that needs explicit classification. Default behavior (new states → `null`) is the safe fallback.
-
----
+### HMAC key derivation for agent auth — intentional simplicity
+<!-- 2026-07-04; updated 2026-09-26 -->
+**Rule:** Each agent Job gets its own key, derived from the master key and the Job name and stored in a Secret for that Job. No pod receives the master key, so one pod's key can't impersonate another pod or the operator. An agent can resume only a run whose work item belongs to it.
+**Why:** One master secret is simple to manage, and agents are ephemeral: identity matters for routing and logs, not for fine-grained access. **Accepting:** no per-agent revocation; a compromise means rotating the master key.
+**Not:** an individual secret per agent; scoped master keys per label group.
+**Revisit when:** a single agent must be revoked without rotating the master key.
 
 ### DispatchGatedLabels: extensible set for human-approval-required label transitions
-
-**Date:** 2026-08-14
-**Category:** architecture
-
-**Decision:** `AgentLabels.DispatchGatedLabels` is a general-purpose extensibility mechanism — a `HashSet<string>` of labels that agents are not permitted to self-set via `RequestLabelChange`. Currently contains only `EpicApproved` (the human gate between epic Phase 1 analysis and Phase 2 execution). When a new pipeline state requires explicit human approval before proceeding (e.g., a hypothetical `agent:deploy-approved` or `agent:escalate-approved`), that label belongs in this set. The hub logs a Warning and silently ignores any agent attempt to self-set a gated label — the agent cannot escalate its own privileges by setting its own transition label.
-
-**Context:** Implemented as a guard in `AgentHub.Pipeline.cs` (`RequestLabelChange`). The `targetKind` parameter from the caller is also overridden server-side from `run.RunType` to prevent routing manipulation. Currently only `EpicApproved` is gated; future cases may arise as the pipeline gains more multi-step workflows with human checkpoints.
-
-**Alternatives considered:** Per-label config for gating (overcomplicated), webhook-based approval gates (different mechanism — label-based is simpler for GitHub-native workflows).
-
-**Reassess when:** A new human-approval gate is added that does not fit the label model (e.g., requires a UI action or API call rather than a label change). For label-based gates, always add to `DispatchGatedLabels`.
-
----
-
-### LeaderElectedPollingService: two correctness defects — resolved by #2027
-
-**Date:** 2026-08-14 · **Closed:** 2026-08-22
-**Category:** architecture
-
-**Decision:** `LeaderElectedPollingService` had two correctness defects: (1) Missing `ArgumentNullException.ThrowIfNull(leaderElection)` in the constructor. (2) A broken `OperationCanceledException` catch filter that caused a spurious `Error` log on clean pod shutdown. Both are fixed: (1) `ThrowIfNull` added to constructor. (2) The OCE catch now uses `if (stoppingToken.IsCancellationRequested) break` to correctly distinguish host-stop from leadership-loss. #2027 complete.
-
-**Reassess when:** Never — both fixes are stable.
-
----
-
-### DrawerCancellationToken: wrong-token bug — resolved by #2028
-
-**Date:** 2026-08-14 · **Closed:** 2026-08-22
-**Category:** ux
-
-**Decision:** `AgentCodingPageService.DrawerCancellationToken` property has been removed. Callers access per-drawer `CancellationToken` directly from the specific `DrawerStateService<T>` instance (`IssueDrawer.CancellationToken`, `PrDrawer.CancellationToken`, `EpicDrawer.CancellationToken`). #2028 complete.
-
-**Reassess when:** Never — stable once the property is gone.
-
----
-
-### ProviderConfigId validation: fail-fast ArgumentException at dispatch entry points is acceptable
-
-**Date:** 2026-08-14
-**Category:** architecture
-
-**Decision:** No strong preference on whether empty `ProviderConfigId` at a dispatch entry point throws `ArgumentException` or returns a soft `(false, error)`. Both are valid. The current implementation throws — this is consistent with treating an empty provider ID as a programming error (the UI validates provider selection before dispatch). Agents adding new dispatch entry points may use either pattern, but should be consistent with the method's existing error-return contract (`TryDispatch*` methods that already return `(bool, string?)` may prefer soft returns; void or fire-and-forget paths should throw). No rule to enforce here.
-
-**Context:** Added in #1995/#2005 to prevent a regression where empty `RepoProviderConfigId` caused lifecycle-tracking to be silently skipped, allowing duplicate dispatches. The fix is correct regardless of throw vs return.
-
-**Alternatives considered:** N/A — no strong opinion.
-
-**Reassess when:** Never. Implementation detail, not a load-bearing design decision.
-
----
-
-### AgentStallMonitor kill threshold: same as AgentTimeout is intentional — K8s is the last resort
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** `AgentStallMonitor` uses `config.AgentTimeout` as the silence-kill threshold. This is intentional: if an agent has produced no output for the full timeout window, it is definitively stuck. The K8s `activeDeadlineSeconds` (= `AgentTimeout` + 60s buffer) is a last-resort infrastructure kill that fires only if the application-level kill itself fails (process doesn't exit cleanly, container runtime issue, etc.). There is no separate `StallKillTimeout` config field; `AgentTimeout` is the single duration that governs both the application-layer kill and the K8s backstop. The +60s K8s buffer is exactly that: a buffer to let the application kill complete first.
-
-**Context:** The two timeouts operate on different clocks — stall monitor on silence duration, K8s on total elapsed. In practice: a run that produced early output and then stalled will be killed by the stall monitor at `AgentTimeout` of silence; K8s fires only if that kill fails. This is the intended layered defense: application-first, infrastructure-second.
-
-**Alternatives considered:** Separate `StallKillTimeout` field (adds config complexity without benefit — the silence window and the total budget should match); K8s-only (no application-layer kill, relies purely on `activeDeadlineSeconds`).
-
-**Reassess when:** Operators report confusion about silence-based kills happening earlier than the expected wall-clock timeout. At that point a separate `StallKillTimeout` becomes justified.
-
----
-
-### AgentStallMonitor: StallPollInterval is intentionally not project-overridable
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** `StallPollInterval` (how often `GetHealthStatus` is polled, default 30s) is NOT decorated with `[ProjectOverridable]`. `StallWarningInterval` IS project-overridable. The asymmetry is intentional: polling frequency is a system-level resource concern — more frequent polling means more `GetHealthStatus` calls per active run, which at scale affects all projects simultaneously. Warning cadence is a per-project UX concern — some projects may want faster warning feedback. Operators control `StallPollInterval` globally; projects control warning cadence.
-
-**Reassess when:** A per-project use case for different poll frequencies emerges (e.g., a project with very noisy agents that benefit from less frequent polling).
-
----
-
-### AgentStallMonitor: stall warnings are flat (no escalation) — intentional observability signal
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** Stall warnings fire at `Warning` level on every `StallWarningInterval` with identical format. There is no severity escalation to `Error` before the kill fires. This is intentional: the repeated Warning messages are the signal that the connection chain (orchestrator → agent process → output) is still alive but silent. They are NOT an indication of imminent failure. The kill fires separately via `HandleKillTimeoutAsync` as an `Error`-level event with "Forcefully terminating" message. Operators counting warning repetitions in Grafana can infer stall duration. An escalated `Error` before the kill would be noise — the kill already fires as an Error.
-
-**Alternatives considered:** Escalate last warning before kill to Error (rejected — the kill itself is already Error-level and fired by a separate code path); progressive warning intervals (rejected — flat interval is simpler and Grafana counting provides the same information).
-
-**Reassess when:** Operators report difficulty distinguishing "agent is running slowly" from "agent is about to be killed" in log streams. A dedicated "kill imminent" log line at Error with a countdown would address that without changing the warning structure.
-
----
-
-### OpenCode health monitoring: session-status polling, not OS process signals
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** The two agent backends expose health differently and that asymmetry is correct by design:
-- **Kiro:** `KiroCliAgentProvider.GetHealthStatus()` reports `IsProcessAlive` from `IProcessWrapper` — real OS process-alive signal from the managed subprocess.
-- **OpenCode:** `OpenCodeAgentProvider.GetHealthStatus()` always returns `IsProcessAlive = null` (no subprocess), but populates `AllSessionsSummary` from a background `PollAllSessionStatusesAsync` loop that calls `GET /session/status` every 10s. This surfaces subagent session states (retry count, busy/idle distribution) that the primary SSE stream doesn't expose.
-
-Both providers give the stall monitor actionable signal via `AgentHealthStatus` — they just use different mechanisms. `stall.process_deaths` will always be 0 for OpenCode runs; this is expected, not a telemetry gap. `AllSessionsSummary` in stall warning logs is the OpenCode equivalent of process-alive state.
-
-**Alternatives considered:** Treat SSE stream disconnect as process death for OpenCode (rejected — SSE reconnects are normal and transient; a false process-death event would trigger premature error paths).
-
-**Reassess when:** OpenCode exposes an explicit "is the server process alive" endpoint. Until then, `GET /session/status` reachability is the functional equivalent.
-
----
-
-### AgentCodingPageService at 460 lines: stable after drawer extraction
-
-**Date:** 2026-09-21
-**Category:** ux
-
-**Decision:** No strong opinion on whether `AgentCodingPageService` is decomposed further. At 460 lines (down from 618 at session 22 capture), the drawer layer is cleanly extracted into three dedicated `*DrawerService` instances. The remaining responsibilities — config data properties, template CRUD, loop controls, and `PropagateProviderContext` — are genuine coordinator concerns. Agents should not extract further without a specific pain point (e.g., template CRUD growing past 150 lines on its own). The existing per-drawer service pattern is the template for any future extraction.
-
-**Reassess when:** File exceeds 600 lines again, or template CRUD methods become complex enough to warrant their own service.
-
----
-
-### EnsureSessionAsync: stall monitoring coverage is complete
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** Both `EnsureSessionAsync` call sites in `AgentPhaseExecutor.Analysis.cs` are already wrapped with `AgentStallMonitor.MonitorAsync` (lines ~114, ~199). Session warm-up hangs are covered. Post-PR enrichment calls (feedback, reflection, brain sync in `PullRequestFinalizationService`) are intentionally NOT wrapped — they are non-fatal best-effort steps executed after the PR is already created. A hang in enrichment is acceptable: the PR is live, the operator can recover manually. Wrapping enrichment with the stall monitor would add kill-on-silence semantics to steps where partial completion is preferable to forced termination.
-
-**Reassess when:** A post-PR enrichment hang is observed in production that cannot be recovered without operator intervention. At that point, the step should either be made interruptible by the existing `CancellationToken` or given a dedicated shorter timeout — not necessarily wrapped with the full stall monitor (which uses `AgentTimeout`).
-
----
-
-### AgentWorkspacePaths: moved to CodingAgent.Contracts — mostly resolved (#2852)
-
-**Date:** 2026-09-21 · **Updated:** 2026-09-30
-**Category:** architecture
-
-**Decision:** `AgentWorkspacePaths` must live in `CodingAgent.Contracts` (not `CodingAgent.Pipeline`) so all assemblies can reference workspace path constants without an upward dependency on `CodingAgent.Pipeline`.
-
-**Status (2026-09-30 audit):** Largely resolved (#2852). `AgentWorkspacePaths` exists in `src/CodingAgent.Contracts/Models/AgentWorkspacePaths.cs`. Four of five hardcoded literals are fixed — those assemblies now use `AgentWorkspacePaths.MetadataDirectory`/`BrainDirectory`. One literal remains:
-
-- `KiroCliLib/Core/ProcessWrapper.cs` — `internal const string AgentMetadataDirectory = ".agent"` still uses its own local copy rather than `AgentWorkspacePaths`. This is the only remaining divergence.
-
-**Alternatives considered:** Duplicate constants in each assembly (rejected), leave literals as-is (rejected).
-
-**Reassess when:** Never for the principle. Replace the remaining `ProcessWrapper.cs` literal on next touch of that file.
-
----
-
-### catch(Exception) terminal path: missing run.MarkCompleted() — #2851 tracks fix
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** `QualityGateExecutor.ProceedToQualityGatesAsync` `catch (Exception ex)` handler does not call `run.MarkCompleted()` before `AddRunToHistoryAsync`. This leaves `CompletedAt = null` on exception-terminated runs, producing ghost `PipelineRun` rows that accumulate permanently because retention sweeps gate on `CompletedAt IS NOT NULL`. `DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync` is the compensating sweep; its code comment explicitly names "the separate terminal gap in QualityGateExecutor.RetryLoop." The fix is a single `run.MarkCompleted()` call before `TransitionTo(PipelineStep.Failed)`, matching the `OperationCanceledException` handler directly above.
-
-**Status:** Fixed (PR #2858, merged 2026-09-22) — both catch arms in `ProceedToQualityGatesAsync` delegate to the shared private `FinalizeRunAsync` helper, which calls `run.MarkCompleted()` as its first statement before `swapLabel`, `TransitionTo`, and `AddRunToHistoryAsync`. The structural approach makes the ordering invariant impossible to violate independently across the two arms. `ReconcileOrphanedPipelineRunsAsync` remains as a safety net for any historical ghost rows; no new accumulation occurs.
-
-**Context:** Same root cause as #2778 (ConflictRestart missing `MarkCompleted`, fixed in #2789). The OCE handler in the same method was already correct; only the general `Exception` handler was missed.
-
-**Reassess when:** N/A — #2851 is fixed. Pattern going forward: every `catch` block that calls `AddRunToHistoryAsync` on a terminal step MUST also call `run.MarkCompleted()` first.
-
----
-
-### GeneratePrDescriptionAsync FileNotFoundException fallback: follow best practices
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** No strong opinion on whether `GeneratePrDescriptionAsync` catches `FileNotFoundException` only or broadens to `IOException`/`DirectoryNotFoundException` to handle a missing `.agent/` directory. The fallback to `OutputLines` is non-fatal best-effort enrichment. Agents should follow the standard .NET pattern: catch `IOException` broadly when directory absence is possible, or add an explicit `DirectoryNotFoundException` sibling catch when the intent needs to be clear. Either is acceptable; the existing TODO in the file documents the gap.
-
-**Reassess when:** A `DirectoryNotFoundException` is observed in production logs from this path.
-
----
-
-### ProviderConfigId Phase 2: no strong opinion — follow best practices
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** No strong opinion on whether Phase 2 of the `ProviderConfigId` value-type migration (removing the reverse implicit conversion and pushing the type into wire/DB boundaries) is pursued or deferred. Both outcomes are acceptable. The Phase 1 implicit conversion (`string → ProviderConfigId`) protects adjacent-parameter signatures. If a natural opportunity arises to remove the reverse implicit and update `PipelineRun`, `JobDistributionRequest`, and wire-format DTOs, agents should proceed following the same incremental approach used for `IssueIdentifier`. If no opportunity arises, the implicit stays indefinitely.
-
-**Reassess when:** A transposition bug is traced to an unguarded string parameter that Phase 2 would have caught.
-
----
-
-### ReconcileOrphanedPipelineRunsAsync: load-all vs. ExecuteUpdateAsync — follow best practices
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** No strong opinion on whether `DatabaseMaintenanceService.ReconcileOrphanedPipelineRunsAsync` is migrated from its current load-all-then-update pattern to `ExecuteUpdateAsync` (set-based SQL, consistent with all other sweeps in the same service). Both are correct. Agents should follow the established pattern in the service: `ExecuteUpdateAsync` is the canonical approach and should be used if this method is touched. The inconsistency is documented in the existing code comment.
-
-**Reassess when:** Ghost-run accumulation rate grows measurably (indicating the root-cause fixes aren't sufficient and the sweep's performance becomes relevant).
-
----
-
-### ReconcileOrphanedPipelineRunsAsync OCE swallowing: follow best practices
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** No strong opinion on whether the `catch (OperationCanceledException) { return 0; }` in `ReconcileOrphanedPipelineRunsAsync` is changed to re-throw (consistent with all other sweeps in `RunSweepAsync`). Agents should follow the established pattern: re-throwing OCE is the canonical behavior in this service and should be applied if this method is touched. The inconsistency is documented in the existing code comment and the unit test `ReconcileOrphanedPipelineRuns_Cancellation_DoesNotThrow` must be updated if the behavior changes.
-
-**Reassess when:** Never specifically. The canonical pattern is re-throw; apply it on next touch.
-
----
-
-**Date:** 2026-09-06
-**Category:** architecture
-
-**Decision:** The `PipelineConfiguration.AgentTimeout` → `WorkItemEntity.TimeoutSeconds` → `BuildContext.TimeoutSeconds` → `V1JobSpec.ActiveDeadlineSeconds = TimeoutSeconds + 60` chain is complete and working. The +60 second buffer is a fixed infrastructure margin (not configurable). Per-project overrides of `AgentTimeout` correctly propagate to K8s `activeDeadlineSeconds` for both work-item and consolidation pods.
-
-**Zero-sentinel fallback:** `DispatchLoop`, `ConsolidationDispatchLoop`, and `ReconciliationLoop` all contain `item.TimeoutSeconds > 0 ? item.TimeoutSeconds : DefaultAgentTimeout` as a backward-compat guard for DB rows created before #2179. All rows created after #2179 have positive `TimeoutSeconds`. A follow-up issue (#2405) tracks the DB migration and guard removal.
-
-**Chat pods are separate:** `ChatJobDispatcher` uses `DispatchServiceOptions.ChatJobMaxDurationSeconds` (not `AgentTimeout`) — intentional by design, documented in `DispatchServiceOptions`.
-
-**Operator-observable confirmation:** After 8 hours the `activeDeadlineSeconds` fires and kills whatever is still running — the chain reaches K8s correctly.
-
-**Context:** The chain was broken before #2158/#2179 — `DispatchLoop` was using the Helm `AgentJobTimeoutSeconds` instead of the per-WorkItem value. Both issues resolved the divergence.
-
-**Reassess when:** Never for the chain itself. Once #2405 migrates the legacy zero rows, remove the zero-sentinel guards.
-
----
-
-### FeedbackTimeoutSeconds stale log: one-line fix in QualityGateExecutor — #2403
-
-**Date:** 2026-09-06
-**Category:** architecture
-
-**Decision:** `QualityGateExecutor.RetryLoop.cs` log of the feedback timeout duration should use `context.Config.FeedbackTimeoutSeconds` (the actual configured value), not `FeedbackConstraints.FailureFeedbackTimeoutSeconds` (hardcoded 60). The CTS was always correct; only the log message was wrong.
-
-**Status (2026-09-30 audit):** Fixed. Log now uses `context.Config.FeedbackTimeoutSeconds`. Unit test in `QualityGateExecutorFeedbackTests.cs` guards against regression to the hardcoded const.
-
-**Reassess when:** Never — stable.
-
----
-
-### WorkItemEntity.TimeoutSeconds zero-sentinel: resolved via loop removal (#2405)
-
-**Date:** 2026-09-06 · **Closed:** 2026-09-30
-**Category:** architecture
-
-**Decision:** The `item.TimeoutSeconds > 0 ? ... : DefaultAgentTimeout` ternary fallback existed in `DispatchLoop`, `ConsolidationDispatchLoop`, and `ReconciliationLoop` to guard against legacy zero-TimeoutSeconds rows created before #2179.
-
-**Status (2026-09-30 audit):** Resolved, but differently than planned. `DispatchLoop` and `ConsolidationDispatchLoop` were removed entirely in #2322/#2323 — no sentinel to remove there. `ReconciliationLoop` uses `if (item.TimeoutSeconds <= 0) continue` (skip the item) rather than the ternary fallback. `DefaultAgentTimeout` is not used in `JobController`. The original three-step removal plan (DB migration + guard removal) is moot for the two removed loops; the ReconciliationLoop behavior (skip zero-TimeoutSeconds items) is its own design choice and does not need the DB migration.
-
-**Reassess when:** Never — the original fallback concern is resolved by the loop removal and the skip-behavior in ReconciliationLoop.
-
----
-
-**Date:** 2026-09-06
-**Category:** architecture
-
-**Decision:** `QualityGateConfiguration.Key(8)` (`SecurityScanEnabled`) was tombstoned in #2249 (coverage-threshold removal). The corresponding result field `QualityGateReport.SecurityScan` (Key 4) and all downstream executor checks were dead code — nothing populated `SecurityScan` with a non-null value.
-
-**Status (2026-09-30 audit):** Fixed (#2400 resolved). Keys 4 and 8 are tombstoned in `QualityGateReport.cs`, `QualityGateConfiguration.cs`, and `QgcExecutionResult.cs`. No live SecurityScan properties or callers remain in `src/`.
-
-**MessagePack invariant:** Key(4) is tombstoned (`// Key(4) is retired`) rather than deleted, following the same pattern used for Keys 1/7/8/11/12/13. Do not reuse the slot.
-
-**Reassess when:** Security scanning is re-introduced as a feature. Add a new `Key(N)` field (after the current highest key), not a resurrection of Key(4).
-
----
-
-### CoberturaParser / JacocoParser: deleted after coverage removal — resolved (#2401)
-
-**Date:** 2026-09-06 · **Closed:** 2026-09-30
-**Category:** architecture
-
-**Decision:** `CoberturaParser` and `JacocoParser` had zero callers after #2249 removed the `CoverageThreshold` config field. Both classes and their associated test files have been deleted. If coverage scanning is re-introduced, the parsers can be recreated from git history.
-
-**Status (2026-09-30 audit):** Fixed. Neither `CoberturaParser.cs` nor `JacocoParser.cs` exist in `src/` — confirmed deleted.
-
-**Reassess when:** Coverage scanning is re-introduced. Start fresh.
-
----
-
-### Cleanup step before PR is intentional quality polish
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** After quality gates pass, a dedicated "cleanup" agent call runs before PR creation. This handles cosmetic/style issues the agent introduced during fix iterations (debug artifacts, verbose logging, temporary files). "Tests pass" is necessary but not sufficient for PR quality. The cleanup gets its own QG run afterward. If cleanup introduces failures, the SHARED retry budget handles them (no separate MaxCleanupRetries). This is acceptable because cleanup rarely introduces new failures.
-
-**Context:** No comparable system (Devin, OpenHands, Copilot CCA) has a cleanup step — they go directly from "tests pass" to PR creation. This is novel and reflects the observation that agents leave non-functional debris that reviewers shouldn't need to catch.
-
-**Alternatives considered:** No cleanup (ship as soon as tests pass), advisory-only cleanup (no re-validation), separate retry budget for cleanup-induced failures.
-
-**Reassess when:** If cleanup consistently passes without changes (agents stop leaving debris), the step can be skipped for efficiency. Track via telemetry: cleanup QG pass rate.
-
----
-
-### Cleanup prompt tool-call budget (10): first approximation, not a hard cap
-
-**Date:** 2026-09-06
-**Category:** architecture
-
-**Decision:** The `BuildCleanupPrompt()` "Budget: 10 tool calls maximum" instruction was added to prevent agents spending hours running linters and formatters — a real observed failure mode before the constraint was introduced. The number 10 was not empirically derived; it is a rough estimate of the minimum required operations (1 diff command + ~5-8 file inspections + 1 linter invocation + 1 report write). If linting/formatting should be a breaking quality gate, that's what CI is for — the cleanup step is a best-effort cosmetic pass, not a correctness gate.
-
-The budget is a soft prompt constraint (not mechanically enforced). Agents may exceed 10 calls if genuinely needed, but the prompt sets the expectation. If runs with large diffs (30+ changed files) consistently fail cleanup due to the budget, the right fix is either increasing the number or implementing a smarter file-sampling strategy — not removing the constraint.
-
-**Context:** Commit `fe6cf46f` scoped the cleanup prompt to diff-only files and added the budget. The key behavioral change: agents can no longer drift into full-codebase linting, which was the root cause of the multi-hour cleanup runs.
-
-**Alternatives considered:** Hard mechanical enforcement via tool-call counting (not feasible in current agent interface), configurable per-project budget (deferred — no demand yet), removing the budget (reverts to unbounded linting runs).
-
-**Reassess when:** Cleanup step runs consistently exceed the budget on normal-sized diffs, or if agents report the budget prevents meaningful cleanup. Track via: cleanup step duration in telemetry.
-
----
-
-### Label swap: add-first ordering for crash safety
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** `AgentLabelOperations.SwapAsync` adds the target label FIRST, then removes all other agent labels. This ordering is intentional crash-safety: an issue should never be left without a status label (invisible to operators). A transient window where TWO labels coexist is acceptable — dedup detection prevents behavioral bugs, and a human can manually derive the correct state from two labels. GitHub doesn't provide atomic label transactions, so this is the safest available approach.
-
-**Context:** Strict "remove-then-add" would create a window where the issue has NO agent label — invisible and confusing. True atomicity is impossible with GitHub's API. The dedup check (`IsIssueBeingProcessed`) prevents double-dispatch from transient two-label states.
-
-**Alternatives considered:** Remove-first-then-add (label gap risk), batch API call (GitHub doesn't support), external lock (overkill for label operations).
-
-**Reassess when:** If GitHub adds atomic label operations (unlikely), or if the two-label transient state causes operational confusion in practice.
-
----
-
-### External CI re-push: workaround for GitHub Actions webhook unreliability
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** `PollCiWithNotStartedRetryAsync` creates empty commits and force-pushes to re-trigger CI when GitHub Actions fails to trigger workflow runs. This is intentional — GitHub Actions has been increasingly unreliable with webhook delivery. Empty commits are used because they're provider-agnostic (all CI tools trigger on push events). Waiting longer doesn't help because dropped webhooks never self-recover. The force-push on agent-created feature branches is acceptable.
-
-**Context:** No comparable system has automated re-push. Most just fail and require manual retry. The race-avoidance check before re-push prevents unnecessary empty commits when CI starts just before the retry fires.
-
-**Alternatives considered:** Longer timeouts (doesn't help for dropped webhooks), workflow_dispatch API (GitHub-specific, not provider-agnostic), manual retry only.
-
-**Reassess when:** If GitHub fixes webhook reliability, or if the system moves to a CI provider with guaranteed event delivery. The empty commit noise in git history is acceptable for agent branches.
-
----
-
-### Filesystem-as-context: workspace files are the context delivery mechanism
-
-**Date:** 2026-07-04
-**Category:** architecture
-
-**Decision:** The pipeline injects context into agents via workspace files (`.agent/`, `.brain/`, `.kiro/steering/`), NOT via prompt messages. The agent discovers and reads these files through its normal file-reading capability. Prompts tell the agent WHAT to do; files tell it WHAT the context is. This is intentional for three reasons: (1) prompts got too large when context was inline, (2) filesystem avoids escaping issues that plagued large JSON/markdown blocks in prompts, (3) files provide an injection point for security scanning (detect prompt injection in written files before agent reads them).
-
-**Context:** Most agent systems inject context into the prompt window (Claude Code injects CLAUDE.md, Cursor injects rules into system prompt). The filesystem approach is closer to how human developers work (read files in the repo). Files are persistent, inspectable by humans, survive session crashes, and have no size limit.
-
-**Alternatives considered:** Prompt injection (guaranteed in context window but limited by tokens and escaping issues), hybrid (critical context in prompt, supplementary in files).
-
-**Reassess when:** If agents consistently fail to read referenced files (would indicate the prompt needs stronger "read these files first" instructions). Currently working well.
-
----
+<!-- 2026-08-14 -->
+**Rule:** Agents can't set labels that mark a human approval (today only `agent:epic-approved`); the hub ignores such requests with a warning. Every new human-approval label joins this set.
+**Why:** An agent must not escalate its own privileges by setting its own transition label.
+**Not:** per-label gating config; webhook approval gates.
+**Revisit when:** a human gate needs something other than a label, such as a UI action.
+
+## Dispatch and scheduling
+
+### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
+<!-- 2026-08-14; updated 2026-09-13 -->
+**Rule:** Pending work dispatches by tier: Review, then Decomposition, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable.
+**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier.
+**Not:** configurable weights per run type; age-based promotion; round-robin; label-based priority.
+**Revisit when:** several teams share the system and lower tiers visibly starve, or someone needs cross-tier urgency.
+
+### MaxConcurrentDecompositions and MinIssueSlots: global-only
+<!-- 2026-09-30 -->
+**Rule:** The decomposition cap and the minimum issue slots are global; projects can't override them.
+**Why:** One dispatcher allocates slots across all projects and has no per-project concurrency domain, so per-project values mean nothing. Keep it simple for now.
+**Not:** per-project values applied to the global cap; per-project soft throttles.
+**Revisit when:** one project measurably takes all decomposition slots; then add per-project quotas with sub-queues.
+
+### MaxRunsPerCycle=0 (unlimited) is intentional — other mechanisms bound concurrency
+<!-- 2026-07-04 -->
+**Rule:** By default, a dispatch cycle has no cap on the number of runs it starts.
+**Why:** Per-selector pod limits and the decomposition cap already bound concurrency; a per-cycle cap would only throttle the common case. Users who want a cap set one.
+**Not:** a positive default as a safety net; a cap derived from cluster capacity.
+**Revisit when:** unbounded dispatch causes scheduling pressure in the cluster.
+
+### Dispatch 503: polling loop is the retry mechanism, no explicit handler needed
+<!-- 2026-09-22 -->
+**Rule:** When a dispatch attempt fails transiently (no free PVC, Kubernetes error), the work item stays Pending and the next loop cycle retries it. No retry headers, dead-letter queue or alert.
+**Why:** The system runs in the background on a loop. Speed is not a constraint, and the next pass recovers a missed attempt.
+**Not:** retry-after headers; dead-lettering after repeated 503s; an alert on the first 503.
+**Revisit when:** items wait several cycles during sustained cluster trouble; then shorten the interval or add backoff.
+
+### WorkItems.Payload: config snapshot must be at dispatch time, not enqueue time
+<!-- 2026-08-29; 2026-08-31 -->
+**Rule:** A work item stores only identity: issue, provider IDs, run, selector, timeout and trace context. Steering, provider configs with fresh tokens, quality-gate and reviewer configs, MCP servers and pipeline settings are resolved when the agent fetches its assignment. If that enrichment fails, the API returns 503 and the agent retries; it never gets an assignment without configs.
+**Why:** Config can change between enqueue and start, and a snapshot silently ignores the change (seen in production: a steering update missed a run queued an hour earlier). An assignment without configs would run without quality gates or steering.
+**Not:** a snapshot at enqueue; a re-fetch on every poll.
+**Revisit when:** never for freshness; if assignment gets slow, add a short-lived server cache that keeps it.
+
+### Circuit breaker is an infrastructure safeguard, not a provider health check
+<!-- 2026-07-04 -->
+**Rule:** The pipeline loop's circuit breaker trips only when every enabled template is failing at once, and it resumes after a cooldown. A single failing provider is skipped and backed off per template; it never trips the breaker.
+**Why:** The breaker is for shared outages (network, DNS, gateway) that heal by themselves; per-template back-off handles one provider.
+**Not:** per-template circuit breaking; no breaker.
+**Revisit when:** several teams with separate infrastructure share the system.
 
 ### Agent label routing: layered resolution from provider to global default
+<!-- 2026-07-04 -->
+**Rule:** The repository provider's required labels choose which agent runs a job; without them, the global default labels apply.
+**Why:** Repos can target different agent stacks (dotnet, python) without per-repo config when the default fits.
+**Not:** template-only selectors; per-issue routing.
+**Revisit when:** a third layer (per issue or per template) is needed.
 
-**Date:** 2026-07-04
-**Category:** architecture
+## Pipeline behavior
 
-**Decision:** `LabelResolver.ResolveRequiredLabels` determines which agent runs a job. The resolution is: `ProviderConfig.RequiredLabels` on the repository provider → `PipelineConfiguration.DefaultRequiredAgentLabels` global fallback → empty (any agent). This allows different repos to target different agent stacks (dotnet repo → `kiro,dotnet` agent, python repo → `kiro,python` agent) without requiring per-repo config when a global default suffices.
+### Confidence gate is intentionally fail-closed
+<!-- 2026-07-04 -->
+**Rule:** The analysis confidence gate treats unknown values as not ready, and any blocking issue forces not ready whatever the recommendation.
+**Why:** The pipeline opens real PRs on real repos, and reviewer time is the bottleneck, so missing a valid run costs less than a broken PR. Analysis retries absorb transient model problems.
+**Not:** fail-open with an early quality-gate check; strictness per project.
+**Revisit when:** false negatives become a measurable drag (watch the `agent:needs-refinement` rate).
 
-**Context:** GitHub Actions uses `runs-on` labels for runner selection. Kubernetes uses node selectors. The layered approach handles shared infrastructure where most repos use the default but specific repos need specialized agents.
+### Partial failure contract: enrichment steps are non-fatal, critical path steps are fatal
+<!-- 2026-07-04 -->
+**Rule:** Steps on the critical path (clone, branch, code generation, quality gates, PR) fail the run. Enrichment steps (brain sync, PR description, feedback, review posting) log a warning, and the run continues. A new step is non-fatal unless a later step consumes its output.
+**Why:** Whether anything downstream needs the output decides it, which is simpler than per-step configuration.
+**Not:** everything fatal; per-step fatality settings; retry first, then ignore.
+**Revisit when:** a non-fatal step's silent failures cause consistent quality drops; then make it fatal.
 
-**Alternatives considered:** Single-level (template-only selector), per-issue label routing (too granular).
+### Cleanup step before PR is intentional quality polish
+<!-- 2026-07-04; budget 2026-09-06 -->
+**Rule:** After quality gates pass, a cleanup agent call removes debris from fix iterations (debug output, temporary files, verbose logging), and the gates run again. Cleanup shares the retry budget. Its prompt limits it to the changed files and about 10 tool calls; the budget is soft, not enforced.
+**Why:** Passing tests are not enough for a reviewable PR. Without the budget, agents spent hours linting the whole codebase; strict lint and format checks belong in CI. **Accepting:** cleanup failures use the shared retry budget.
+**Not:** no cleanup; advisory cleanup without re-validation; a separate retry budget; removing the tool-call budget.
+**Revisit when:** cleanup rarely changes anything (skip it), or normal-size diffs keep exceeding the budget (raise it or sample files; don't remove it).
 
-**Reassess when:** If a third resolution layer is needed (e.g., per-issue or per-template label overrides).
+### Draft PR is the retry-exhausted fallback
+<!-- 2026-07-04 -->
+**Rule:** When quality gates still fail after all retries, the pipeline opens a draft PR with the work, labeled `agent:error`, instead of only failing the run.
+**Why:** People see what the agent tried and can finish it without digging through logs.
+**Not:** failing without a PR; a summary comment only.
+**Revisit when:** abandoned draft PRs become a measurable housekeeping burden.
 
----
+### agent:done ordering: full pipeline + post-PR CI before label is set
+<!-- 2026-09-30 -->
+**Rule:** `agent:done` is set only after every step, post-PR enrichment included, has finished and CI on the PR's head commit has passed. A ready-for-review PR can exist while enrichment still runs. A CI failure on the head commit after promotion makes the run an error.
+**Why:** A reviewer who sees `agent:done` must be able to trust that CI is green.
+**Not:** done at PR creation (the old behavior marked failing PRs done); done after CI but before enrichment.
+**Revisit when:** enrichment gets slow enough that the delay confuses operators, or post-PR CI is expected to fail.
 
-### LocalPipelineExecutor: decomposition complete
+### PR creation: draft-first then finalize, hybrid template + agent narrative
+<!-- 2026-07-25; description file 2026-08-29 -->
+**Rule:** The pipeline opens a minimal draft PR early. It then finalizes the PR with a generated body (test results, changed files, review findings, acceptance-criteria table) and the agent's Summary and Approach. The agent writes the narrative to `.agent/pr-description.md`; the narrative never comes from the agent's stdout.
+**Why:** The early draft makes progress visible, the template guarantees structure and metrics, and the narrative explains what and why. Stdout mixes in tool output and reasoning, which scrambled PR bodies in production. **Accepting:** without the file, the PR has only the generated part.
+**Not:** fully agent-written bodies; template-only bodies; parsing stdout with markers.
+**Revisit when:** reviewers find the narrative unhelpful; then drop it to save tokens.
 
-**Date:** 2026-07-04 · **Closed:** 2026-08-22
-**Category:** architecture
+### Label swap: add-first ordering for crash safety
+<!-- 2026-07-04 -->
+**Rule:** A label swap adds the new agent label first, then removes the others.
+**Why:** An issue must never be left without a status label, because operators couldn't see it. GitHub has no atomic label update. A brief two-label state is acceptable: dedup prevents double dispatch, and a person can tell the state.
+**Not:** remove first, then add; an external lock.
+**Revisit when:** GitHub adds atomic label updates, or two-label states confuse operators.
 
-**Decision:** `LocalPipelineExecutor` is now 334 lines — well under the original 600-line target. Decomposition is complete; no further action needed. Issues #975, #957, #958 implemented the extraction of context records, helpers, and step methods.
+### External CI re-push: workaround for GitHub Actions webhook unreliability
+<!-- 2026-07-04 -->
+**Rule:** When CI doesn't start for a pushed commit, the pipeline checks again and then pushes an empty commit to trigger it. Force-pushing agent feature branches is allowed.
+**Why:** GitHub Actions drops webhooks, and a dropped one never recovers, so waiting doesn't help. An empty commit works with any CI that triggers on push. **Accepting:** empty commits in agent branches.
+**Not:** longer timeouts; GitHub's workflow_dispatch API (not provider-agnostic); manual retry only.
+**Revisit when:** webhook delivery becomes reliable, or CI moves to a provider with guaranteed events.
 
-**Reassess when:** If the file grows past 600 lines again, reapply the same extraction pattern.
+### MaxRetries=3 is an arbitrary but well-performing default
+<!-- 2026-07-04 -->
+**Rule:** The defaults are 3 quality-gate retries (4 attempts) and 2 analysis retries (3 attempts). Keep them until evidence says otherwise.
+**Why:** They are not calibrated, but they work well in practice; each retry costs tokens, and the same errors tend to repeat.
+**Not:** formal A/B tests at this scale; retry counts by error type.
+**Revisit when:** exhausted-retry draft PRs become a measurable problem (tune from data), or token cost matters (lower to 2).
 
----
+### Failure history may include transient-wait entries — accepted noise
+<!-- 2026-09-06 -->
+**Rule:** The failure history that the agent receives, and that draft PR bodies show, also records iterations that only waited on a transient error such as a rate limit.
+**Why:** This is known noise, not design, but the impact is low: draft PRs are rare, and the transient-retry cap limits it to 10 entries. **Accepting:** some stale entries in feedback prompts.
+**Not:** recording only real fix attempts; that is correct, but the change must keep the retry loop's ordering invariant, so it is deferred.
+**Revisit when:** feedback quality measurably suffers, or the transient cap is removed.
 
-### Label lifecycle: formal state machine delivered (#1046)
+### Acceptance criteria parsing: regex-based, intentionally simple and deterministic
+<!-- 2026-07-25 -->
+**Rule:** A regex extracts acceptance criteria from an `## Acceptance Criteria` section (checkbox or numbered items); no LLM parsing. Issues without the section fall back to the issue's goals.
+**Why:** The format is standard across trackers, and deterministic parsing never invents criteria; it trades recall for precision.
+**Not:** LLM extraction for unusual formats; looser patterns.
+**Revisit when:** a tracker uses a format the regex can't handle, or missed criteria become measurable.
 
-**Date:** 2026-07-04 · **Closed:** 2026-08-22
-**Category:** architecture
+### NonCompliant acceptance criteria as CRITICAL: hard contract, retry budget bounds cost
+<!-- 2026-07-25 -->
+**Rule:** A non-compliant acceptance criterion becomes a CRITICAL finding that forces another fix attempt. If it is still non-compliant when the retries run out, the PR ships with that status visible.
+**Why:** Acceptance criteria are both the Definition of Ready and the Definition of Done. An agent that is still sure after several rounds is valid signal: the criterion may be infeasible, or the evaluator wrong. **Accepting:** the retry budget bounds the cost of evaluator false negatives.
+**Not:** downgrading to a warning; confidence thresholds.
+**Revisit when:** correct implementations regularly exhaust their retries on evaluator false negatives.
 
-**Decision:** The label transition graph (agent:next → in-progress → done/error/cancelled/needs-refinement/wont-do) is enforced by `LabelStateMachine` with explicit transition validation. Issue #1046 implemented the formal state machine. Valid transitions are defined in one authoritative location with runtime validation.
+### Code review always uses isolated sessions (no Shared mode)
+<!-- 2026-07-04; Shared mode removed 2026-09 -->
+**Rule:** Review agents always start in a fresh session without access to the coding conversation. No shared mode exists.
+**Why:** Models rate their own output as more correct when they see their own reasoning. Fresh-context review catches more errors and lets reviewers run in parallel.
+**Not:** shared sessions with a different model; a choice per issue; shared mode as an escape hatch.
+**Revisit when:** research shows that context-aware review with debiasing beats isolation.
 
-**Reassess when:** If blocking mode (throw on invalid transition) was not enabled at implementation, revisit based on false-positive rate from warn mode.
+### Multi-agent code review: specialized reviewers run in parallel
+<!-- 2026-07-04; defaults updated 2026-10-02 -->
+**Rule:** Several reviewers, each with one focus, run in parallel. By default, correctness, security and test-quality reviewers check every repository, and stack specialists (the .NET reviewer) check repositories with the matching label. A project can add its own project reviewer. The reviewer set is configurable.
+**Why:** A reviewer that focuses on one concern catches what a generalist misses.
+**Not:** one thorough generalist; only two reviewers; six or more (diminishing returns, noisy consolidation).
+**Revisit when:** parallel review becomes too expensive; then compare findings per reviewer to see which roles earn their cost.
 
----
+### Code review iteration: CRITICAL-only triggers re-review, warnings get one fix pass
+<!-- 2026-07-25 -->
+**Rule:** CRITICAL findings are fixed and reviewed again. Warnings and suggestions get one fix pass (a TODO is fine), and then the review loop ends. Zero findings end it at once. A maximum iteration count caps the loop.
+**Why:** Only real defects justify another full round across all reviewers. Warnings are simple, and the refactoring loop picks up TODOs later. **Accepting:** human review is the only check for a bug introduced while fixing a warning.
+**Not:** re-review after warning fixes; pass/fail without severity.
+**Revisit when:** warning fixes often introduce new bugs.
 
-### Template-level overrides: minimal because no need yet, not intentional constraint
+### Adversarial review is a default pattern for all durable agent outputs
+<!-- 2026-07-04 -->
+**Rule:** Every step where an agent produces durable output (committed code, created issues, brain changes, posted comments) gets an adversarial review step with its own switch. Ephemeral output such as logs and status messages doesn't.
+**Why:** In practice the adversarial reviewer always finds something to correct, critical bugs included, and a separate context removes self-attribution bias.
+**Not:** review for code only; a case-by-case choice per feature; no review for internal artifacts such as the brain.
+**Revisit when:** token cost becomes prohibitive and the measurable gain drops.
 
-**Date:** 2026-07-04
-**Category:** architecture
+### Epic decomposition: two-phase with human gate
+<!-- 2026-07-25; sub-issue size 2026-08-14 -->
+**Rule:** In phase 1 the agent explores, plans, has the plan reviewed adversarially, posts it on the epic and sets `agent:epic-review`. Phase 2 creates the sub-issues, and it starts only after a person sets `agent:epic-approved`. Each sub-issue is one agent run with one verification criterion and at most `MaxDecompositionSubIssueFiles` files (default 12).
+**Why:** The human gate stops a bad plan from creating many issues that all fail. The limit of 12 rests on agents routinely handling changes of 10–15 files; it is a low-confidence estimate, not measured on sub-issues.
+**Not:** auto-approval after a clean review (possible later); fully autonomous decomposition; a limit of 5 (fragments the work) or 20 and more (no evidence).
+**Revisit when:** outcomes from 50 or more sub-issues show errors rising with file count, or auto-approval is built.
 
-**Decision:** `ApplyTemplateOverrides` currently only applies `BrainReadOnly` from the template and `BlacklistedPaths` from the repo provider. This is NOT an intentional design constraint — it's simply that no other template-level overrides have been needed yet. The priority chain is: `Global → Project (deep-merge) → Template (currently BrainReadOnly + Blacklist only)`. Template expansion is a future possibility when heterogeneous workloads demand per-template retry/timeout tuning.
+### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
+<!-- 2026-07-25 -->
+**Rule:** The refactoring loop runs from proposal through review, issue creation, implementation and PR without human approval, and it may create 30 or more issues in one batch. Merging stays a human action.
+**Why:** Adversarial review, wont-do tracking and `agent:needs-refinement` gate quality well enough before the merge review, and the merge is the human checkpoint.
+**Not:** approval at issue creation; auto-merge for small issues.
+**Revisit when:** merged loop PRs keep causing regressions, or more than 30% of proposals end as `agent:needs-refinement` or `agent:wont-do`.
 
-**Context:** Templates define routing (which providers, which agent labels). Projects define behavioral configuration. This separation works today. If different templates need different retry counts (e.g., dotnet templates need more retries than python), template-level config expansion would be the path.
+### Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only
+<!-- 2026-07-25 -->
+**Rule:** Agents may create issues that declare `Depends on #N` or `Blocked by #N` to order simple, mechanical refactoring; the adversarial reviewer checks them. Dependencies for architectural work go through the human-approved epic workflow.
+**Why:** Each refactoring issue is small and low-risk, so a mechanical order is safe.
+**Not:** human approval for every dependency; time-based auto-release.
+**Revisit when:** a bad dependency blocks work for more than 24 hours unnoticed, or chains grow deeper than 3.
 
-**Alternatives considered:** Full template-level overrides now (premature), template inherits all project-level override capabilities (adds maintenance burden without demand).
+### Refactoring proposal quality bar
+<!-- 2026-07-04 -->
+**Rule:** A refactoring proposal becomes an issue only if it touches a hotspot (recent git activity), one agent can do it in one run (fewer than 30 files), and the evidence is concrete (files and pattern instances, not advice). The adversarial review enforces this.
+**Why:** The bar must be high enough to avoid noise and low enough to catch real debt; outcome data (done vs. wont-do) should move it over time.
+**Not:** fixed complexity or duplication thresholds; filtering by scope only; leaving calibration entirely to the operator.
+**Revisit when:** more than 50% of proposals are wont-do over 90 days; the system is then too aggressive.
 
-**Reassess when:** Heterogeneous templates within the same project need different behavioral configuration (e.g., timeout differences between language stacks).
+### Zero open-issue context on decomposition run: InfrastructureFailure, not agent failure
+<!-- 2026-09-22; cause corrected 2026-09-25 -->
+**Rule:** A decomposition run that downloaded zero open issues and produced no plan fails as an infrastructure failure, not as an agent failure.
+**Why:** Without issue context the agent can't plan. The orchestrator is at fault, so the failure must not use up the agent's retry budget.
+**Not:** a generic failure; an immediate retry on zero context (it could loop while the cause lasts).
+**Revisit when:** infrastructure failure covers several causes that need different recovery.
 
----
+### RequestGetIssue double-retry tier: intentional resilience
+<!-- 2026-09-22; gap found 2026-09-25; fixed 2026-10-03 (#3279) -->
+**Rule:** Provider calls that agents make through the hub get a second, longer retry tier on top of the provider's own short retry budget, capped at about two minutes.
+**Why:** GitHub blips (short outages, rate-limit surges) outlast the inner budget. An outer tier gives a longer recovery window without inflating every call's inner retries.
+**Not:** one tier with a longer inner budget; no outer tier.
+**Revisit when:** GitHub becomes measurably more reliable, or the outer tier hides failures that should surface.
 
-### SignalR reconnection: infinite retry for docker-compose, K8s would rely on self-healing
+### Conflict rework re-queues issues regardless of current label — only abandonment labels block
+<!-- 2026-09-21 -->
+**Rule:** When an agent PR conflicts with main, its issue goes back to `agent:next` from any label, including `agent:done`, `agent:error` and `agent:needs-refinement`. Only `agent:wont-do` and `agent:cancelled` block it.
+**Why:** An open conflicted PR always needs rework, whatever the issue label says; only an explicit human decision to abandon the issue stops it.
+**Not:** blocking `agent:done`; blocking all non-terminal labels.
+**Revisit when:** an `agent:done` issue is re-dispatched although its PR was already merged or closed; then also check the PR state.
 
-**Date:** 2026-07-04
-**Category:** architecture
+### HousekeepingActiveLabels set: narrow by design — only live-work labels protect branches
+<!-- 2026-09-21 -->
+**Rule:** Stale-branch cleanup spares a branch whose issue has a queued or in-progress label: `agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-approved` or `agent:epic-review`. Done, error, needs-refinement, wont-do and cancelled labels don't protect a branch; an open PR does.
+**Why:** Cleanup is for branches left over after a merge or an abandonment, so only labels that mean work is queued or running protect a branch.
+**Not:** all non-terminal labels; the full label state machine.
+**Revisit when:** a new active-work label is added; it joins the set if it means work is in progress.
 
-**Decision:** `InfiniteRetryPolicy` (exponential backoff 1s → 120s cap + jitter) ensures agents never self-terminate from disconnection. This is intentional for docker-compose mode: orchestrator restarts are common during development, and agents should recover automatically. For a future K8s-only setup, self-termination after prolonged disconnection (letting K8s liveness probes → pod restart) would be more appropriate. Currently, both modes use infinite retry.
+### IssueReworkService: fail-closed on missing active-run data is intentional
+<!-- 2026-09-22 -->
+**Rule:** If housekeeping can't get the set of branches with active runs, it skips all conflict-rework swaps for that cycle.
+**Why:** A swap onto an issue that already has a run causes a double dispatch and a stuck label state that needs manual repair. A one-cycle delay costs nothing because the loop retries; safety beats speed for background work.
+**Not:** fail-open with partial data (a truncated list looks like "no active runs").
+**Revisit when:** list failures block urgent rework for several cycles in a row; then accept recent last-known data.
 
-**Status (2026-08-16):** Spec 041 removed docker-compose mode. All agents are now ephemeral K8s Jobs. For work-item pods this is largely moot (the Job terminates after one work item). For chat pods (`AgentWorkerService`), infinite retry is retained — chat pods use SignalR throughout their lifetime and should reconnect automatically if the orchestrator restarts. The `InfiniteRetryPolicy` remains in place for chat pods.
+### Housekeeping updates one branch at a time per repository
+<!-- 2026-08-14 -->
+**Rule:** The housekeeping concurrency limit defaults to 1: one branch update in flight per repository per poll tick.
+**Why:** Housekeeping acts as a merge queue, and the work happens in CI, which runs serially; more updates in flight buy nothing. This is the right long-term default, not a cautious start.
+**Not:** a higher default for parallel CI setups.
+**Revisit when:** repositories with independent CI pipelines would really merge faster with parallel updates.
 
-**Context:** Kubernetes controllers use infinite watch re-establishment. GitHub Actions runners self-terminate after prolonged disconnection (5 min). The 120s cap prevents CPU waste while maintaining ~30s average reconnection latency after orchestrator returns.
+### GitHub mergeability mapping: correctness-driven, conservative null for unknown states
+<!-- 2026-08-14 -->
+**Rule:** For housekeeping slots, GitHub's `blocked` and `unstable` merge states, and every state without an explicit mapping, mean that CI is still running: the slot stays in flight. `clean`, `dirty`, `draft` and `has_hooks` free the slot.
+**Why:** GitHub reports `blocked` for the whole CI run when required checks exist. Treating it as done would free the slot before CI starts and defeat the concurrency limit.
+**Not:** mapping `blocked` or unknown states to done.
+**Revisit when:** GitHub changes or adds merge states.
 
-**Alternatives considered:** Self-termination after N minutes (appropriate for K8s, harmful for docker-compose), configurable per deployment mode (adds complexity for a non-issue today).
+### AgentTimeout is the only agent time limit
+<!-- 2026-08-29; 2026-09-06; 2026-09-21 -->
+**Rule:** `AgentTimeout`, which projects can override, is the one wall-clock limit for work-item and consolidation agents. The stall monitor kills an agent after `AgentTimeout` of silence, and the Kubernetes deadline is `AgentTimeout` plus a fixed 60 seconds as a last-resort backstop. Chat pods are separate: they have their own maximum duration and idle timeout.
+**Why:** Two settings for one concern drift apart; a Helm value once silently overrode per-project timeouts. The application kills first, and Kubernetes only catches a kill that failed.
+**Not:** a separate Helm job timeout; a separate stall-kill timeout; a global-only timeout.
+**Revisit when:** never for the single source. If a safety cap independent of `AgentTimeout` is needed, add it under its own clear name; if silence kills confuse operators, a separate stall-kill timeout becomes justified.
 
-**Reassess when:** If chat pods need a bounded reconnection window (e.g., for resource efficiency when the API is down for extended periods). Currently the idle-kill circuit terminates idle chat pods within 90s regardless of SignalR state, so infinite reconnect only keeps a browser tab waiting — it doesn't leak K8s resources. If chat pod resource cost during reconnect becomes measurable, add `MaxReconnectionDuration` for chat pods specifically.
+### AgentStallMonitor: StallPollInterval is intentionally not project-overridable
+<!-- 2026-09-21 -->
+**Rule:** How often the stall monitor polls agent health is global; how often it warns can be set per project.
+**Why:** Poll frequency multiplies health calls across every active run of every project, which is a system resource concern. Warning cadence is a per-project UX choice.
+**Revisit when:** a project needs a different poll frequency.
 
----
+### AgentStallMonitor: stall warnings are flat (no escalation) — intentional observability signal
+<!-- 2026-09-21 -->
+**Rule:** Stall warnings repeat at Warning level in the same format until the kill, which logs separately at Error ("Forcefully terminating").
+**Why:** Repeated warnings show that the chain is alive but silent, not that a kill is near; counting them in Grafana gives the stall duration. An Error before the kill would duplicate the kill's own Error.
+**Not:** escalating the last warning; growing intervals.
+**Revisit when:** operators can't tell slow agents from imminent kills; then add one "kill imminent" line, not escalation.
+
+### SignalR reconnection: chat pods reconnect indefinitely
+<!-- 2026-07-04; updated 2026-08-16 -->
+**Rule:** Chat pods retry their SignalR connection forever, with exponential backoff capped at 120 seconds plus jitter. Work-item pods end with their job anyway.
+**Why:** Chat pods use SignalR for their whole life and must recover when the web app or API restarts. The idle-kill circuit removes idle chat pods within about 90 seconds regardless, so endless reconnects don't leak cluster resources.
+**Not:** self-termination after a set time.
+**Revisit when:** chat pod cost during long outages becomes measurable; then cap reconnection for chat pods.
+
+### Consolidation scheduling: manual-only for now, automated scheduling is future roadmap
+<!-- 2026-07-04 -->
+**Rule:** Brain consolidation and refactoring detection start only from the Consolidation page; no timer or event triggers them.
+**Why:** It is enough for now, and it avoids spending agent budget at peak times. It is a work-in-progress state, not a permanent choice.
+**Not:** a daily timer; a run after every success.
+**Revisit when:** brain staleness becomes a measurable quality problem, or people forget to run consolidation. The first step would be a trigger after every N implementation runs.
+
+## Agents and context
+
+### Agent provider abstraction supports N backends as first-class citizens
+<!-- 2026-07-04 -->
+**Rule:** Kiro and OpenCode are both full agent backends. Kiro is the main development focus; OpenCode is maintained as a peer, not best effort. The provider abstraction allows more backends.
+**Why:** Provider diversity enables competitive evaluation and model or runtime flexibility.
+**Not:** a single backend; OpenCode only as a proof of extensibility.
+**Revisit when:** a third backend is added, or keeping both creates a disproportionate test burden.
+
+### OpenCode health monitoring: session-status polling, not OS process signals
+<!-- 2026-09-21 -->
+**Rule:** Kiro reports health from its OS process. OpenCode has no subprocess, so it reports health by polling session status. Process-death counts are therefore always 0 for OpenCode: that is expected, not a telemetry gap, and the session summary in its stall warnings is the equivalent signal.
+**Why:** Both give the stall monitor actionable signal through the same health status, and SSE disconnects are normal, so they must not count as process deaths.
+**Not:** treating an SSE disconnect as a process death.
+**Revisit when:** OpenCode exposes a server-alive endpoint.
+
+### Kiro token/cost telemetry: provider subscription limitation, not a permanent design choice
+<!-- 2026-09-30 -->
+**Rule:** Kiro runs record session count and elapsed time only. Token and cost values stay zero, and the UI hides those tiles and columns when there is no token data.
+**Why:** The Amazon Q subscription doesn't expose token usage through the Kiro CLI. This is a provider limitation, not policy: capture usage as soon as it is exposed.
+**Not:** estimating tokens from output or time (misleading); always showing N/A columns (clutter).
+**Revisit when:** the Kiro CLI or Amazon Q exposes usage in a parseable form.
+
+### Filesystem-as-context: workspace files are the context delivery mechanism
+<!-- 2026-07-04 -->
+**Rule:** The pipeline gives agents context as workspace files (`.agent/`, `.brain/`, steering files): prompts say what to do, and files say what the context is. Agents also return structured output as files, not on stdout.
+**Why:** Inline context made prompts too large and caused escaping problems. Files can be scanned for prompt injection before the agent reads them, people can inspect them, and they survive crashes.
+**Not:** inline prompt context; a hybrid split.
+**Revisit when:** agents often fail to read the referenced files.
+
+### Steering content: project vs. repo are complementary, not competing
+<!-- 2026-07-04 -->
+**Rule:** Project steering (team preferences, style, behavioral limits) and repository steering (architecture, dependencies, repo conventions) reach the agent as two separate parts with no precedence rule. The agent resolves any ambiguity from context.
+**Why:** They cover different concerns, so they shouldn't conflict.
+**Not:** repo steering overriding project steering; a merge with priority markers; one combined file.
+**Revisit when:** real conflicts between the two confuse agents.
+
+### Open issue context: cross-issue awareness to prevent conflicting parallel changes
+<!-- 2026-07-04 -->
+**Rule:** Agents get up to 50 open issues (configurable) as files, so they know about work in flight. Closed issues are not included.
+**Why:** Without knowledge of sibling work, parallel agents make conflicting changes, especially within epics; the cap prevents context overload. **Accepting:** recently closed sibling issues are missing.
+**Not:** no cross-issue context; closed issues included; epic siblings only.
+**Revisit when:** agents still make conflicting changes, or recently closed context proves valuable.
+
+### Brain: runs append, consolidation curates
+<!-- 2026-07-04; 2026-07-25; read-only update 2026-09-29 -->
+**Rule:** The brain is plain files in a git repository. Runs read it before they start and only append lessons afterwards, with source and citation tracking. Only consolidation merges, prunes and resolves contradictions, optionally with an adversarial review. A read-only brain is read but never written or consolidated; read-only can be set globally or per project, and a template can switch it on but not off. The feature is experimental.
+**Why:** Appending is safe, unchecked growth hurts agents, and consolidation keeps the brain small; citation tracking guides pruning. Git gives history, rollback and human inspection. Read-only serves templates that should use shared knowledge without adding to it.
+**Not:** a database store (loses git history and inspectability); expiry by age (drops rare but useful entries); periodic full resets; brain access per provider or per run.
+**Revisit when:** the feature becomes stable, brain size measurably slows runs, or consolidation keeps finding nothing to change.
+
+### Prompt architecture: layered composition with non-overridable structural guardrails
+<!-- 2026-07-25 -->
+**Rule:** Prompt content (focus areas, checklist items) can be overridden per project. The structure around it (scope fences, thoroughness and calibration footers, the verification clause) is fixed in code and not configurable.
+**Why:** Users customize what the agent does; the pipeline controls how it behaves. The structural parts are research-backed behavioral guardrails, and the pipeline flow is strict by design. **Accepting:** prompt changes need a deploy.
+**Not:** a template engine for everything; hot-reloaded prompt files; automatic prompt optimization.
+**Revisit when:** never for the split; if several teams need different calibration, make only the calibration tunable.
+
+### Prompt versioning: out of scope, scale doesn't justify the infrastructure
+<!-- 2026-07-25 -->
+**Rule:** Git history is the only version record for prompts, and changes apply to all runs on deploy. No version numbers, changelogs, A/B tests or evaluation pipelines.
+**Why:** Prompts change rarely, adversarial review catches prompt regressions, a single operator can revert quickly, and no teams with different prompt needs exist.
+**Not:** content hashes in telemetry; semantic versions on prompt constants.
+**Revisit when:** several teams share the system, or a prompt regression took days to find because telemetry couldn't correlate it.
+
+### Feedback loop: data collection only, automated calibration explicitly deferred
+<!-- 2026-07-04; 2026-07-25 -->
+**Rule:** Feedback from every run is collected, harness suggestions analyze it, and refactoring outcomes (done vs. wont-do) are tracked. Nothing adjusts itself: the operator sees the results and decides.
+**Why:** No safe design for automated calibration exists, and premature automation compounds errors.
+**Not:** auto-disabling proposals above a rejection rate; auto-creating issues from suggestions; closed-loop self-improvement.
+**Revisit when:** the data shows stable patterns that a safe automatic rule could act on.
+
+## Data and serialization
+
+### Dual JSON options: strict write (Default), lenient read (Lenient)
+<!-- 2026-07-04 -->
+**Rule:** Data that the orchestrator controls is written in one strict, canonical format. Agent-produced JSON and user-edited configs are read case-insensitively. New reads of agent output use the lenient options; new writes of orchestrator state use the strict ones.
+**Why:** The system is authoritative on what it writes but can't trust LLM formatting; lenient reads prevent data loss from casing differences.
+**Not:** one set of options; strict parsing with error messages that teach the agent the format.
+**Revisit when:** structured outputs guarantee the formatting.
+
+### Enums in agent-produced JSON: snake_case names, always parseable
+<!-- 2026-07-04 -->
+**Rule:** Enum values that an LLM produces use snake_case names (`not_ready`, `non_compliant`); enums only the orchestrator writes keep PascalCase. Every enum value that can appear in agent JSON must parse. Whether an enum carries its own converter or relies on the global options is free.
+**Why:** LLMs produce snake_case more reliably, and explicit names plus lenient parsing give two layers of safety.
+**Not:** PascalCase or snake_case everywhere; one mandatory converter style.
+**Revisit when:** a bug traces to a missing converter; then require self-annotation for agent-facing enums.
+
+### Enum roundtrip test is a mandatory invariant for new pipeline enums
+<!-- 2026-07-04 -->
+**Rule:** Every new enum in the pipeline namespace gets a case in the enum JSON roundtrip test, which checks that every value serializes as a string and back.
+**Why:** An enum that silently serializes as a number corrupts persisted data after a code change, and the test costs one line per enum.
+**Not:** relying on property or integration tests.
+**Revisit when:** a source generator can verify string serialization for all enums.
+
+### No schema versioning — append-only config evolution via nullable properties
+<!-- 2026-07-04 -->
+**Rule:** Configuration has no version field. New properties get defaults. Renames and type changes are avoided: to change a meaning, add a new field and retire the old one. A removed field leaves its key retired, so stored data still loads. One-time data migrations are fine; version gating is not.
+**Why:** The same build always writes and reads the data (the homogeneous deployment that MessagePack also relies on), and the system is still a work in progress, so a schema version is premature.
+**Not:** a version field with migrations per version; JSON Schema validation at startup.
+**Revisit when:** a stable 1.0 needs backward compatibility with old configs, or a breaking change is unavoidable.
 
 ## Configuration
 
-<!-- Decisions about defaults, limits, thresholds, and tunables -->
-
 ### Settings are read, offered and range-checked — one record, four scopes
-
-**Date:** 2026-09-29
-**Category:** configuration
-
-**Decision:** Four rules for `PipelineConfiguration`:
-1. Every setting is read by code; a setting nothing reads is removed, not wired up. Sixteen were removed (seven of them in #3149), with their MessagePack keys retired.
-2. Every setting has a field on a settings page and a row in `docs/configuration.md`, except four internal fields that are not settings (`ClosedLoopAutoStart`, `PipelineInjectedPaths`, `TransientRetryDelay`, `WorkspaceBaseDirectory`). Tests enforce both.
-3. A value outside its range is refused when global settings, a project or an import is saved. A project override stored outside its range is skipped with a warning, so it affects only its own setting.
+<!-- 2026-09-29 -->
+**Rule:** Four rules for pipeline settings:
+1. Every setting is read by code. A setting nothing reads is removed, not wired up, and its MessagePack key is retired.
+2. Every setting has a field on a settings page and a row in `docs/configuration.md`, except four internal fields that are not settings. Tests enforce both.
+3. A value outside its range is refused when global settings, a project or an import is saved. A stored project override outside its range is skipped with a warning, so it affects only its own setting.
 4. The scopes stay as they are: global settings, project overrides, the pipeline job template (bindings, workflow switches, `BrainReadOnly`, housekeeping limit), the repository provider (labels, secrets, setup, steering, blacklist) and the label catalogs. The record is not split, and system settings are not moved to Helm.
 
-A setting's limits are standard `[Range]` attributes on the property, the one source for the API check, the resolver and the settings pages' input limits. Setters no longer throw, so a stored out-of-range value can no longer stop the configuration from loading.
-
-**Context:** A 2026-09-27 review found settings that did nothing (most of the Advanced page), working settings without a field, limits that differed between the global and project pages, and one bad project override discarding all of the project's overrides (#3144). Code review settings were spread over five places; they are now one Code Review page, next to Reviewer Configs (who reviews) and the template's Review switch (whether a repository's PRs are reviewed).
-
-**Alternatives considered:** A settings registry that generates both settings pages and the docs table (less page code, but a large UI rewrite that loses the hand-tuned layouts); moving system settings such as loop timing and retention to Helm (more restarts to change them, and no problem it would solve); project-level label routing (labels also select the agent profile, so it would need project context in every place labels are resolved).
-
-**Reassess when:** The guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
-
----
-
-### Project overrides: deep-merge semantics implemented (#1044 resolved)
-
-**Date:** 2026-07-04 (updated 2026-07-25)
-**Category:** configuration
-
-**Decision:** Project-level overrides for nested config objects use deep-merge semantics via `[ProjectOverridable(DeepMerge = true)]`. Only explicitly-set sub-properties override the global config; unspecified sub-properties retain their global values. `PipelineConfigurationResolver` implements the merge logic at runtime. Scalar properties continue using the existing nullable pattern. **Status: Implemented and verified.** Issue #1044 closed July 9, 2026.
-
-**Context:** Kubernetes uses strategic merge patch. Helm uses deep merge. The implementation follows the nullable property pattern on override records — matching the suggested approach from the original issue.
-
-**Alternatives considered:** Keep REPLACE (simpler implementation but bad UX), configurable per-object (overcomplicated).
-
-**Reassess when:** Template-level overrides are added (should follow the same deep-merge pattern). A drift-detection test guards against new DeepMerge properties being added without verification.
-
----
-
-### Consolidation scheduling: manual-only for now, automated scheduling is future roadmap
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** Brain consolidation and refactoring detection are triggered exclusively via UI buttons on the Consolidation page. No automated scheduling exists (no timer, no cron, no event-based triggers). This is sufficient for now. Future evolution: trigger consolidation automatically after every N implementation runs, configurable per-template. This avoids consuming agent budget during peak hours while still keeping the brain clean.
-
-**Context:** SonarQube runs quality scans on schedule. GitHub Dependabot uses cron. Most maintenance tools have automated scheduling. Manual-only is a WIP state, not a permanent design choice.
-
-**Alternatives considered:** Timer-based (every 24h), event-based (after each successful run), hybrid (manual + optional schedule per template).
-
-**Reassess when:** Brain staleness becomes a measurable quality issue, or when users report forgetting to run consolidation. The "every N runs" approach would be the first automation step.
-
----
-
-### Enum roundtrip test is a mandatory invariant for new pipeline enums
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** `PipelineEnumJsonRoundtripTests.cs` is a mandatory test file — any new enum added to the `CodingAgent.Pipeline` namespace MUST have a corresponding test method and `MemberData` source in this file. The test exhaustively verifies every value of every pipeline enum survives JSON roundtrip as a string (not numeric). This catches silent config corruption at CI time: if an enum value serializes as `0` instead of `"Ready"`, persisted run files become unreadable after code changes.
-
-**Context:** Most projects rely on integration tests to catch serialization bugs. This explicit per-value test is comparable to financial systems and protocol implementations where data corruption is high-severity. The cost is one line per new enum; the benefit is preventing severity-1 runtime failures.
-
-**Alternatives considered:** Rely solely on property tests (covers structural changes but doesn't guarantee individual enum values), rely on integration tests (catches bugs too late in the pipeline).
-
-**Reassess when:** If a compile-time source generator can automatically verify all enums have string serialization configured, the manual test becomes redundant.
-
----
-
-### No schema versioning — append-only config evolution via nullable properties
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** `PipelineConfiguration` has no `version` field. Schema evolution is handled implicitly: new properties are added with default values, old configs missing those properties deserialize fine via `Lenient` options (which don't enforce `required`). Breaking changes (renames, type changes, field removals) are avoided by design. If a field must change meaning, add a new field and deprecate the old one. The `ConfigMigrationService` handles one-time data migrations (e.g., moving from file-based to DB-based storage) but not schema version gating.
-
-**Context:** Kubernetes uses `apiVersion`, Terraform uses schema versions. Simpler tools (Claude Code, Cursor) have no versioning. This system is still WIP — fixing a schema version is premature. The implicit approach works because configs are always written and read by the same codebase version (same homogeneous deployment assumption as MessagePack).
-
-**Alternatives considered:** Explicit `version` field with migration logic per version bump, JSON Schema validation at startup.
-
-**Reassess when:** The system reaches a stable 1.0 where backward compatibility with older configs becomes a user-facing concern, or when a breaking schema change is unavoidable.
-
----
-
-### MaxRetries=3 is an arbitrary but well-performing default
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** `RetryConfiguration.MaxRetries=3` (4 total attempts) and `MaxAnalysisRetries=2` (3 total attempts) are not empirically calibrated — they're "reasonable defaults" that happen to work well subjectively. No formal tuning has been done. The values stay unless evidence shows they're wrong. Per-project override is available via `PipelineProject.MaxRetries` for teams that need different budgets.
-
-**Context:** Devin uses 5 retries. OpenHands uses 3. GitHub Copilot CCA uses 2. Most agent systems converge on 2-4 because each retry costs tokens and diminishing returns set in quickly (same errors tend to repeat).
-
-**Alternatives considered:** Formal A/B testing of retry counts (overkill at current scale), dynamic retry based on error type (adds complexity).
-
-**Reassess when:** If the `agent:error` rate (draft PRs from exhausted retries) becomes a measurable productivity concern, tune empirically. Or if token costs become a concern, reduce to 2.
-
----
-
-### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
-
-**Date:** 2026-08-14 (supersedes 2026-07-04 "equal round-robin" entry) · **Updated:** 2026-09-13 (#2561 — consolidation moves from a separate synchronous path to the unified Pending queue, dispatched last by RunType tier ordering in DispatchStateBuilder)
-**Category:** configuration
-
-<!-- TODO (#2563/#2564) resolved 2026-09-30: DispatchStateBuilder now has RunType tier ordering (Review→Decomp→Impl→Consolidation) via WorkItemDispatchOrderExtensions.ApplyDispatchOrder(). Consolidation is enqueued as a normal Pending WorkItem. The body text below and the Update 2026-09-13 section are both accurate; the pre-unification references in the original decision body are superseded by the Update. -->
-**Decision:** Dispatch uses a static priority ordering: Review (PRs) first, then Decomposition, then Implementation (Issues), then Consolidation (lowest). Within each tier, FIFO order is preserved. The tier is enforced at the dispatch level in `WorkItemDispatchOrderExtensions.ApplyDispatchOrder()` — not configurable at runtime. Starvation prevention is explicitly out of scope.
-
-**Update 2026-09-13 (#2561 — consolidation dispatch unification):** The "Consolidation … dispatched via separate path" clause is superseded, and the tier ordering above is now enforced at the **dispatch** level — previously it shaped only the provider-backlog *enqueue* loop (`DispatchScheduler`), never the WorkItem `Pending` drain. The Pending dispatch was **flat**: `DispatchStateBuilder.BuildStateAsync` sorted `PriorityWeight DESC, CreatedAt ASC` with no RunType tier (`DispatchStateBuilder.cs:64-65`), and `PriorityWeight` is only `IsManual ? 100 : 0` (`WorkItemEndpoints.cs:565`), so Review/Decomposition/Implementation `Pending` items drained purely by creation time. As part of unifying consolidation onto the Pending queue (epic #2561, dispatch-only), a **RunType tier becomes the primary dispatch sort key** in the shared dispatch query: `tier(TaskType)` [Review > Decomposition > Implementation > Consolidation], then `PriorityWeight DESC`, then `CreatedAt ASC`. This makes the documented tier a real property of the poller (not just the enqueue side) and places consolidation lowest by construction — no separate path, no two-pass, no negative `PriorityWeight`. Consolidation enqueues as a normal `Pending` WorkItem at default weight 0. Cross-tier starvation remains explicitly out of scope. Decision recorded in #2562; implemented by #2563 (tier ordering in the shared `DispatchStateBuilder`) + #2564 (enqueue). The tier ordering lands in the shared query, so the consolidation-exclusion is lifted only for #2541's leader-elected CAS poller — the pre-cutover flat per-replica loop never claims consolidation.
-
-**Context:** Implemented in #1931. The rationale: Review jobs unblock humans actively waiting on feedback (highest latency sensitivity). Decomposition unblocks multiple future Implementation runs — one decomposed epic creates N tasks, so decomposing early has compound throughput value. Implementation is background work; it runs to completion regardless. Consolidation is housekeeping. The previous design (strict three-way round-robin with no weighting) was replaced because a Review job enqueued after 10 Implementation jobs would wait behind all of them — visibly bad UX when a developer is watching for review feedback. Static ordering (no configuration) was chosen over configurable weights; starvation of Implementation by Decomposition is acknowledged as a theoretical risk but not prioritized.
-
-**Alternatives considered:** Configurable priority weights (adds complexity for a problem not yet observed in practice), age-based starvation promotion (deferred), keeping round-robin (replaced because it ignores latency sensitivity by job type).
-
-**Reassess when:** Multiple teams share infrastructure and Implementation work is visibly starved by Decomposition/Review volume, or when a configurable priority weight becomes a concrete request.
-
----
-
-### Conflict rework re-queues issues regardless of current label — only abandonment labels block
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** `IssueReworkService` re-queues a conflicted PR's linked issue to `agent:next` in almost all label states — including `agent:done`, `agent:error`, and `agent:needs-refinement`. Only `agent:wont-do` and `agent:cancelled` (`HousekeepingTerminalReworkBlockers`) block the re-queue, because those represent an explicit human decision to abandon the issue permanently. `agent:done` is intentionally excluded from the blockers: if a PR was created but subsequently conflicted with main, the open conflicted PR always needs rework regardless of what the issue label says. A completed issue with an open conflicted PR must be re-dispatched — the PR's state takes precedence over the issue label.
-
-**Context:** `HousekeepingActiveLabels` (`{Next, InProgress, Epic, EpicApproved, EpicReview}`) is a separate set used by `StaleBranchCleaner` to protect branches from deletion. It is intentionally distinct from `HousekeepingTerminalReworkBlockers` — an issue in `agent:error` should have its stale branch protected (still being worked on) but CAN be re-queued for rework if its PR conflicts.
-
-**Alternatives considered:** Block `agent:done` from re-queue (rejected — the PR's open state takes precedence; completing the issue label doesn't close the PR). Block all non-terminal labels (rejected — too conservative; `agent:error` and `agent:needs-refinement` are precisely the states that warrant automatic rework).
-
-**Reassess when:** An `agent:done` issue is re-dispatched unexpectedly and the PR was already closed/merged. At that point the conflict-detection logic should also check PR state, not just mergeability status.
-
----
-
-### StaleBranchCleaner double-scan: fixed — single data source (#2880 resolved)
-
-**Date:** 2026-09-21 · **Closed:** 2026-09-30
-**Category:** architecture
-
-**Decision:** `StaleBranchCleaner.RunBranchCleanupAsync` previously re-fetched all open agent PRs independently via `FetchAllOpenAgentPrBranchesAsync`, ignoring the `agentDonePrs` input from `HousekeepingService`. This violated KISS/DRY.
-
-**Status (2026-09-30 audit):** Fixed (#2880 resolved). `RunBranchCleanupAsync` now uses the `agentDonePrs` pre-fetched parameter directly. Code comment confirms: "This is the sole branch-protection guard — no independent API scan is needed." `FetchAllOpenAgentPrBranchesAsync` has been removed.
-
-**Reassess when:** Never — single data source is the stable form.
-
----
-
-### HousekeepingMaxSlotAgeMinutes: dead config — deleted (#2881 resolved)
-
-**Date:** 2026-09-21 · **Closed:** 2026-09-30
-**Category:** configuration
-
-**Decision:** `PipelineConfiguration.HousekeepingMaxSlotAgeMinutes` (Key 84, default `0` = disabled) was added preemptively for slot starvation handling. Never enabled in production — DB confirmed default `0` everywhere.
-
-**Status (2026-09-30 audit):** Fixed (#2881 resolved). Field deleted, Key 84 tombstoned in `PipelineConfiguration.cs` (`// Key(84) retired — HousekeepingMaxSlotAgeMinutes removed`). No behavior change for existing deployments.
-
-**Reassess when:** Never for this config. If slot starvation is observed in production, introduce a new mechanism with a non-zero recommended default.
-
----
-
-### HousekeepingActiveLabels set: narrow by design — only live-work labels protect branches
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** `AgentLabels.HousekeepingActiveLabels` = `{Next, InProgress, Epic, EpicApproved, EpicReview}`. These are the labels that mean "a pipeline run is queued or in progress." A branch whose linked issue carries one of these labels is protected from stale-branch deletion. `agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, and `agent:cancelled` are intentionally absent — stale branch cleanup is for lingering branches after PR merge or issue abandonment. An errored issue's branch can be deleted (no open PR = stale). The set is narrow by design: only labels that indicate active pipeline work protect branches.
-
-**Alternatives considered:** Use all non-terminal labels (rejected — `agent:error` branches are stale; they don't need protection). Use the full label state machine (rejected — overkill; the set is explicit and maintainable).
-
-**Reassess when:** A new active-work label is added to the pipeline. It must be evaluated against `HousekeepingActiveLabels` — if it means "work is in progress," it belongs in the set.
-
----
-
-### DispatchWorkItemService.ApplyGates sanitizedSelector: implicit contract, no strong opinion
-
-**Date:** 2026-09-21
-**Category:** architecture
-
-**Decision:** No strong opinion on whether `sanitizedSelector` in `DispatchWorkItemService.ApplyGates` is enforced via a sanitized-string wrapper type or left as an implicit naming contract. Both current callers sanitize before passing. Agents should follow the existing `IssueIdentifier`/`ProviderConfigId` pattern if adding new parameters that embed user-controlled strings into HTTP responses — but this specific parameter is not a priority for wrapping.
-
-**Reassess when:** A new caller passes an unsanitized selector, or a security review flags the implicit contract.
-
----
-
-### HousekeepingTriggerCooldownMinutes: promoted to PipelineConfiguration — resolved (#2404)
-
-**Date:** 2026-09-06 · **Updated:** 2026-09-06 (session 21 — added implementation direction) · **Closed:** 2026-09-30
-**Category:** configuration
-
-**Decision:** `HousekeepingService.TriggerCooldown = TimeSpan.FromMinutes(25)` was a hardcoded `internal` property. It was promoted to `PipelineConfiguration.HousekeepingTriggerCooldownMinutes` (default 25). Operators with fast CI (2-min runs) can lower it; those with long CI (45+ min) should raise it.
-
-**Status (2026-09-30 audit):** Fixed (#2404 resolved). `PipelineConfiguration.cs` has `[Key(82)] public int HousekeepingTriggerCooldownMinutes { get; init; } = 25`. Read as `snapshot.Config.HousekeepingTriggerCooldownMinutes` in `PipelineLoopService.MultiTemplateLoop.cs`. Internal setter retained for test overrides.
-
-**Reassess when:** Never once promoted. Advanced-section placement keeps it out of the default config view.
-
----
-
-**Date:** 2026-08-14
-**Category:** configuration
-
-**Decision:** `HousekeepingConcurrencyLimit = 1` (one branch update in-flight per repo provider per poll tick) is not a conservative "start low and tune" default — it is the correct long-term default for the current deployment topology. The housekeeping feature serves as a de-facto merge queue: updates are serial because GitHub's merge queue itself is serial. Having more than one simultaneous branch update in-flight does not improve throughput in this model; the work happens server-side (CI runs), not client-side (API calls). The property is configurable for teams with different CI topologies, but the default reflects that serial is almost always correct.
-
-**Context:** `HousekeepingConcurrencyLimit` is `PipelineConfiguration` Key(72). Added in spec 040 (auto-branch-updater). Per-template override is available.
-
-**Alternatives considered:** Higher default (e.g., 3) for parallel CI topologies — rejected because the current deployment has a single merge queue; concurrent updates would queue behind each other at the CI level anyway, buying nothing.
-
-**Reassess when:** A deployment accumulates multiple repos with independent CI pipelines where parallel branch updates would genuinely reduce wall-clock time to merge.
-
----
-
-### MaxRunsPerCycle=0 (unlimited) is intentional — other mechanisms bound concurrency
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** `ClosedLoopMaxRunsPerCycle=0` means unlimited dispatch per cycle. This is safe because concurrency is bounded by: `MaxConcurrentPods` per-selector (K8s), rate limiter (10 Jobs/s in DispatchService), and `MaxConcurrentDecompositions`. The `0=unlimited` default avoids artificial throttling for the common case. Users who need a cap set it explicitly.
-
-**Context:** GitHub Actions has 20-256 concurrent jobs per org. Argo defaults to 500 concurrent workflows. This system's layered concurrency controls make a global per-cycle cap redundant for most deployments.
-
-**Alternatives considered:** Positive default (safety net for misconfigured K8s), dynamic cap based on cluster capacity.
-
-**Reassess when:** If unbounded dispatch causes issues in K8s mode (e.g., pod scheduling pressure), add a positive default for K8s deployments specifically.
-
----
-
-### AgentJobTimeoutSeconds: removed — PipelineConfiguration.AgentTimeout is the single source of truth (#2179)
-
-**Date:** 2026-08-29 · **Supersedes:** session-17 "Helm default, per-project override takes precedence"
-**Category:** configuration
-
-**Decision:** `DispatchServiceOptions.AgentJobTimeoutSeconds` and its Helm counterpart are **removed**. `PipelineConfiguration.AgentTimeout` (Key 4, `[ProjectOverridable(Order=3)]`, default 30 min) is the sole configurable agent wall-clock limit. Having two places for the same concern is bad practice; the Helm value was silently ignored at the per-project level anyway (see #2158). `DispatchLoop` and `ConsolidationDispatchLoop` must read `TimeoutSeconds` from the `PendingWorkItemDto` (sourced from the WorkItem payload), falling back to the global `AgentTimeout` default for items without the field. `ReconciliationLoop.EnforceTimeoutsAsync` uses the same per-item value.
-
-**Chat-specific timeouts stay in `DispatchServiceOptions`:** `ChatIdleTimeoutSeconds`, `ChatPodConnectTimeoutSeconds`, and `ChatTerminationGracePeriodSeconds` have no `PipelineConfiguration` equivalent — they remain.
-
-**Context:** `AgentJobTimeoutSeconds` was added before `AgentTimeout` became per-project-overridable. The two diverged: orchestration set `JobDistributionRequest.TimeoutSeconds` from the per-project `AgentTimeout`, but the job controller used the Helm value. Result: per-project timeout overrides were silently ignored at the K8s `activeDeadlineSeconds` layer.
-
-**Alternatives considered:** Keep both (explicit Helm ceiling + per-project override) — rejected: two places, same concern, bad practice. Make `AgentTimeout` non-overridable (global only) — rejected: per-project granularity is a documented feature.
-
-**Reassess when:** Never for the single-source principle. If a "maximum agent lifetime cap" independent of `AgentTimeout` is needed (safety floor), add an explicit `MaxAgentTimeoutCap` with a clear name — do not re-introduce a shadow of the same field.
-
-**Status:** Resolved — `AgentJobTimeoutSeconds` removed in #2179 (closed 2026-08-29); `PipelineConfiguration.AgentTimeout` is now the single source of truth.
-
----
-
-### PriorityWeight: secondary sort key within RunType tier — static tier ordering preserved
-
-**Date:** 2026-08-29
-**Category:** configuration
-
-**Decision:** `WorkItemEntity.PriorityWeight` (integer, default 0) is a **secondary sort key within the same RunType tier**. The static priority ordering `Review > Decomposition > Implementation > Consolidation` is preserved as the primary sort. Within the same tier, higher `PriorityWeight` dispatches first. This enables urgent work items (e.g., a hotfix Implementation) to jump ahead of other Implementation items without crossing tier boundaries. Default is 0 (FIFO within tier, as before).
-
-**Context:** Issues #2172 (schema) and #2173 (UI edit). The rationale: a critical Implementation job still dispatches after all Review jobs — the tier ordering reflects latency sensitivity by job type, not urgency. Within the Implementation tier, urgency can be expressed via weight.
-
-**Alternatives considered:** Weight replaces tier ordering (fully flexible but requires calibrating default weights per RunType to preserve Review-first behavior), tier-override flag for urgent items (more complex, deferred).
-
-**Reassess when:** If a cross-tier urgency use case emerges (e.g., "this Implementation is more urgent than pending Review jobs") — at that point, evaluate whether a `PriorityClass` concept that overrides tier ordering is needed.
-
----
-
-### FeedbackTimeoutSeconds: must be a PipelineConfiguration field — hardcoded const is bad practice
-
-**Date:** 2026-08-29
-**Category:** configuration
-
-**Decision:** `FailureFeedbackTimeoutSeconds = 60` (hardcoded `const` in `RunFeedback.cs`) must be promoted to a `PipelineConfiguration` field. Hardcoded timeout constants are bad practice — they cannot be adjusted without a recompile, they're invisible in configuration documentation, and they're inconsistent with all other timeout fields in the system. The value should be in the "hidden advanced" section of the settings UI. The current 60s default is reasonable; operators with slow agent environments may need to increase it.
-
-**Context:** `FailureFeedbackTimeoutSeconds` is used in `PullRequestFinalizationService.CollectFeedbackAsync` and `QualityGateExecutor.RetryLoop.CollectFeedbackAsync` — both as a non-fatal step budget. It is the only timeout in the system that is a compile-time constant rather than a runtime-configurable field.
-
-**Alternatives considered:** Keep as `const` (simple, no operator knob needed — rejected: inconsistent with system-wide practice), make it a `static readonly` default with a config override (equivalent to a `PipelineConfiguration` field but needlessly complex).
-
-**Reassess when:** Never — once promoted to `PipelineConfiguration`, this decision is stable. The "hidden advanced" placement keeps it out of the default configuration view.
-
----
-
-### Draft PR is the retry-exhausted fallback
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** When quality gates fail and all retries are exhausted, the pipeline creates a draft PR with the failing code (labeled `agent:error`) rather than just marking the run as Failed. This preserves the agent's partial work for human inspection and potential manual completion.
-
-**Context:** Most CI/CD systems simply fail. Devin and OpenHands fail outright. The draft PR approach gives humans visibility into what the agent attempted without requiring log diving. Draft PRs are clearly marked and carry the `agent:error` label.
-
-**Alternatives considered:** Fail without PR (clean but loses visibility), configurable per-project, summary-comment-only without PR.
-
-**Reassess when:** Draft PR accumulation becomes a measurable housekeeping burden across repositories.
-
----
-
-### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** The refactoring consolidation loop (proposal generation → adversarial review → issue creation → agent implementation → code review → PR creation) is fully autonomous. No human approval is needed for any step up to PR creation. Merging PRs remains a manual human action. The loop can generate 30+ issues in a batch and agents immediately pick them up — this is intended behavior. The adversarial review + wont-do tracking + `agent:needs-refinement` label constitute sufficient quality gating before human merge review.
-
-**Context:** The July 23-25 consolidation batch created 30+ issues automatically, all implemented and PR'd without human intervention. Comparable systems (Dependabot, SonarQube) create proposals for human triage before implementation. This system's higher autonomy reflects trust in the multi-agent review pipeline (generator + discriminator pattern) and the fact that merge remains the human checkpoint.
-
-**Alternatives considered:** Human approval at issue creation (delays throughput without proportional safety gain given adversarial review), auto-merge for effort:small issues (removes the human checkpoint entirely — not desired).
-
-**Reassess when:** If merged PRs from the consolidation loop consistently introduce regressions, or if the `agent:needs-refinement` / `agent:wont-do` rate exceeds 30% on refactoring proposals.
-
----
-
-### Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** Agents creating issues with `Depends on #N` / `Blocked by #N` declarations (via DependencyResolver) is acceptable for simple refactoring tasks. The adversarial reviewer validates dependency correctness. For complex multi-step stories (epic-decomposition), a separate human-reviewed workflow handles dependency and ordering — agents do NOT autonomously create complex dependency chains for architectural work.
-
-**Context:** The refactoring loop creates dependency chains for mechanical ordering (extract class X before migrating its consumers). These are safe because each individual issue is small/low-risk. Epic decomposition uses a dedicated workflow with human approval at the decomposition stage.
-
-**Alternatives considered:** All dependency declarations require human approval (would block simple mechanical orderings), TTL-based auto-release (masks real dependency issues rather than surfacing them).
-
-**Reassess when:** A bad dependency declaration blocks legitimate work for >24 hours without human detection, or when the refactoring loop starts creating chains longer than 3 issues deep.
-
----
-
-### Value types, dispatch decomposition, temporal coupling: implementation details — follow DDD best practices
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** No strong preference on implementation-level patterns (value type consistency, dispatch class decomposition boundaries, DI temporal coupling). Agents should follow general DDD best practices and .NET conventions. Specific patterns: value types should validate on construction per DDD; class extraction follows single-responsibility principle; temporal coupling should be minimized via Lazy<T> or constructor injection when practical. These are not decisions that need human arbitration — agents may choose the idiomatic approach.
-
-**Context:** Five value types exist with varying patterns (bidirectional vs unidirectional implicit conversion, presence/absence of null validation). DispatchService was decomposed into 5+ services. DispatchInfrastructure has a mutable setter. All of these are normal .NET/DDD engineering choices that don't require human specification.
-
-**Alternatives considered:** N/A — this is explicitly "no strong opinion, follow best practices."
-
-**Reassess when:** Never — implementation details don't need human arbitration.
-
----
-
-### Project overrides: deep-merge is implemented (resolves #1044)
-
-**Date:** 2026-07-25
-**Category:** configuration
-
-**Decision:** Deep-merge for project-level nested config overrides is implemented and working. `PipelineConfigurationResolver` uses the `[ProjectOverridable(DeepMerge = true)]` attribute flag to invoke `ApplyOverrides` on nested config objects. Currently only `CodeReview` uses DeepMerge; a drift-detection test guards against adding new DeepMerge properties without verification. Issue #1044 was closed July 9, 2026.
-
-**Context:** The previous decision entry ("Project overrides: intended semantics is deep-merge — currently broken — #1044") is now resolved. The implementation uses a nullable property pattern on override records + ApplyOverrides methods, exactly as suggested in the original issue.
-
-**Alternatives considered:** N/A — the bug was fixed as specified.
-
-**Reassess when:** A second `DeepMerge = true` property is added (the drift-detection test will fire, ensuring verification).
-
----
-
-**Date:** 2026-07-04
-**Category:** configuration
-
-**Decision:** A refactoring proposal is "good" if: (1) it touches a hotspot file (evidence of active development via git log within `HotspotAnalysisLookback`), (2) the scope is achievable by a single agent in one run (<30 files), and (3) the evidence is concrete (specific file paths, specific pattern instances, not abstract advice). The adversarial review enforces these criteria. The outcome feedback loop (tracking `agent:done` vs `agent:wont-do`/`agent:cancelled` on past proposals within `RefactoringOutcomeLookback`) should drive the threshold over time — if >50% of proposals get wont-do'd, the system is too aggressive.
-
-**Context:** The 3-agent Phase 1 pipeline (structural debt, correctness/hygiene, design consistency) produces candidates filtered by Phase 0 conventions and Phase 2 aggregation. The "worth creating an issue" bar must be high enough to avoid noise but low enough to catch real debt. No comparable system does proactive refactoring detection — this is novel territory.
-
-**Alternatives considered:** Hard metric thresholds (SonarQube-style complexity/duplication), pure scope-based filtering (any real issue regardless of hotspot), defer entirely to human calibration via feedback loop.
-
-**Reassess when:** The `agent:wont-do` rate on refactoring proposals exceeds 50% over a 90-day window, indicating the system is too aggressive.
-
----
-
-### Code review iteration: CRITICAL-only triggers re-review, warnings get one fix pass
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** The `FixPromptDecision` escalation strategy is intentional: CRITICAL findings → fix + continue iterating (defects require resolution). Warnings/suggestions only → fix once (add TODO comments) then EXIT the review loop (no re-review). Zero findings → exit immediately. Warnings are low-complexity and typically resolved in a single fix iteration. Adding a TODO for a warning is acceptable because the refactoring consolidation loop will eventually find and fix TODOs. Only CRITICALs — actual defects — justify burning another full review iteration (4 agents × token cost).
-
-**Context:** CodeRabbit and GitHub Copilot CCA don't have fix loops. Devin has implicit retry without severity-based escalation. The CRITICAL-only-retry pattern optimizes for throughput: a warning that introduces a new issue during fix won't be caught until human review, but the probability is low for TODO-level changes. `MaxIterations` config bounds total cost regardless.
-
-**Alternatives considered:** Re-review after warning fixes (doubles cost for marginal gain), binary pass/fail with no severity distinction (loses the "defect vs polish" nuance).
-
-**Reassess when:** If warning fixes frequently introduce new bugs (would indicate the fix agent is unsafe for unsupervised changes). Track via: human review comments on WARNING-level fix commits.
-
----
-
-### Epic decomposition: two-phase with human gate, sub-issue sizing constraint (currently ≤5, increasing to ~12)
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** Epic decomposition uses a two-phase workflow with a mandatory human gate between phases. Phase 1: agent explores codebase → produces plan → adversarial review → posts plan as issue comment → swaps to `agent:epic-review`. Phase 2 (after human approves via `agent:epic-approved`): agent generates full sub-issue JSON files. The human gate prevents bad decompositions from creating N issues that all fail. Each sub-issue is sized to: one verification criterion, one agent run, and a configurable file limit. The ≤5 file limit was the initial conservative default but is too restrictive — increasing to ~12 is planned. Auto-approval when adversarial review passes with 0 findings is a future possibility but not currently implemented.
-
-**Context:** No comparable system has a two-phase human-gated decomposition workflow. Devin decomposes internally without checkpoints. The structured sizing constraints ensure each sub-issue is achievable by a single agent run. The consolidation loop proves agents handle 10-15 file mechanical changes routinely.
-
-**Alternatives considered:** Auto-approve on clean review (faster but removes the human quality check for architectural decisions), fully autonomous decomposition (high risk for complex work).
-
-**Reassess when:** Auto-approval is implemented (removes latency when review passes cleanly), or when the file limit needs further tuning based on agent success rates on decomposed sub-issues.
-
----
-
-### PR creation: draft-first then finalize, hybrid template + agent narrative
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** PRs follow a draft-first-then-finalize pattern: `CreateDraftPrIfNotExistsAsync` creates a minimal draft during implementation (for pipeline visibility and structural purposes), then `FinalizePullRequestAsync` adds the full body (test results, coverage, file changes, code review findings, AC compliance table) and marks ready for review. The body is hybrid: deterministic template (`PipelineFormatting.GeneratePrBody`) provides structure/metrics, agent narrative (`BuildPrDescriptionPrompt`) provides "Summary" and "Approach" sections explaining what and why. Template is authoritative (always present, correctly formatted); agent narrative is enrichment (non-fatal if generation fails).
-
-**Context:** Dependabot uses purely template bodies. Devin uses purely LLM-generated descriptions. This hybrid ensures reviewers always get consistent metrics while also getting human-readable explanations. The draft state exists for pipeline visibility — the issue has an associated PR from early in the run, enabling operators to follow progress.
-
-**Alternatives considered:** Fully agent-generated (risks inconsistent structure, no guaranteed test stats), template-only (loses the "why" context that helps reviewers).
-
-**Reassess when:** If reviewers report the agent narrative is unhelpful or misleading — consider dropping it to save tokens. Currently it adds value for understanding implementation strategy.
-
----
-
-### Brain knowledge: experimental, append-only with git versioning, consolidation handles maintenance
-
-**Date:** 2026-07-25
-**Category:** scope
-
-**Decision:** The brain feature is experimental. The lifecycle is: pre-run clone/pull → agent reads knowledge → agent appends lessons learned (structured: general/technology/projects/sessions, source attribution, citation tracking) → post-run detect changes + validate + commit+push. Append-only is intentional for safety — consolidation cycles handle pruning/merging separately. Git provides versioning and rollback. The citation tracking ("used, helpful" / "read, not applicable" / "used, outdated") enables data-driven pruning during consolidation. The feature's simplicity (just files in a git repo) is by design.
-
-**Context:** Devin uses opaque session snapshots. Claude Code has flat CLAUDE.md. The append-only + consolidation pattern is unique and addresses the ETH Zurich finding (arXiv:2602.11988) that naive context accumulation hurts performance — consolidation prevents unbounded growth.
-
-**Alternatives considered:** Database-backed knowledge store (loses git versioning and human inspectability), TTL-based auto-expiry (loses valuable rare-but-useful entries).
-
-**Reassess when:** The feature moves from experimental to production-stable, or if brain size becomes a measurable performance degradation factor (would indicate consolidation frequency needs increasing).
-
----
-
-### Image extraction: security hardening kept but feature is experimental, may be reworked
-
-**Date:** 2026-07-25
-**Category:** scope
-
-**Decision:** The image extraction feature (IssueImageExtractor + ImageDownloadService) includes substantial security hardening (SSRF protection, magic bytes validation, dimension bounds, atomic byte budget, throughput floor detection). The hardening was agent-recommended during implementation — not from a deliberate security design session. It's kept because it costs nothing in normal operation and protects against real attack vectors (SSRF via issue markdown). However, the feature is experimental and not fully tested — parts may be reworked. Security parameters are reasonable defaults, not hardened invariants with a formal threat model.
-
-**Context:** No comparable agent system downloads issue images for agent consumption. The feature enables handling visual bugs (screenshots, UI mockups). The security depth is disproportionate to the feature's maturity — but removing it would be regression.
-
-**Alternatives considered:** No image support (simpler but loses visual context), unsecured download (unacceptable for user-controlled URLs).
-
-**Reassess when:** Feature is fully tested and promoted to production-stable — formalize security parameters as proper invariants. Or when rework reveals the hardening causes issues.
-
----
-
-## Future Direction
-
-<!-- Decisions about what IS and IS NOT planned, scope boundaries -->
-
-### Three deployment modes: Legacy → DB+SignalR → DB+Kubernetes (progressive)
-
-**Date:** 2026-07-04
-**Category:** future-direction
-
-**Decision:** The system supports three deployment modes representing progressive infrastructure investment. Legacy (in-memory JSON files, zero dependencies) was the initial implementation. DB+SignalR adds Postgres persistence for multi-replica safety. DB+Kubernetes adds K8s Job-based dispatch for production scale. For non-K8s deployments, DB+SignalR is the production path. K8s-only is a possible long-term direction but that decision hasn't been made yet. Legacy mode remains for zero-friction onboarding but is not guaranteed feature parity with DB modes — new persistence-dependent features can be DB-only.
-
-**Status (2026-08-16):** Spec 041 removed Legacy mode and DB+SignalR mode. Kubernetes (DB+Kubernetes) is now the only supported deployment target. PostgreSQL is required. The progressive model was collapsed to a single mode.
-
-**Context:** The `IWorkDistributor` and `IConfigurationStore` abstractions enable all three modes. Docker Compose is the development/small-team target. Helm chart is the K8s production target. Both deployment targets are first-class. New features requiring work item lifecycle or reconciliation can be DB-only.
-
-**Alternatives considered:** K8s-only (locks out non-K8s users), single mode (loses progressive adoption), deprecate Legacy immediately.
-
-**Reassess when:** The decision to go K8s-only becomes clear (likely after CRD-based dispatch proves itself in production), or if Legacy mode maintenance becomes a test burden without active users.
-
----
-
-### MaxDecompositionSubIssueFiles=12: research-based, low-confidence default
-
-**Date:** 2026-08-14
-**Category:** configuration
-
-**Decision:** `MaxDecompositionSubIssueFiles = 12` (valid range 1–30, `[ProjectOverridable]`). The value was raised from 5 based on research showing agents routinely handle 10–15 file changes (the consolidation loop demonstrates this empirically). It was NOT chosen via A/B testing on decomposed sub-issues — the decomposition feature is rarely used, so no usage data exists yet. The default should be kept at 12 with low confidence; it is the best available estimate, not an empirically validated optimum. If `agent:error` or `agent:wont-do` rates on decomposed sub-issues become measurable, calibrate from that data.
-
-**Context:** Previous default was 5 (too conservative — artificially fragmented refactors). The upper bound of 30 is a safety rail, not a recommendation. Per-project override allows teams with complex codebases to lower the limit.
-
-**Alternatives considered:** Keep at 5 (overly conservative), increase to 20+ (no evidence agents succeed at that scope on decomposed sub-issues), per-template override instead of per-project (no demand yet).
-
-**Reassess when:** Decomposition feature accumulates enough runs (50+) to compute `agent:done` vs `agent:error`/`agent:wont-do` rates on sub-issues. If error rate increases with file count, lower the default.
-
----
-
-### MaxConcurrentDecompositions and MinIssueSlots: global-only — per-project overrides removed by #3150
-
-**Date:** 2026-09-30
-**Category:** configuration
-
-**Decision:** `MaxConcurrentDecompositions` and `MinIssueSlots` are intentionally global-only caps. They govern dispatch slot allocation across ALL projects simultaneously in the single dispatcher loop — per-project values are meaningless because the loop has no per-project concurrency domains. The per-project override fields in `PipelineProject` were dead code (scheduler always reads the global config snapshot); #3150 removes them along with `HarnessSuggestionsReviewEnabled` (harness suggestions are global, no template, project config never applied). Keep it simple for now. Per-project quotas would require a different dispatch architecture with per-project sub-queues.
-
-**Context:** `MaxConcurrentDecompositions` enforcement uses `GetActiveDecompositionCountAsync` (DB-backed, cross-cycle) since #3154. The global-only intent was confirmed while auditing the dead per-project overrides in session 27.
-
-**Alternatives considered:** Fix plumbing to apply per-project overrides to the global cap (incorrect semantics — the cap is total active jobs, not per-project allocation). Per-project soft throttles as courtesy limits (deferred — requires per-project dispatch state tracking).
-
-**Reassess when:** Multiple teams on shared infrastructure report a single project consuming all decomposition slots is a measurable productivity problem. At that point, a per-project quota system with sub-queues is the correct path.
-
----
-
-### MaxConsolidationDispatchRetries: promoted to PipelineConfiguration — resolved by #2025 — **superseded by #3149**
-
-**Date:** 2026-08-14 · **Closed:** 2026-08-22 · **Superseded:** 2026-09-30
-**Category:** configuration
-
-**Decision (original):** `MaxConsolidationDispatchRetries` was promoted to a `PipelineConfiguration` property `[Key(74)]` with `[ProjectOverridable(Order=30)]` and a nullable per-project override in `PipelineProject`. Default value was 5.
-
-**Superseded by #3149:** The consolidation drain service that read this setting was removed in #2323. The property was never read by any production code. It was removed from `PipelineConfiguration` in #3149. Keys 23, 45, 74, and 84 are all retired — their indices are reserved and must not be reused. Existing stored data with these fields loads without error (STJ ignores unknown properties; MessagePack ignores unused array slots).
-
-**Reassess when:** Never — retired settings are tombstoned permanently.
-
----
-
-### Dispatch priority is FIFO — no priority queue yet
-
-**Date:** 2026-07-04
-**Category:** future-direction
-
-**Decision:** All `agent:next` issues are treated equally in dispatch order (API pagination order, typically oldest-first). There is no priority mechanism. Manual dispatch handles urgent cases. Round-robin budget sharing across work types (implementation, review, decomposition) is the only scheduling intelligence.
-
-**Context:** Tekton and Argo support priority classes; most agent orchestrators at this maturity use FIFO. The system isn't at a scale where priority scheduling justifies the added complexity (starvation prevention, priority inversion, configuration UX). Priority is something that could go on the roadmap but has no mechanism today.
-
-**Alternatives considered:** Label-based priority (e.g., `priority:high` bumps to front), deadline-aware scheduling, weighted fair queuing.
-
-**Reassess when:** Multiple teams share the same pipeline infrastructure and low-value batch work visibly blocks urgent fixes.
-
-## Integration
-
-<!-- Decisions about external systems, APIs, provider boundaries -->
-
-### Prompt architecture: layered composition with non-overridable structural guardrails
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** Prompts follow a strict 3-layer architecture: `DefaultPrompts.cs` (raw content) → `PipelineConfiguration` (overridable per-project) → `PromptBuilder` (composes final prompt with non-overridable structural elements). The structural elements — scope fences, thoroughness footer, calibration footer, verification clause — are hardcoded in PromptBuilder because they're research-backed behavioral guardrails, not domain content. Users customize WHAT the agent does (analysis focus areas, review checklist items). The pipeline controls HOW it behaves (primacy-positioned scope fences, debiasing calibration, anti-fabrication verification). Making structural elements configurable is explicitly out of scope — the pipeline flow is strict by design.
-
-**Context:** Most agent frameworks (LangChain, CrewAI) use template engines for composition. The hardcoded structural approach matches Anthropic's recommended architecture for production agents (separate system-level behavioral constraints from user-level content). C# string constants mean prompt changes require recompile — acceptable because prompts change at deploy cadence. Research references: arXiv:2508.12358 (over-rejection bias → calibration), arXiv:2605.01771 (compliance gap → verification clause brevity), arXiv:2603.18740 (developer framing bias → debiasing).
-
-**Alternatives considered:** Template engine for all elements (loses guaranteed behavioral compliance), external prompt files with hot-reload (premature for single-operator system), DSPy-style auto-optimization (research-grade, not production-ready).
-
-**Reassess when:** Never for the structural/domain separation principle. If the system serves multiple teams who need different calibration thresholds, consider making calibration tunable while keeping scope fences immutable.
-
----
-
-### Acceptance criteria parsing: regex-based, intentionally simple and deterministic
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** `IssueDescriptionParser` uses regex to extract `## Acceptance Criteria` sections (checkbox `- [ ]` or numbered `1.` items) from markdown issue bodies. No NLP, no LLM-based parsing. This is intentionally simple because: (1) the format is standard across all `IIssueProvider` implementations (GitHub, GitLab), (2) deterministic parsing never hallucinates criteria that don't exist, (3) it works reliably for the expected input format. The dedicated AC evaluation agent then assesses compliance, producing structured JSON. NonCompliant results are injected as CRITICAL findings, forcing the implementation agent to address them or exhaust the retry budget.
-
-**Context:** Devin and OpenHands don't parse acceptance criteria structurally. The approach is novel — closest research is requirement-to-test traceability (arXiv:2507.02564, ~73.7% recall). The regex approach trades recall for precision. Issues without an AC section degrade gracefully to "check issue goals."
-
-**Alternatives considered:** LLM-based extraction for non-standard formatting (adds latency and hallucination risk), more permissive patterns (risk extracting non-criteria content as criteria).
-
-**Reassess when:** If a new IIssueProvider uses a fundamentally different format where regex can't extract criteria, or if false-negative rate on criteria extraction becomes measurable.
-
----
-
-### NonCompliant acceptance criteria as CRITICAL: hard contract, retry budget bounds cost
-
-**Date:** 2026-07-25
-**Category:** architecture
-
-**Decision:** Acceptance criteria are part of both DoR (Definition of Ready) and DoD (Definition of Done). When the AC agent reports `NonCompliant`, it's injected as a `[CRITICAL]` finding that forces the implementation agent to retry. If after all retry attempts the AC remains non-compliant, the PR ships with non-compliant status visible — this is an acceptable outcome. The implementing agent being "sure" after multiple rounds that the AC can't be met is valid signal (the criterion may be unfeasible or the AC agent may be wrong). The retry budget bounds the cost of false negatives.
-
-**Context:** No comparable system treats AC as a forcing function. Most systems treat AC as documentation. This approach is closer to contract testing (Pact) where contract violations are hard failures. The bounded retry budget prevents infinite loops from AC agent false negatives.
-
-**Alternatives considered:** Soften to WARNING (loses the forcing function — AC becomes advisory), confidence threshold (adds complexity without clear benefit given bounded retries).
-
-**Reassess when:** If the AC agent's false-negative rate becomes high enough that retry budgets are regularly exhausted on correct implementations. Track via: ratio of "all AC compliant" PRs vs "non-compliant after retries" PRs.
-
----
-
-### Feedback loop: data collection only, automated calibration explicitly deferred
-
-**Date:** 2026-07-25
-**Category:** scope
-
-**Decision:** The system collects structured feedback from every run (success AND failure) via `FeedbackPromptBuilder`. `HarnessSuggestionExecutor` periodically analyzes accumulated feedback and produces actionable suggestions. `RefactoringOutcomeLookback` tracks wont-do vs done rates. NO automated adjustment exists — feedback is collected, analyzed, surfaced to the human operator, and the human decides what to change. This is intentional: no clear design exists for safe automated calibration, and premature automation risks compounding errors. The arXiv:2607.13091 "accumulated behavioral rules" approach is interesting but too new for production adoption.
-
-**Context:** Most production systems (GitHub Copilot, Cursor) don't have automated self-calibration. Research (arXiv:2607.13091, July 2026) proposes closed-loop self-improvement but is unproven in production. The data collection infrastructure is complete and ready for a future automation layer when a safe design emerges.
-
-**Alternatives considered:** Auto-disable proposals if rejection rate > 50% (simple but loses nuance), auto-create issues from suggestions (adds noise without human validation), full closed-loop per arXiv:2607.13091 (too experimental).
-
-**Reassess when:** A clear, safe design for automated calibration emerges — likely triggered by accumulated data showing stable, predictable feedback patterns that could be auto-acted upon without human oversight.
-
----
-
-### Prompt versioning: out of scope, scale doesn't justify the infrastructure
-
-**Date:** 2026-07-25
-**Category:** scope
-
-**Decision:** Prompts are tracked via git history only. No version numbers, changelogs, A/B testing, or evaluation pipelines exist. Changes are immediate on deploy (all runs use new prompts). This is acceptable because: (1) prompts change infrequently, (2) adversarial review catches prompt-induced regressions, (3) single operator can revert quickly, (4) the system doesn't serve multiple teams with different prompt needs.
-
-**Context:** Production LLM systems at scale (Anthropic enterprise, Scale AI) use explicit prompt versioning with evaluation pipelines. Research (Thomas Wiegold 2026) shows versioning becomes critical when multiple teams share prompt infrastructure. The "prompts are just code" approach works for single-team systems.
-
-**Alternatives considered:** Content hash in telemetry (enables Grafana correlation but adds complexity for a problem that doesn't exist), semantic versions on constants (documentation overhead without consumer).
-
-**Reassess when:** The system serves multiple teams, OR a regression is traced to a prompt change that took days to identify because there was no correlation in telemetry.
-
----
+A setting's limits are standard `[Range]` attributes, the one source for the API check, the resolver and the settings pages' input limits.
+**Why:** A 2026-09-27 review found settings that did nothing, working settings without a field, limits that differed between pages, and one bad project override discarding all of the project's overrides. Code review settings now live on one Code Review page.
+**Not:** a settings registry that generates the pages and the docs table (a large UI rewrite that loses the hand-tuned layouts); system settings in Helm (more restarts, no problem solved); project-level label routing (labels also select the agent profile, so it would need project context everywhere labels are resolved).
+**Revisit when:** the guard tests or the hand-written pages become the main cost of adding a setting; then generate the pages from the attributes.
+
+### Project review: one project reviewer per project, with read-only clones of the project's other repositories
+<!-- 2026-10-02 -->
+**Rule:** A project can turn on a project review. Its reviewer joins every code review of the project's repositories, in implementation runs and PR review runs, after the reviewers that the repository's labels pick. It shares their findings, inline comments and fix rounds. It reads read-only clones of the project's other repositories, which never reach the diff or a commit. It checks the change against the whole project: cross-repository contracts, decisions in the connected MCP servers, documentation and brain lessons for this project. A fix that belongs in another repository is a `[WARNING]`, so fix rounds don't chase it. The settings page edits one reviewer, and the project stores a list. Project epics use the same clones.
+**Why:** Repository labels choose reviewers, and they describe the tech stack: the same labels pick the agent image and the quality gates. A reviewer that knows the product doesn't fit them. **Accepting:** a GitLab or personal-access-token repository keeps its own token for the clone. The agent strips the token from the clone, blocks pushes and deletes a clone it can't make read-only, but the run still holds the tokens of the project's other GitLab repositories. Use short-lived project access tokens.
+**Not:** "product labels" on repositories (labels route agent images, and a label without a matching agent profile blocks dispatch); a shared reviewer catalog (project instructions are project-specific); letting a project pick label reviewer sets (adds no project knowledge).
+**Revisit when:** projects need several distinct reviewers in the UI, or GitLab tokens can be narrowed to read-only.
+
+### Project overrides: nested settings deep-merge
+<!-- 2026-07-04; 2026-07-25 -->
+**Rule:** A project override of a nested settings object replaces only the sub-settings it sets; the others keep their global values. A scalar override applies when it is set.
+**Why:** Replacing the whole object would silently reset unrelated sub-settings.
+**Not:** replacing the whole object; merge behavior configurable per object.
+**Revisit when:** another nested object becomes overridable; a guard test forces it through the same merge.
+
+### 1:1:1 template binding: one repo, one tracker per enabled template — intentional constraint
+<!-- 2026-09-30 -->
+**Rule:** Each enabled template is bound to exactly one repository and one issue tracker, and no two enabled templates share either. Disabled templates are exempt. Saving a template enforces this.
+**Why:** Issue, template and PR stay one-to-one, so no agent has to decide what to implement where; that is out of scope. Multi-repo work goes through project epics, which dispatch to single-repo templates.
+**Not:** multi-repo templates; shared trackers with multiplexing; no enforcement (duplicate dispatch).
+**Revisit when:** project epics can't serve a multi-repo case; then add a new multi-repo concept instead of relaxing this rule.
+
+### Epic scope: tracker-of-record determines sub-issue routing — intentional, same rationale as 1:1:1
+<!-- 2026-09-30 -->
+**Rule:** An epic's tracker decides where its sub-issues may go. An epic in the project's epic tracker gets full project context and can route to any repository in the project. An epic in a template's own tracker stays in that tracker. No flag grants cross-repo routing; move the epic instead. The scope comes from the live config when the work is claimed.
+**Why:** Routing ownership stays unambiguous, for the same reason as 1:1:1.
+**Not:** an opt-in cross-repo flag for template epics; the dispatching template's scope.
+**Revisit when:** an epic in a repository tracker needs cross-repo routing without the project tracker; then add an explicit mechanism, and don't loosen the tracker check.
+
+## Observability
+
+### Telemetry philosophy: instrument every decision point for full run traceability
+<!-- 2026-07-04; 2026-08-29; 2026-08-31 -->
+**Rule:** Every step an agent took must be traceable in Grafana. Anything slow or branching gets a span, and operationally relevant events get counters. Every pipeline progress line is also a structured log entry with the run ID. Trace context flows both ways on the orchestration channel, but not into provider API calls.
+**Why:** The goal is debugging ("the system did A, I wanted B: find out why in Grafana"), not just alerting. Progress lines that exist only in the UI are invisible to ops tooling.
+**Not:** job-level counters only; instrumenting only the critical path; a span event per output line; automatic trace propagation on every HTTP client.
+**Revisit when:** telemetry storage costs more than its value. Lower trace sampling before you remove spans, and sample high-volume output lines if log cost grows.
+
+### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
+<!-- 2026-08-28 -->
+**Rule:** Pre-PR CI (on branch push) and post-PR CI (on the pull_request event after promotion) each have their own duration histogram. A new CI poll phase also gets its own histogram.
+**Why:** One histogram for both doubles the samples on runs that go through both phases and inflates p50 and p99 dashboards.
+**Not:** one metric with a phase tag (equally valid, but every panel needs a filter); one total per run (loses per-phase detail).
+**Revisit when:** never for the separation.
 
 ### Grafana Faro RUM: CDN-only is acceptable for now — air-gapped deployments need revision
+<!-- 2026-08-29 -->
+**Rule:** The Faro browser SDK loads from unpkg.com with pinned integrity hashes. Without internet access it silently stays off, and the app is unaffected. An empty collector URL turns it off completely.
+**Why:** The deployment target (Grafana Cloud with internet access) needs nothing more. **Accepting:** air-gapped use needs a code change to self-host the bundles, and a future Content-Security-Policy must allow unpkg.com in `script-src`.
+**Not:** configurable bundle URLs (no demand yet); bundling with npm at build time (no JS build step).
+**Revisit when:** Faro is needed without internet access; the minimal change is SDK and tracing URL overrides.
 
-**Date:** 2026-08-29
-**Category:** integration
+## Scope and users
 
-**Decision:** The Grafana Faro SDK and tracing bundles are loaded from `unpkg.com` (SRI-pinned, v2.8.1). There is no configurable bundle URL. In air-gapped or firewalled clusters, the CDN load silently fails — the no-op stub remains and Faro is disabled; the application is unaffected. This is intentionally acceptable for the current deployment target (Grafana Cloud with outbound internet access). The workaround for air-gapped deployments (copy bundles to `wwwroot/js/faro/`, update `SDK_URL`/`TRACING_URL` in `faro-init.js`) requires a code change, not a config change — this is a known limitation.
+### Target user: single operator/power-user — no RBAC for now
+<!-- 2026-07-04 -->
+**Rule:** The UI serves one expert operator who configures, watches and manages the pipeline. Work is submitted with tracker labels, outside the UI. No roles or permissions exist, and the UX favors expertise (compact, dense) over approachability.
+**Why:** One person owns the whole pipeline lifecycle, so RBAC isn't needed yet.
+**Not:** a developer-facing tool with guided flows; admin and viewer personas.
+**Revisit when:** a second person needs access, or the system runs as a shared service; then add ArgoCD-style Read, ReadWrite and Admin roles.
 
-**Context:** `Faro:CollectorUrl` absent/empty = Faro disabled (no CDN load attempted). The environment toggle is the config value, not an explicit `isDevelopment` guard. `app-environment` meta is passed to Faro for dashboard filtering but does not gate loading. SRI hashes protect against CDN tampering. No Content-Security-Policy header is currently configured for the `<script>` tags loaded from unpkg.com — this is a known gap if CSP is ever added.
-
-**Alternatives considered:** Configurable `Faro__SdkUrl` / `Faro__TracingUrl` env vars (adds config surface; deferred — no demand yet), NPM bundle at build time (requires a JS build step not currently present in the Docker build), self-hosted bundle path (documented as workaround, not first-class).
-
-**Reassess when:** A deployment scenario arises that requires Faro without outbound internet access. At that point, add `Faro__SdkUrl` / `Faro__TracingUrl` overrides (pointing to a self-hosted copy) as the minimal change. If CSP is ever added, `unpkg.com` must be in `script-src`.
-
-## Scope
-
-<!-- Decisions about what's intentionally excluded or limited -->
-
-### Brain repository uses active consolidation, not append-only
-
-**Date:** 2026-07-04
-**Category:** scope
-
-**Decision:** The brain repo is actively curated via a periodic `BrainConsolidation` job — a 4-phase agent workflow that clones the brain, runs consolidation (merge, prune, resolve contradictions), optionally runs adversarial review (`brainConsolidationReviewEnabled`), then commits and pushes. The brain is NOT append-only; it's a living knowledge store with automated maintenance.
-
-**Context:** Research (arXiv:2602.11988) shows naive context accumulation hurts agent performance. The consolidation system addresses this by periodically merging redundant entries, pruning stale knowledge, and resolving contradictions. The adversarial review acts as a quality gate on brain mutations. This is a more sophisticated approach than most comparable systems (Claude Code uses flat CLAUDE.md, Devin uses opaque snapshots).
-
-**Alternatives considered:** Append-only with manual human pruning, periodic full resets per milestone, TTL-based automatic expiry.
-
-**Reassess when:** Consolidation runs consistently produce zero changes (brain is already clean), or when consolidation cost (tokens, latency) exceeds the value of the knowledge maintenance.
-
----
-
-### Brain ReadOnly mode is for shared/untrusted brain consumers
-
-**Date:** 2026-07-04
-**Category:** scope
-
-**Decision:** `BrainReadOnly=true` means the brain is synced pre-run (agent reads knowledge) but NOT written post-run (no reflection, no `.brain/` artifacts committed). Use case: when a template wants brain context but doesn't trust its own runs to contribute quality knowledge — either because it's new, experimental, or a secondary consumer of shared knowledge. Template-level `BrainReadOnly` is now implemented on `PipelineJobTemplate` — this allows "template A writes to the brain, template B only reads" within the same project. The setting is one-directional at the template level: it can only switch read-only on (never off), so a template with `BrainReadOnly: true` overrides any project-level `BrainReadOnly: false`.
-
-**Context:** `BrainReadOnly` is on `PipelineConfiguration` (global) with a per-project nullable override and a per-template boolean (`PipelineJobTemplate.BrainReadOnly`). Template-level overrides are applied by `PipelineConfigurationResolver.ApplyTemplateOverrides` after project overrides. The general pattern is: primary/trusted templates write, secondary/experimental templates read-only.
-
-**Alternatives considered:** Brain access as a provider-level setting (too coarse), per-run override (too granular, no UI for it).
-
-**Reassess when:** N/A — template-level `BrainReadOnly` is implemented. The current project-level override still serves the "all templates in this project are read-only" case.
-
-**Status (2026-09-29):** Template-level `BrainReadOnly` exists: a template can turn read-only on (never off) and can be edited in place on the Pipelines page. A read-only brain is also not consolidated. The global setting (Settings → Global Defaults → Advanced) and the project override remain.
-
----
-
-### Steering content: project vs. repo are complementary, not competing
-
-**Date:** 2026-07-04
-**Category:** scope
-
-**Decision:** Pipeline steering is delivered as two separate files — `pipeline-project.md` (from project configuration) and `pipeline-repo.md` (from repository provider). They have different concerns: project-level is team/org preferences (code style, tool preferences, behavioral constraints); repo-level is technical specifics (architecture, dependencies, conventions for that specific repo). No conflict resolution mechanism exists because they shouldn't conflict. The agent resolves any ambiguity contextually.
-
-**Context:** For Kiro agents, both files go to `.kiro/steering/` with `inclusion: always` frontmatter. For OpenCode agents, they're concatenated into `AGENTS.md` under "Project Instructions" and "Repository Instructions" headers. The `.kiro/steering/` directory in the workspace is for pipeline-injected content in agent containers — it's separate from the local development `.kiro/steering/` in the source repo.
-
-**Alternatives considered:** Explicit precedence (repo overrides project), merge with priority markers, single combined file.
-
-**Reassess when:** Real conflicts are reported between project and repo steering causing agent confusion. Currently, the separation of concerns prevents this.
-
----
-
-### Open issue context: cross-issue awareness to prevent conflicting parallel changes
-
-**Date:** 2026-07-04
-**Category:** scope
-
-**Decision:** `OpenIssueContextWriter` writes up to `MaxOpenIssuesForContext` (default 50) open issues as markdown files in `.agent/open-issues/`. This gives agents awareness of in-flight work — preventing conflicting changes when multiple agents work in parallel. Issues are rarely isolated; especially for epics, knowing sibling tasks helps agents make coordinated decisions. Currently only OPEN issues are included (via `ListOpenIssuesAsync`). Closed issues are excluded — potentially a gap for recently-completed sibling context.
-
-**Context:** No comparable system (Devin, OpenHands, Copilot CCA) has cross-issue awareness. This is novel and addresses a real multi-agent coordination problem. The 50-issue cap is a reasonable heuristic to prevent context overload.
-
-**Alternatives considered:** No cross-issue context (simpler but leads to conflicting changes), include closed issues (more context but larger I/O and potential noise), per-epic scoping (only sibling issues, not all open).
-
-**Reassess when:** If agents frequently produce conflicting changes despite the context (cap too low?), or if recently-closed issue context proves valuable for continuity. Issue #1049 tracks adding closed sibling issues for epic flows.
-
----
-
-### Multi-agent code review: 4 specialized reviewers in parallel is intentional (#1047)
-
-**Date:** 2026-07-04
-**Category:** scope
-
-**Decision:** The system ships with 4 parallel review agents (Correctness, DotNetSpecialist, SecurityReviewer, TestQualityReviewer), each with a specialized prompt focusing on one concern. This "ensemble review" approach catches issues a single generalist would miss because each agent focuses without distraction. The reviewer configuration is externalized (`ReviewerConfigurationStore`) so users can customize agents, add roles, or disable ones they don't need. Issue #1047 adds a "be thorough" standardized instruction to all reviewer prompts.
-
-**Context:** CodeRabbit and GitHub Copilot CCA use single reviewers. Multi-perspective review with role specialization is uncommon. Research (arXiv:2511.16708) shows multi-agent verification improves accuracy by +39.7pp over single-agent. 4 agents is the default; configurable per use case.
-
-**Alternatives considered:** Single "be thorough" generalist (cheaper but misses domain-specific issues), 2 agents (correctness + security — insufficient for test quality concerns), 6+ agents (diminishing returns, too much consolidation noise).
-
-**Reassess when:** If token costs for 4 parallel review calls become prohibitive, consider reducing to 2-3 with broader role definitions. Track via telemetry: finding-count-per-agent to identify which roles produce the most value.
-
----
-
-### Feedback loop: outcome tracking infrastructure exists, automated calibration is future
-
-**Date:** 2026-07-04
-**Category:** scope
-
-**Decision:** `FeedbackService` collects structured feedback from each run (harness suggestions, issue categorization). `RefactoringOutcomeLookback=90d` tracks whether past refactoring proposals were accepted or rejected. This outcome data is intentional self-calibration infrastructure — the data collection is implemented, but the automated adjustment loop (e.g., "reduce proposal aggressiveness if rejection rate > 50%") is not yet built. Currently the data is available for export and manual inspection only. No concrete feature design exists for automated calibration.
-
-**Context:** SonarQube has "won't fix" tracking. No agent system has automated self-calibration from outcome tracking. The 90-day lookback captures enough history for trend detection. The infrastructure is in place; the intelligence layer is future work.
-
-**Alternatives considered:** No outcome tracking (loses calibration potential), immediate automated adjustment (premature without understanding the feedback patterns), manual-only forever (wastes the collected data).
-
-**Reassess when:** Enough runs accumulate (100+) to detect statistical patterns. At that point, design an automated calibration mechanism (e.g., reduce `MaxRefactoringProposals` when rejection rate exceeds threshold).
+### Image extraction: security hardening kept but feature is experimental, may be reworked
+<!-- 2026-07-25 -->
+**Rule:** Downloading issue images for agents keeps its security hardening (SSRF protection, magic-byte, dimension and byte-budget checks). The feature is experimental and may be reworked, and its limits are reasonable defaults, not invariants from a threat model.
+**Why:** An agent recommended the hardening; it costs nothing in normal use and blocks real attacks through issue markdown, so removing it would be a regression.
+**Not:** no image support; unsecured downloads.
+**Revisit when:** the feature is tested and promoted (then formalize the limits), or the hardening causes problems.
 
 ## UX
 
-<!-- Decisions about UI/UX choices, user-facing behavior -->
-
-### AgentCoding page is configure + dispatch only — no pipeline progress
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The Agent Coding page is exclusively for configuring templates and dispatching work. It does NOT show pipeline progress, output terminals, or run summaries. That was wrongly implemented (likely a leftover from before the remote agent model existed) and has been removed (#1059). The page always shows the same view regardless of whether runs are active — template table, loop controls, manual dispatch. Pipeline observation belongs on Agent Monitoring.
-
-**Context:** `PipelineService.ActiveRun` is set by `PipelineRunLifecycleService` — there is no locally-executing pipeline in the intended architecture. Agents execute pipelines remotely via SignalR/K8s. The inline progress view on Agent Coding was dead code that never triggered correctly in production deployments.
-
-**Alternatives considered:** Keep the progress view for "quick glance" (wrong — monitoring page exists for this purpose).
-
-**Reassess when:** Never. Clear page responsibility boundary.
-
----
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The split between `AgentCoding.razor.cs` and `AgentCodingPageService` grew organically and is NOT a deliberate architectural boundary. The formalized principle going forward (best practice for Blazor Server): **PageService owns all async workflows and persistent state. Component owns render-lifecycle concerns (timers, JS interop, event subscriptions, transient visibility flags like `_showAddForm`).** When touching this file, migrate behavioral state (e.g., `_recentlyToggled`) into PageService. No strong opinion from the human — adopting Blazor best practice as the default. Apply incrementally.
-
-**Context:** PR #1037 extracted drawer/dispatch logic but left several state fields in the component (`_recentlyToggled`, `_showAddForm`, `_showDeleteConfirm`, toast timers). The boundary is fuzzy. Comparable Blazor patterns (MudBlazor, Radzen) typically extract ALL mutable state to services — we accept a middle ground where render-lifecycle stays in the component.
-
-**Alternatives considered:** Full stateless component (all state in service — too many `Func<Task>` callbacks), keep as-is (continues organic growth).
-
-**Reassess when:** If adding a new feature requires modifying both the component AND the service for the same concern — that signals the boundary is wrong.
-
----
-
-### Undo snackbar: always show for toggles, not loop-conditional
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The undo snackbar should appear for ALL toggle operations (template enabled, implementation, review, decomposition) regardless of whether the loop is active. The current loop-conditional behavior and the inconsistency where `_recentlyToggled` is added unconditionally for some toggles but conditionally for others are both unintentional. Fix: make both `_recentlyToggled` and the undo snackbar unconditional for all toggle types. The cost is minimal (5-second snackbar) and it provides consistent UX.
-
-**Context:** The toggle-during-loop restriction was not a deliberate safety design — it grew from the initial implementation where only template-enabled toggling existed. When implementation/review/decomposition toggles were added, they copied the pattern inconsistently.
-
-**Alternatives considered:** Keep loop-only (saves visual noise in idle state but inconsistent), remove undo entirely (loses safety net).
-
-**Reassess when:** If user feedback indicates the snackbar is annoying in idle state, make it configurable or reduce timeout to 3 seconds.
-
----
-
-### Drawer tabs: current three-component approach is acceptable, open to consolidation
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The tabbed drawer approach (three separate components — `IssueDispatchDrawer`, `PrDispatchDrawer`, `EpicDispatchDrawer` — with tab navigation) is intentional but holds no strong commitment. The three-component pattern allows per-type customization (different columns, actions, data models). If a future contributor can achieve the same customization with a single generic `DispatchDrawer<T>` component without sacrificing readability, that's acceptable. The shared CancellationTokenSource across drawers is intentional — opening any drawer cancels pending work from the previous.
-
-**Context:** Implemented in PR #1013 ([UI-09]). The pattern matches GitLab CI's drawer+tabs approach. Adding a new work type (e.g., "Browse Feedback") should create a new component + tab unless the existing components can be generalized cleanly.
-
-**Alternatives considered:** Single generic component (less code but harder to customize per-type), fully independent drawers without tabs (more components, worse UX).
-
-**Reassess when:** A fourth work type is added — at that point, evaluate whether the per-type component pattern scales or whether a generic approach is needed.
-
----
-
-### Error messages: sticky, no auto-dismiss, must have manual dismiss button
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** Error messages (`_errorMessage`) MUST be sticky — they never auto-dismiss. They SHOULD have a manual dismiss button (currently missing — known gap). Success messages auto-dismiss after 3 seconds. This asymmetry is intentional: errors represent actionable failures that the user must acknowledge; successes are confirmatory and transient. New code MUST NOT add auto-dismiss timers for error messages. The TODO in the Razor template ("Error messages need a manual dismiss mechanism") is a valid gap to fix.
-
-**Context:** Material Design guidelines and GitHub Actions both use persistent error messages with explicit dismiss. Auto-dismiss for errors is an anti-pattern — users may miss critical failures.
-
-**Alternatives considered:** Auto-dismiss errors after 10-15 seconds (risky — users miss problems), toast-style errors with queue (over-engineered for current complexity).
-
-**Reassess when:** If error accumulation becomes confusing (multiple errors stacking), consider showing only the most recent error with a "previous errors" expandable section.
-
----
-
-### PipelineService event handling: extract state transitions to PageService, keep JS in component
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The `HandleStateChanged` event handler in `AgentCoding.razor.cs` grew organically and mixes testable state-transition logic (`_lastRunId`, `_showCompletionOnly`, `_lastLoopStatus` detection) with untestable UI concerns (JS scroll interop, `StateHasChanged`). The target state: extract state-transition logic into `PageService.HandlePipelineStateChanged(PipelineRun? activeRun)` so it's unit-testable. The component handler becomes a thin wrapper: call PageService, then `StateHasChanged()`, then JS scroll. Issue #1053 tracks this work.
-
-**Context:** Post-extraction (#1037), the component still has non-trivial logic in event handlers that can't be tested without bUnit. The PageService was designed for user-initiated workflows but should also handle system-event state transitions.
-
-**Alternatives considered:** Keep all event handling in component (untestable), move JS interop to service via IJSRuntime injection (weird — services shouldn't own render concerns).
-
-**Reassess when:** After implementing this, if the PageService becomes too large (>1000 lines), consider splitting into sub-services per concern (DrawerService, LoopControlService, EventStateService).
-
----
-
-### Output lines buffer: lock+snapshot is acceptable, Channel<string> is the future alternative
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The `lock (_outputLock)` + `_outputLines.TakeLast(200).ToList()` pattern for streaming agent output works correctly at current output rates (~1-10 lines/second). It is NOT intentional design — it grew pragmatically. The lock is held during render which is theoretically suboptimal but unmeasurable at current throughput. The target migration is `Channel<string>` with a bounded buffer (lock-free write via `TryWrite`, drain-on-render via `TryRead` loop). Issue #1054 tracks this work.
-
-**Context:** Blazor Server docs recommend `InvokeAsync` for cross-thread updates (which is used), but the shared `List<string>` is still manually synchronized. `Channel<T>` is the .NET-native async producer/consumer pattern that eliminates lock contention. The 200-line cap prevents memory growth regardless of approach.
-
-**Alternatives considered:** `ConcurrentQueue<string>` (simpler than Channel but still needs periodic drain), `IObservable<string>` with Rx (over-engineered), keep current (works fine at current scale).
-
-**Reassess when:** Output rates exceed 50 lines/second, or profiling shows render thread contention from the output lock.
-
----
-
-### Target user: single operator/power-user — no RBAC for now
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The primary user is a single operator/power-user who configures, monitors, and manages the pipeline. This is NOT a developer-facing tool where casual users file issues and wait — it's an ops-facing tool for someone who understands the full system. Dispatch to agents is done via labels (external to this UI), so "submitting work" is already separate from "operating the pipeline." Future RBAC (Read/ReadWrite/Admin, similar to ArgoCD) is on the roadmap but not yet needed. UX should optimize for expertise (compact, dense, keyboard-shortcuts-as-bonus) rather than approachability.
-
-**Context:** The navigation flow (Agent Coding → Monitoring → Consolidation → Settings) assumes one person owns the entire pipeline lifecycle. ArgoCD's permission model (Read/ReadWrite/Admin) is the likely future direction. The onboarding checklist handles first-run learning; after that, the UI assumes expertise.
-
-**Alternatives considered:** Developer-facing tool (simpler UI, guided workflows), multi-persona split (admin vs viewer — premature).
-
-**Reassess when:** A second team member needs access, or when the system is deployed as a shared service. At that point, implement ArgoCD-style RBAC with read-only dashboard views.
-
----
-
 ### Visual design: dark-first, light theme exists for accessibility
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** Dark theme is the primary design. The CSS custom property system (`--bg`, `--surface`, `--accent`, etc.) defines dark as root defaults. Light theme exists via `[data-theme="light"]` override for accessibility/preference but is not the design priority. New UI features should be verified in dark theme; light theme is "should work" not "must look great." The deep purple accent (`#7c3aed`) is designed for dark backgrounds.
-
-**Context:** Developer tools are overwhelmingly dark-first (VS Code, GitHub, terminals). The light theme variables were defined for completeness but haven't received hand-tuning. The theme toggle persists via localStorage.
-
-**Alternatives considered:** Equal polish for both themes (doubles design work), remove light entirely (hurts accessibility for some users).
-
-**Reassess when:** User feedback specifically reports light theme visual issues. Don't proactively invest in light theme polish.
-
----
-
-### Monitoring refresh: 5-second polling is the correct interval
-
-**Date:** 2026-07-04 · **Updated:** 2026-08-22
-**Category:** ux
-
-**Decision:** The Agent Monitoring page polls at 5-second intervals. Issue #1058 implemented the change from 2s → 5s. The freshness indicator transparency ("Refreshing every 5s") is intentional — it builds trust that data is current.
-
-**Context:** Grafana defaults to 5-second refresh. GitHub Actions uses 5-10s.
-
-**Alternatives considered:** Event-driven via SignalR (eliminates polling entirely — future possibility), configurable interval (over-engineering for single-operator use).
-
-**Reassess when:** If event-driven monitoring is implemented (SignalR push from pipeline events to monitoring page), polling becomes a fallback only.
-
----
+<!-- 2026-07-04; confirmed after the redesign 2026-10-02 -->
+**Rule:** Dark is the default theme and the design priority. The light theme must work but isn't hand-tuned, so verify new UI in dark.
+**Why:** Developer tools are mostly dark-first, and equal polish doubles the design work. **Accepting:** the light theme gets less care.
+**Not:** equal polish for both themes; no light theme (hurts accessibility).
+**Revisit when:** users report specific light-theme problems.
 
 ### Interaction model: mouse-first with keyboard as bonus layer
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The primary interaction model is mouse-first. Keyboard shortcuts (Esc, ?, arrow keys in drawers) exist as a power-user layer introduced by an agent, not as a core design principle. They provide value for users who want them but are NOT the primary interaction path. Full keyboard-first navigation (tab trapping, roving tabindex, visible focus states in all components) is not a priority. Fix keyboard accessibility bugs when reported; don't proactively invest in keyboard-first features.
-
-**Context:** The `ShortcutHelpOverlay` and global keyboard handler were added by an agent as a UX improvement. The system owner is mouse-primary. WCAG keyboard accessibility is a separate concern from "keyboard-first design" — basic keyboard operability (tab order, focus-visible) should work, but advanced keyboard navigation is optional.
-
-**Alternatives considered:** Keyboard-first (VS Code model — too much investment for current user base), remove keyboard shortcuts entirely (loses the bonus value for power users who find them).
-
-**Reassess when:** Users report relying on keyboard navigation, or accessibility audit requires specific keyboard improvements.
-
----
-
-### Information density: high for monitoring, open to redesign for other pages
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** The Agent Monitoring dashboard is intentionally high-density — operators need system state at a glance (Connected/Busy/Idle/Queued + run metrics in a single stats bar). This is correct and should not be reduced. HOWEVER, other pages (Agent Coding, Settings, Consolidation) are open to UX redesign. The Agent Coding page in particular has grown organically and could benefit from better information hierarchy, progressive disclosure, or layout restructuring. Agents proposing UX improvements to non-monitoring pages should feel free to suggest alternatives.
-
-**Context:** Agent Monitoring is an ops dashboard — high density is the genre standard (Grafana, Datadog). Agent Coding is more of a "control panel" — it could benefit from clearer separation of concerns (configuration vs. dispatch vs. active pipeline). The template table, loop controls, and manual dispatch section are all visible simultaneously regardless of what the user is doing.
-
-**Alternatives considered:** Reduce monitoring density (wrong for ops dashboards), apply same density to all pages (wrong — different pages serve different needs).
-
-**Reassess when:** A UX redesign proposal is created for the Agent Coding page. Consider: tabbed sections (Configure | Dispatch | Monitor), collapsible regions, or a "mode" switch that shows only the relevant section based on pipeline state.
-
----
-
-### Pipeline progress: dual-panel (sidebar + terminal) is intentional
-
-**Date:** 2026-07-04
-**Category:** ux
-
-**Decision:** When a pipeline is active, showing BOTH the structured PipelineSidebar (phased steps: Preparation → Analysis → Code Generation) AND the raw OutputTerminal (agent logs) simultaneously is intentional. The sidebar answers "where am I in the pipeline?" — the terminal answers "what's happening right now?" They serve different cognitive needs for an operator watching a run. The pipeline is a structured process (known phases, known steps); the terminal provides raw transparency into the agent's execution. **This view belongs on Agent Monitoring, NOT Agent Coding.** The Agent Coding page wrongly contained an inline progress view triggered by `PipelineService.ActiveRun` — this was never intended and is being removed (#1059). Agent Coding is purely configure + dispatch.
-
-**Context:** No comparable system uses this exact dual-panel approach. GitHub Actions merges structure and output (expandable log groups). Argo uses DAG + per-step logs (similar concept, different layout). The side-by-side layout leverages the operator's screen width — desktop-only assumption is acceptable for this tool.
-
-**Alternatives considered:** Merged view with expandable log groups per step (GitHub Actions style — loses simultaneous visibility), terminal-only with progress bar (loses structured phase awareness), sidebar-only with expandable logs (too cramped).
-
-**Reassess when:** If the terminal output is rarely useful during a run (operators only check post-hoc), consider making it collapsible. Currently, seeing real-time agent output is part of the trust model — the operator knows the agent is actually working.
-
-### Pod anti-affinity: soft (preferred) spreading, not hard (required)
-
-**Date:** 2026-08-28
-**Category:** architecture
-
-**Decision:** All control-plane Deployments (api, orchestrator, jobcontroller, scheduler) use `preferredDuringSchedulingIgnoredDuringExecution` for pod anti-affinity when `replicas > 1`. The previously committed `requiredDuringSchedulingIgnoredDuringExecution` was incorrect — it blocks pod scheduling when the cluster has fewer nodes than replicas (e.g., 2 replicas on a 1-node dev cluster → `Pending` forever). Soft spreading achieves HA in production without preventing scheduling on constrained clusters.
-
-**Context:** Hard anti-affinity is appropriate for stateful services (databases, Kafka) where co-location causes data corruption. These are stateless HTTP services; co-location reduces HA but does not corrupt state. All four templates now use weight=100 `preferred` spreading on `kubernetes.io/hostname`. The `orchestrator.affinity` override (user-provided) still takes precedence when set.
-
-**Alternatives considered:** Hard anti-affinity (rejected — blocks dev single-node clusters), no anti-affinity (less HA in prod).
-
-**Reassess when:** Never for the soft/hard choice on stateless services. If a specific deployment requires hard node isolation (regulatory requirement), the `affinity:` values override handles it.
-
----
-
-### AgentJobTimeoutSeconds: unified wall-clock ceiling for all job types — backstop semantics for chat pods
-
-**Date:** 2026-08-28
-**Category:** configuration
-**Superseded by:** session "AgentJobTimeoutSeconds: removed — #2179" (2026-08-29)
-
-**Superseded (2026-08-29):** `AgentJobTimeoutSeconds` was removed by #2179; see "AgentJobTimeoutSeconds: removed" above. Work-item and consolidation jobs take their deadline from `AgentTimeout`; chat pods use `workDistribution.dispatch.chatJobMaxDurationSeconds`.
-
-**Decision:** `AgentJobTimeoutSeconds` (renamed from `ChatSessionMaxDurationSeconds`, default 7200s) governs `activeDeadlineSeconds` for all K8s Job types: work-item agents, consolidation agents, and chat pods. The rename makes the semantics correct — the previous name was misleading because the field always applied to all jobs, not only chat. For chat pods, the circuit-based idle-kill mechanism (`ChatIdleTimeoutSeconds=90s`) terminates the pod when the browser window closes; `AgentJobTimeoutSeconds` is a last-resort backstop for orphaned resources (e.g., browser crash with no idle-kill firing, Redis unavailable for heartbeat cross-replica delivery).
-
-**Context:** The idle-kill circuit is the primary chat lifecycle mechanism. The 2h wall clock only fires if the circuit fails. Keeping a single unified timeout value simplifies operations: operators only need to reason about one "max job lifetime" per agent type, not separate interactive vs batch limits.
-
-**Alternatives considered:** Separate `ChatSessionMaxDurationSeconds` for interactive vs batch jobs — rejected because the idle-kill circuit makes the distinction unnecessary for normal operation; edge cases (orphaned pods) benefit from the same backstop regardless of job type.
-
-**Reassess when:** If users routinely need chat sessions >2h, add a separate `ChatSessionMaxDurationSeconds` that defaults to longer than `AgentJobTimeoutSeconds`. Track via: how often chat pods hit `activeDeadlineSeconds` vs idle-kill.
-
----
-
-### Chat keepalive Redis: required for multi-replica deployments
-
-**Date:** 2026-08-28
-**Category:** architecture
-
-**Decision:** Redis is required when `api.replicas > 1` OR `orchestrator.replicas > 1` for correct chat keepalive behavior. When keepalive POSTs land on a different API replica than the one hosting the watcher, the in-process `LastClientHeartbeatTicks` fallback does NOT see the heartbeat — the pod is idle-killed after `ChatIdleTimeoutSeconds` (90s) even though the browser is active. Redis is the cross-replica authoritative heartbeat store (`chat:heartbeat:{agentId}`, TTL=2× idle timeout). The in-process fallback is only correct for single-replica local dev.
-
-A startup warning is emitted when `ChatJobDispatcher` is instantiated with `_redis == null` and `api.replicas > 1`. **Implemented in #2133 (closed 2026-08-29).**
-
-**Context:** The current code silently falls back to local ticks when Redis is absent — no warning is emitted. In a 2-replica deployment without Redis configured, a user whose keepalive POST happens to land on the non-watcher replica will see their chat pod killed after 90s of inactivity on the watcher side. This is a silent incorrect behavior, not a loud failure.
-
-**Alternatives considered:** Make Redis unconditionally required (breaks local dev without Redis), configurable `requireRedisForHeartbeat: true/false` (unnecessary complexity when the rule is simply `replicas > 1`). See #2131 for implementation.
-
-**Reassess when:** Never for the principle. Redis is already required for multi-replica SignalR backplane — this is consistent with that existing requirement.
-
----
-
-### Epic scope: tracker-of-record determines sub-issue routing — intentional, same rationale as 1:1:1
-
-**Date:** 2026-09-30
-**Category:** architecture
-
-**Decision:** An epic's sub-issue routing scope is determined entirely by which tracker the epic lives in. Project-tracker epics (in `project.EpicIssueProviderId`) receive full project context and can route sub-issues to any repo in the project. Template-tracker epics (in a template's own `IssueProviderId`) are single-repo only — sub-issues land in that template's tracker only. There is no flag to grant a template-tracker epic cross-repo routing; the epic must be moved to the project's epic tracker. This is intentional — same rationale as 1:1:1: keep it simple. Scope is re-derived from live config at claim time, not from the WorkItem payload, so config changes take effect on the next dispatch.
-
-**Context:** `AssignmentEnricher.EnrichCoreAsync` applies `project.IsEpicTracker(identity.IssueProviderConfigId)` at claim time. If neither condition matches (neither project epic tracker nor any template tracker), the assignment is dropped with an error. This handles WorkItems queued before a config change that removes the epic's tracker.
-
-**Alternatives considered:** Allow template-tracker epics to opt into cross-repo via a flag (adds routing complexity). Use the dispatcher template's scope regardless of where the epic lives (old behavior — ambiguous for project epics).
-
-**Reassess when:** A use case emerges where a repo-tracker epic needs cross-repo routing without the project epic tracker overhead. Introduce an explicit mechanism — do not silently relax the tracker check.
-
----
-
-### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
-
-**Date:** 2026-08-28
-**Category:** architecture
-
-**Decision:** `ExternalCiDuration` (existing) measures the pre-PR CI poll in `AppendExternalCiIfNeededAsync` — triggered on branch push. A new `PostPrCiDuration` histogram must be added to measure the post-PR CI poll in `WaitForPostPrCiAsync` — triggered on the pull_request event after PR promotion. The two are semantically distinct: pre-PR CI validates the branch commit; post-PR CI validates CI workflows that only trigger on `pull_request` events. Emitting both into `ExternalCiDuration` inflates p50/p99 dashboards on runs that execute both phases.
-
-**Context:** The TODO in `WaitForPostPrCiAsync` documents this gap. On paths where both pre-PR and post-PR CI run (e.g., cleanup made no changes → skipCiIfNoChanges → post-PR CI fires), two histogram samples land in `ExternalCiDuration`, making the p99 appear 2× higher than actual worst-case single-phase duration.
-
-**Alternatives considered:** Keep single metric with a phase tag (`phase=pre_pr|post_pr`) — equally valid but requires a Grafana filter to disaggregate; separate histograms are more natural for Grafana dashboard panels that show one thing per panel. Run-level aggregation (`TotalCiWaitDuration` emitted once at end) — accurate but loses per-phase granularity needed for debugging.
-
-**Reassess when:** Never for the separation principle. If a third CI poll phase is added, follow the same pattern.
-
----
-
-### WorkItems.Payload: config snapshot must be at dispatch time, not enqueue time — fixed (#2171)
-
-**Date:** 2026-08-29
-**Category:** architecture
-
-**Decision:** `WorkItems.Payload` should store only identity fields (issue identifier, provider config IDs, run ID, agent selector, timeout, trace context). All mutable config — steering content, provider configs (with fresh tokens), QG configs, reviewer configs, MCP servers, pipeline configuration — must be resolved **fresh at dispatch/assignment time** (`GET /api/work-items/{id}/assignment`), not frozen at enqueue. This is the same pattern already used for `ProjectSecrets` (injected at assignment time) and for consolidation work items (enriched at claim time).
-
-**Why:** Steering, QG configs, and provider configs can change between when work is enqueued and when an agent starts. An agent receiving a stale snapshot silently ignores these changes. Confirmed in production: a steering update was invisible to a run enqueued 1h earlier.
-
-**Context:** The current design pre-fetches and serializes the full `JobDistributionRequest` (including `RepoSteeringContent`, `ProviderConfigs`, `QualityGateConfigs`) into `WorkItems.Payload` at orchestration time. The intent was to avoid duplicate GitHub API calls at assignment time — this concern is addressed by moving the fetch to assignment time rather than removing it.
-
-**Alternatives considered:** Snapshot everything at enqueue (current — rejected: silent stale config), re-fetch all on every poll (excessive API calls), selective refresh (too complex to maintain correctly).
-
-**Reassess when:** Never for the principle. If `GetAssignment` performance becomes a bottleneck (due to provider API latency), add a server-side cache with a short TTL (e.g., 30s) — but the freshness contract must hold.
-
-**Status (2026-09-30 audit):** Fixed. `WorkItemDispatchEndpoints.cs` stores only identity fields. `AssignmentEnricher.cs` fetches all mutable config fresh at assignment time with explicit code comment: "This fixes the stale-config problem described in issue #2171."
-
----
-
-### EmitOutputLine must route through Serilog — fixed (#2178)
-
-**Date:** 2026-08-29
-**Category:** architecture
-
-**Decision:** `EmitOutputLine` is the pipeline's progress message channel (`Action<string>` callback). Every invocation must produce a Serilog `Information` entry tagged with `run_id`. The UI output buffer receives the same line as a forwarded side-effect. No line is logged twice — the forwarding is internal to the callback implementation, not a second explicit log call at the call site.
-
-**Why:** Pipeline progress messages ("🔍 Starting code review...", "📝 Generating review summary...") are currently invisible in Grafana. Full run traceability requires that every observable pipeline event be queryable by `run_id` in structured logs — the telemetry philosophy decision already establishes this as a requirement.
-
-**Context:** `EmitOutputLine` was introduced as a lightweight UI streaming callback before Serilog integration was complete. It was never wired through structured logging. OTel spans cover phase boundaries; `EmitOutputLine` covers the intra-phase human-readable stream. Both are needed for full traceability.
-
-**Alternatives considered:** Mirror all lines as Serilog messages (accepted — but emoji strings reduce SNR), dedicated span events per output line (overkill — OTel spans already cover phase structure), UI-only remains (rejected — invisible to ops tooling).
-
-**Reassess when:** If output line volume causes Serilog/Loki ingestion cost issues, add a sampling filter for high-frequency lines. The `run_id` tag enables targeted filtering per run.
-
-**Status (2026-09-30 audit):** Fixed. `PipelineRunLifecycleService.EmitOutputLine` uses `LogContext.PushProperty("PipelineRunId", runId)` + `_logger.Information("[Pipeline] {Line}", message)` — routed through Serilog. A minor edge case for the null-runId path remains but the core Serilog routing is complete.
-
----
-
-### PR description: agent writes to .agent/pr-description.md — stdout is not the output channel
-
-**Date:** 2026-08-29
-**Category:** architecture
-
-**Decision:** `GeneratePrDescriptionAsync` must read the PR description from `.agent/pr-description.md` written by the agent, NOT from `result.OutputLines` (raw stdout). The agent is instructed via prompt to write the description to that file; the service reads it post-execution. This is consistent with the filesystem-as-context decision (agents deliver structured outputs via files, not stdout) and eliminates the current corruption where tool call outputs, reasoning, and git diff content are prepended to the PR body.
-
-**Why:** Joining all stdout lines (`string.Join("\n", result.OutputLines)`) produces a broken PR body when the agent emits any output before or after the description (tool calls, internal monologue, blockquote-stripped reasoning). Confirmed in production: scrambled PR bodies caused by tool invocation output leaking into the description.
-
-**Context:** The file-based output pattern already exists for brain knowledge (`.brain/`), analysis results (`.agent/`), acceptance criteria (`.agent/ac.md`). Using `.agent/pr-description.md` is consistent. The `StripBlockquotePrefix` step was a workaround for Kiro CLI's `> ` formatting — with file output, the agent writes clean markdown directly.
-
-**Alternatives considered:** Keep stdout with delimiter markers — rejected: another bespoke parsing pattern, fragile across agent backends. Keep stdout with extraction (last markdown block) — rejected: unreliable when agents emit multi-section output.
-
-**Reassess when:** Never for the file-based output principle. If `.agent/pr-description.md` is absent after execution (agent failed to write it), fall back gracefully (log warning, skip description — do not corrupt the PR body with raw stdout).
-
-**Status (2026-09-30 audit):** Fixed. `GeneratePrDescriptionAsync` in `PullRequestFinalizationService.cs` reads from `.agent/pr-description.md` via `File.ReadAllTextAsync`. Falls back to `OutputLines` only on `FileNotFoundException`. Prompt instructs file write.
-
----
-
-### AgentAuthorizationFilter reconnect race: implementation detail — no strong opinion
-
-**Date:** 2026-08-29
-**Category:** architecture
-
-**Decision:** No strong preference on the implementation approach for fixing the `[RequiresActiveJob]` filter race during agent reconnection (async `ActiveJobId` set in `RecoverOrphanedStateAsync` vs. filter checking before it completes). Agents may choose the most pragmatic fix: atomic registration, grace-period retry, or guard in `GuardActiveJob`. The hard requirement is that in-flight runs are not killed when the API pod restarts mid-run. Implementation detail — agents decide.
-
-**Reassess when:** Never — once the race is fixed (#2152), the implementation choice is stable.
-
----
-
-### ReconciliationLoop terminal guard: implementation detail — no strong opinion
-
-**Date:** 2026-08-29
-**Category:** architecture
-
-**Decision:** No strong preference on whether `HandleJobCompletedAsync` uses an in-memory processed-job `HashSet`, a GET-before-POST guard, or another mechanism to avoid repeated status posts for completed K8s Jobs within their TTL window (#2177). The hard requirement is that each completed job's status is posted to the API exactly once (or idempotently — the API absorbs duplicates, but unnecessary load is undesirable). Implementation detail — agents decide.
-
-**Reassess when:** Never — once #2177 is fixed, the implementation choice is stable.
-
----
-
-### DispatchLoop concurrency map: filter to Active>0 — implementation detail, no strong opinion
-
-**Date:** 2026-08-29
-**Category:** configuration
-
-**Decision:** No strong preference on the exact implementation of the concurrency map fix (#2176). The hard requirement is that completed K8s Jobs (within their 60-minute TTL window) are excluded from the active concurrency count. `job.Status?.Active > 0` is the obvious filter. Implementation detail — agents decide.
-
-**Reassess when:** Never — once #2176 is fixed, the implementation choice is stable.
-
----
-
-### ExternalCiDuration vs PostPrCiDuration: two separate histograms for two distinct CI poll phases
-
-**Date:** 2026-08-28
-**Category:** architecture
-
-**Decision:** `ExternalCiDuration` (existing) measures the pre-PR CI poll in `AppendExternalCiIfNeededAsync` — triggered on branch push. A new `PostPrCiDuration` histogram must be added to measure the post-PR CI poll in `WaitForPostPrCiAsync` — triggered on the pull_request event after PR promotion. The two are semantically distinct: pre-PR CI validates the branch commit; post-PR CI validates CI workflows that only trigger on `pull_request` events. Emitting both into `ExternalCiDuration` inflates p50/p99 dashboards on runs that execute both phases.
-
-**Context:** The TODO in `WaitForPostPrCiAsync` documents this gap. On paths where both pre-PR and post-PR CI run (e.g., cleanup made no changes → skipCiIfNoChanges → post-PR CI fires), two histogram samples land in `ExternalCiDuration`, making the p99 appear 2× higher than actual worst-case single-phase duration.
-
-**Status (2026-09-06):** `PostPrCiDuration` histogram implemented in #2220. Grafana panel "Post-PR CI Duration (avg / p95)" added as panel 57 in the `coding-agent-pipeline` dashboard (session 21). Panel shows avg and p95 for `quality_gate_post_pr_ci_duration_seconds`, positioned alongside the existing External CI Duration panel. Dashboard update complete — queued item closed.
-
-**Alternatives considered:** Keep single metric with a phase tag (`phase=pre_pr|post_pr`) — equally valid but requires a Grafana filter to disaggregate; separate histograms are more natural for Grafana dashboard panels that show one thing per panel. Run-level aggregation (`TotalCiWaitDuration` emitted once at end) — accurate but loses per-phase granularity needed for debugging.
-
-**Reassess when:** Never for the separation principle. If a third CI poll phase is added, follow the same pattern.
-
----
-
-### IssueReworkService: fail-closed on missing active-run data is intentional
-
-**Date:** 2026-09-22
-**Category:** architecture
-
-**Decision:** When `HousekeepingService` fails to fetch the active-run branch set (Step 4 throws), `IssueReworkService.TriggerConflictReworkAsync` skips ALL rework swaps for that cycle — it does not attempt partial rework on PRs where branches appear safe. Fail-closed is correct: a double-dispatch (swapping `agent:next` onto an issue that already has an active run) produces a stuck duplicate label state that requires manual recovery. A one-cycle rework delay during a K8s blip costs nothing — the housekeeping loop retries on the next iteration. The system runs in the background on a loop; liveness pressure does not outweigh safety.
-
-**Context:** Same fail-closed principle as `PipelineLoopService` leader-gating and `IssueReworkService`'s per-PR active-run check. Partial application with incomplete state data is the category of mistake that created the `DispatchGatedLabels` mechanism.
-
-**Alternatives considered:** Fail-open on missing active-run data (swap where branch name doesn't appear in partial result — unsafe; a truncated or errored list looks identical to "no active runs").
-
-**Reassess when:** A K8s list failure repeatedly blocks urgent rework for multiple consecutive cycles. At that point, add a staleness threshold: use last-known active-run data if it is less than N minutes old rather than treating any error as "unavailable."
-
----
-
-### Dispatch 503: polling loop is the retry mechanism, no explicit handler needed
-
-**Date:** 2026-09-22
-**Category:** architecture
-
-**Decision:** When `DispatchWorkItemService.RunDispatchLifecycleAsync` returns HTTP 503 (PVC race or K8s Job creation failure), the work item remains in `Pending` state. The `WorkItemDispatchLoop` in the Scheduler is a polling loop — on the next cycle, the item is visible in the `Pending` queue and dispatch is retried automatically. No explicit 503-retry logic, dead-letter queue, or operator alert is needed. The system runs in the background on a loop; a missed dispatch attempt is transparently recovered on the next iteration. Speed is not a constraint for background work.
-
-**Context:** Same design principle as "system does not need to be super fast since it runs in the background on a loop anyway." The `DispatchPendingWorkItem` endpoint is the Scheduler-facing path; `DispatchWorkItem` is the agent-facing synchronous path. On the Scheduler path, 503 = "try next cycle." On the agent path (synchronous dispatch), 503 triggers `SafelyCancelOrphanedDispatchedWorkItemAsync` to prevent a stuck work item.
-
-**Alternatives considered:** Explicit retry-after header (adds complexity for a problem the poll loop already handles), dead-letter on repeated 503 (adds operator noise for what is usually a transient K8s blip), operator alert on first 503 (too noisy during routine K8s disruptions).
-
-**Reassess when:** If the polling interval is too coarse for the workload (items waiting multiple full cycles during sustained K8s issues), reduce `WorkItemDispatchLoopIntervalSeconds` or add exponential backoff within the dispatch loop itself.
-
----
-
-### Zero open-issue context on decomposition run: InfrastructureFailure, not agent failure
-
-**Date:** 2026-09-22 (cause corrected 2026-09-25)
-**Category:** architecture
-
-**Decision:** When `run.OpenIssuesDownloaded == 0` on a `DecompositionAnalysis` or `Decomposition` run, `DecompositionAnalysisStep` treats the missing plan file as `FailureReason.InfrastructureFailure` rather than a generic agent failure. The agent literally cannot produce a decomposition plan without issue context — a zero download count means every `RequestGetIssue` call failed. This is the orchestrator's fault, not the agent's. Classifying it as `InfrastructureFailure` preserves the retry budget for real agent failures.
-
-**Correction (2026-09-25):** This entry originally blamed a cross-replica state miss ("`RequestGetIssue` returns 404 when the hub doesn't have the run registered"). That was never the observed cause, and the mechanism doesn't exist as described. A hub call has no HTTP status, and `ResolveIssueProviderForRunAsync` falls back to the WorkItem row in the database when the run lookup misses, so a missing run alone doesn't fail the call; it fails only if the WorkItem row is gone too (`No active run or work item found`). From 2026-07-23 (#1570) until #2927 (2026-09-23), every `RequestGetIssue` call failed for one reason: the agent sent `IssueIdentifier` as a MessagePack map while the hub method takes a `string`, so SignalR rejected the call during argument binding, before the hub method ran. The agent saw only `Failed to invoke 'RequestGetIssue' due to an error on the server.`, and the server logged `InvalidHubParameters` at Debug, which the Serilog override for `Microsoft.AspNetCore` (Warning) filters out. The classification decision is unaffected. Causes that can still produce zero context: the provider call failing after its retries, a missing provider config, or a missing WorkItem row.
-
-**Context:** Errors are swallowed per-identifier in the context writer. The `OpenIssuesDownloaded` counter is the trip-wire. Comparable systems (Devin, OpenHands) don't distinguish infrastructure failures from agent failures — everything consumes the retry budget. This system's distinction reflects that context-miss is a known, categorized failure mode.
-
-**Alternatives considered:** Generic failure classification (simpler, but penalizes the agent's retry budget for orchestrator faults), immediate retry on zero context (could loop indefinitely while the cause persists — the #2927 binding failure was deterministic; bounded-retry via InfrastructureFailure path is safer).
-
-**Reassess when:** `InfrastructureFailure` becomes overloaded with multiple root causes that need different recovery strategies. If so, add more discriminating `FailureReason` variants.
-
----
-
-### RequestGetIssue double-retry tier: intentional resilience, applies to CI waiting loop too
-
-**Date:** 2026-09-22 (implementation facts corrected 2026-09-25)
-**Category:** architecture
-
-**Decision:** A second retry tier on top of the provider's own `CreateGitHubApiPipeline` retry budget is intentional: GitHub API blips lasting longer than the inner pipeline's budget exist in production (brief upstream outages, rate-limit surges at the token boundary). The outer tier provides a longer recovery window without requiring the inner retry count to be bloated. The same double-tier resilience pattern should be applied to the CI waiting loop (`PollCiWithNotStartedRetryAsync`) and other infrastructure-failure-mode loops where the provider call may fail transiently after the inner retry budget is exhausted.
-
-**Correction (2026-09-25) — the outer tier does not cover provider errors today:** This entry originally said `AgentHub.Decomposition.cs` and `AgentOrphanRecoveryService` implement the outer tier by catching the `"Failed to "` errors thrown by `ExecuteWithIssueProviderAsync`. The outer tier is the agent-side SignalR pipeline (`ResiliencePipelineFactory.CreateSignalRPipeline`, used by `OrchestratorProxy`: 3 retries, 2-minute outer timeout). #2835 added a clause to it that retries any `HubException` whose message starts with `Failed to `. That clause never matches a provider failure. When a hub method throws, SignalR prefixes the text, so the agent receives `An unexpected error occurred invoking '<method>' on the server. HubException: <hub message>`. The only messages that start with `Failed to ` are SignalR's own rejections before the method runs, such as `Failed to invoke '<method>' due to an error on the server.` (argument binding) and `Failed to invoke '<method>' because user is unauthorized`. Those are permanent. Until #2927 the clause retried the `RequestGetIssue` binding failure on every call and then failed anyway. Provider errors therefore get only the inner tier today. Before this pattern is applied to other loops, the predicate has to match what the agent actually receives, or the clause should be removed; that choice is still open.
-
-**Context:** The inner `CreateGitHubApiPipeline` has a short budget (tight retry timing, few attempts). A 2-minute outer timeout caps total retry time so this doesn't delay the agent indefinitely. The pattern follows the same reasoning as the `ExternalCiDuration` / `PollCiWithNotStartedRetryAsync` re-push mechanism: GitHub webhooks and API calls are unreliable enough that application-level resilience is required in addition to provider-level retry.
-
-**Alternatives considered:** Single tier with longer inner budget (inflates inner timing for all calls, not just blip-recovery scenarios), no outer tier (accepts occasional hard failure when inner budget is exhausted during brief upstream blips).
-
-**Reassess when:** GitHub API reliability improves measurably, or if the outer tier is observed masking repeated failures that should surface as errors. Track via: `stall.RequestGetIssue.outer_retry_fired` counter if added.
-
----
-
-### ChatSessionWatcher idle-kill: watcher self-await is a known gap, force-delete is the current invariant
-
-**Date:** 2026-09-22
-**Category:** architecture
-
-**Decision:** No strong preference on whether the `ChatSessionWatcher.TryTriggerIdleKillAsync` self-await deadlock is fixed. The current behavior — every idle chat kill burns `ChatTerminationGracePeriodSeconds` before cleanup, with the graceful path structurally unreachable — is acceptable. Force-delete is always correct for idle kills (unresponsive or idle agents by definition don't need graceful shutdown). The grace period wait is a bounded cost (`ChatTerminationGracePeriodSeconds`) and the code has a `// TODO [WARNING]` for the fix. Agents may fix it by routing idle-kill directly through K8s delete + `CleanupSession` (bypassing `TerminateChatSessionAsync`), but only if the idempotent `CleanupSession` CAS gate is preserved.
-
-**Context:** `entry.WatcherTask` is the task running `WatchJobUntilTerminalAsync`, so calling `TerminateChatSessionAsync` (which awaits `entry.WatcherTask`) from inside that task creates a self-await that always times out. The fix is structurally clean: idle-kill should invoke K8s delete directly then call `cleanupCallback` — the same pattern `TerminateChatSessionAsync` uses after the grace period elapses anyway. The pre-existing behavior predates the `ChatSessionWatcher` extraction.
-
-**Alternatives considered:** Keep current (force-delete is correct for idle; grace period is bounded overhead — acceptable); fix via direct K8s delete path (restores graceful kill when agent responds before grace period — faster cleanup, less noise in K8s events).
-
-**Reassess when:** Operators report K8s events noise from repeated force-deletes on idle chat kills, or if `ChatTerminationGracePeriodSeconds` is increased to a value where the overhead becomes measurable.
-
----
-
-### ChatHeartbeatTracker null-tracker: Redis required for multi-replica is already documented — no-opinion on startup warning
-
-**Date:** 2026-09-22
-**Category:** architecture
-
-**Decision:** No strong preference on whether `ChatJobDispatcher.StartAsync` emits a startup warning when `_heartbeatTracker is null` and the API is running multi-replica. The "Chat keepalive Redis required for multi-replica" decision already documents the requirement. The `DistributedAgentRegistryService` pattern (explicit startup warning) would add consistency, but the silent null-tracker degradation is also acceptable since Redis is documented as a multi-replica prerequisite. Agents may add the warning for consistency with `DistributedAgentRegistryService`; no blocking issue exists.
-
-**Context:** `ChatJobDispatcher` receives `null` for `IChatHeartbeatTracker` when Redis is absent, falling back to local in-process ticks. In multi-replica deployments this causes false idle-kills after `ChatIdleTimeoutSeconds`. The existing startup warning in `DistributedAgentRegistryService` follows the same scenario.
-
-**Reassess when:** A production incident traces to chat pods being falsely idle-killed with no log indication that Redis was absent. At that point add the startup warning.
-
----
-
-### DispatchPendingWorkItem advisory lock asymmetry: follow best practices
-
-**Date:** 2026-09-22
-**Category:** architecture
-
-**Decision:** No strong preference on whether the advisory lock in `DispatchPendingWorkItem` (Scheduler path) is also applied to `DispatchWorkItem` (agent-synchronous path). The asymmetry is neither confirmed intentional nor confirmed an oversight. Both patterns are acceptable: the CAS inside `ExecuteDispatchLifecycleAsync` is the cross-path correctness guard; the advisory lock is an efficiency optimization. Agents adding a third dispatch path should assess whether concurrent calls are possible on that path — if yes, follow the `DispatchPendingWorkItem` pattern (add the advisory lock); if no, follow `DispatchWorkItem` (CAS only).
-
-**Reassess when:** An over-dispatch race is traced to the `DispatchWorkItem` path in multi-replica operation. At that point, apply the Postgres advisory lock matching `DispatchPendingWorkItem`.
-
----
-
-### PvcPoolExhaustions counter placement: follow KISS and DRY
-
-**Date:** 2026-09-22
-**Category:** architecture
-
-**Decision:** No strong preference on whether `PvcPoolExhaustions` is emitted exclusively from `DispatchPendingWorkItem` (current) or from all paths that hit the PVC gate. Follow KISS and DRY: if the counter should measure "any PVC gate 503", move it into `ApplyGates` where the gate fires. If the counter's intended semantics are "Scheduler-blocked-by-PVC only" (current comments say this), leave it at the call site. Agents should not introduce a third emission site without aligning with the existing comment-documented intent. If the semantics are clarified to "all exhaustion events", move the counter into `ApplyGates` and remove the two existing call-site emissions.
-
-**Reassess when:** A Grafana dashboard query is documented that relies on the current Scheduler-only semantics, at which point the metric's scope is locked. Until then, either interpretation is acceptable — just keep it consistent.
-
----
-
-## Decision Map
-
-### Relationships
-- "Dual JSON options (Default/Lenient)" enables "Snake_case JsonStringEnumMemberName for LLM-produced enums"
-- "Dual JSON options (Default/Lenient)" enables "No schema versioning — append-only evolution"
-- "Enum roundtrip test is mandatory" constrains "Enum serialization: self-annotation is flexible"
-- "MessagePack int ordinals for SignalR" scoped by "Monolithic orchestrator — now split into 4 services (homogeneous deployment still holds: single Helm release)"
-- "No schema versioning" scoped by "Monolithic orchestrator — now split into 4 services (same SHA homogeneous deployment assumption)"
-- "Token vending: private keys never leave orchestrator" constrains "MessagePack int ordinals for SignalR" (both assume trusted orchestrator↔agent channel)
-- "Circuit breaker is infrastructure safeguard" scoped by "Partial failure contract (enrichment non-fatal, critical path fatal)"
-- "Agent lifetime: pull→push evolution" constrains "Three deployment modes" (K8s-only is now the only mode — condition met and resolved in spec 041)
-- "MaxRunsPerCycle=0 unlimited" scoped by "Agent lifetime: pull→push evolution" (bounded by MaxConcurrentPods per-selector in K8s; docker-compose removed)
-- "Cleanup step before PR" enables "Confidence gate is fail-closed" (cleanup reduces false negatives from cosmetic issues)
-- "MaxRetries=3 arbitrary default" scoped by "Draft PR is the retry-exhausted fallback" (exhausted retries → draft PR, not failure)
-- "Label swap: add-first ordering" scoped by "Token vending: private keys never leave orchestrator" (both assume imperfect external APIs)
-- "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
-- "Project overrides: deep-merge (#1044 resolved)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
-- "LocalPipelineExecutor: decomposition complete" — lives in CodingAgent.Agent (K8s-only agent binary); prior "agent lifetime dual model" correlation is no longer relevant
-- "AgentCoding component ↔ PageService boundary" scoped by "PipelineService event handling" (event state transitions should migrate to PageService per the boundary principle)
-- "Undo snackbar: always show" correlates with "Error messages: sticky with dismiss" (both are feedback pattern decisions — success/undo are transient, errors are persistent)
-- "Drawer tabs: three-component approach" scoped by "AgentCoding component ↔ PageService boundary" (drawer state lives in PageService, rendering in components)
-- "Target user: single operator" scopes "Information density: high for monitoring" (operator expertise justifies dense dashboard)
-- "Target user: single operator" scopes "Monitoring refresh: 5-second polling" (single operator means low server load regardless)
-- "Visual design: dark-first" scopes "Information density: high for monitoring" (dark theme with purple accent designed for dense data display)
-- "Interaction model: mouse-first" constrains "Keyboard shortcuts" (shortcuts are bonus, not primary interaction path)
-- "Pipeline progress: dual-panel" scoped by "Target user: single operator" (desktop-assumed, screen-width-leveraging layout)
-- "Refactoring consolidation loop: autonomous up to PR" scoped by "Adversarial review is default pattern" (review is the quality gate that enables autonomy)
-- "Refactoring auto-dispatch with dependencies" scoped by "Refactoring proposal quality bar" (only proposals passing the quality bar get dependency chains)
-- "Value types / dispatch decomposition: follow DDD" scoped by "No schema versioning" (value types need wire-compat awareness)
-
-- "Prompt architecture: layered composition" scoped by "Adversarial review is default pattern" (structural guardrails enable reliable adversarial review behavior)
-- "AC parsing: regex-based" enables "NonCompliant AC as CRITICAL" (parsing feeds the AC evaluation agent which produces the CRITICAL findings)
-- "NonCompliant AC as CRITICAL" scoped by "MaxRetries=3 arbitrary default" (retry budget bounds the cost of AC false negatives)
-- "Feedback loop: data collection only" correlates with "Refactoring proposal quality bar" (outcome tracking informs quality bar but doesn't auto-adjust it)
-- "Prompt versioning: out of scope" scoped by "Target user: single operator" (multi-team would require versioning)
-- "Code review iteration: CRITICAL-only re-review" scoped by "Adversarial review is default pattern" (review agents produce severity-graded findings that drive the decision tree)
-- "Code review iteration: CRITICAL-only re-review" correlates with "Cleanup step before PR" (cleanup handles cosmetic issues that warnings might leave)
-- "Epic decomposition: two-phase with human gate" scoped by "Refactoring auto-dispatch with dependencies" (simple refactoring is autonomous; complex epics require human gate)
-- "PR creation: draft-first then finalize" enables "Pipeline progress: dual-panel" (draft PR provides visibility during execution)
-- "Brain knowledge: experimental, append-only" scoped by "Filesystem-as-context" (brain is delivered to agents via filesystem like all other context)
-- "Image extraction: experimental with security hardening" scoped by "Token vending: private keys never leave orchestrator" (both reflect defense-in-depth philosophy)
-
-- "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" supersedes "Dispatch fairness: equal round-robin" (session 10 correction)
-- "Housekeeping auto-update concurrency: 1 is permanent default" scoped by "Agent lifetime: pull→push evolution" (serial default fits current deployment's serial merge queue)
-- "GitHub mergeability mapping: conservative null for unknown states" scoped by "Housekeeping auto-update concurrency" (null-state concurrency slot semantics are the correctness invariant the feature depends on)
-- "DispatchGatedLabels: extensible set for human-approval-required transitions" scoped by "Label lifecycle needs formalization (#1046)" (gated labels are one axis of the label state machine)
-- "DispatchGatedLabels: extensible" correlates with "Epic decomposition: two-phase with human gate" (EpicApproved is currently the only gated label, but the set is designed for future approval gates)
-- "MaxDecompositionSubIssueFiles=12: research-based low-confidence" scoped by "Epic decomposition: two-phase with human gate" (sub-issue scope constraint operationalizes 'achievable in one agent run')
-
-- "PipelineLoopService: full loop leader-gated" scoped by "Agent lifetime: pull→push evolution" (all deployments are K8s; the loop runs unconditionally only in test environments without leader election)
-- "PipelineLoopService: full loop leader-gated" enables "Housekeeping auto-update concurrency: 1 is permanent default" (concurrency gate only works correctly when a single leader runs the poll loop)
-- "DatabaseMaintenanceService: Spec 047 superseded migration" scoped by "PipelineLoopService: full loop leader-gated" (leader-gate now lives in Scheduler's RetentionSweepSchedulerService; plain-singleton pattern removes BackgroundService concerns entirely)
-- ~~"DatabaseMaintenanceService: migrate to LeaderElectedPollingService" correlates with "LeaderElectedPollingService: two correctness defects (#2027)"~~ — superseded; migration never executed; Spec 047 resolved both concerns via a different approach
-- "AgentCodingPageService: extract per-drawer orchestrators" scoped by "AgentCoding component ↔ PageService boundary" (drawer orchestration is the next extraction target after the component boundary was established)
-- "DrawerCancellationToken: wrong-token bug (#2028)" scoped by "AgentCodingPageService: extract per-drawer orchestrators" (bug is a symptom of the tight coupling; extraction removes the need for the property entirely)
-- "LeaderElectedPollingService: two correctness defects (#2027)" — resolved; constraint on PipelineLoopService migration lifted
-- "ProviderConfigId validation: no strong opinion" scoped by "Dual JSON options (Default/Lenient)" (both decisions follow the principle: strict at boundaries the system controls, lenient at agent-produced boundaries)
-
-- "LoopStatePersistenceService: no leader guard needed" scoped by "PipelineLoopService: full loop leader-gated" (the loop gate makes eager activation on all replicas safe — all sit in leader-wait until promoted)
-- "LoopStatePersistenceService: no leader guard needed" correlates with "Agent lifetime: pull→push evolution" (90s delay is a rolling-deploy drain guard, not a multi-replica coordination mechanism)
-
-- "1:1:1 template binding: intentional constraint" enables "Epic scope: tracker-of-record determines routing" (both express the same keep-it-simple ownership principle — unambiguous dispatch at every layer)
-- "1:1:1 template binding: intentional constraint" scoped by "Agent provider abstraction supports N backends" (the binding constraint applies per-template regardless of which agent provider handles it)
-- "Epic scope: tracker-of-record determines routing" scoped by "1:1:1 template binding: intentional constraint" (project-epic cross-repo routing is the escape valve that makes 1:1:1 sufficient)
-- "agent:done ordering: full pipeline + post-PR CI" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (post-PR CI is critical path; enrichment like brain sync is non-fatal but still runs before agent:done)
-- "agent:done ordering: full pipeline + post-PR CI" enables "ExternalCiDuration vs PostPrCiDuration" (separate histogram justified by the fact that post-PR CI is a distinct tracked phase that gates agent:done)
-- "Kiro token/cost: provider subscription limitation" scoped by "Agent provider abstraction supports N backends" (per-backend telemetry asymmetry is the natural consequence of heterogeneous backends)
-- "Kiro token/cost: provider subscription limitation" contradicts "Telemetry philosophy: instrument every decision point" (Kiro runs have zero token/cost telemetry — acknowledged gap until provider exposes metrics)
-- "MaxConcurrentDecompositions global-only (#3150)" scoped by "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" (global cap is a single pool shared by all tiers; per-project quotas would require sub-pools)
-
-- "Pod anti-affinity: soft spreading" scoped by "Monolithic orchestrator is intentional" (stateless services; co-location reduces HA but doesn't corrupt state)
-- "AgentJobTimeoutSeconds: unified backstop" scoped by "Agent lifetime: pull→push evolution" (K8s-only; both work-item and chat pods are ephemeral K8s Jobs)
-- "AgentJobTimeoutSeconds: unified backstop" enables "Chat keepalive Redis required for multi-replica" (the backstop fires when the idle-kill circuit fails, which happens when Redis is absent in multi-replica)
-- "Chat keepalive Redis required for multi-replica" scoped by "HMAC key derivation for agent auth" (Redis is already in the dependency stack for multi-replica SignalR; this adds one more reason it's required)
-- "ExternalCiDuration vs PostPrCiDuration" scoped by "Telemetry philosophy: instrument every decision point" (the split follows from the principle that each observable event gets its own instrument)
-- "PostPrCiDuration: separate histogram" scoped by "ExternalCiDuration vs PostPrCiDuration" (the new histogram is the actionable consequence of the separation decision); #2220 implemented; Grafana panel update still pending
-- "WorkItems.Payload dispatch-time snapshot" scoped by "Dual JSON options (Default/Lenient)" (fresh fetch at assignment uses Lenient deserialization for backward compat); fixed — #2171 resolved
-- "WorkItems.Payload null-discriminator: no strong opinion" scoped by "WorkItems.Payload dispatch-time snapshot" (discriminator is the schema boundary guard for the snapshot feature); #2221 tracks
-- "AssignmentEnricher: 503 on enrichment failure" scoped by "WorkItems.Payload dispatch-time snapshot" (enrichment failure must not produce a partial assignment — 503 preserves the freshness contract)
-- "AssignmentEnricher: 503 on enrichment failure" scoped by "Partial failure contract: enrichment steps non-fatal, critical path fatal" (enrichment IS on the critical path — a configless job spec degrades quality; 503 is the correct contract)
-- "Traceparent propagation: bidirectional" enables "Telemetry philosophy: instrument every decision point" (full run traceability in Grafana Tempo requires end-to-end span linkage)
-- "Traceparent propagation: bidirectional" scoped by "Token vending: private keys never leave orchestrator" (both affect what flows over the agent↔API channel — traceparent is metadata, not secret)
-- "Live K8s dual ListJobsAsync: correctness requirement" scoped by "Agent lifetime: pull→push evolution" (K8s-only push model; live query is necessary because ephemeral Jobs are the only state)
-- "Live K8s dual ListJobsAsync: correctness requirement" constrains "Live K8s dual ListJobsAsync: optimization deferred" (optimization is blocked until K8s informer or TTL cache is introduced)
-- "DistributedAgentRegistry _allAgentsCache staleness: no strong opinion" scoped by "Chat keepalive Redis required for multi-replica" (both are multi-replica correctness concerns; cache staleness is low-risk because dispatch reads Redis directly)
-- "WorkItems.Payload dispatch-time snapshot" enables "Token vending: private keys never leave orchestrator" (tokens vended fresh at assignment time, not expired from enqueue snapshot)
-- "EmitOutputLine → Serilog routing" scoped by "Telemetry philosophy: instrument every decision point" (full run traceability requires every observable event to be Serilog-queryable); fixed — #2178 resolved
-- "AgentJobTimeoutSeconds: removed — single AgentTimeout" supersedes "AgentJobTimeoutSeconds: Helm default + per-project override" (session 17 entry); #2179 tracks the removal
-- "PriorityWeight: secondary sort within RunType tier" scoped by "Dispatch priority: static ordering Review > Decomp > Impl > Consolidation" (tier ordering is primary; weight is secondary within tier)
-- "FeedbackTimeoutSeconds: must be PipelineConfiguration field" scoped by "AgentJobTimeoutSeconds: removed" (part of the same timeout simplification arc — no more hardcoded timeouts)
-- "PR description via .agent/pr-description.md" scoped by "Filesystem-as-context" (structured agent outputs delivered via files, not stdout)
-- "PR description via .agent/pr-description.md" enables "Partial failure contract" (description failure is non-fatal; reading from file makes fallback cleaner — no stdout pollution)
-- "Grafana Faro CDN-only" scoped by "Telemetry philosophy: instrument every decision point" (RUM is the frontend telemetry complement; CDN-only is acceptable for current deployment target)
-- "SecurityScan: zombie code → #2400" scoped by "Confidence gate is fail-closed" (dead gate check that never fires cannot contribute to gate outcome)
-- "CoberturaParser/JacocoParser: dead code → #2401" scoped by "SecurityScan: zombie code → #2400" (both are artifacts of the coverage/security scan removal; same cleanup pattern)
-- "Cleanup prompt budget (10 calls): first approximation" scoped by "Cleanup step before PR is intentional quality polish" (budget bounds the step's cost, not its intent)
-- "RetryErrors.Enqueue on transient iterations: known noise" scoped by "MaxRetries=3 arbitrary default" (transient-cap bounds the blast radius; bounded noise within a bounded retry budget)
-- "RetryErrors.Enqueue on transient iterations: known noise" correlates with "Partial failure contract" (transient provider errors are non-fatal enrichment noise, not critical-path failures)
-- "HousekeepingTriggerCooldownMinutes: must be PipelineConfiguration field" scoped by "FeedbackTimeoutSeconds: must be PipelineConfiguration field" (same pattern: no hardcoded timeout constants anywhere in the system)
-- "HousekeepingTriggerCooldownMinutes: must be PipelineConfiguration field" scoped by "Housekeeping auto-update concurrency: 1 is permanent default" (the cooldown and concurrency limit together define the housekeeping slot-fairness contract)
-- "AgentTimeout chain: verified complete" enables "WorkItemEntity.TimeoutSeconds zero-sentinel: keep until migration" (chain only verified safe once the sentinel guards are audited end-to-end)
-- "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" scoped by "AgentTimeout chain: verified complete" (sentinel is the one remaining correctness gap in the otherwise-complete chain)
-- "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" constrains "AgentTimeout end-to-end: chain verified" (removal gated on DB migration)
-- "FeedbackTimeoutSeconds stale log → #2403" scoped by "FeedbackTimeoutSeconds: must be PipelineConfiguration field" (promotion fixed the timeout logic; log message was missed)
-- "PostPrCiDuration Grafana panel: added session 21" resolves "PostPrCiDuration Grafana panel: confirmed pending session 20"
-- "AgentWorkspacePaths → CodingAgent.Contracts (#2852)" scoped by "Filesystem-as-context" (centralized path constants are the stable reference points for context file delivery)
-- "AgentWorkspacePaths → CodingAgent.Contracts (#2852)" constrains "PR description via .agent/pr-description.md" (once moved, PrDescriptionFilePath constant in Contracts is reachable from all assemblies)
-- "catch(Exception) MarkCompleted gap → #2851" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (quality gate failure is critical path — ghost run accumulation is the consequence of the missing MarkCompleted)
-- "catch(Exception) MarkCompleted gap → #2851" correlates with "ConflictRestart MarkCompleted fix (#2778/#2789)" (same root cause, same file, sibling terminal path; pattern: every terminal catch calling AddRunToHistoryAsync must also call run.MarkCompleted() first)
-- "ReconcileOrphanedPipelineRunsAsync load-all: follow best practices" scoped by "catch(Exception) MarkCompleted gap → #2851" (root-cause fix reduces ghost accumulation; load-all performance concern is moot once #2851 is closed)
-- "ReconcileOrphanedPipelineRunsAsync OCE swallowing: follow best practices" scoped by "ReconcileOrphanedPipelineRunsAsync load-all: follow best practices" (same method, both inconsistencies; apply canonical patterns on next touch)
-- "AgentStallMonitor kill threshold = AgentTimeout: intentional" scoped by "AgentTimeout end-to-end: chain verified complete" (single config knob governs application-layer kill and K8s backstop; +60s buffer makes K8s last resort)
-- "AgentStallMonitor kill threshold = AgentTimeout: intentional" correlates with "WorkItemEntity.TimeoutSeconds zero-sentinel → #2405" (both are consequences of the single-AgentTimeout design; sentinel removal closes the last gap)
-- "StallPollInterval not project-overridable: intentional" scoped by "StallWarningInterval is project-overridable" (polling is system-level, warning cadence is per-project; asymmetry is deliberate)
-- "Stall warnings are flat (no escalation): intentional" scoped by "Telemetry philosophy: instrument every decision point" (Warning repetition IS the signal; separate kill Error is already instrumented)
-- "OpenCode health: session-status polling, not OS signals" scoped by "Agent provider abstraction supports N backends" (health mechanisms differ by backend transport; both satisfy the stall monitor contract via AgentHealthStatus)
-- "OpenCode health: session-status polling, not OS signals" constrains "OpenCode provider returns IsProcessAlive=null" (null is correct — stall.process_deaths=0 for OpenCode is expected, not a telemetry gap)
-- "AgentCodingPageService: stable at 460 lines" resolves "AgentCodingPageService: razor component is current decomposition target" (drawer extraction complete; 460 lines is stable resting point; no further extraction planned)
-- "EnsureSessionAsync stall monitoring: coverage complete" scoped by "AgentStallMonitor kill threshold = AgentTimeout: intentional" (session warm-up already wrapped; post-PR enrichment intentionally not wrapped)
-- "EnsureSessionAsync stall monitoring: coverage complete" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (post-PR enrichment is non-fatal — stall monitoring with kill semantics would conflict with best-effort intent)
-- "Conflict rework re-queues agent:done: intentional" scoped by "Label lifecycle: formal state machine (#1046)" (conflict rework is a label transition that bypasses normal state-machine entry points; only abandonment labels block it)
-- "Conflict rework re-queues agent:done: intentional" constrains "HousekeepingTerminalReworkBlockers set" (only wont-do and cancelled are blockers; all other labels including done are fair game for conflict re-queue)
-- "HousekeepingActiveLabels: narrow by design" scoped by "Conflict rework re-queues agent:done: intentional" (the two sets are intentionally distinct: active-work labels protect branches; abandonment labels block conflict re-queue)
-- "StaleBranchCleaner double-scan: should reuse input → #2880" scoped by "Partial failure contract: enrichment non-fatal" (branch cleanup is a housekeeping enrichment step; the double-fetch is a correctness workaround, not a design intent)
-- "HousekeepingMaxSlotAgeMinutes: dead config → #2881" scoped by "HousekeepingTriggerCooldownMinutes: must be PipelineConfiguration field" (same housekeeping config area; both should be lean)
-- Automated calibration design remains explicitly deferred
-- Housekeeping feature calibration data — no empirical data yet; revisit after 50+ housekeeping cycles
-- AgentCodingPageService decomposition — decision captured but implementation not yet started
-- `RateLimiter` null-forgiving operator (#1994) — no opinion captured, implementation detail
-- ~~Timeout field proliferation~~ — HousekeepingTriggerCooldown is the last remaining hardcoded timeout (session 20/21); #2404 tracks
-- DistributedAgentRegistry `_allAgentsCache` races — session 19: no-opinion, #2219 tracks
-- Payload null-discriminator fragility — session 19: no-opinion, #2221 tracks
-- ~~PostPrCiDuration Grafana panel~~ — resolved session 21: panel 57 added to `coding-agent-pipeline` dashboard
-- AssignmentEnricher 503 correctness gap — session 19: issue #2222 created
-- Traceparent agent→orchestrator gap — session 19: issue #2223 created
-- SecurityScan zombie code — session 20: issue #2400 created
-- Dead CoberturaParser/JacocoParser — session 20: issue #2401 created
-- RetryErrors transient-enqueue noise — session 20: known, low-priority, bounded by transient cap
-- ~~AgentTimeout end-to-end propagation~~ — resolved session 21: chain verified complete; #2405 tracks zero-sentinel cleanup
-- FeedbackTimeoutSeconds stale log — session 21: issue #2403 created
-- WorkItemEntity.TimeoutSeconds zero-sentinel — session 21: issue #2405 created (migration + guard removal)
-- HousekeepingTriggerCooldownMinutes promotion — session 21: issue #2404 created
-- catch(Exception) MarkCompleted gap — session 22: issue #2851 created
-- AgentWorkspacePaths in wrong assembly — session 22: issue #2852 created
-- DirectoryNotFoundException unhandled in GeneratePrDescriptionAsync — session 22: no-opinion, follow best practices (catch IOException broadly)
-- ProviderConfigId Phase 2 migration — session 22: no-opinion, apply if natural opportunity arises
-- ReconcileOrphanedPipelineRunsAsync load-all inconsistency — session 22: no-opinion, apply ExecuteUpdateAsync on next touch
-- ReconcileOrphanedPipelineRunsAsync OCE swallowing inconsistency — session 22: no-opinion, re-throw on next touch
-- ~~AgentCodingPageService decomposition~~ — resolved session 23: 460 lines, drawer extraction complete, stable
-- ~~AgentStallMonitor kill/warning/health semantics~~ — resolved session 23: 3 decisions captured
-- ~~EnsureSessionAsync stall monitoring coverage~~ — resolved session 23: both call sites already wrapped; post-PR enrichment intentionally excluded
-- DispatchWorkItemService.ApplyGates sanitization contract — session 24: no-opinion, follow existing value-type pattern if adding new user-controlled parameters
-- Conflict rework and stale-branch label policy — session 24: decisions captured (#2880, #2881 for follow-ups)
-- ChatSessionWatcher idle-kill watcher-self-await — session 25: no-opinion (force-delete path is the invariant; fix acceptable if pursued)
-- RequestGetIssue double-retry tier — session 25: intentional resilience pattern; same policy applies to CI waiting loop. Corrected 2026-09-25: the implemented outer tier never matches provider errors (see entry)
-- Zero open-issue context = InfrastructureFailure — session 25: confirmed correct classification. Corrected 2026-09-25: the observed cause was the SignalR argument-binding failure fixed in #2927, not a cross-replica state miss
-- Dispatch 503 recovery — session 25: next poll cycle is the retry mechanism; no explicit 503 handler needed
-- IssueReworkService fail-closed on missing active-run data — session 25: confirmed correct; safety over liveness on a polling loop
-- PvcPoolExhaustions counter placement — session 26: no-opinion, follow KISS/DRY — emit from ApplyGates if semantics are "all exhaustion events", leave at call site if Scheduler-only is intentional
-- DispatchPendingWorkItem advisory lock asymmetry — session 26: no-opinion, follow best practices on new dispatch paths
-- ChatHeartbeatTracker null-tracker startup warning — session 26: no-opinion, Redis already documented as required; warning would add consistency
-
-- "PvcPoolExhaustions counter placement: follow KISS/DRY" scoped by "Telemetry philosophy: instrument every decision point" (counter scope must match the event semantics; KISS/DRY favors single-site emission)
-- "DispatchPendingWorkItem advisory lock asymmetry: follow best practices" scoped by "Dispatch loop belongs in a leader-elected controller" (advisory lock is the per-path contention guard; CAS is the cross-path correctness guard)
-- "ChatHeartbeatTracker null-tracker: Redis required for multi-replica" scoped by "Chat keepalive Redis required for multi-replica" (null-tracker is the fallback when the documented requirement is not met)
-
-- "IssueReworkService: fail-closed on missing active-run data" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (rework swap is enrichment — skipping one cycle is non-fatal; double-dispatch would be a correctness violation)
-- "IssueReworkService: fail-closed on missing active-run data" scoped by "HousekeepingActiveLabels: narrow by design" (both are housekeeping guard conditions that fail-closed when state is uncertain)
-- "Dispatch 503: polling loop is retry mechanism" scoped by "Dispatch loop belongs in a leader-elected controller" (Scheduler's WorkItemDispatchLoop is the polling loop that picks up Pending items; 503 = item stays Pending)
-- "Dispatch 503: polling loop is retry mechanism" correlates with "AssignmentEnricher: 503 on enrichment failure" (both use 503 as a signal that the work item must be retried — but at different layers: Scheduler-facing vs agent-facing)
-- "Zero open-issue context = InfrastructureFailure" scoped by "Partial failure contract: enrichment non-fatal, critical path fatal" (context delivery is on the critical path for decomposition; zero context is infrastructure fault, not agent fault)
-- "Zero open-issue context = InfrastructureFailure" scoped by "Open issue context: cross-issue awareness" (the context system failing completely is a different failure mode than partial or absent context by design)
-- "RequestGetIssue double-retry tier: intentional" scoped by "External CI re-push: workaround for GitHub webhook unreliability" (same root cause: GitHub API and webhook delivery are unreliable; application-layer resilience on top of provider-layer retry is the established pattern)
-- "RequestGetIssue double-retry tier: intentional" constrains "RequestGetIssue double-retry tier applies to CI waiting loop too" (same pattern should be applied consistently across all provider-dependent polling loops)
-- "ChatSessionWatcher idle-kill self-await: force-delete invariant" scoped by "AgentJobTimeoutSeconds: unified backstop" (grace period cost is bounded; force-delete on idle is correct regardless of agent responsiveness)
-- "ChatSessionWatcher idle-kill self-await: force-delete invariant" scoped by "Chat keepalive Redis required for multi-replica" (idle-kill fires when heartbeat is absent; Redis is the authoritative heartbeat for multi-replica — both decisions protect chat session correctness)
-
-### Queued Questions (for next session)
-- Automated calibration design — when a clear mechanism emerges, revisit
-- Housekeeping calibration: after 50+ branch-update cycles, is concurrency=1 still correct?
-- Grafana Faro CSP: when CSP is added, revisit `script-src` to include `unpkg.com`
-- RetryErrors transient-enqueue gate: if failure-feedback prompt accuracy degrades, revisit gating Enqueue on RetryOutcome.Retry
-- ProviderConfigId Phase 2: apply if natural opportunity arises (no-opinion, no blocking issue)
-- ChatSessionWatcher idle-kill deadlock: if the watcher self-await TODO is actioned, verify the fix doesn't regress the idempotent CleanupSession CAS gate
-- RequestGetIssue double-retry: the outer tier's `Failed to ` predicate never matches provider errors (corrected 2026-09-25). Decide whether to fix the predicate or remove the clause before applying the pattern to the CI waiting loop (PollCiWithNotStartedRetryAsync)
-
----
-
-### HeartbeatMonitorService: deleted at 041–045 arc close (T1, arch-audit 2026-08-22)
-
-**Date:** 2026-08-22
-**Category:** architecture
-
-**Decision (Option B — delete):** `HeartbeatMonitorService` and its six sweep phases (`ChatAgentSweepPhase`, `StaleHeartbeatSweepPhase`, `OrphanRestoredJobSweepPhase`, `ProgressTimeoutSweepPhase`, `DisconnectedAgentSweepPhase`, `OrphanedRunSweepPhase`) were deleted. The source files are gone; the empty `SweepPhases/` directory was removed.
-
-**Rationale:** The K8s topology (agents are ephemeral one-shot pods, not a long-lived fleet) makes several sweep phases hazardous:
-- `DisconnectedAgentSweepPhase` would fail runs for pods that completed and exited normally.
-- `StaleHeartbeatSweepPhase` and `ProgressTimeoutSweepPhase` duplicate work already done by `ReconciliationService` in JobController.
-- Only `OrphanRestoredJobSweepPhase` had no JobController equivalent — but `AgentOrphanRecoveryService` now logs a warning and ReconciliationService's work-item timeout fires within `ReconciliationTimeoutSeconds` (default: 3600s), which is acceptable.
-
-**What covers timeout enforcement now:**
-- **Work-item timeouts:** `ReconciliationService` + `ReconciliationLoop` in `CodingAgent.JobController`.
-- **Orphan detection/restoration:** `AgentOrphanRecoveryService` (in Hub, fires on agent re-registration).
-- **Stale-heartbeat / disconnect state cleanup:** Not enforced in the agent registry — agents are ephemeral. A pod that exits simply stops sending heartbeats; its registry entry ages out naturally when the reconciler terminates its work item.
-
-**`OrphanRestoredAt` field retained:** The field and its writers in `AgentOrphanRecoveryService`, `AgentHub.Lifecycle`, `AgentJobLifecycleService`, and `RunLifecycleManager` remain live. They gate the "should we fail this run if agent goes silent?" logic inside `AgentOrphanRecoveryService`'s crash-recovery path and are cleared on successful job completion.
-
-**T4 test guard:** `LayerBoundaryTests.AllBackgroundServices_AreRegisteredOrRetired` includes `HeartbeatMonitorService` in its retired allowlist with a "DELETED — do not add back" comment. The guard will fail if the class is ever re-introduced without a corresponding `AddHostedService` call.
-
----
-
-### AgentSelectorKey: canonical label-to-selector serialization (T22, arch-audit 2026-08-22)
-
-**Date:** 2026-08-22
-**Category:** architecture
-
-**Decision:** Extracted `AgentSelectorKey.From(IEnumerable<string>? labels)` into `CodingAgent.Pipeline.Models.AgentSelectorKey`. It normalises a label list into the comma-separated, ordinally-sorted string stored in `WorkItemEntity.AgentSelector` and `JobDistributionRequest.AgentSelector`.
-
-**Rationale:** The original two callers (`ConsolidationDispatchService.cs` and `ConsolidationRehydrationExtensions.cs`, both since deleted in #3030/#3204) had byte-identical label-to-selector logic that had already co-changed 4 times. Centralising in `AgentSelectorKey.From()` makes the invariant impossible to violate silently — divergence in sort order or separator would cause agent selection to return `null` (no match) rather than a compile error. Current callers: `ConsolidationService.cs`, `ConsolidationJobPreparationService.cs`, `ConsolidationSelectorResolver.cs`.
-
-**Reassess when:** A third call site appears, or the separator changes (both must move together).
-
-### ScanPagedAsync: shared over-fetch paging loop for PostgresPipelineRunHistoryService (T22, arch-audit 2026-08-22)
-
-**Date:** 2026-08-22
-**Category:** architecture
-
-**Decision:** Extracted `private ScanPagedAsync(db, page, pageSize, fetchBatch, include, ct)` in `PostgresPipelineRunHistoryService`. The two paged-scan methods (`GetRunHistoryPagedInternalAsync` and `GetRunHistoryPagedWithFeedbackFilterInternalAsync`) differed only by their fetch delegate (LINQ vs `FromSqlRaw`) and an optional extra predicate for feedback-only. Three shared bugfix commits had already touched both.
-
-**Reassess when:** A third paged query with a different fetch strategy is added — extend the same helper.
-
-### Agent mode naming: ChatMode and WorkItemMode replace SignalRMode and K8sMode (T23, arch-audit 2026-08-22)
-
-**Date:** 2026-08-22
-**Category:** naming / architecture
-
-**Decision:** `AgentSignalRModeRegistration` → `AgentChatModeRegistration`; `AgentK8SModeRegistration` → `AgentWorkItemModeRegistration`.
-
-**Rationale:** The old names were actively misleading — both modes use SignalR and both run in Kubernetes. The essential difference is:
-
-- **Work-item mode** (one-shot batch): pod owns a durable `WorkItem` row; must drive it to a terminal status; uses `AgentConnectionManager`, `WorkItemAgentService`, and `IJobCompletionReporter`.
-- **Chat mode** (long-lived interactive): pod owns no durable row; product is streamed output; uses `AgentConnectionLifecycle`, `AgentWorkerService`, `ChatJobExecutor`, and `CriticalMessageBuffer`.
-
-**The split is deliberate and should not be re-unified.** Registration overlap between the two files is 0% — not one registration line is shared. Three of ~10 slots fill the same abstraction with a genuinely different implementation (e.g., `IJobCompletionReporter` vs `SignalRCompletionReporter`). Merging them behind an `if` would be strictly worse.
-
-**Dead branch removed at same time:** The `!isChatMode` check at `AgentWorkerService.cs:94` is the correct live path (wires `OnAssignJob` for work-item pods). Confirmed live — not removed.
-
----
-
-### DistributedAgentRegistryService: _allAgentsCache staleness is acceptable — no strong opinion on fix approach
-
-**Date:** 2026-08-31
-**Category:** architecture
-
-**Decision:** No strong preference on how to fix the documented `_allAgentsCache` race in `GetIdleAgentsAsync` / `GetAllAgentsAsync` (TODOs at lines ~511 and ~554). The hard requirement is: dispatch correctness must not be affected. Four TODO (WARNING) comments document the issue explicitly in source. Agents should resolve them via whichever approach is simplest: `Interlocked.Exchange` for full replacements, `lock(_cacheUpdateLock)` via a dedicated `SemaphoreSlim(1)` for partial merges, or promoted `KNOWN-STALENESS:` comments if the staleness is accepted as a best-effort optimization. `#2219` tracks the fix.
-
-**Context:** `_allAgentsCache` is used only for the OTel `agent.jobs.active` gauge (`GetBusyAgentCount` → `GetAllAgents` sync) and non-dispatch reads. Dispatch itself reads Redis directly via `GetIdleAgentsAsync` (which returns fresh Redis data regardless of cache state). A deregistered agent resurrected in the in-memory cache does not affect dispatch — it only inflates the gauge transiently.
-
-**Alternatives considered:** Full async lock (introduces `SemaphoreSlim` overhead), drop `_allAgentsCache` entirely (callers already do `GetAwaiter().GetResult()` on the async path), accept staleness (cache is best-effort).
-
-**Reassess when:** Never for the principle — dispatch correctness is the invariant. Cache staleness in the OTel gauge is acceptable. `#2219` tracks cleanup of the TODO comments.
-
----
-
-### WorkItems.Payload: null-discriminator for schema detection is fragile — no strong opinion on timing of fix
-
-**Date:** 2026-08-31
-**Category:** architecture
-
-**Decision:** No strong preference on when to add `PayloadSchemaVersion` to replace the fragile `ProviderConfigs == null` null-discriminator in `GetAssignment`. The current design works correctly for all rows written after `#2171`. The fragility (a legacy row with `ProviderConfigs` accidentally null being misclassified as new-schema) has a small but non-zero probability surface. `#2221` tracks the fix. Agents encountering a breaking schema change or adding a new field to `JobDistributionRequest` should evaluate whether adding `PayloadSchemaVersion` at that point is the right time.
-
-**Context:** The code itself documents the gap: `NOTE: [WARNING] The null-discriminator is fragile: an old-schema row where ProviderConfigs happened to deserialize as null ... would be misclassified as new-schema.` The suggested fix (`PayloadSchemaVersion = int?` in `JobDistributionRequest`, set to `1` in `BuildMinimalPayload`, discriminated in `GetAssignment`) requires no DB migration — the field lives in the `Payload` JSONB column.
-
-**Alternatives considered:** Keep null-discriminator permanently (acceptable risk for stable schema), add a sentinel in an existing nullable field (fragile in a different way).
-
-**Reassess when:** A breaking schema change to `JobDistributionRequest` is required, or a serialization regression causes a null-discriminator false-positive in production. At that point `#2221` becomes urgent.
-
----
-
-### PostPrCiDuration: separate histogram from ExternalCiDuration — create tracking issue
-
-**Date:** 2026-08-31
-**Category:** architecture
-
-**Decision:** `WaitForPostPrCiAsync` must emit into a dedicated `PostPrCiDuration` histogram, not the existing `ExternalCiDuration`. The two CI poll phases are semantically distinct (pre-PR: branch push; post-PR: `pull_request` event). Emitting both into the same histogram inflates p50/p99 dashboards on runs that execute both phases (2× samples). `#2220` tracks the fix.
-
-**Context:** The TODO in `QualityGateExecutor.RetryLoop.cs:~210` documents this gap. On paths where both pre-PR and post-PR CI run (cleanup has no changes → post-PR CI fires), two samples land in `ExternalCiDuration`. The telemetry philosophy decision ("instrument every decision point") requires each observable event to have its own instrument.
-
-**Alternatives considered:** Single metric with `phase=pre_pr|post_pr` tag (valid but requires Grafana filter to disaggregate), run-level aggregate (loses per-phase granularity needed for debugging).
-
-**Reassess when:** Never for the separation principle. `#2220` tracks implementation.
-
----
-
-### Live K8s dual ListJobsAsync calls per dispatch cycle — two calls are correct by design
-
-**Date:** 2026-08-31
-**Category:** architecture
-
-**Decision:** `DispatchLoop` and `ConsolidationDispatchLoop` each issue **two** `ListJobsAsync` calls per dispatch cycle when kiro items are present: one for `BuildConcurrencyMapAsync` (active job count per selector, called before the per-item loop) and one per kiro item for `SelectAvailablePvcAsync` (PVC availability, called inside `_pvcSelectLock`). These cannot be safely merged. Merging would require the PVC selection to use a snapshot taken before the lock — but concurrent cycles or loops may have created jobs between the snapshot and the lock acquisition. The second call is a correctness requirement: PVC selection must reflect the state of K8s at the moment the lock is held. The `SameLoop_ConcurrentCycles` and `CrossLoop` tests confirm this: both rely on the stateful mock returning different data for each `ListJobsAsync` call as jobs are created.
-
-**Context:** Option B (merge into one call) was implemented and reverted when two TOCTOU tests failed. The tests are correct: the per-item PVC query must be fresh. The only safe optimization would be to merge the two calls if `BuildConcurrencyMapAsync` were also executed inside `_pvcSelectLock` — but that would serialize the concurrency map computation (a per-cycle-level concern) into the per-item lock, which is worse.
-
-**Alternatives considered:** Short-lived in-process cache with TTL = dispatch cycle interval (~5s) — valid if K8s API latency becomes a bottleneck, but adds complexity. K8s informer watch stream (avoids polling entirely) — major architectural change, deferred.
-
-**Reassess when:** K8s API latency on `ListJobsAsync` becomes measurable (e.g., >100ms per call under load with many concurrent items). At that point, a per-cycle in-process cache with TTL shorter than the cycle interval is the right optimization.
-
----
-
-### AssignmentEnricher: enrichment failure must return 503, not degraded 200
-
-**Date:** 2026-08-31
-**Category:** architecture
-
-**Decision:** When `AssignmentEnricher.EnrichAsync` fails transiently (DB timeout, provider resolution failure), `GetAssignment` must return 503, not a degraded identity-only 200. An agent receiving a 200 with `ProviderConfigs = null`, `QualityGateConfigs = null`, and `PipelineConfiguration = null` treats it as a valid job spec and proceeds — running without quality gates or steering. This is a correctness gap. `#2222` tracks the fix.
-
-**Context:** The current code swallows all non-`OperationCanceledException` exceptions in `EnrichAsync` and returns `null`, which the endpoint treats as "degraded but acceptable." The comment explicitly documents this as a gap: `NOTE: [WARNING] assignmentEnricher is nullable ... If enrichment fails silently, agents receive an identity-only 200 with no configs.` Comparable systems (GitHub Copilot CCA) return 503 on transient assignment failures; agents implement retry.
-
-**Alternatives considered:** Log at Error level + emit OTel counter (makes silent degrade visible without behavior change — insufficient), configurable degrade-vs-fail per failure type (over-engineered for a clear correctness requirement).
-
-**Reassess when:** Never for the 503-on-failure principle. If `GetAssignment` performance becomes a bottleneck due to enrichment latency, add a short-TTL server-side cache for config resolution — but the freshness contract must hold.
-
----
-
-### Traceparent propagation: agent→orchestrator direction must be implemented
-
-**Date:** 2026-08-31
-**Category:** architecture
-
-**Decision:** W3C traceparent must be propagated **bidirectionally**: orchestrator→agent (implemented in #2211) AND agent→orchestrator. `WorkItemHttpClient` must inject `Activity.Current`'s traceparent into all outgoing orchestration-channel HTTP calls (`GetAssignmentAsync`, `PostStatusAsync`, `PostLabelSwapAsync`). Without this, agent-sourced status updates start disconnected root spans in Grafana Tempo — two separate trace trees per run instead of one. `#2223` tracks the fix.
-
-**Context:** The current propagation is one-directional. Agent spans are children of the API request that created the WorkItem. But when the agent calls `POST /status` or `GET /assignment`, those API spans are independent root spans. Correlation today requires querying by `run_id` tag across both trees. The preferred fix is manual header injection in `WorkItemHttpClient` (targeted to the orchestration channel only, not provider API calls like GitHub/GitLab).
-
-**Alternatives considered:** `AddHttpClientInstrumentation()` (auto-propagates on all `HttpClient` calls, including provider API calls — undesirable), tag-based correlation only (sufficient for debugging but not for end-to-end trace visualization).
-
-**Reassess when:** Never for the bidirectional principle once implemented. Chat pods (`AgentWorkerService`) use a persistent SignalR connection — traceparent for chat sessions is a separate concern, out of scope for `#2223`.
-
----
-
-### ConsolidationRuns table dropped; ConsolidationRun and ConsolidationRunStatus types deleted (issue #3032)
-
-**Date:** 2026-09-30
-**Category:** data-model, cleanup
-
-**Decision:** The `ConsolidationRuns` DB table has been dropped and the `ConsolidationRun` model class plus `ConsolidationRunStatus` enum have been permanently deleted from the codebase. `ConsolidationRunType` is retained because it is still used by the dispatch system, UI, and run history tracking.
-
-**Context:** Prior issues (#3027–#3031) removed all consumers of `ConsolidationRun` and `ConsolidationRunStatus`. Consolidation runs are now tracked exclusively as `PipelineRuns` with `RunType = PipelineRunType.Consolidation`. The `ConsolidationRuns` table was a historical artefact from the pre-unification architecture where consolidation had its own separate persistence path. The backfill sweep (`DatabaseMaintenanceService.BackfillConsolidationRunsAsync`) that migrated legacy rows into `PipelineRuns` has also been removed since there is no source table to read from. `ConfigMigrationService.MigrateConsolidationRunsAsync` (the JSON-to-DB importer) and `ConfigExportService.ExportConsolidationRunsAsync` have been removed for the same reason.
-
-**Return type change:** `IConsolidationService.TriggerAsync` previously returned `Task<ConsolidationRun?>`. With `ConsolidationRun` deleted, a new `ConsolidationTriggerResult` sealed record was introduced carrying only the fields callers actually consume (`RunId`, `Type`, `TemplateId`, `TemplateName`, `ProjectId`, `ProjectName`, `StartedAtUtc`, `WorkItemId`). The `Status` field (always `Pending` on a successful trigger) was dropped as it carried no meaningful information. All callers updated accordingly.
-
-**Stale entries corrected:** Any prior decisions or documentation describing consolidation as a "separate dispatch path" or "separate history store" are superseded by this entry. Consolidation runs are tracked via `PipelineRuns` with `RunType = Consolidation` and dispatched via the unified `WorkItem` queue.
-
-**EF migration:** `DropConsolidationRuns` migration drops the table in `Up()` and recreates it in `Down()` for rollback safety.
-
-**Reassess when:** Never — the `ConsolidationRuns` table no longer exists and `ConsolidationRun`/`ConsolidationRunStatus` are no longer part of the type system.
+<!-- 2026-07-04; confirmed after the redesign 2026-10-02 -->
+**Rule:** The UI is mouse-first. Keyboard shortcuts are an optional power-user layer. Basic keyboard operation (tab order, visible focus) should work, but don't invest in keyboard-first navigation unasked.
+**Why:** The owner works mouse-first, and the shortcuts were an agent's addition, not a design principle.
+**Not:** keyboard-first design; removing the shortcuts.
+**Revisit when:** users rely on keyboard navigation, or an accessibility audit requires more.
+
+### Feedback messages: errors stay, successes fade, toggles offer undo
+<!-- 2026-07-04; confirmed after the redesign 2026-10-02 -->
+**Rule:** Error messages never dismiss themselves and have a manual dismiss button. Success messages disappear after about 3 seconds. Every toggle shows an undo snackbar, whether or not the loop is running.
+**Why:** Errors are failures the user must acknowledge, while successes only confirm. Consistent undo is a cheap safety net; showing it only while the loop ran was accidental.
+**Not:** auto-dismissed errors; a toast queue; undo only while the loop runs; no undo.
+**Revisit when:** errors stack up confusingly (then show the latest and make older ones expandable), or the snackbar annoys when idle.
+
+### Pipelines page is configure + dispatch only
+<!-- 2026-07-04; confirmed after the redesign 2026-10-02 -->
+**Rule:** The Pipelines page (`/pipelines`, formerly Agent Coding) only configures templates and dispatches work. It shows no run progress, output or summaries; those belong on the run pages.
+**Why:** Agents run pipelines remotely, so a local progress view on this page never worked, and it blurs the page's job.
+**Not:** a quick-glance progress view on this page.
+**Revisit when:** never; the page's responsibility is clear.
+
+## Flexible areas
+
+The owner has no preference in these areas. Follow best practice and the surrounding code.
+
+- Value types, class decomposition and DI wiring: follow DDD and .NET conventions.
+- Error style at new dispatch entry points (throw or return a result): match the method's existing contract.
+- Phase 2 of the `ProviderConfigId` value-type migration: do it when a natural opportunity comes up.
+- Orphaned-run reconciliation: use set-based updates and rethrow cancellation like the other sweeps when you next touch it.
+- Wrapper types for user-controlled strings such as selectors: follow the `IssueIdentifier` pattern for new ones.
+- How the agent reconnect race, completed-job status posts and the active-Job count are handled: only the outcome matters (in-flight runs survive an API restart, each completed Job's status is posted once, and finished Jobs don't count as active).
+- Agent registry cache staleness: acceptable while dispatch reads fresh data.
+- Work-item payload schema detection: add a version field at the next breaking payload change.
+- Chat idle-kill self-await: may be fixed by deleting the pod directly, as long as cleanup stays idempotent.
+- A startup warning when chat heartbeats run without Redis: optional, for consistency.
+- The advisory lock on the agent-synchronous dispatch path: add it if concurrent calls are possible there.
+- Where `PvcPoolExhaustions` is emitted: keep it consistent with its documented meaning.

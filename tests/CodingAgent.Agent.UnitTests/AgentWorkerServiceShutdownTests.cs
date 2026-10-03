@@ -85,32 +85,6 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
         await (Task)GetPrivateMethod(service, "ShutdownAsync").Invoke(service, [])!;
     }
 
-    [Fact]
-    public async Task ShutdownAsync_WithBothJobAndChatSession_CancelsBoth()
-    {
-        var service = TestAgentWorkerServiceFactory.Create();
-        var slotManager = GetSlotManager(service);
-
-        var jobCts = new CancellationTokenSource();
-        var chatCts = new CancellationTokenSource();
-        var jobTask = Task.CompletedTask;
-        var chatTask = Task.CompletedTask;
-
-        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"job-shutdown");
-        SetPrivateField(slotManager, "_isBusy", true);
-        SetPrivateField(slotManager, "_jobCts", jobCts);
-        SetPrivateField(slotManager, "_activeJobTask", jobTask);
-
-        SetPrivateField(slotManager, "_activeChatSessionId", "chat-shutdown");
-        SetPrivateField(slotManager, "_chatCts", chatCts);
-        SetPrivateField(slotManager, "_activeChatTask", chatTask);
-
-        await (Task)GetPrivateMethod(service, "ShutdownAsync").Invoke(service, [])!;
-
-        jobCts.IsCancellationRequested.Should().BeTrue("active job CTS must be cancelled on shutdown");
-        chatCts.IsCancellationRequested.Should().BeTrue("active chat CTS must be cancelled on shutdown");
-    }
-
     // ── ExecuteAsync — OperationCanceledException is swallowed ──────────────
 
     [Fact]
@@ -141,12 +115,12 @@ public sealed class AgentWorkerServiceShutdownTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
+    private static ChatSlotManager GetSlotManager(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_slotManager",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("_slotManager not found");
-        return (AgentJobSlotManager)field.GetValue(service)!;
+        return (ChatSlotManager)field.GetValue(service)!;
     }
 
     private static MethodInfo GetPrivateMethod(object obj, string name) =>

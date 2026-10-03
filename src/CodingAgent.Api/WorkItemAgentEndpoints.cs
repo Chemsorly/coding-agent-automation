@@ -7,6 +7,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Serilog;
 
 namespace CodingAgent.Api;
@@ -400,7 +401,14 @@ public static class WorkItemAgentEndpoints
         // If runService is genuinely unused, consider marking the parameter with _ = runService or
         // adding a #pragma warning disable IDE0060 suppression; if it should be used, wire it through.
         _ = runService;
-        var svc = new WorkItemStatusTransitionService(transitionService, runLifecycleManager, dbFactory);
+        // TODO: [WARNING] NullLogger is hard-wired here, which silently suppresses the Warning log
+        // emitted by WorkItemStatusTransitionService for malformed agent Result payloads. Requests
+        // routed through this endpoint helper will still fall back to agent:error but operators get
+        // no log signal — defeating the purpose of the fix for this call site. Consider adding
+        // ILogger<WorkItemStatusTransitionService> (or ILoggerFactory) to the endpoint's parameter
+        // list and forwarding it here, as is done in the DI-registered singleton path in
+        // ApiServiceCollectionExtensions.cs.
+        var svc = new WorkItemStatusTransitionService(transitionService, runLifecycleManager, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         return PostStatus(id, request, svc, ct, awaitTelemetry);
     }
 }

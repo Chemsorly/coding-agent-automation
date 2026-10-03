@@ -25,7 +25,7 @@ How the layers combine:
 - A repository's blacklist replaces the global or project blacklist. `.agent` and `.brain` are always excluded.
 - A repository's labels replace `defaultRequiredAgentLabels`. Every quality gate config and reviewer config whose labels match applies.
 
-A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels only (see [Label Routing](label-routing.md)).
+A setting that applies to a whole product is set once on its project. Reviewers and quality gates are chosen by repository labels (see [Label Routing](label-routing.md)); a project can add its own reviewer, the [project review](pr-review.md#project-review).
 
 ### Limits
 
@@ -102,7 +102,7 @@ External CI runs when a Pipeline/CI provider is set on the pipeline job template
 
 ### Code Review
 
-Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository label in [Reviewer Configs](label-routing.md); whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
+Implementation runs review their changes before the pull request is opened. PR review runs review a pull request once and never change code. Which reviewers run is set per repository label in [Reviewer Configs](label-routing.md), plus the project's reviewer when its [project review](pr-review.md#project-review) is on; whether a repository's pull requests are reviewed is the pipeline job template's Review switch.
 
 | Setting | Default | Range | Project | Description |
 |---------|---------|-------|---------|-------------|
@@ -391,6 +391,21 @@ Configure via Settings → Providers → Repository → Steering Content field. 
 - `AGENTS.md` for OpenCode agents
 
 Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents.
+
+## Runtime System Packages
+
+Agent pods run as the non-root `ubuntu` user with all Linux capabilities dropped, so `apt-get install` and `sudo` fail there. The agent images include `user-apt`, which installs Ubuntu packages without root:
+
+```bash
+user-apt install libgbm1 libxkbcommon0
+. ~/.user-apt/env && <command that needs the packages>
+```
+
+`user-apt` resolves the packages and their missing dependencies with apt and downloads them. It unpacks them under `~/.user-apt` with `dpkg -x` and writes `~/.user-apt/env`, which puts their programs and libraries on `PATH` and `LD_LIBRARY_PATH`. Maintainer scripts do not run, so it suits libraries and plain command-line tools, not services. The packages last only as long as the pod.
+
+The images stay free of project-specific tools and versions; a repository's own docs say what its tasks need. To make agents aware of `user-apt`, add a line like this to the project steering content:
+
+> You run as a non-root user without sudo. To install an Ubuntu package (a library or command-line tool), run `user-apt install <package>...`, then prefix the command that needs it with `. ~/.user-apt/env &&`.
 
 ## MCP Server Support
 

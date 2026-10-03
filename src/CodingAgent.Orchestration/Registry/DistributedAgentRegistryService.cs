@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;

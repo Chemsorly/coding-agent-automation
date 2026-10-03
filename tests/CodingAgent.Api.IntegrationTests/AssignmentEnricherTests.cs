@@ -71,6 +71,21 @@ public sealed class AssignmentEnricherTests
             ProjectEpicContextCalls++;
             return Task.FromResult(ProjectEpicContext);
         }
+
+        /// <summary>The other repositories <see cref="BuildProjectReviewRepositoriesAsync"/> returns.</summary>
+        public IReadOnlyList<RepositoryTarget> ProjectReviewRepositories { get; set; } = [];
+
+        public string? ProjectReviewOwnRepository { get; private set; }
+
+        public int ProjectReviewRepositoriesCalls { get; private set; }
+
+        internal override Task<IReadOnlyList<RepositoryTarget>> BuildProjectReviewRepositoriesAsync(
+            PipelineProject project, string ownRepoProviderId, Serilog.ILogger logger, CancellationToken ct)
+        {
+            ProjectReviewRepositoriesCalls++;
+            ProjectReviewOwnRepository = ownRepoProviderId;
+            return Task.FromResult(ProjectReviewRepositories);
+        }
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────────────
@@ -579,6 +594,68 @@ public sealed class AssignmentEnricherTests
 
         // ASSERT: empty selector acts as catch-all — first enabled profile is matched
         result.Should().NotBeNull("empty selector matches any profile per the Superset strategy (targetSet.Count==0 → true)");
+    }
+
+    // ── Project review ──────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Implementation)]
+    [InlineData(WorkItemTaskType.Review)]
+    public async Task EnrichAsync_ProjectReviewOn_AddsTheReviewersAndTheOtherRepositoriesToClone(WorkItemTaskType taskType)
+    {
+        var identity = MakeIdentity() with { TaskType = taskType };
+        var project = MakeProject() with { ProjectReviewEnabled = true };
+        var (infra, _, enricher) = MakeEnricher();
+        infra.ProjectReviewRepositories =
+        [
+            new RepositoryTarget { TemplateName = "api", Description = "", RepoProviderId = "repo-api" },
+            new RepositoryTarget { TemplateName = "mobile", Description = "", RepoProviderId = "repo-mobile" }
+        ];
+
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        var reviewer = result!.ProjectReviewers.Should().ContainSingle().Subject;
+        reviewer.Name.Should().Be(PipelineConfigurationDefaults.DefaultProjectReviewerName);
+        reviewer.Prompt.Should().Be(PipelineConfigurationDefaults.DefaultProjectReviewPrompt);
+        result.ProjectReviewRepositories!.Select(r => r.TemplateName).Should().Equal("api", "mobile");
+        infra.ProjectReviewOwnRepository.Should().Be("repo-prov-1", "the run's own repository is the workspace, not a clone");
+        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().Equal(["repo-api", "repo-mobile"],
+            "the other repositories get clone-only provider configs");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ProjectReviewOff_AddsNoReviewersAndClonesNothing()
+    {
+        var project = MakeProject() with
+        {
+            ProjectReviewers = [new ReviewAgent { Name = "Product", Prompt = "Check it" }]
+        };
+        var (infra, _, enricher) = MakeEnricher();
+
+        var result = await enricher.EnrichAsync(MakeIdentity(), project, CancellationToken.None);
+
+        result!.ProjectReviewers.Should().BeEmpty();
+        result.ProjectReviewRepositories.Should().BeNull();
+        infra.ProjectReviewRepositoriesCalls.Should().Be(0);
+        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnrichAsync_RepoEpicDecomposition_GetsNoProjectReview()
+    {
+        // A decomposition has no code review, so it gets no project reviewers even when the project review is on
+        var identity = MakeIdentity() with { TaskType = WorkItemTaskType.Decomposition, IssueProviderConfigId = "issue-prov-1" };
+        var project = MakeProject() with { ProjectReviewEnabled = true };
+        var (infra, _, enricher) = MakeEnricher(projectTemplates:
+        [
+            new PipelineJobTemplate { Id = "t1", Name = "web", IssueProviderId = "issue-prov-1", RepoProviderId = "repo-prov-1", Enabled = true }
+        ]);
+
+        var result = await enricher.EnrichAsync(identity, project, CancellationToken.None);
+
+        result!.ProjectReviewers.Should().BeEmpty();
+        infra.ProjectReviewRepositoriesCalls.Should().Be(0);
+        infra.CapturedRequest!.AdditionalRepoProviderIds.Should().BeNull("a repo epic clones no other repository");
     }
 
     // ── PrepareDispatchCoreAsync returns null ─────────────────────────────────────

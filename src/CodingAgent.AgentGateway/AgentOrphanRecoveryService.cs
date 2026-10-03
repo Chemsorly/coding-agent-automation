@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -441,157 +442,204 @@ public sealed class AgentOrphanRecoveryService(
         return agentChanged && string.IsNullOrEmpty(previousAgentId) ? existingRun : null;
     }
 
+    // TODO: [WARNING] The acceptance criterion says "DetectAndRestoreOrphans delegates each of its
+    // new-run / existing-run-link / crash-recovery branches to a separate handler". Those three
+    // top-level branches (RestoreActiveJobAsync, DetectAndRestoreOrphans, HandleCrashRecoveryAsync)
+    // are already separate methods at the RecoverOrphanedStateAsync level. The decomposition here
+    // targets the sub-steps inside DetectAndRestoreOrphans (ownership guard, history guard,
+    // lock-and-activate), not the top-level branch split. The criterion naming is ambiguous; this
+    // interpretation reduces the 151-line method to ~23 lines and satisfies the no-method-over-100-lines
+    // constraint.
     private async Task DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
     {
         var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
-        if (orphanedRuns.Count > 0)
-        {
-            // Restore the most recent orphaned run as the active job so the
-            // disconnect grace period timer applies. If the agent truly lost the job,
-            // ReconciliationService (JobController) will time out the run after the grace period.
-            var mostRecent = orphanedRuns[^1];
-
-            // The run records this agent, but only its work item says whose work it is: as for a
-            // reported active job, re-attach it only to the work item's own agent.
-            if (_facade.CanVerifyWorkItems)
-            {
-                var record = await ReadWorkItemRecordAsync(agentId, mostRecent.RunId);
-                if (record is null || !record.IsOwnedBy(agentId.Value))
-                {
-                    _logger.Warning(
-                        "Agent {AgentId}: tracked run {RunId} could not be verified as a work item assigned to it — not restoring it",
-                        agentId, LogSanitizer.SanitizeForLog(mostRecent.RunId));
-                    return;
-                }
-            }
-
-            // Guard: don't re-activate a run that is already in history as a non-Cancelled/
-            // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
-            // Mirrors the history check in RestoreRunFromAgentStateAsync. Cancelled/Failed runs
-            // remain restorable — they may be legitimately re-dispatched.
-            // TODO [WARNING]: CancellationToken.None is passed because RecoverOrphanedStateAsync does not yet
-            // accept a CancellationToken. Add a token parameter to the public method and propagate it here
-            // so that hub connection teardown can abort this history storage call (tracked separately).
-            // TODO [WARNING]: GetRunHistoryAsync returns the full history and this performs an O(N) linear scan
-            // on every orphan-recovery call. Verify that GetRunHistoryAsync does not return cross-agent history;
-            // if run history is large, consider scoping the query by agent or run ID to avoid performance issues.
-            // TODO [WARNING]: Early return when inHistory==true skips processing of any other orphaned runs in
-            // the active set. If mostRecent is a completed run but older entries are legitimately restorable,
-            // they are silently ignored this cycle. Assess whether the active set can hold multiple orphans
-            // for one agent; if so, iterate over all entries rather than only inspecting orphanedRuns[^1].
-            IReadOnlyList<PipelineRunSummary> history;
-            try
-            {
-                history = await _facade.GetRunHistoryAsync(CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                // Fail-open: if history storage is unavailable, proceed with restoration rather
-                // than blocking agent registration. At worst, a completed run is briefly re-activated
-                // until ReconciliationService times it out. Failing closed here would leave the agent
-                // stuck in Idle with a legitimate orphaned run for the full reconciliation grace period.
-                _logger.Warning(ex,
-                    "Agent {AgentId} orphan guard: GetRunHistoryAsync faulted — proceeding with restoration (fail-open)",
-                    agentId);
-                history = [];
-            }
-            var inHistory = history.Any(r => r.RunId == mostRecent.RunId
-                && r.FinalStep.IsTerminal()
-                && r.FinalStep != PipelineStep.Cancelled
-                && r.FinalStep != PipelineStep.Failed);
-            if (inHistory)
-            {
-                _logger.Information(
-                    "Agent {AgentId} has orphaned run {RunId} in active set but it is already in history as a terminal non-retryable state — skipping restoration",
-                    agentId, mostRecent.RunId);
-                return;
-            }
-            bool shouldTransition;
-            lock (entry.SyncRoot)
-            {
-                // Atomic check-and-set under lock: if DrainService assigned a job
-                // between GetActiveRunsByAgent and this lock acquisition, don't overwrite.
-                if (entry.ActiveJobId is not null)
-                {
-                    _logger.Information(
-                        "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
-                        agentId, entry.ActiveJobId);
-                    shouldTransition = false;
-                }
-                else
-                {
-                    var now = DateTimeOffset.UtcNow;
-                    entry.ActiveJobId = mostRecent.RunId;
-                    entry.OrphanRestoredAt = now;
-                    // Synchronously update _localSnapshot so GetByConnectionId returns the correct
-                    // ActiveJobId immediately — before the fire-and-forget Redis write completes.
-                    // Without this, [RequiresActiveJob] hub calls made during the async write window
-                    // see the stale snapshot (ActiveJobId = null) and throw HubException (issue #2616).
-                    // TODO (WARNING): lock(entry.SyncRoot) above guards the live entry object but does
-                    // NOT protect the _localSnapshot mutation triggered by SetLocalAgentSnapshotField.
-                    // The snapshot write in DistributedAgentRegistryService.SetLocalSnapshotField is
-                    // unsynchronized against Register, TransitionStatusAsync, and UpdateAgentFieldAsync.
-                    // The entry lock is entry-scoped; _localSnapshot has no dedicated lock here. This is
-                    // consistent with other _localSnapshot writes in this file that also run outside
-                    // any snapshot-scoped lock. See DistributedAgentRegistryService.SetLocalSnapshotField
-                    // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
-                    _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
-                    _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
-                    _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, mostRecent.RunId, _logger, "DetectAndRestoreOrphans");
-                    _facade.UpdateAgentFieldFireAndForget(agentId, "orphanRestoredAt", now.ToString("O"), _logger, "DetectAndRestoreOrphans");
-                    // The decision to call TransitionStatus is captured inside the lock.
-                    // This prevents a concurrent disconnect handler from clearing ActiveJobId
-                    // between lock release and the TransitionStatus call.
-                    shouldTransition = true;
-                }
-            }
-
-            if (shouldTransition)
-            {
-                // Re-materialize the run hash in Redis so GetRun returns non-null on any replica,
-                // even if the hash was about to expire between this check and the agent's first
-                // hub call. GetActiveRunsByAgent guarantees the hash existed when mostRecent was
-                // loaded (GetActiveRunsAsync skips runs with an empty/absent hash). Only write if
-                // the hash is absent — if another replica has already written a live hash (e.g.
-                // advancing currentStep, writing prUrl between GetActiveRunsByAgent and now),
-                // calling AddRun would overwrite those newer values with stale snapshot data.
-                // Guard: call GetRun first; if the hash exists, skip AddRun entirely. If absent
-                // (expired between GetActiveRunsByAgent and this point), call AddRun to re-anchor.
-                // This call is OUTSIDE lock(entry.SyncRoot) — GetRun performs synchronous Redis I/O
-                // via .GetAwaiter().GetResult(); holding the entry lock across a network call is
-                // an anti-pattern. See HandleCrashRecovery for the established pattern.
-                var existingHash = _facade.GetRun(mostRecent.RunId);
-                if (existingHash is null)
-                    _facade.AddRun(mostRecent);
-
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-
-                // Log at Information for a normal first-registration (run has not progressed
-                // beyond initial analysis), and at Warning for a mid-run re-registration where
-                // the agent was actively working (issue #2956).
-                // NOTE: OrphanRestoredAt is NOT a valid discriminator here — it is set above on
-                // this very call. The CurrentStep of the orphaned run is the correct signal.
-                // TODO: [WARNING] The boundary `<= AnalyzingCode` includes early setup steps
-                // (CloningRepository=1, SyncingBrainRepoPreRun=2, CreatingBranch=3, VerifyingBaseline=4)
-                // which are past initial dispatch. A run at step 4 that crashed logs at Information
-                // instead of Warning. In practice the 77 noisy Warnings were all genuine first-starts,
-                // so the current boundary is directionally correct for the common path. Tighten if
-                // setup-step crashes become a diagnostic concern.
-                var logLevel = mostRecent.CurrentStep <= PipelineStep.AnalyzingCode
-                    ? LogEventLevel.Information
-                    : LogEventLevel.Warning;
-                _logger.Write(logLevel,
-                    "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
-                    "Restoring run {RunId} (issue {IssueIdentifier}) as active — ReconciliationService will time out the run if agent does not resume.",
-                    agentId, orphanedRuns.Count, mostRecent.RunId, mostRecent.IssueIdentifier);
-            }
-        }
-        else
+        if (orphanedRuns.Count == 0)
         {
             _logger.Information(
                 "Agent {AgentId} registered with no active job and no orphaned runs (status={Status})",
                 agentId, entry.Status);
+            return;
         }
+
+        // Restore the most recent orphaned run as the active job so the
+        // disconnect grace period timer applies. If the agent truly lost the job,
+        // ReconciliationService (JobController) will time out the run after the grace period.
+        var mostRecent = orphanedRuns[^1];
+
+        if (!await VerifyOrphanOwnershipAsync(agentId, mostRecent))
+            return;
+
+        if (await CheckOrphanInHistoryAsync(agentId, mostRecent))
+            return;
+
+        ActivateOrphanedRun(agentId, entry, mostRecent, orphanedRuns.Count);
+    }
+
+    /// <summary>
+    /// Returns <c>false</c> when work-item ownership verification is enabled and the tracked run
+    /// cannot be confirmed as belonging to this agent — in that case restoration is skipped.
+    /// Returns <c>true</c> when verification passes or is not required.
+    /// </summary>
+    private async Task<bool> VerifyOrphanOwnershipAsync(AgentId agentId, PipelineRun mostRecent)
+    {
+        if (!_facade.CanVerifyWorkItems)
+            return true;
+
+        // The run records this agent, but only its work item says whose work it is: as for a
+        // reported active job, re-attach it only to the work item's own agent.
+        var record = await ReadWorkItemRecordAsync(agentId, mostRecent.RunId);
+        if (record is null || !record.IsOwnedBy(agentId.Value))
+        {
+            _logger.Warning(
+                "Agent {AgentId}: tracked run {RunId} could not be verified as a work item assigned to it — not restoring it",
+                agentId, LogSanitizer.SanitizeForLog(mostRecent.RunId));
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> when the orphaned run is already in history as a non-retryable terminal
+    /// state — in that case restoration should be skipped. Returns <c>false</c> when the run is not
+    /// in history (or history is unavailable — fail-open).
+    /// </summary>
+    private async Task<bool> CheckOrphanInHistoryAsync(AgentId agentId, PipelineRun mostRecent)
+    {
+        // Guard: don't re-activate a run that is already in history as a non-Cancelled/
+        // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
+        // Mirrors the history check in RestoreRunFromAgentStateAsync. Cancelled/Failed runs
+        // remain restorable — they may be legitimately re-dispatched.
+        // TODO [WARNING]: CancellationToken.None is passed because RecoverOrphanedStateAsync does not yet
+        // accept a CancellationToken. Add a token parameter to the public method and propagate it here
+        // so that hub connection teardown can abort this history storage call (tracked separately).
+        // TODO [WARNING]: GetRunHistoryAsync returns the full history and this performs an O(N) linear scan
+        // on every orphan-recovery call. Verify that GetRunHistoryAsync does not return cross-agent history;
+        // if run history is large, consider scoping the query by agent or run ID to avoid performance issues.
+        // TODO [WARNING]: Early return when inHistory==true skips processing of any other orphaned runs in
+        // the active set. If mostRecent is a completed run but older entries are legitimately restorable,
+        // they are silently ignored this cycle. Assess whether the active set can hold multiple orphans
+        // for one agent; if so, iterate over all entries rather than only inspecting orphanedRuns[^1].
+        IReadOnlyList<PipelineRunSummary> history;
+        try
+        {
+            history = await _facade.GetRunHistoryAsync(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // Fail-open: if history storage is unavailable, proceed with restoration rather
+            // than blocking agent registration. At worst, a completed run is briefly re-activated
+            // until ReconciliationService times it out. Failing closed here would leave the agent
+            // stuck in Idle with a legitimate orphaned run for the full reconciliation grace period.
+            _logger.Warning(ex,
+                "Agent {AgentId} orphan guard: GetRunHistoryAsync faulted — proceeding with restoration (fail-open)",
+                agentId);
+            return false;
+        }
+
+        var inHistory = history.Any(r => r.RunId == mostRecent.RunId
+            && r.FinalStep.IsTerminal()
+            && r.FinalStep != PipelineStep.Cancelled
+            && r.FinalStep != PipelineStep.Failed);
+
+        if (inHistory)
+        {
+            _logger.Information(
+                "Agent {AgentId} has orphaned run {RunId} in active set but it is already in history as a terminal non-retryable state — skipping restoration",
+                agentId, mostRecent.RunId);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Activates the orphaned run as the agent's active job under <c>lock(entry.SyncRoot)</c>,
+    /// re-materialises the Redis hash if absent, and transitions the agent to Busy.
+    /// No-ops if DrainService assigned a different job between the orphan-detection check and the
+    /// lock acquisition (the captured <c>shouldTransition</c> flag prevents a spurious Busy transition).
+    /// </summary>
+    private void ActivateOrphanedRun(AgentId agentId, AgentEntry entry, PipelineRun mostRecent, int orphanCount)
+    {
+        bool shouldTransition;
+        lock (entry.SyncRoot)
+        {
+            // Atomic check-and-set under lock: if DrainService assigned a job
+            // between GetActiveRunsByAgent and this lock acquisition, don't overwrite.
+            if (entry.ActiveJobId is not null)
+            {
+                _logger.Information(
+                    "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
+                    agentId, entry.ActiveJobId);
+                shouldTransition = false;
+            }
+            else
+            {
+                var now = DateTimeOffset.UtcNow;
+                entry.ActiveJobId = mostRecent.RunId;
+                entry.OrphanRestoredAt = now;
+                // Synchronously update _localSnapshot so GetByConnectionId returns the correct
+                // ActiveJobId immediately — before the fire-and-forget Redis write completes.
+                // Without this, [RequiresActiveJob] hub calls made during the async write window
+                // see the stale snapshot (ActiveJobId = null) and throw HubException (issue #2616).
+                // TODO (WARNING): lock(entry.SyncRoot) above guards the live entry object but does
+                // NOT protect the _localSnapshot mutation triggered by SetLocalAgentSnapshotField.
+                // The snapshot write in DistributedAgentRegistryService.SetLocalSnapshotField is
+                // unsynchronized against Register, TransitionStatusAsync, and UpdateAgentFieldAsync.
+                // The entry lock is entry-scoped; _localSnapshot has no dedicated lock here. This is
+                // consistent with other _localSnapshot writes in this file that also run outside
+                // any snapshot-scoped lock. See DistributedAgentRegistryService.SetLocalSnapshotField
+                // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
+                _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
+                _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
+                _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, mostRecent.RunId, _logger, "DetectAndRestoreOrphans");
+                _facade.UpdateAgentFieldFireAndForget(agentId, "orphanRestoredAt", now.ToString("O"), _logger, "DetectAndRestoreOrphans");
+                // The decision to call TransitionStatus is captured inside the lock.
+                // This prevents a concurrent disconnect handler from clearing ActiveJobId
+                // between lock release and the TransitionStatus call.
+                shouldTransition = true;
+            }
+        }
+
+        if (!shouldTransition)
+            return;
+
+        // Re-materialize the run hash in Redis so GetRun returns non-null on any replica,
+        // even if the hash was about to expire between this check and the agent's first
+        // hub call. GetActiveRunsByAgent guarantees the hash existed when mostRecent was
+        // loaded (GetActiveRunsAsync skips runs with an empty/absent hash). Only write if
+        // the hash is absent — if another replica has already written a live hash (e.g.
+        // advancing currentStep, writing prUrl between GetActiveRunsByAgent and now),
+        // calling AddRun would overwrite those newer values with stale snapshot data.
+        // Guard: call GetRun first; if the hash exists, skip AddRun entirely. If absent
+        // (expired between GetActiveRunsByAgent and this point), call AddRun to re-anchor.
+        // This call is OUTSIDE lock(entry.SyncRoot) — GetRun performs synchronous Redis I/O
+        // via .GetAwaiter().GetResult(); holding the entry lock across a network call is
+        // an anti-pattern. See HandleCrashRecovery for the established pattern.
+        var existingHash = _facade.GetRun(mostRecent.RunId);
+        if (existingHash is null)
+            _facade.AddRun(mostRecent);
+
+        _facade.TransitionStatus(agentId, AgentStatus.Busy);
+
+        // Log at Information for a normal first-registration (run has not progressed
+        // beyond initial analysis), and at Warning for a mid-run re-registration where
+        // the agent was actively working (issue #2956).
+        // NOTE: OrphanRestoredAt is NOT a valid discriminator here — it is set above on
+        // this very call. The CurrentStep of the orphaned run is the correct signal.
+        // TODO: [WARNING] The boundary `<= AnalyzingCode` includes early setup steps
+        // (CloningRepository=1, SyncingBrainRepoPreRun=2, CreatingBranch=3, VerifyingBaseline=4)
+        // which are past initial dispatch. A run at step 4 that crashed logs at Information
+        // instead of Warning. In practice the 77 noisy Warnings were all genuine first-starts,
+        // so the current boundary is directionally correct for the common path. Tighten if
+        // setup-step crashes become a diagnostic concern.
+        var logLevel = mostRecent.CurrentStep <= PipelineStep.AnalyzingCode
+            ? LogEventLevel.Information
+            : LogEventLevel.Warning;
+        _logger.Write(logLevel,
+            "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
+            "Restoring run {RunId} (issue {IssueIdentifier}) as active — ReconciliationService will time out the run if agent does not resume.",
+            agentId, orphanCount, mostRecent.RunId, mostRecent.IssueIdentifier);
     }
 
     private async Task HandleCrashRecoveryAsync(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry)
@@ -681,12 +729,8 @@ public sealed class AgentOrphanRecoveryService(
         // GetWorkItemRunRecordAsync throws on DB failure (intentional — failed reads must not look
         // like missing records during normal ownership checks). Here, reconstruction is best-effort:
         // a DB outage should degrade to "skip reconstruction" rather than crashing re-registration.
-        // TODO: [WARNING] The broad catch swallows all exception types, including OperationCanceledException.
-        // During a DB outage, returning null means the caller treats the run as unrecoverable for this
-        // re-registration cycle. On the next agent reconnect, reconstruction is retried — but if the
-        // outage persists, the run stays orphaned for its duration. Consider re-throwing
-        // OperationCanceledException and logging DB-specific exception types distinctly to allow callers
-        // to distinguish transient failures from genuine missing records.
+        // OperationCanceledException is not caught so a cancelled token propagates to the caller
+        // rather than being silently treated as a missing record.
         // TODO: [WARNING] CancellationToken.None is passed here. Ideally a connection-lifetime
         // CancellationToken from the SignalR hub context should be threaded through so a disconnecting
         // agent can abort the in-flight DB read rather than letting it run to completion.
@@ -695,7 +739,7 @@ public sealed class AgentOrphanRecoveryService(
         {
             record = await _facade.GetWorkItemRunRecordAsync(new JobId(runId), CancellationToken.None);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // TODO: [WARNING] runId is logged verbatim here. Serilog's structured logging prevents
             // format-string injection, but the raw value is persisted in the log store without

@@ -49,6 +49,10 @@ RUN apt-get update && \
         libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
+# user-apt lets the agent, which runs as non-root with all capabilities dropped, install Ubuntu
+# packages (libraries, command-line tools) at runtime. See dockerfiles/user-apt.sh.
+COPY --chmod=755 dockerfiles/user-apt.sh /usr/local/bin/user-apt
+
 # Download and install OpenCode binary (pinned version, architecture-aware)
 RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
     curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \

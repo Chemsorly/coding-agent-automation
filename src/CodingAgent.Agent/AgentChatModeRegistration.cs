@@ -15,8 +15,8 @@ namespace CodingAgent.Agent;
 /// chat sessions. Consolidation runs are work items, like every other run type.
 /// Reached when the agent pod is started without <c>--work-item-id</c> (chat mode).
 /// Registers <see cref="AgentWorkerService"/> and the full SignalR hub connection stack
-/// (<see cref="AgentConnectionLifecycle"/>, <see cref="AgentJobSlotManager"/>,
-/// <see cref="ChatJobExecutor"/>, <see cref="SignalRCompletionReporter"/>, <see cref="CriticalMessageBuffer"/>)
+/// (<see cref="AgentConnectionLifecycle"/>, <see cref="ChatSlotManager"/>,
+/// <see cref="ChatJobExecutor"/>)
 /// so the pod can serve interactive chat sessions.
 /// </summary>
 internal static class AgentChatModeRegistration
@@ -25,40 +25,11 @@ internal static class AgentChatModeRegistration
         this IServiceCollection services,
         ILogger logger)
     {
-        services.AddSingleton<CriticalMessageBuffer>();
-        services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
-            sp.GetRequiredService<IHubConnectionManager>(),
-            ResiliencePipelineFactory.CreateSignalRPipeline(logger),
-            sp.GetRequiredService<CriticalMessageBuffer>(),
-            logger));
-        services.AddSingleton<AgentJobSlotManager>(sp =>
-        {
-            // Use lazy resolution to break the circular dependency:
-            // AgentJobSlotManager -> AgentConnectionLifecycle -> AgentJobSlotManager.
-            // The signalReady callback is only invoked at runtime (after DI construction),
-            // so lazy resolution is safe here.
-            var agentId = sp.GetRequiredService<AgentId>().Value;
-            return new AgentJobSlotManager(async () =>
-            {
-                try
-                {
-                    var connectionLifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
-                    var lifetime = sp.GetRequiredService<IHostApplicationLifetime>();
-                    await connectionLifecycle.WaitForRegistrationAsync(lifetime.ApplicationStopping);
-                    await connectionLifecycle.Connection.InvokeAsync(
-                        HubMethodNames.AgentReady, agentId, lifetime.ApplicationStopping);
-                }
-                catch (Exception ex)
-                {
-                    logger.Warning(ex, "Failed to send AgentReady signal");
-                }
-            });
-        });
+        services.AddSingleton<ChatSlotManager>();
         services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
             sp.GetRequiredService<IHubConnectionManager>(),
             sp.GetRequiredService<IHubConnectionManagerFactory>(),
-            sp.GetRequiredService<SignalRCompletionReporter>(),
-            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<ChatSlotManager>(),
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             logger,
@@ -72,7 +43,7 @@ internal static class AgentChatModeRegistration
             var isChatMode = runtimeOpts.IsChatMode;
             return new ChatJobExecutor(new ChatJobExecutorDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
-                sp.GetRequiredService<AgentJobSlotManager>(),
+                sp.GetRequiredService<ChatSlotManager>(),
                 sp.GetRequiredService<IKiroCliOrchestrator>(),
                 sp.GetRequiredService<IHttpClientFactory>(),
                 sp.GetRequiredService<IHostApplicationLifetime>(),
@@ -103,7 +74,7 @@ internal static class AgentChatModeRegistration
         });
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
-            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<ChatSlotManager>(),
             sp.GetRequiredService<ChatJobExecutor>(),
             logger)));
         services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());

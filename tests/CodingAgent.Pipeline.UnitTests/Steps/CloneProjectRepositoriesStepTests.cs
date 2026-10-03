@@ -311,13 +311,13 @@ public class CloneProjectRepositoriesStepTests : IDisposable
     [InlineData("v1.2", "v1.2")]
     public void ToFolderName_KeepsSafeCharactersAndReplacesTheRest(string templateName, string expected)
     {
-        CloneProjectRepositoriesStep.ToFolderName(templateName).Should().Be(expected);
+        ProjectRepositoryCloner.ToFolderName(templateName).Should().Be(expected);
     }
 
     [Fact]
     public void ToFolderName_LongName_IsCapped()
     {
-        CloneProjectRepositoriesStep.ToFolderName(new string('a', 300)).Should().HaveLength(100);
+        ProjectRepositoryCloner.ToFolderName(new string('a', 300)).Should().HaveLength(100);
     }
 
     [Fact]
@@ -326,9 +326,9 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         // "web app" and "web_app" both become "web_app"; clones run in parallel, so they must not share it
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        var first = CloneProjectRepositoriesStep.UniqueFolderName(CloneProjectRepositoriesStep.ToFolderName("web app"), used);
-        var second = CloneProjectRepositoriesStep.UniqueFolderName(CloneProjectRepositoriesStep.ToFolderName("web_app"), used);
-        var third = CloneProjectRepositoriesStep.UniqueFolderName(CloneProjectRepositoriesStep.ToFolderName("Web_App"), used);
+        var first = ProjectRepositoryCloner.UniqueFolderName(ProjectRepositoryCloner.ToFolderName("web app"), used);
+        var second = ProjectRepositoryCloner.UniqueFolderName(ProjectRepositoryCloner.ToFolderName("web_app"), used);
+        var third = ProjectRepositoryCloner.UniqueFolderName(ProjectRepositoryCloner.ToFolderName("Web_App"), used);
 
         new[] { first, second, third }.Should().Equal("web_app", "web_app_2", "Web_App_3");
     }

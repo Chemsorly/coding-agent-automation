@@ -1,30 +1,14 @@
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
-using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// TDD tests for <see cref="IJobCompletionReporter"/> interface extraction (R3).
-/// Defines the behavioral contract:
-/// - Unified completion reporting interface for both agent modes
-/// - SignalRCompletionReporter: wraps SignalR with resilience + CriticalMessageBuffer
-/// - HttpPrimaryCompletionReporter: HTTP POST (primary) + SignalR (secondary)
-/// - Both agent services use IJobCompletionReporter instead of inline completion logic
+/// Tests for <see cref="IJobCompletionReporter"/> interface behavioral contract.
 /// </summary>
 public class IJobCompletionReporterTests
 {
-    // ── Interface definition ─────────────────────────────────────────────
-
-
-
-
-
-    // ── Implementation existence ─────────────────────────────────────────
-
-
-
     // ── Behavioral tests: mock completion reporter ───────────────────────
 
     [Fact]
@@ -71,27 +55,5 @@ public class IJobCompletionReporterTests
             new JobId("job-fail"),
             It.Is<JobCompletionPayload>(p => p.FinalStep == PipelineStep.Failed && p.FailureReason == "Quality gates failed"),
             It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── SignalRCompletionReporter behavior ────────────────────────────────
-
-
-
-    // ── HttpPrimaryCompletionReporter behavior ───────────────────────────
-
-
-
-    // ── Consumer assertions ──────────────────────────────────────────────
-
-
-
-    // ── Helpers ──────────────────────────────────────────────────────────
-
-    private static string GetSourceDirectory()
-    {
-        var dir = AppContext.BaseDirectory;
-        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
-            dir = Path.GetDirectoryName(dir);
-        return dir ?? throw new InvalidOperationException("Could not find solution root");
     }
 }

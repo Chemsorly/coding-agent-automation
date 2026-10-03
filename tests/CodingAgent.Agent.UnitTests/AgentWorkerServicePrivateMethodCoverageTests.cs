@@ -317,12 +317,12 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
+    private static ChatSlotManager GetSlotManager(AgentWorkerService service)
     {
         var field = typeof(AgentWorkerService).GetField("_slotManager",
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException("Field '_slotManager' not found");
-        return (AgentJobSlotManager)field.GetValue(service)!;
+        return (ChatSlotManager)field.GetValue(service)!;
     }
 
     private static MethodInfo GetPrivateMethod(object obj, string name) =>

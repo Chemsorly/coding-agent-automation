@@ -696,6 +696,32 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task CreateStepContext_PropagatesTheProjectReview()
+    {
+        SetupReporterFactory();
+        var builder = CreateBuilder();
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+        var job = CreateTestJob() with
+        {
+            ProjectReviewers = [new ReviewAgent { Name = "ProjectReviewer", Prompt = "Check the project." }],
+            ProjectReviewRepositories = [new RepositoryTarget { TemplateName = "web", Description = "", RepoProviderId = "repo-web" }]
+        };
+
+        var buildResult = await builder.Build(
+            job, new PipelineConfiguration(), mockRepo.Object, mockAgent.Object, null, null,
+            new OrchestratorProxy(_connection, "job-123"), _connection, _batcher, null, CancellationToken.None);
+        var ctx = builder.CreateStepContext(buildResult.ExecutionContext, buildResult.Reporter, CancellationToken.None);
+
+        ctx.ProjectReviewers.Should().BeSameAs(job.ProjectReviewers);
+        ctx.ProjectReviewRepositories.Should().BeSameAs(job.ProjectReviewRepositories);
+
+        await buildResult.DisposeAsync();
+    }
+
+    [Fact]
     public async Task CreateStepContext_CallbacksFireTransitionTo()
     {
         SetupReporterFactory();
