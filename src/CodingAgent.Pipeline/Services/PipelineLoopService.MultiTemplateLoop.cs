@@ -46,7 +46,9 @@ public sealed partial class PipelineLoopService
             {
                 if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
                     break;
-                Interlocked.Increment(ref _cycleCount);
+                // CycleCount is incremented inside ExecuteCycleAsync (before DelayOrStop) so
+                // that tests waiting on CycleCount >= N observe the increment as soon as dispatch
+                // work is done, without waiting for the full poll interval to elapse.
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -188,6 +190,12 @@ public sealed partial class PipelineLoopService
 
         lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} {(snapshot.EnabledTemplates.Count == 1 ? "template" : "templates")} every {(int)snapshot.Config.ClosedLoopPollInterval.TotalSeconds}s."; }
         NotifyChange();
+        // Increment CycleCount before DelayOrStop so that tests waiting on CycleCount >= N
+        // observe the increment as soon as the dispatch work is done, without waiting for the
+        // full poll interval to elapse. Placed after the status-message update and NotifyChange
+        // so the UI reflects "cycle complete" at the same moment CycleCount becomes observable.
+        // The caller (RunMultiTemplateLoopAsync) no longer increments CycleCount after return.
+        Interlocked.Increment(ref _cycleCount);
         await DelayOrStop(snapshot.Config.ClosedLoopPollInterval, ct);
         return true;
     }
