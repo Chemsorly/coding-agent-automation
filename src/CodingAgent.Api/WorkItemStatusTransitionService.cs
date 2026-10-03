@@ -8,6 +8,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace CodingAgent.Api;
 
@@ -52,18 +53,22 @@ public sealed partial class WorkItemStatusTransitionService
 {
     private readonly WorkItemTransitionService _transitionService;
     private readonly IRunLifecycleManager _runLifecycleManager;
+    private readonly ILogger<WorkItemStatusTransitionService> _logger;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
 
     public WorkItemStatusTransitionService(
         WorkItemTransitionService transitionService,
         IRunLifecycleManager runLifecycleManager,
+        ILogger<WorkItemStatusTransitionService> logger,
         IDbContextFactory<PipelineDbContext>? dbFactory = null)
     {
         ArgumentNullException.ThrowIfNull(transitionService);
         ArgumentNullException.ThrowIfNull(runLifecycleManager);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _transitionService = transitionService;
         _runLifecycleManager = runLifecycleManager;
+        _logger = logger;
         _dbFactory = dbFactory;
     }
 
@@ -150,7 +155,7 @@ public sealed partial class WorkItemStatusTransitionService
                 // on the HTTP Failed path. All other values (including agent:error, agent:wont-do,
                 // any disallowed label, or absent payload) fall back to null — which causes
                 // RunLifecycleManager to use its default agent:error label.
-                string? resolvedFinalLabel = ResolveAllowedFinalLabelFromPayload(request.Result);
+                string? resolvedFinalLabel = ResolveAllowedFinalLabelFromPayload(request.Result, id);
 
                 await _runLifecycleManager.FailRunWithLabelAsync(
                     new RunId(id.ToString()),
@@ -381,16 +386,9 @@ public sealed partial class WorkItemStatusTransitionService
             ? row.CompletedAt.Value - row.DispatchedAt.Value
             : null;
 
-        // Safe fallback: use a local switch with null default rather than
-        // ToDefaultRunType() which throws UnreachableException for unknown values.
-        var resolvedRunType = row.RunType ?? row.TaskType switch
-        {
-            WorkItemTaskType.Implementation => (PipelineRunType?)PipelineRunType.Implementation,
-            WorkItemTaskType.Review => PipelineRunType.Review,
-            WorkItemTaskType.Decomposition => PipelineRunType.DecompositionAnalysis,
-            WorkItemTaskType.Consolidation => PipelineRunType.Consolidation,
-            _ => null
-        };
+        // Safe fallback: use ToDefaultRunTypeOrNull() which returns null for unknown values
+        // rather than ToDefaultRunType() which throws UnreachableException.
+        var resolvedRunType = row.RunType ?? row.TaskType.ToDefaultRunTypeOrNull();
         var runTypeTag = resolvedRunType.HasValue
             ? resolvedRunType.Value.ToString().ToLowerInvariant()
             : UnknownTag;
@@ -565,7 +563,7 @@ public sealed partial class WorkItemStatusTransitionService
     /// <see cref="IRunLifecycleManager.FailRunWithLabelAsync"/> applies when
     /// <c>resolvedFinalLabel</c> is null.
     /// </remarks>
-    private static string? ResolveAllowedFinalLabelFromPayload(string? resultJson)
+    private string? ResolveAllowedFinalLabelFromPayload(string? resultJson, Guid workItemId)
     {
         if (string.IsNullOrEmpty(resultJson))
             return null;
@@ -578,14 +576,19 @@ public sealed partial class WorkItemStatusTransitionService
                 ? AgentLabels.NeedsRefinement
                 : null;
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            // TODO: [WARNING] This catch is silent — ILogger was removed from WorkItemStatusTransitionService
-            // in issue #2967 (the constructor no longer accepts it). A malformed or camelCase Result JSON from
-            // an agent is swallowed here with no log output, making agent serialization regressions invisible
-            // to operators. Consider injecting ILogger<WorkItemStatusTransitionService> (Microsoft.Extensions.Logging,
-            // not Serilog static) and logging at Warning level here (include WorkItem ID, not raw JSON content).
-            // Malformed payload — treat as absent; caller uses null (agent:error fallback).
+            // TODO: [WARNING] System.Text.Json's JsonException.Message routinely embeds a snippet of
+            // the offending input (e.g. "'n' is an invalid start of a value. Path: $ | ..."). Passing
+            // `ex` as the first arg to LogWarning causes structured-log sinks (Serilog, OpenTelemetry)
+            // to render ex.Message in the log record, which may expose a fragment of the raw payload.
+            // The acceptance criterion (no raw JSON body in logs) is satisfied at the template-args
+            // level, but if strict zero-payload-leakage is required, consider replacing `ex` with
+            // only `ex.GetType().Name` as a named structured arg and omitting the exception object
+            // entirely, or stripping it from the LogWarning call.
+            _logger.LogWarning(ex,
+                "Malformed agent Result payload for WorkItem {WorkItemId}. Falling back to agent:error label.",
+                workItemId);
             return null;
         }
     }

@@ -324,6 +324,95 @@ public sealed class AgentHubIssueProxyTests
 
     // ── RequestUpdateComment ──────────────────────────────────────────────
 
+    // ── HubException pass-through regression tests (issue #3279) ─────────
+    // Guard against a regression where the hub's outer catch(Exception) re-wraps a HubException
+    // thrown by ResolveIssueProviderForRunAsync (e.g. "No active run or work item found…") with a
+    // "Request{Name} failed …" prefix, which would silently disable CreateSignalRPipeline's
+    // "Failed to " / "No active run" retry predicates.
+    //
+    // The regression path: GetRun returns null AND the DB fallback also returns null.
+    // ResolveIssueProviderForRunAsync then throws HubException("No active run or work item found…").
+    // That HubException bypasses ExecuteWithIssueProviderAsync's inner catch (which only wraps
+    // exceptions from the operation delegate) and reaches the hub method's outer catch directly.
+    // Pre-fix: the outer catch(Exception ex) re-wrapped it as "Request{Name} failed for job …:
+    //   No active run or work item found…" — the retry predicate would not match.
+    // Post-fix: catch(HubException){throw;} re-throws it unchanged so the predicate can fire.
+
+    [Fact]
+    public async Task RequestGetIssue_ResolveProviderThrowsHubException_PropagatesUnchanged()
+    {
+        // Arrange: no in-memory run and no DB fallback — ResolveIssueProviderForRunAsync throws
+        // HubException("No active run or work item found for job job-1").
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestGetIssue("job-1", "42");
+
+        // Assert: message is NOT re-wrapped with "RequestGetIssue failed …" prefix.
+        // A re-wrapped message would start with "RequestGetIssue" instead of "No active run".
+        var thrown = await act.Should().ThrowAsync<HubException>();
+        thrown.Which.Message.Should().NotStartWith("RequestGetIssue failed",
+            "a re-wrapped message would disable CreateSignalRPipeline's retry predicate");
+        thrown.Which.Message.Should().Contain("No active run or work item",
+            "the original HubException message from ResolveIssueProviderForRunAsync must propagate");
+    }
+
+    [Fact]
+    public async Task RequestListOpenIssues_ResolveProviderThrowsHubException_PropagatesUnchanged()
+    {
+        // Arrange: same ResolveIssueProviderForRunAsync failure path as RequestGetIssue above.
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);
+
+        var thrown = await act.Should().ThrowAsync<HubException>();
+        thrown.Which.Message.Should().NotStartWith("RequestListOpenIssues failed",
+            "a re-wrapped message would disable CreateSignalRPipeline's retry predicate");
+        thrown.Which.Message.Should().Contain("No active run or work item",
+            "the original HubException message from ResolveIssueProviderForRunAsync must propagate");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssues_ResolveProviderThrowsHubException_PropagatesUnchanged()
+    {
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssues("job-1", 1, 25, null, null);
+
+        var thrown = await act.Should().ThrowAsync<HubException>();
+        thrown.Which.Message.Should().NotStartWith("RequestListClosedIssues failed",
+            "a re-wrapped message would disable CreateSignalRPipeline's retry predicate");
+        thrown.Which.Message.Should().Contain("No active run or work item",
+            "the original HubException message from ResolveIssueProviderForRunAsync must propagate");
+    }
+
+    [Fact]
+    public async Task RequestListComments_ResolveProviderThrowsHubException_PropagatesUnchanged()
+    {
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string, string)?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListComments("job-1", "42");
+
+        var thrown = await act.Should().ThrowAsync<HubException>();
+        thrown.Which.Message.Should().NotStartWith("RequestListComments failed",
+            "a re-wrapped message would disable CreateSignalRPipeline's retry predicate");
+        thrown.Which.Message.Should().Contain("No active run or work item",
+            "the original HubException message from ResolveIssueProviderForRunAsync must propagate");
+    }
+
+    // ── RequestUpdateComment ──────────────────────────────────────────────
+
     [Fact]
     public async Task RequestUpdateComment_NullIssueId_Throws()
     {
@@ -835,9 +924,15 @@ public sealed class AgentHubIssueProxyTests
     // ── Outer catch with context — RequestListOpenIssues / Closed / Comments ──
 
     [Fact]
-    public async Task RequestListOpenIssues_ProviderThrows_WrapsWithContextualHubException()
+    public async Task RequestListOpenIssues_ProviderThrows_WrapsAsHubException()
     {
-        // Arrange: provider resolves successfully but throws during list call.
+        // Arrange: provider resolves successfully but throws a non-HubException during list call.
+        // ExecuteWithIssueProviderAsync catches it and re-throws as HubException("Failed to …").
+        // The outer catch(HubException){throw;} passes it through unchanged.
+        // TODO: [WARNING] The original assertion also verified ex.Which.InnerException.BeOfType<HubException>()
+        // which confirmed ExecuteWithIssueProviderAsync was the catch site. That assertion was
+        // removed when the outer catch was refactored (issue #3279). Re-adding it would lock in
+        // that the message is produced by ExecuteWithIssueProviderAsync, not some other path.
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
         var (_, mockProvider) = SetupIssueProvider();
@@ -847,16 +942,21 @@ public sealed class AgentHubIssueProxyTests
         var hub = CreateHub();
         var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);
 
-        // HubException wraps the provider error AND includes job/page context
+        // HubException propagates with the "Failed to …" prefix from ExecuteWithIssueProviderAsync.
+        // The message must start with "Failed to " so CreateSignalRPipeline's predicate fires.
         var ex = await act.Should().ThrowAsync<HubException>();
-        ex.WithMessage("*RequestListOpenIssues*job-1*");
-        ex.Which.InnerException.Should().BeOfType<HubException>(
-            "inner exception is the HubException from ExecuteWithIssueProviderAsync which already logs at Error");
+        ex.Which.Message.Should().StartWith("Failed to ");
+        ex.Which.Message.Should().Contain("list open issues");
     }
 
     [Fact]
-    public async Task RequestListClosedIssues_ProviderThrows_WrapsWithContextualHubException()
+    public async Task RequestListClosedIssues_ProviderThrows_WrapsAsHubException()
     {
+        // TODO: [WARNING] The original assertion also verified ex.Which.InnerException.BeOfType<HubException>()
+        // which confirmed ExecuteWithIssueProviderAsync was the catch site. That assertion was
+        // removed when the outer catch was refactored (issue #3279). Re-adding it would lock in
+        // that the message is produced by ExecuteWithIssueProviderAsync, not some other path.
+        // (TestQualityReviewer finding — AgentHubIssueProxyTests.cs:940)
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
         var (_, mockProvider) = SetupIssueProvider();
@@ -867,12 +967,18 @@ public sealed class AgentHubIssueProxyTests
         var act = () => hub.RequestListClosedIssues("job-1", 1, 25, null, null);
 
         var ex = await act.Should().ThrowAsync<HubException>();
-        ex.WithMessage("*RequestListClosedIssues*job-1*");
+        ex.Which.Message.Should().StartWith("Failed to ");
+        ex.Which.Message.Should().Contain("list closed issues");
     }
 
     [Fact]
-    public async Task RequestListComments_ProviderThrows_WrapsWithContextualHubException()
+    public async Task RequestListComments_ProviderThrows_WrapsAsHubException()
     {
+        // TODO: [WARNING] The original assertion also verified ex.Which.InnerException.BeOfType<HubException>()
+        // which confirmed ExecuteWithIssueProviderAsync was the catch site. That assertion was
+        // removed when the outer catch was refactored (issue #3279). Re-adding it would lock in
+        // that the message is produced by ExecuteWithIssueProviderAsync, not some other path.
+        // (TestQualityReviewer finding — AgentHubIssueProxyTests.cs:940)
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
         var (_, mockProvider) = SetupIssueProvider();
@@ -883,6 +989,7 @@ public sealed class AgentHubIssueProxyTests
         var act = () => hub.RequestListComments("job-1", "42");
 
         var ex = await act.Should().ThrowAsync<HubException>();
-        ex.WithMessage("*RequestListComments*job-1*");
+        ex.Which.Message.Should().StartWith("Failed to ");
+        ex.Which.Message.Should().Contain("list comments");
     }
 }
