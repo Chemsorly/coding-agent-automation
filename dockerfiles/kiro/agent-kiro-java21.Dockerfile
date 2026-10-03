@@ -48,6 +48,10 @@ RUN apt-get update && \
         libvips42t64 \
     && rm -rf /var/lib/apt/lists/*
 
+# user-apt lets the agent, which runs as non-root with all capabilities dropped, install Ubuntu
+# packages (libraries, command-line tools) at runtime. See dockerfiles/user-apt.sh.
+COPY --chmod=755 dockerfiles/user-apt.sh /usr/local/bin/user-apt
+
 # JAVA_HOME varies by architecture — set dynamically via symlink
 # The JDK package installs to java-21-openjdk-amd64 or java-21-openjdk-arm64
 RUN JAVA_ARCH=$(dpkg --print-architecture) && \
