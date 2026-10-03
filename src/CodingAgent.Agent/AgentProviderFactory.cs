@@ -54,10 +54,10 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        if (config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
+        if (config.ProviderType.Equals(ProviderTypes.GitHub, StringComparison.OrdinalIgnoreCase))
             return CreateGitHubRepositoryProvider(config);
 
-        if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
+        if (config.ProviderType.Equals(ProviderTypes.GitLab, StringComparison.OrdinalIgnoreCase))
             return CreateGitLabRepositoryProvider(config);
 
         Serilog.Log.Error("Unsupported repository provider type: {ProviderType}", config.ProviderType);
@@ -69,7 +69,7 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        if (config.ProviderType.Equals("KiroCli", StringComparison.OrdinalIgnoreCase))
+        if (config.ProviderType.Equals(ProviderTypes.KiroCli, StringComparison.OrdinalIgnoreCase))
             return CreateKiroCliAgentProvider(config);
 
         if (config.ProviderType.Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
@@ -84,10 +84,10 @@ public sealed class AgentProviderFactory : IProviderFactory
     {
         ArgumentNullException.ThrowIfNull(config);
 
-        if (config.ProviderType.Equals("GitHub", StringComparison.OrdinalIgnoreCase))
+        if (config.ProviderType.Equals(ProviderTypes.GitHub, StringComparison.OrdinalIgnoreCase))
             return Task.FromResult<IPipelineProvider>(CreateGitHubPipelineProvider(config));
 
-        if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
+        if (config.ProviderType.Equals(ProviderTypes.GitLab, StringComparison.OrdinalIgnoreCase))
             return Task.FromResult<IPipelineProvider>(CreateGitLabPipelineProvider(config));
 
         Serilog.Log.Error("Unsupported pipeline provider type: {ProviderType}", config.ProviderType);

@@ -108,6 +108,11 @@ public sealed class ConfigEndpointTests
             Id = Guid.NewGuid().ToString(),  // must be a parseable Guid (PostgresConfigurationStore validation)
             Kind = ProviderKind.Issue,
             DisplayName = "Test Provider",
+            // TODO: this fixture uses lowercase "github" which relies on OrdinalIgnoreCase comparison in
+            //       ProviderFactory. If comparisons ever change to case-sensitive (e.g. direct == on
+            //       ProviderTypes.GitHub constant), this fixture would silently stop exercising the right
+            //       branch. Migrate to ProviderTypes.GitHub for correctness.
+            //       Tracked by correctness review finding (WARNING).
             ProviderType = "github",
             Settings = new Dictionary<string, string>
             {
