@@ -117,9 +117,9 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         {
             exitCode = await RunWorkItemLifecycleAsync(stoppingToken);
         }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (stoppingToken.IsCancellationRequested)
         {
-            _logger.Information("WorkItemAgentService stopped by SIGTERM for work item {WorkItemId}; no status posted", _workItemId);
+            _logger.Information(ex, "WorkItemAgentService stopped by SIGTERM for work item {WorkItemId}; no status posted", _workItemId);
             exitCode = ExitCodeTerminated;
         }
         catch (WorkItemFetchException ex)
@@ -337,8 +337,10 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     /// </summary>
     private async Task<T> RetryWhileControlPlaneUnreachableAsync<T>(Func<Task<T>> call, string operation, CancellationToken ct)
     {
-        for (var attempt = 1; ; attempt++)
+        var attempt = 0;
+        while (true)
         {
+            attempt++;
             try
             {
                 return await call();
