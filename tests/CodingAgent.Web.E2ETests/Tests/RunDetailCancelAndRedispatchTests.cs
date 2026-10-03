@@ -337,11 +337,15 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         Assert.NotNull(failedRun.IssueProviderConfigId);
         Assert.NotNull(failedRun.RepoProviderConfigId);
 
+        // Dispose the first agent before connecting the second so the FakeJobController's
+        // FindIdleAgentFor("e2e") returns only the new agent. Both agents carry the "e2e" label
+        // (required for the agent profile MatchLabels = ["e2e"] to match during AssignmentEnricher),
+        // so we must ensure only one is idle when the Pending WorkItem is dispatched.
+        await agent.DisposeAsync();
+
         // Connect a fresh agent to receive the re-dispatched job.
         // The original agent's JobAssigned TCS is already resolved, so use a new client.
-        // Use a unique label ("e2e-redispatch-3b") so AgentSelector can route exclusively
-        // to this agent, avoiding the FakeJobController selecting the still-idle first agent.
-        await using var newAgent = new FakeAgentClient("redispatch-agent-3b", "e2e-redispatch-3b");
+        await using var newAgent = new FakeAgentClient("redispatch-agent-3b", "e2e");
         await newAgent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
 
         // Navigate to the failed run's detail page
@@ -359,7 +363,8 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // which is sensitive to Blazor Server re-renders in CI.
         // Uses IWorkDistributor.DistributeAsync (→ POST /api/work-items, Pending path) so the
         // FakeJobController picks it up via the Pending poll.
-        // AgentSelector targets "e2e-redispatch-3b" so only the new agent receives the job.
+        // AgentSelector = "e2e" matches the seeded profile (MatchLabels = ["e2e"]) so
+        // AssignmentEnricher can resolve the full job spec at assignment time.
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
@@ -370,7 +375,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             PipelineProviderConfigId = failedRun.PipelineProviderConfigId,
             InitiatedBy = InitiatedByConstants.Manual,
             TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "e2e-redispatch-3b",
+            AgentSelector = "e2e",
             TimeoutSeconds = 0,
             RunType = PipelineRunType.Implementation,
             PayloadSchemaVersion = 1,
