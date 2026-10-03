@@ -3400,10 +3400,10 @@ public sealed class ReconciliationLoopErrorTests
 
     // ─── OperationCanceledException propagation (Issue #3236) ─────────────────
 
-    // TODO: [WARNING] The six OCE-propagation tests below each verify only that OCE *propagates*.
+    // TODO: [WARNING] The seven OCE-propagation tests below each verify only that OCE *propagates*.
     // They do not verify the complementary behaviour: that a non-OCE exception (e.g. InvalidOperationException)
     // at the same catch site is still *caught* and causes the method to return normally. Without that
-    // counterpart, a regression that removes the `when` filter entirely would still pass all six tests
+    // counterpart, a regression that removes the `when` filter entirely would still pass all seven tests
     // (the bare catch would re-swallow everything, so OCE would still not propagate — wait, actually the
     // test would fail, but through a different mechanism). More precisely: if the filter is accidentally
     // removed, non-OCE exceptions would propagate unexpectedly and break the "skip this cycle" contract.
@@ -3556,6 +3556,44 @@ public sealed class ReconciliationLoopErrorTests
 
         // GetStatusAsync inside the 400-catch throws OCE — must propagate
         _workItemClient.Setup(c => c.GetStatusAsync(id, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var loop = CreateLoop();
+
+        var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // TODO: [WARNING] This test verifies that OCE propagates from PostStatusAsync's terminal catch
+    // but lacks a complementary test asserting that a non-OCE exception (e.g. InvalidOperationException)
+    // thrown by PostStatusAsync is still *caught* and causes ReconcileOnceAsync to return normally
+    // without throwing. Without that counterpart, a regression that removes the `when (ex is not
+    // OperationCanceledException)` filter and instead re-raises all exceptions would still pass this test.
+    // Add: HandleJobCompleted_WhenPostStatusThrowsNonOce_CompletesNormally asserting ReconcileOnceAsync
+    // does NOT throw when PostStatusAsync throws InvalidOperationException.
+    // (Review finding: TestQualityReviewer [WARNING])
+
+    /// <summary>
+    /// Issue #3281: When PostStatusAsync throws OperationCanceledException inside
+    /// HandleJobCompletedAsync's main try block, the OCE must propagate out of
+    /// ReconcileOnceAsync rather than being caught by the terminal catch, logged as an
+    /// Error, and returning false.
+    /// Must use a SUCCEEDED job to avoid entering ClassifyJobFailureReasonAsync (which also
+    /// calls GetStatusAsync) — using a failed job would risk consuming the OCE at the wrong site.
+    /// CancellationToken.None is passed to ReconcileOnceAsync because the OCE is injected via
+    /// the PostStatusAsync mock directly; the filter fix is type-based, not token-state-based.
+    /// </summary>
+    [Fact]
+    public async Task HandleJobCompleted_WhenPostStatusThrowsOce_PropagatesOperationCanceledException()
+    {
+        var id = Guid.NewGuid();
+        var job = MakeJob($"caa-agent-{id:N}"[..21], id, succeeded: true);
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // PostStatusAsync throws OCE — must propagate, NOT be caught by the terminal catch
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
         var loop = CreateLoop();
