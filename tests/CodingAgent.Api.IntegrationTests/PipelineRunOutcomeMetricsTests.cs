@@ -82,6 +82,7 @@ public sealed class PipelineRunOutcomeMetricsTests
             .ReturnsAsync((PipelineRun?)null);
         return new WorkItemStatusTransitionService(
             CreateTransitionService(opts), lifecycleManager.Object,
+            NullLogger<WorkItemStatusTransitionService>.Instance,
             dbFactory ?? CreateDbFactory(opts));
     }
 

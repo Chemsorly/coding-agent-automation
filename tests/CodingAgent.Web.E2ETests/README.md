@@ -27,8 +27,21 @@ dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E
 
 - Classes that derive from `HeadlessE2ETestBase` need no browser.
 - Classes that derive from `E2ETestBase` drive Chromium through Playwright. They need the browser
-  and its system libraries. The agent images do not include them, so in an agent pod run only the
-  headless classes and let the pipeline's CI round run the Playwright classes.
+  that matches the repository's `Microsoft.Playwright` and Chromium's system libraries. The agent
+  images include neither. In an agent pod (non-root, no sudo), install both after the build, then
+  run the test with the `user-apt` environment loaded:
+
+  ```bash
+  PW=tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/.playwright
+  $PW/node/linux-*/node $PW/package/cli.js install --only-shell chromium
+  user-apt install libasound2t64 libatk1.0-0t64 libatk-bridge2.0-0t64 libatspi2.0-0t64 libdbus-1-3 libgbm1 libxcomposite1 libxdamage1 libxfixes3 libxkbcommon0 libxrandr2
+  . ~/.user-apt/env && dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"FullyQualifiedName~SettingsCrudTests" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m"
+  ```
+
+  This downloads about 150 MB, so do it only when you work on a Playwright class. `user-apt`
+  skips packages that are already installed (see `docs/configuration.md`). A test that fails
+  with `error while loading shared libraries: <name>.so` ran without the libraries: load
+  `~/.user-apt/env` in the same shell command as `dotnet vstest`.
 - On a Linux dev machine, install the system libraries (needs root) and the browser that matches
   the repository's `Microsoft.Playwright` (as your own user) once:
 

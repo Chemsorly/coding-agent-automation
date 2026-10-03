@@ -216,8 +216,29 @@ public sealed partial class AgentHub
             return await ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list open issues",
                 (provider, ct) => provider.ListOpenIssuesAsync(page, pageSize, labels, ct));
         }
+        catch (HubException)
+        {
+            // TODO: If ProviderConfigResolver.ResolveRequiredAsync ever stops logging at Error for
+            // the config-not-found path, this catch arm would silently swallow the diagnostic (the
+            // HubException is re-thrown but no re-log is emitted here). Consider adding a narrowed
+            // re-log if that internal contract cannot be relied upon.
+            // (DotNetSpecialist/Correctness review — AgentHub.Decomposition.cs:220)
+            //
+            // ExecuteWithIssueProviderAsync or ResolveIssueProviderForRunAsync already logged this.
+            // More precisely: ExecuteWithIssueProviderAsync logs at Error before re-throwing;
+            // ResolveIssueProviderForRunAsync logs at Error for the "no active run" path; and
+            // ProviderConfigResolver.ResolveRequiredAsync (called inside ResolveIssueProviderForRunAsync)
+            // logs at Error for the config-not-found path before throwing InvalidOperationException,
+            // which ResolveIssueProviderForRunAsync wraps as HubException(ex.Message) — so Error is
+            // always emitted before the HubException surfaces here.
+            // Re-throw unchanged so CreateSignalRPipeline's "Failed to " predicate fires.
+            throw;
+        }
         catch (Exception ex)
         {
+            _logger.Error(ex,
+                "RequestListOpenIssues unexpected failure for job {JobId} (page={Page}, pageSize={PageSize})",
+                jobId.Value, page, pageSize);
             throw new HubException(
                 $"RequestListOpenIssues failed for job {jobId.Value} (page={page}, pageSize={pageSize}): {ex.Message}", ex);
         }
@@ -236,8 +257,17 @@ public sealed partial class AgentHub
             return await ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list closed issues",
                 (provider, ct) => provider.ListClosedIssuesAsync(page, pageSize, labels, since, ct));
         }
+        catch (HubException)
+        {
+            // ExecuteWithIssueProviderAsync or ResolveIssueProviderForRunAsync already logged this.
+            // Re-throw unchanged so CreateSignalRPipeline's "Failed to " predicate fires.
+            throw;
+        }
         catch (Exception ex)
         {
+            _logger.Error(ex,
+                "RequestListClosedIssues unexpected failure for job {JobId} (page={Page}, pageSize={PageSize})",
+                jobId.Value, page, pageSize);
             throw new HubException(
                 $"RequestListClosedIssues failed for job {jobId.Value} (page={page}, pageSize={pageSize}): {ex.Message}", ex);
         }
@@ -272,17 +302,18 @@ public sealed partial class AgentHub
             return await ExecuteWithIssueProviderAsync<IssueDetail>(jobId.Value, $"get issue '{identifier}'",
                 (provider, ct) => provider.GetIssueAsync(identifier, ct));
         }
+        catch (HubException)
+        {
+            // ExecuteWithIssueProviderAsync or ResolveIssueProviderForRunAsync /
+            // ProviderConfigResolver.ResolveRequiredAsync already logged this at Error.
+            // Re-throw unchanged so CreateSignalRPipeline's "Failed to " predicate fires.
+            throw;
+        }
         catch (Exception ex)
         {
-            // Log at Error so the server-side cause of "Failed to invoke 'RequestGetIssue'"
-            // is always visible in Grafana regardless of which failure path produced it.
-            // ExecuteWithIssueProviderAsync logs provider-level exceptions (GitHub API, etc.)
-            // at Error before re-throwing as HubException. This catch handles the remaining paths:
-            // ResolveIssueProviderForRunAsync failures (missing run, missing provider config) that
-            // escape the inner try/catch and arrive here as HubException without prior Error-level
-            // logging — the comment in the previous revision was aspirational, not accurate.
+            // Non-HubException paths: genuinely unexpected failures not covered by the inner helpers.
             _logger.Error(ex,
-                "RequestGetIssue failed for job {JobId}, identifier '{Identifier}'",
+                "RequestGetIssue unexpected failure for job {JobId}, identifier '{Identifier}'",
                 jobId.Value, SanitizeForLog(identifier));
             throw new HubException(
                 $"RequestGetIssue failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
@@ -303,8 +334,17 @@ public sealed partial class AgentHub
             return await ExecuteWithIssueProviderAsync<IReadOnlyList<IssueComment>>(jobId.Value, $"list comments for issue '{identifier}'",
                 (provider, ct) => provider.ListCommentsAsync(identifier, ct));
         }
+        catch (HubException)
+        {
+            // ExecuteWithIssueProviderAsync or ResolveIssueProviderForRunAsync already logged this.
+            // Re-throw unchanged so CreateSignalRPipeline's "Failed to " predicate fires.
+            throw;
+        }
         catch (Exception ex)
         {
+            _logger.Error(ex,
+                "RequestListComments unexpected failure for job {JobId}, identifier '{Identifier}'",
+                jobId.Value, SanitizeForLog(identifier));
             throw new HubException(
                 $"RequestListComments failed for job {jobId.Value}, identifier '{SanitizeForLog(identifier)}': {ex.Message}", ex);
         }

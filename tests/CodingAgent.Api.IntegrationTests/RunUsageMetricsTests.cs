@@ -65,7 +65,7 @@ public sealed class RunUsageMetricsTests
         var dbFactory = new LocalTestDbContextFactory(opts);
         return new WorkItemStatusTransitionService(
             new WorkItemTransitionService(dbFactory, NullLogger<WorkItemTransitionService>.Instance),
-            lifecycleManager.Object, dbFactory);
+            lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
     }
 
     private static string SerializePayload(JobCompletionPayload payload)
