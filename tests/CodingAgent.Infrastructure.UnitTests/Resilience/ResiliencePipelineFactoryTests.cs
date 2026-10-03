@@ -485,6 +485,14 @@ public class ResiliencePipelineFactoryTests
     // ── SignalR pipeline — HubException retry predicates ─────────────────
 
     [Theory]
+    // Raw "Failed to ..." messages produced by ExecuteWithIssueProviderAsync.
+    // After the fix in #3279, these messages reach the predicate unchanged because the four hub
+    // methods (RequestGetIssue, RequestListOpenIssues, RequestListClosedIssues, RequestListComments)
+    // now have catch (HubException) { throw; } that passes the exception through without re-wrapping.
+    // Note: double-wrapped "Request{Name} failed …" cases are NOT listed here because the fix
+    // prevents them from ever reaching the predicate; they belong in
+    // CreateSignalRPipeline_DoesNotRetryReWrappedHubException below, which asserts they are
+    // correctly rejected (i.e., the predicate does not match them even if they were to appear).
     [InlineData("Failed to get issue '42' for job abc-123: GitHub API 503")]
     [InlineData("Failed to list open issues for job abc-123: connection reset")]
     [InlineData("Failed to list closed issues for job abc-123: timeout")]
@@ -531,6 +539,46 @@ public class ResiliencePipelineFactoryTests
 
         await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>();
         callCount.Should().Be(1, "permanent config-not-found errors must not be retried");
+    }
+
+    [Theory]
+    // Pre-fix double-wrapped format: the hub's outer catch re-wrapped ExecuteWithIssueProviderAsync's
+    // "Failed to …" message with a "Request{Name} failed …" prefix. After the fix (#3279) these
+    // messages no longer reach the predicate (catch (HubException) { throw; } passes them through
+    // unchanged). These cases guard against two regressions:
+    //   1. The fix is reverted AND the predicate is widened to match "Request{Name} failed" — this
+    //      test would fail (callCount > 1) because the predicate would start matching.
+    //   2. The predicate is widened independently of the hub fix — same failure mode.
+    // Each InlineData entry covers one of the four affected hub methods, ensuring all four are
+    // explicitly represented in the resilience suite.
+    [InlineData("RequestGetIssue failed for job abc-123, identifier '42': Failed to get issue '42' for job abc-123: GitHub API 503")]
+    [InlineData("RequestListOpenIssues failed for job abc-123 (page=1, pageSize=25): Failed to list open issues for job abc-123: connection reset")]
+    [InlineData("RequestListClosedIssues failed for job abc-123 (page=1, pageSize=25): Failed to list closed issues for job abc-123: timeout")]
+    [InlineData("RequestListComments failed for job abc-123, identifier '42': Failed to list comments for issue '42' for job abc-123: rate limit")]
+    public async Task CreateSignalRPipeline_DoesNotRetryReWrappedHubException(string reWrappedMessage)
+    {
+        // Before the fix in issue #3279, the four hub methods (RequestGetIssue,
+        // RequestListOpenIssues, RequestListClosedIssues, RequestListComments) re-wrapped
+        // provider-level HubExceptions from ExecuteWithIssueProviderAsync with a
+        // "Request{Name} failed …" prefix. Such messages do NOT start with "Failed to ",
+        // so the retry predicate would not fire and the exception would propagate immediately
+        // instead of being retried. This test documents that the predicate rejects the old
+        // re-wrapped format, providing a canary: if the predicate is ever changed to match
+        // "Request{Name} failed" messages, this test will catch the unintended widening.
+        var pipeline = ResiliencePipelineFactory.CreateSignalRPipeline(
+            Log.Logger, TimeSpan.FromSeconds(10), outerTimeout: TimeSpan.FromSeconds(60),
+            retryDelay: TimeSpan.FromMilliseconds(1));
+        var callCount = 0;
+
+        var act = () => pipeline.ExecuteAsync(async _ =>
+        {
+            callCount++;
+            throw new Microsoft.AspNetCore.SignalR.HubException(reWrappedMessage);
+        }, CancellationToken.None).AsTask();
+
+        await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>();
+        callCount.Should().Be(1, "re-wrapped 'Request{Name} failed' messages must not be retried — " +
+            "if they reach the predicate it means the hub is re-wrapping again (regression of #3279)");
     }
 
     [Fact]

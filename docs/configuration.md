@@ -392,6 +392,21 @@ Configure via Settings → Providers → Repository → Steering Content field. 
 
 Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents.
 
+## Runtime System Packages
+
+Agent pods run as the non-root `ubuntu` user with all Linux capabilities dropped, so `apt-get install` and `sudo` fail there. The agent images include `user-apt`, which installs Ubuntu packages without root:
+
+```bash
+user-apt install libgbm1 libxkbcommon0
+. ~/.user-apt/env && <command that needs the packages>
+```
+
+`user-apt` resolves the packages and their missing dependencies with apt and downloads them. It unpacks them under `~/.user-apt` with `dpkg -x` and writes `~/.user-apt/env`, which puts their programs and libraries on `PATH` and `LD_LIBRARY_PATH`. Maintainer scripts do not run, so it suits libraries and plain command-line tools, not services. The packages last only as long as the pod.
+
+The images stay free of project-specific tools and versions; a repository's own docs say what its tasks need. To make agents aware of `user-apt`, add a line like this to the project steering content:
+
+> You run as a non-root user without sudo. To install an Ubuntu package (a library or command-line tool), run `user-apt install <package>...`, then prefix the command that needs it with `. ~/.user-apt/env &&`.
+
 ## MCP Server Support
 
 The agent CLI supports [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) servers for extending agent capabilities. The Docker images include `uv`/`uvx` (Python) and `npm`/`npx` (Node.js) for running MCP servers.
