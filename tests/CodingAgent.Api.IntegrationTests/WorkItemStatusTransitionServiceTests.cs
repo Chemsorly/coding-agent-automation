@@ -1,4 +1,5 @@
 using System.Diagnostics.Metrics;
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -8,6 +9,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Serilog;
@@ -70,7 +72,7 @@ public sealed class WorkItemStatusTransitionServiceTests
         DbContextOptions<PipelineDbContext> opts,
         IRunLifecycleManager lifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null)
-        => new(CreateTransitionService(opts), lifecycleManager, dbFactory ?? CreateDbFactory(opts));
+        => new(CreateTransitionService(opts), lifecycleManager, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory ?? CreateDbFactory(opts));
 
     // ── Infrastructure-recovery path ─────────────────────────────────────────
 
@@ -293,7 +295,7 @@ public sealed class WorkItemStatusTransitionServiceTests
                 It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, FailureReason = "99" };
 
         // Act
@@ -322,7 +324,7 @@ public sealed class WorkItemStatusTransitionServiceTests
                 It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, FailureReason = "AgentError" };
 
         // Act
@@ -436,6 +438,105 @@ public sealed class WorkItemStatusTransitionServiceTests
         capturedLabel.Should().BeNull("malformed JSON → deserialization fails → agent:error fallback");
     }
 
+    // TODO: [WARNING] There is no counterpart test verifying that a *valid* JobCompletionPayload JSON
+    // does NOT trigger the Warning log. Without it, the suite would pass even if LogWarning were called
+    // on every transition regardless of parse success. Add a test that passes well-formed JSON and
+    // asserts Times.Never for LogLevel.Warning to complete the coverage and prevent regressions in
+    // the opposite direction.
+    [Fact]
+    public async Task TransitionAsync_Failed_WithMalformedResult_LogsWarningWithWorkItemId()
+    {
+        // Arrange: seed a Running WorkItem so a real Failed transition fires
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+
+        // A payload string that is distinctly recognizable but NOT a valid JSON literal.
+        // The acceptance criterion is that the raw payload body is not included in the log
+        // message template args — the exception is passed as the first arg (so the stack trace
+        // appears in structured logs), but resultJson itself must not be forwarded to the logger.
+        const string malformedJson = "not-valid-json{{";
+
+        string? capturedMessage = null;
+        Exception? capturedEx = null;
+        var mockLogger = new Mock<ILogger<WorkItemStatusTransitionService>>();
+        mockLogger
+            .Setup(l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            // TODO: [WARNING] The Callback generic type parameters <LogLevel, EventId, object, Exception?, Delegate>
+            // are inconsistent with the Setup's It.IsAnyType placeholders. Moq requires callback type args to
+            // match the resolved types; using `object` for TState and `Delegate` for the formatter may cause Moq
+            // to silently skip invoking the callback, leaving capturedMessage/capturedEx null. The assertions on
+            // those variables would then pass vacuously (null.Should().BeOfType<JsonException>() passes via
+            // AwesomeAssertions null-safe path). The correct Callback signature is:
+            //   .Callback<LogLevel, EventId, object, Exception?, Func<object, Exception?, string>>(...)
+            // Alternatively, replace the Mock with a concrete TestLogger<T> implementation.
+            .Callback<LogLevel, EventId, object, Exception?, Delegate>((_, _, state, ex, _) =>
+            {
+                capturedEx = ex;
+                capturedMessage = state?.ToString();
+            });
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunWithLabelAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var svc = new WorkItemStatusTransitionService(
+            CreateTransitionService(opts),
+            lifecycleManager.Object,
+            mockLogger.Object,
+            CreateDbFactory(opts));
+
+        var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, Result = malformedJson };
+
+        // Act
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None);
+
+        // Assert — positive call-count: warning must be emitted exactly once
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Warning,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once,
+            "a Warning must be logged exactly once for a malformed Result payload");
+
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned,
+            "the fallback to null label must still produce a successful transition");
+
+        // Assert — exception is passed to LogWarning (stack trace preserved in structured logs)
+        capturedEx.Should().BeOfType<JsonException>(
+            "the caught JsonException must be passed to LogWarning so the stack trace appears in structured logs");
+
+        // Assert — WorkItem ID appears in the log message template args
+        capturedMessage.Should().Contain(item.Id.ToString(),
+            "the WorkItem ID must appear in the Warning log message");
+
+        // Assert — the raw JSON payload string is NOT passed as a message template arg (issue AC).
+        // The implementation logs only workItemId (not resultJson); ex.Message is separate from the
+        // message template args and may embed a snippet at the deserializer's discretion, but the
+        // raw payload must not be explicitly forwarded as a structured log property.
+        // TODO: [WARNING] This assertion is nearly tautological because malformedJson contains "{{" which
+        // is a format-escape sequence. If the payload were passed as a structured log argument, Moq's
+        // FormattedLogValues.ToString() would render "{{" as a literal "{", so NotContain("not-valid-json{{")
+        // would pass even if the payload were present (it would appear as "not-valid-json{" in the rendered
+        // string). Use a sentinel string without format-special characters (e.g. "not-valid-json-SENTINEL")
+        // to reliably detect forbidden payload inclusion.
+        capturedMessage.Should().NotContain(malformedJson,
+            "the raw JSON payload body must not be passed as a log message argument");
+    }
+
     [Fact]
     public async Task TransitionAsync_Failed_WithEmptyStringResult_PassesNullLabel()
     {
@@ -517,7 +618,7 @@ public sealed class WorkItemStatusTransitionServiceTests
         listener.Start();
 
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded };
 
         // Act — awaitTelemetry: true for deterministic assertion
@@ -550,7 +651,7 @@ public sealed class WorkItemStatusTransitionServiceTests
         listener.Start();
 
         var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed };
 
         // Act
@@ -595,7 +696,7 @@ public sealed class WorkItemStatusTransitionServiceTests
         listener.Start();
 
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var outcome = await svc.TransitionAsync(item.Id,
             new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded },
             CancellationToken.None, awaitTelemetry: true);
@@ -639,7 +740,7 @@ public sealed class WorkItemStatusTransitionServiceTests
                 It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var outcome = await svc.TransitionAsync(item.Id,
             new WorkItemStatusRequest { Status = WorkItemStatus.Failed, FailureReason = "Timeout" },
             CancellationToken.None, awaitTelemetry: true);
@@ -688,7 +789,7 @@ public sealed class WorkItemStatusTransitionServiceTests
         var payloadJson = System.Text.Json.JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
 
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         await svc.TransitionAsync(item.Id,
             new WorkItemStatusRequest
             {
@@ -747,7 +848,7 @@ public sealed class WorkItemStatusTransitionServiceTests
             .Setup(m => m.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         await svc.TransitionAsync(item.Id,
             new WorkItemStatusRequest
             {
@@ -784,7 +885,7 @@ public sealed class WorkItemStatusTransitionServiceTests
         listener.Start();
 
         var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
-        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, dbFactory);
+        var svc = new WorkItemStatusTransitionService(CreateTransitionService(opts), lifecycleManager.Object, NullLogger<WorkItemStatusTransitionService>.Instance, dbFactory);
         var outcome = await svc.TransitionAsync(item.Id,
             new WorkItemStatusRequest { Status = WorkItemStatus.Failed },
             CancellationToken.None, awaitTelemetry: true);

@@ -491,6 +491,12 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton(sp => new WorkItemStatusTransitionService(
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IRunLifecycleManager>(),
+            // TODO: [WARNING] Resolves logger via ILoggerFactory rather than ILogger<T> directly.
+            // Both produce a correctly typed logger at runtime, but the ILoggerFactory approach
+            // bypasses any ILogger<T> registrations or decorators held by the DI container (e.g.
+            // scoped test loggers, xUnit sink registrations). The idiomatic pattern is:
+            //   sp.GetRequiredService<ILogger<WorkItemStatusTransitionService>>()
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemStatusTransitionService>(),
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── IConsolidationJobPreparationService ────────────────────────────
