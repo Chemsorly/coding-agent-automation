@@ -23,11 +23,8 @@ public sealed class AgentOrphanRecoveryService(
     private readonly IChangeNotifier _changeNotifier = changeNotifier;
     private readonly ILogger _logger = logger;
 
-    // TODO: Add CancellationToken parameter to RecoverOrphanedStateAsync (and update IAgentOrphanRecoveryService).
-    // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
-    // in the refactoring, but this operation hits history storage and should be cancellable.
     /// <inheritdoc />
-    public async Task<OrphanRecoveryResult> RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
+    public async Task<OrphanRecoveryResult> RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(message);
         ArgumentNullException.ThrowIfNull(agentId.Value);
@@ -36,7 +33,7 @@ public sealed class AgentOrphanRecoveryService(
         PipelineRun? firstPickupRun = null;
         if (message.ActiveJob is not null)
         {
-            firstPickupRun = await RestoreActiveJobAsync(message, agentId);
+            firstPickupRun = await RestoreActiveJobAsync(message, agentId, ct);
         }
 
         // Detect orphaned runs: if the orchestrator tracks active runs for this agent
@@ -46,18 +43,18 @@ public sealed class AgentOrphanRecoveryService(
         var entry = _facade.GetByAgentId(agentId);
         if (entry is { ActiveJobId: null })
         {
-            await DetectAndRestoreOrphans(agentId, entry);
+            await DetectAndRestoreOrphans(agentId, entry, ct);
         }
         else if (entry is { ActiveJobId: not null })
         {
-            await HandleCrashRecoveryAsync(message, agentId, entry);
+            await HandleCrashRecoveryAsync(message, agentId, entry, ct);
         }
 
         return new OrphanRecoveryResult(firstPickupRun);
     }
 
     /// <returns>The tracked run when the agent was just recorded on it as its first agent.</returns>
-    private async Task<PipelineRun?> RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
+    private async Task<PipelineRun?> RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId, CancellationToken ct)
     {
         var activeJob = message.ActiveJob!;
 
@@ -69,7 +66,7 @@ public sealed class AgentOrphanRecoveryService(
         RunIdentity identity;
         if (_facade.CanVerifyWorkItems)
         {
-            var record = await ReadWorkItemRecordAsync(agentId, activeJob.RunId);
+            var record = await ReadWorkItemRecordAsync(agentId, activeJob.RunId, ct);
             if (record is null || !record.IsOwnedBy(agentId.Value))
             {
                 _logger.Warning(
@@ -88,7 +85,7 @@ public sealed class AgentOrphanRecoveryService(
 
         if (existingRun is null)
         {
-            await RestoreRunFromAgentStateAsync(agentId, activeJob, identity);
+            await RestoreRunFromAgentStateAsync(agentId, activeJob, identity, ct);
             return null;
         }
 
@@ -100,13 +97,24 @@ public sealed class AgentOrphanRecoveryService(
     /// as "not the agent's": registration fails with an error the agent retries, so a store outage
     /// does not leave a legitimate agent registered without its run.
     /// </summary>
-    private async Task<WorkItemRunRecord?> ReadWorkItemRecordAsync(AgentId agentId, string runId)
+    /// <remarks>
+    /// Two distinct exit modes: an <see cref="OperationCanceledException"/> from
+    /// <see cref="IAgentHubFacade.GetWorkItemRunRecordAsync"/> propagates directly to the caller
+    /// (the <c>when</c> guard lets it escape the catch block). All other exceptions are caught,
+    /// logged, and rethrown as <see cref="Microsoft.AspNetCore.SignalR.HubException"/> so the
+    /// SignalR retry pipeline treats the failure as transient.
+    /// </remarks>
+    // TODO [WARNING]: Two distinct exit modes — OCE propagates, all others become HubException —
+    // should be visible to maintainers. The XML doc <remarks> above captures this. If the catch
+    // filter (when (ex is not OperationCanceledException)) is ever simplified, ensure OCE still
+    // propagates rather than being swallowed or re-wrapped as HubException.
+    private async Task<WorkItemRunRecord?> ReadWorkItemRecordAsync(AgentId agentId, string runId, CancellationToken ct)
     {
         try
         {
-            return await _facade.GetWorkItemRunRecordAsync(runId, CancellationToken.None);
+            return await _facade.GetWorkItemRunRecordAsync(runId, ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex,
                 "Agent {AgentId}: could not read work item {RunId} to verify the agent's run — failing registration so the agent retries",
@@ -118,12 +126,12 @@ public sealed class AgentOrphanRecoveryService(
     }
 
     private async Task RestoreRunFromAgentStateAsync(
-        AgentId agentId, ActiveJobState activeJob, RunIdentity identity)
+        AgentId agentId, ActiveJobState activeJob, RunIdentity identity, CancellationToken ct)
     {
         // Check history — don't re-register a completed run.
         // Only treat runs with successful terminal states as stale.
         // Cancelled/Failed runs may be legitimately re-dispatched with the same RunId.
-        var history = await _facade.GetRunHistoryAsync(CancellationToken.None);
+        var history = await _facade.GetRunHistoryAsync(ct);
         var inHistory = history.Any(r => r.RunId == activeJob.RunId
             && r.FinalStep != PipelineStep.Cancelled
             && r.FinalStep != PipelineStep.Failed);
@@ -183,10 +191,11 @@ public sealed class AgentOrphanRecoveryService(
             // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
             // the async continuation must not escape the lock scope and potentially
             // overwrite the Busy status already written to Redis by TransitionStatus.
-            // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
-            // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
-            // limitation at the call site. If cancellation support is added to the enclosing method,
-            // propagate the token here.
+            // TODO [WARNING]: UpdateAgentFieldFireAndForget cannot forward a CancellationToken because
+            // IAgentHubFacade.UpdateAgentFieldAsync has no CancellationToken parameter. The fire-and-forget
+            // helper intentionally uses CancellationToken.None for the ContinueWith fault-log continuation.
+            // To propagate the recovery token here, IAgentHubFacade.UpdateAgentFieldAsync would need a
+            // CancellationToken overload and UpdateAgentFieldFireAndForget would need to be updated.
             _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "RestoreConsolidationTracking");
         }
 
@@ -227,10 +236,11 @@ public sealed class AgentOrphanRecoveryService(
             // UpdateAgentFieldAsync is called AFTER TransitionStatus and outside the lock:
             // the async continuation must not escape the lock scope and potentially
             // overwrite the Busy status already written to Redis by TransitionStatus.
-            // TODO: [WARNING] CancellationToken is not threaded through to UpdateAgentFieldAsync.
-            // RecoverOrphanedStateAsync does not accept a CancellationToken, so this is a structural
-            // limitation at the call site. If cancellation support is added to the enclosing method,
-            // propagate the token here.
+            // TODO [WARNING]: UpdateAgentFieldFireAndForget cannot forward a CancellationToken because
+            // IAgentHubFacade.UpdateAgentFieldAsync has no CancellationToken parameter. The fire-and-forget
+            // helper intentionally uses CancellationToken.None for the ContinueWith fault-log continuation.
+            // To propagate the recovery token here, IAgentHubFacade.UpdateAgentFieldAsync would need a
+            // CancellationToken overload and UpdateAgentFieldFireAndForget would need to be updated.
             _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "RestorePipelineRun");
         }
 
@@ -450,7 +460,7 @@ public sealed class AgentOrphanRecoveryService(
     // lock-and-activate), not the top-level branch split. The criterion naming is ambiguous; this
     // interpretation reduces the 151-line method to ~23 lines and satisfies the no-method-over-100-lines
     // constraint.
-    private async Task DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
+    private async Task DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry, CancellationToken ct)
     {
         var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
         if (orphanedRuns.Count == 0)
@@ -466,10 +476,10 @@ public sealed class AgentOrphanRecoveryService(
         // ReconciliationService (JobController) will time out the run after the grace period.
         var mostRecent = orphanedRuns[^1];
 
-        if (!await VerifyOrphanOwnershipAsync(agentId, mostRecent))
+        if (!await VerifyOrphanOwnershipAsync(agentId, mostRecent, ct))
             return;
 
-        if (await CheckOrphanInHistoryAsync(agentId, mostRecent))
+        if (await CheckOrphanInHistoryAsync(agentId, mostRecent, ct))
             return;
 
         ActivateOrphanedRun(agentId, entry, mostRecent, orphanedRuns.Count);
@@ -480,14 +490,14 @@ public sealed class AgentOrphanRecoveryService(
     /// cannot be confirmed as belonging to this agent — in that case restoration is skipped.
     /// Returns <c>true</c> when verification passes or is not required.
     /// </summary>
-    private async Task<bool> VerifyOrphanOwnershipAsync(AgentId agentId, PipelineRun mostRecent)
+    private async Task<bool> VerifyOrphanOwnershipAsync(AgentId agentId, PipelineRun mostRecent, CancellationToken ct)
     {
         if (!_facade.CanVerifyWorkItems)
             return true;
 
         // The run records this agent, but only its work item says whose work it is: as for a
         // reported active job, re-attach it only to the work item's own agent.
-        var record = await ReadWorkItemRecordAsync(agentId, mostRecent.RunId);
+        var record = await ReadWorkItemRecordAsync(agentId, mostRecent.RunId, ct);
         if (record is null || !record.IsOwnedBy(agentId.Value))
         {
             _logger.Warning(
@@ -504,15 +514,12 @@ public sealed class AgentOrphanRecoveryService(
     /// state — in that case restoration should be skipped. Returns <c>false</c> when the run is not
     /// in history (or history is unavailable — fail-open).
     /// </summary>
-    private async Task<bool> CheckOrphanInHistoryAsync(AgentId agentId, PipelineRun mostRecent)
+    private async Task<bool> CheckOrphanInHistoryAsync(AgentId agentId, PipelineRun mostRecent, CancellationToken ct)
     {
         // Guard: don't re-activate a run that is already in history as a non-Cancelled/
         // non-Failed terminal state (e.g. Completed, PrMerged, PrClosed, ConflictRestart).
         // Mirrors the history check in RestoreRunFromAgentStateAsync. Cancelled/Failed runs
         // remain restorable — they may be legitimately re-dispatched.
-        // TODO [WARNING]: CancellationToken.None is passed because RecoverOrphanedStateAsync does not yet
-        // accept a CancellationToken. Add a token parameter to the public method and propagate it here
-        // so that hub connection teardown can abort this history storage call (tracked separately).
         // TODO [WARNING]: GetRunHistoryAsync returns the full history and this performs an O(N) linear scan
         // on every orphan-recovery call. Verify that GetRunHistoryAsync does not return cross-agent history;
         // if run history is large, consider scoping the query by agent or run ID to avoid performance issues.
@@ -523,9 +530,9 @@ public sealed class AgentOrphanRecoveryService(
         IReadOnlyList<PipelineRunSummary> history;
         try
         {
-            history = await _facade.GetRunHistoryAsync(CancellationToken.None);
+            history = await _facade.GetRunHistoryAsync(ct);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Fail-open: if history storage is unavailable, proceed with restoration rather
             // than blocking agent registration. At worst, a completed run is briefly re-activated
@@ -642,7 +649,7 @@ public sealed class AgentOrphanRecoveryService(
             agentId, orphanCount, mostRecent.RunId, mostRecent.IssueIdentifier);
     }
 
-    private async Task HandleCrashRecoveryAsync(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry)
+    private async Task HandleCrashRecoveryAsync(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry, CancellationToken ct)
     {
         // Crash recovery detection: agent registered without an active job but the
         // registry already restored ActiveJobId (from its own prior state in the update factory).
@@ -677,7 +684,7 @@ public sealed class AgentOrphanRecoveryService(
                     // The restored run carries only the fields recoverable from the DB — enough
                     // for ResolveIssueProviderForRunAsync and [RequiresActiveJob] auth to pass.
                     // ReconciliationService will still time out the run if the agent does not resume.
-                    var restoredRun = await TryReconstructRunFromDbAsync(existingJobId, agentId.Value);
+                    var restoredRun = await TryReconstructRunFromDbAsync(existingJobId, agentId.Value, ct);
                     if (restoredRun is not null)
                     {
                         _facade.AddRun(restoredRun);
@@ -716,7 +723,7 @@ public sealed class AgentOrphanRecoveryService(
     /// or the DB is unavailable. The reconstructed run carries only fields recoverable from the DB —
     /// enough for <see cref="ResolveIssueProviderForRunAsync"/> and [RequiresActiveJob] auth to pass.
     /// </summary>
-    private async Task<PipelineRun?> TryReconstructRunFromDbAsync(string runId, string agentId)
+    private async Task<PipelineRun?> TryReconstructRunFromDbAsync(string runId, string agentId, CancellationToken ct)
     {
         if (!Guid.TryParse(runId, out _))
         {
@@ -731,13 +738,10 @@ public sealed class AgentOrphanRecoveryService(
         // a DB outage should degrade to "skip reconstruction" rather than crashing re-registration.
         // OperationCanceledException is not caught so a cancelled token propagates to the caller
         // rather than being silently treated as a missing record.
-        // TODO: [WARNING] CancellationToken.None is passed here. Ideally a connection-lifetime
-        // CancellationToken from the SignalR hub context should be threaded through so a disconnecting
-        // agent can abort the in-flight DB read rather than letting it run to completion.
         WorkItemRunRecord? record;
         try
         {
-            record = await _facade.GetWorkItemRunRecordAsync(new JobId(runId), CancellationToken.None);
+            record = await _facade.GetWorkItemRunRecordAsync(new JobId(runId), ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
