@@ -21,9 +21,7 @@ public static class PipelineTelemetry
     private const string UnitUpdate = "{update}";
     private const string UnitFailure = "{failure}";
     private const string UnitItem = "{item}";
-    private const string UnitSync = "{sync}";
     private const string UnitRetry = "{retry}";
-    private const string UnitJob = "{job}";
     private const string UnitRun = "{run}";
     private const string UnitEvent = "{event}";
     private const string UnitReprobe = "{reprobe}";

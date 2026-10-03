@@ -68,8 +68,10 @@ public class PipelinePollingHelperTests
     }
 
     [Fact]
-    public async Task PollUntilCompleteAsync_TerminalCancelled_ReturnsWithoutEnrichment()
+    public async Task PollUntilCompleteAsync_TerminalCancelled_CallsEnrichment()
     {
+        // A job that exceeds its timeout-minutes ends Cancelled; its log holds the test failures
+        // the agent has to fix, so a cancelled run is enriched like a failed one.
         var enrichCalled = false;
         var cancelledStatus = MakeStatus(PipelineRunState.Cancelled, "sha3");
 
@@ -84,7 +86,7 @@ public class PipelinePollingHelperTests
             logger: SilentLogger);
 
         result.State.Should().Be(PipelineRunState.Cancelled);
-        enrichCalled.Should().BeFalse("enrichment is only called for Failed, not Cancelled");
+        enrichCalled.Should().BeTrue("a cancelled run's job logs must reach the agent");
     }
 
     [Fact]
@@ -295,6 +297,38 @@ public class PipelinePollingHelperTests
         result.Jobs[0].LogContent.Should().Be(expectedLog);
         result.Jobs[0].Name.Should().Be("test");
         result.Jobs[0].JobId.Should().Be(jobId);
+    }
+
+    [Fact]
+    public async Task EnrichFailedJobsWithLogsAsync_CancelledJob_InjectsLogContent_PassedJobNotFetched()
+    {
+        // Shape of the e2e job that exceeded timeout-minutes: the job is Cancelled and its log
+        // already lists the failing tests; docker-push was skipped (mapped to Passed).
+        const long e2eJobId = 7;
+        const string e2eLog = "Failed AgentOutputTests.LiveOutput [21 s]\n  Error Message:\n   System.TimeoutException";
+        var fetchedIds = new List<long>();
+
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new[]
+            {
+                new PipelineJobResult { Name = "e2e", State = PipelineRunState.Cancelled, JobId = e2eJobId },
+                new PipelineJobResult { Name = "docker-push", State = PipelineRunState.Passed, JobId = 8 }
+            },
+            CommitSha = "sha"
+        };
+
+        var result = await PipelinePollingHelper.EnrichFailedJobsWithLogsAsync(
+            status,
+            (id, _) => { fetchedIds.Add(id); return Task.FromResult<string?>(id == e2eJobId ? e2eLog : null); },
+            "job",
+            CancellationToken.None,
+            SilentLogger);
+
+        fetchedIds.Should().Equal(e2eJobId);
+        result.Jobs.Single(j => j.Name == "e2e").LogContent.Should().Be(e2eLog);
+        result.Jobs.Single(j => j.Name == "docker-push").LogContent.Should().BeNull();
     }
 
     [Fact]
