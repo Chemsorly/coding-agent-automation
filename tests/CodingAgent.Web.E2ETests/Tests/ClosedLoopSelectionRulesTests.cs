@@ -741,17 +741,20 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             CreatedAt = now.AddDays(-1)  // older: FIFO selects this first
         });
 
-        // Issue "61" — also in the primary provider.
-        // With budget=2, this WOULD be dispatched if the disabled project's template were
-        // incorrectly included by FlattenTemplates (since both templates share the same provider).
-        // The DB assertion below confirms it was never dispatched.
-        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        // Issue "61" — in the SECONDARY provider (issue-e2e-2), only visible to the disabled project's template.
+        // Using a separate provider is the discriminating pattern (see EnabledTemplates_PolledInProjectNameOrder):
+        // if FlattenTemplates incorrectly includes the disabled project's template, "61" appears in its queue
+        // and is dispatched; if the disabled template is correctly skipped, "61" is never visible to any
+        // polled template and cannot be dispatched regardless of budget. This eliminates the prior ambiguity
+        // where "61" was in the same provider as "62" and the enabled template could dispatch it as the
+        // FIFO-second issue within budget=2.
+        Fixture.FakeProviders.SecondaryIssueProvider.Issues.Add(new IssueDetail
         {
             Identifier = "61",
             Title = "Issue for disabled project",
             Description = "Project is disabled — must NOT be dispatched",
             Labels = AgentNextLabel,
-            CreatedAt = now  // newer: FIFO-second; dispatched only if budget > 1 AND template included
+            CreatedAt = now  // FIFO-second relative to "62"; only visible via issue-e2e-2
         });
 
         // 1. An enabled template in the default (enabled) project — this is what starts the loop.
@@ -771,7 +774,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         {
             Id = "template-disabled-proj",
             Name = "Template in Disabled Project",
-            IssueProviderId = "issue-e2e",
+            IssueProviderId = FakeProviderFactory.SecondaryIssueProviderConfigId, // "issue-e2e-2" — issue "61" only visible here
             RepoProviderId = "repo-e2e",
             Enabled = true,
             ImplementationEnabled = true
@@ -781,7 +784,9 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // Budget=2: if FlattenTemplates incorrectly includes the disabled project's template,
         // it gets a second dispatch slot. The 60s poll interval prevents a second cycle from
         // starting before StopLoop() fires, so any second dispatch must come from the disabled
-        // template being incorrectly included within cycle 1.
+        // template being incorrectly included within cycle 1. Issue "61" is ONLY in issue-e2e-2
+        // (the disabled project's provider), so it can only be dispatched if that template is
+        // incorrectly polled — the enabled template never sees it.
         await SetPollIntervalAsync(maxRunsPerCycle: 2, pollInterval: TimeSpan.FromSeconds(60));
 
         await using var fakeAgent = new FakeAgentClient("loop-disabled-proj-1", "e2e");
@@ -810,20 +815,11 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
             await WaitUntilAsync(() => !loopService.IsLoopActive, timeout: TimeSpan.FromSeconds(10));
 
             // DB assertion: no work item for issue "61" must ever have been created.
-            // If FlattenTemplates were broken and included the disabled project's template,
-            // the second budget slot within cycle 1 would have dispatched "61" from the shared
-            // provider (both templates see the same InMemoryIssueProvider). This is the
-            // discriminating assertion that budget-count alone cannot provide.
-            // TODO [WARNING]: Both templates share the same InMemoryIssueProvider ("issue-e2e"). If
-            // FlattenTemplates were broken and included the disabled project's template, the combined
-            // polling would see both issues in the same provider and could dispatch "62" twice (once
-            // per template) rather than "62" once and "61" once. The DB assertion catches "61" being
-            // dispatched, but does NOT catch a duplicate dispatch of "62" (two WorkItems for the same
-            // identifier). Using the SecondaryIssueProvider pattern (as in EnabledTemplates_PolledInProjectNameOrder)
-            // — with the disabled project's template pointing at "issue-e2e-2" and issue "61" seeded there —
-            // would make this test a cleaner discriminator: "62" would only appear via the enabled template
-            // and "61" only via the disabled template, so any inclusion of the disabled template is caught
-            // by the "61" assertion without the duplicate-"62" ambiguity.
+            // Issue "61" is ONLY in the secondary issue provider (issue-e2e-2), which is ONLY
+            // polled by the disabled project's template (template-disabled-proj). If FlattenTemplates
+            // correctly skips the disabled project, no template ever sees issue-e2e-2 and "61" can
+            // never be dispatched. If FlattenTemplates were broken and included the disabled template,
+            // the second budget slot within cycle 1 would dispatch "61" via issue-e2e-2.
             await using var db = Fixture.DbContextFactory.CreateDbContext();
             var issue61WorkItems = await db.WorkItems.AsNoTracking()
                 .Where(w => w.IssueIdentifier == "61")
@@ -1042,15 +1038,13 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
         // in Part A, so no Pending work item exists), but the setup is fragile if a second issue is
         // added to the test in the future.
 
-        // Use a fresh FakeAgentClient for Part B rather than resetting the one used in Part A.
-        // ResetJobAssigned() swaps the TCS reference on the client, but if a residual Part-A
-        // SignalR callback fires after the reset it can complete the *new* TCS with stale data,
-        // making Part B's WaitAsync resolve immediately and Assert.Equal("60") pass on a
-        // Part-A dispatch — exactly the bug this scenario is designed to catch. A brand-new
-        // client has a fresh TCS that no Part-A callback holds a reference to, eliminating
-        // the race entirely.
-        await using var fakeAgentB = new FakeAgentClient("loop-dep-2", "e2e");
-        await fakeAgentB.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
+        // Part B uses fakeAgent (from Part A) directly. Part A never dispatched issue "60"
+        // (the blocker was open), so fakeAgent.JobAssigned was never resolved and its TCS is
+        // still fresh. ResetJobAssigned() is called here as a defensive measure to ensure a
+        // clean TCS even if a future code change causes Part A to dispatch something.
+        // Note: a separate fakeAgentB would time out because FakeJobController.FindIdleAgentFor
+        // selects the longest-idle agent, which is fakeAgent (connected earlier in Part A).
+        fakeAgent.ResetJobAssigned();
 
         var startedB = await loopService.StartLoopAsync();
         // TODO [WARNING]: StartLoopAsync is called immediately after WaitUntilAsync confirms
@@ -1065,7 +1059,7 @@ public sealed class ClosedLoopSelectionRulesTests : HeadlessE2ETestBase
 
         try
         {
-            var assignment = await fakeAgentB.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal("60", assignment.IssueIdentifier);
         }
         finally
