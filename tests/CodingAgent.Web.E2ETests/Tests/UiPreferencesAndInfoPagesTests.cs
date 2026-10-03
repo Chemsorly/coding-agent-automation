@@ -152,10 +152,13 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             // as a distinct scenario. This test verifies the Work page default, but never navigates
             // to a third unrelated page (e.g. /fleet) and asserts its select shows 60, leaving
             // that part of the criterion untested.
+            // Timeout raised to 20s: slow CI runners can take >10s for the initial Blazor render
+            // cycle + SignalR connection to complete, after which the select is populated with the
+            // default 60s value. Matches the tolerance given to the post-reload localStorage checks.
             await Page.WaitForFunctionAsync(
                 "() => document.querySelector('.refresh-bar-select')?.value === '60'",
                 null,
-                new() { Timeout = 10_000 });
+                new() { Timeout = 20_000 });
             Assert.Equal("60", await Page.InputValueAsync(".refresh-bar-select"));
 
             // Set Work to 10s — SelectOptionAsync fires the DOM change event (@onchange handler)

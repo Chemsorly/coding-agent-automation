@@ -5,15 +5,17 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.UnitTests.Models;
 
 /// <summary>
-/// Tests for <see cref="WorkItemTaskTypeExtensions.ToDefaultRunType"/>.
+/// Tests for <see cref="WorkItemTaskTypeExtensions"/>.
 /// </summary>
 public sealed class WorkItemTaskTypeExtensionsTests
 {
+    // ── ToDefaultRunType (throwing variant) ──────────────────────────────────
+
     [Theory]
     [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
-    [InlineData(WorkItemTaskType.Review,         PipelineRunType.Review)]
-    [InlineData(WorkItemTaskType.Decomposition,  PipelineRunType.DecompositionAnalysis)]
-    [InlineData(WorkItemTaskType.Consolidation,  PipelineRunType.Consolidation)]
+    [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
+    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
     public void ToDefaultRunType_KnownValues_ReturnExpectedRunType(
         WorkItemTaskType taskType, PipelineRunType expectedRunType)
     {
@@ -43,6 +45,46 @@ public sealed class WorkItemTaskTypeExtensionsTests
         {
             var act = () => taskType.ToDefaultRunType();
             act.Should().NotThrow(because: $"WorkItemTaskType.{taskType} must have a mapping in ToDefaultRunType");
+        }
+    }
+
+    // ── ToDefaultRunTypeOrNull (non-throwing variant) ─────────────────────────
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
+    [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
+    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Consolidation)]
+    public void ToDefaultRunTypeOrNull_KnownValues_ReturnExpectedRunType(
+        WorkItemTaskType taskType, PipelineRunType expectedRunType)
+    {
+        taskType.ToDefaultRunTypeOrNull().Should().Be(expectedRunType,
+            because: $"WorkItemTaskType.{taskType} must map to PipelineRunType.{expectedRunType}");
+    }
+
+    [Fact]
+    public void ToDefaultRunTypeOrNull_UnknownValue_ReturnsNull()
+    {
+        // Cast an out-of-range integer to simulate a future enum addition
+        // that has not yet been handled in the switch expression.
+        var unknownTaskType = (WorkItemTaskType)999;
+
+        var act = () => unknownTaskType.ToDefaultRunTypeOrNull();
+
+        act.Should().NotThrow(because: "an unrecognised WorkItemTaskType must not throw — null is the intended fallback");
+        unknownTaskType.ToDefaultRunTypeOrNull().Should().BeNull(
+            because: "ToDefaultRunTypeOrNull must return null for unrecognised values, not throw");
+    }
+
+    [Fact]
+    public void ToDefaultRunTypeOrNull_AllCurrentEnumValues_ReturnNonNull()
+    {
+        // Guard: if a new WorkItemTaskType member is added without updating ToDefaultRunTypeOrNull,
+        // this test will fail at the test-run level — prompting an update to both methods.
+        foreach (var taskType in Enum.GetValues<WorkItemTaskType>())
+        {
+            taskType.ToDefaultRunTypeOrNull().Should().NotBeNull(
+                because: $"WorkItemTaskType.{taskType} is a known member and must have a non-null mapping in ToDefaultRunTypeOrNull");
         }
     }
 }

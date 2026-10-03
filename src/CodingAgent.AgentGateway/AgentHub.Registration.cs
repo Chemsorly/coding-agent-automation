@@ -122,7 +122,7 @@ public sealed partial class AgentHub
         // Recovery accepts the reported active job only for the agent's own work item, and only
         // then records the agent on the run (run.AgentId — in K8s dispatch mode AgentAcceptedRunAsync
         // is not called, so registration is where a dispatched run gets its agent).
-        var recovery = await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId);
+        var recovery = await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId, Context.ConnectionAborted);
 
         // First pickup: the agent has now actually picked up the dispatched run, so this is the
         // moment to move the issue (or PR, for reviews) agent:next → agent:in-progress. Until now it

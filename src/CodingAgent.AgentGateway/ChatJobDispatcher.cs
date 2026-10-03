@@ -81,7 +81,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         AgentId AgentId,
         string JobName,
         string NormalizedSelector,
-        string? ClaimedPvc);
+        string? ClaimedPvc,
+        string? PoolName);
 
     /// <summary>
     /// Tracks per-session watcher state. Must be <c>internal</c> so <see cref="IChatSessionWatcher"/>
@@ -94,6 +95,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         public readonly string JobName;
         public readonly string NormalizedSelector;
         public readonly string? ClaimedPvc;
+        public readonly string? PoolName;
         public readonly DateTimeOffset StartedAt;
         public readonly CancellationTokenSource WatcherCts; // disposed in CleanupSession
         public int Cleaned; // 0 = not yet cleaned; 1 = cleanup done. Used with Interlocked.
@@ -114,6 +116,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             JobName = identity.JobName;
             NormalizedSelector = identity.NormalizedSelector;
             ClaimedPvc = identity.ClaimedPvc;
+            PoolName = identity.PoolName;
             StartedAt = startedAt;
             WatcherCts = watcherCts;
             LastClientHeartbeatTicks = startedAt.UtcTicks;
@@ -199,6 +202,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var dispatchStart = DateTimeOffset.UtcNow;
 
         var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, activeChatJobs);
+        // TODO [WARNING]: poolName derives from template.ProviderType whenever claimedPvc is non-null.
+        // Today ClaimPvcForKiroAgent only returns non-null for Kiro providers, so poolName is always
+        // "kiro" or null. If a future provider introduces its own PVC pool (i.e. ClaimPvcForKiroAgent
+        // or an equivalent returns non-null for non-Kiro types), this derivation will still produce
+        // the correct pool tag — but the coupling between "claimedPvc != null ⟹ use providerType as
+        // pool name" is an implicit assumption. Add an explicit comment or assertion when a second
+        // PVC-capable provider is introduced to keep the intent clear.
+        var poolName = claimedPvc is not null ? template.ProviderType : null;
 
         await BuildAndSubmitChatJobAsync(normalized, selectorLabelValue, model, effort, jobName, dispatchId, claimedPvc, template, cancellationToken);
 
@@ -213,7 +224,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("provider_type", template.ProviderType);
 
         return await PollForAgentConnectionAsync(
-            dispatchId, jobName, claimedPvc, normalized, selectorLabelValue,
+            dispatchId, jobName, claimedPvc, poolName, normalized, selectorLabelValue,
             dispatchStart, activity, cancellationToken);
     }
 
@@ -346,7 +357,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     }
 
     private async Task<string> PollForAgentConnectionAsync( // NOSONAR S107 — private polling helper; params are independent timing/routing inputs
-        Guid dispatchId, string jobName, string? claimedPvc, string normalized,
+        Guid dispatchId, string jobName, string? claimedPvc, string? poolName, string normalized,
         string selectorLabelValue, DateTimeOffset dispatchStart,
         System.Diagnostics.Activity? activity, CancellationToken cancellationToken)
     {
@@ -374,7 +385,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                             connected.AgentId, jobName);
                     }
 
-                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc));
+                    RegisterWatcher(new WatcherIdentity(connected.AgentId, jobName, normalized, claimedPvc, poolName));
 
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
@@ -456,7 +467,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, identity.NormalizedSelector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
         if (identity.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", "kiro"));
+            ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", identity.PoolName ?? "unknown"));
 
         _logger.Information("ChatJobDispatcher: watcher registered jobName={JobName}", identity.JobName);
     }
@@ -514,7 +525,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
-            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", entry.PoolName ?? "unknown"));
 
         var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
         ChatTelemetry.SessionDuration.Record(
@@ -693,11 +704,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
         ChatTelemetry.SessionsActive.Add(-1, selectorTag);
         if (entry.ClaimedPvc is not null)
-            // TODO [WARNING]: "kiro" is hard-coded here and in CleanupSession. Both sites must be
-            // updated if additional PVC pool types are introduced. The pool tag should be derived
-            // from the entry (e.g. entry.ClaimedPvc.Pool) to avoid silent misattribution of
-            // PvcUtilization telemetry for non-Kiro agents.
-            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", entry.PoolName ?? "unknown"));
         var duration = (DateTimeOffset.UtcNow - entry.StartedAt).TotalSeconds;
         ChatTelemetry.SessionDuration.Record(duration, selectorTag, new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
         try { entry.WatcherCts.Dispose(); }
