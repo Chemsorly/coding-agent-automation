@@ -109,7 +109,7 @@ public static class CompletionOutcomeResolver
         return terminalStatus switch
         {
             WorkItemStatus.Succeeded => AgentLabels.Done,
-            WorkItemStatus.Failed    => AgentLabels.Error,
+            WorkItemStatus.Failed => AgentLabels.Error,
             WorkItemStatus.Cancelled => AgentLabels.Cancelled,
             _ => null
         };

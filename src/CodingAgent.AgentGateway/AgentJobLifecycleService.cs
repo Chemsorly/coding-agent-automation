@@ -373,7 +373,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             PipelineStep.Completed => (WorkItemStatus?)WorkItemStatus.Succeeded,
             PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-            PipelineStep.Failed    => WorkItemStatus.Failed,
+            PipelineStep.Failed => WorkItemStatus.Failed,
             _ => null
         };
         // FinalLabel is honoured iff it is a known agent label (AgentLabels.All); otherwise the
