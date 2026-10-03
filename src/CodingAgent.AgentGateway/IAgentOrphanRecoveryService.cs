@@ -13,7 +13,11 @@ public interface IAgentOrphanRecoveryService
     /// <summary>
     /// Reconciles agent state after registration. Called immediately after <c>_facade.Register()</c>.
     /// </summary>
-    Task<OrphanRecoveryResult> RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId);
+    // TODO [WARNING]: Parameter named 'ct' deviates from .NET BCL and ASP.NET Core convention
+    // ('cancellationToken'). This is a style issue only and does not affect correctness, but
+    // interface parameter names form part of the public contract for named-argument callers.
+    // Consider renaming to 'cancellationToken' in a future cleanup pass.
+    Task<OrphanRecoveryResult> RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId, CancellationToken ct = default);
 }
 
 /// <summary>What <see cref="IAgentOrphanRecoveryService.RecoverOrphanedStateAsync"/> did that the hub acts on.</summary>

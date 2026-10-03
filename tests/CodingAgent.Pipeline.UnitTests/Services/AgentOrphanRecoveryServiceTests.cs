@@ -3,6 +3,7 @@ using CodingAgent.AgentGateway;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -1909,5 +1910,219 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId.Should().Be("run-orphan-x",
             "guard must not spuriously match history entries for different RunIds");
         _facade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+    }
+
+    // ── Cancellation token propagation (characterization tests for issue #3283) ───
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_CancelledToken_GetRunHistoryAsync_ActiveJobPath_PropagatesCancel()
+    {
+        // Arrange: agent reports an active job that is not in history yet, so GetRunHistoryAsync
+        // is called via RestoreRunFromAgentStateAsync. The token should reach GetRunHistoryAsync
+        // so that an OperationCanceledException propagates out of RecoverOrphanedStateAsync.
+        // TODO [WARNING]: The GetRunHistoryAsync mock uses It.IsAny<CancellationToken>() and always throws
+        // OperationCanceledException regardless of which token is supplied. This means the test would pass
+        // even if the production code still called GetRunHistoryAsync(CancellationToken.None) — it verifies
+        // that OCE propagates, not that the caller's specific token is forwarded. A stronger arrangement
+        // would capture the token argument via a Callback and assert it equals cts.Token after the call.
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-ct-1");
+        var message = MessageWithJob(job: activeJob);
+        var entry = MakeEntry();
+
+        _facade.Setup(f => f.GetRun(new JobId("run-ct-1"))).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _sut.RecoverOrphanedStateAsync(message, agentId, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_CancelledToken_GetRunHistoryAsync_OrphanPath_PropagatesCancel()
+    {
+        // Arrange: agent registers without active job, orphan detection calls CheckOrphanInHistoryAsync
+        // which calls GetRunHistoryAsync. An OperationCanceledException must propagate, not be
+        // swallowed by the fail-open catch block.
+        // TODO [WARNING]: The GetRunHistoryAsync mock uses It.IsAny<CancellationToken>() and always throws
+        // OperationCanceledException regardless of which token is supplied. A regression restoring
+        // CancellationToken.None would still make this test pass. To strengthen, capture the token via a
+        // Callback and assert it equals cts.Token.
+        // TODO [WARNING]: _facade.CanVerifyWorkItems is not set up explicitly; Moq defaults to false
+        // (loose mock), causing VerifyOrphanOwnershipAsync to skip the ReadWorkItemRecordAsync call
+        // silently. This is the intended path, but the implicit default is fragile if the mock behavior
+        // ever changes. Add an explicit _facade.SetupGet(f => f.CanVerifyWorkItems).Returns(false).
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-ct-orphan",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_NonOce_GetRunHistoryAsync_OrphanPath_DoesNotPropagate()
+    {
+        // Counterpart: a non-OCE from GetRunHistoryAsync on the orphan path must still be caught
+        // (fail-open). This guards against accidentally removing the when-filter entirely.
+        // TODO [WARNING]: TransitionStatus and SetLocalAgentSnapshotField are called inside ActivateOrphanedRun
+        // but are not set up on the mock. With MockBehavior.Loose this is silently ignored, but if the mock
+        // were ever switched to MockBehavior.Strict the test would fail with unexpected invocations. Consider
+        // adding explicit setups: _facade.Setup(f => f.TransitionStatus(agentId, AgentStatus.Busy)) and
+        // _facade.Setup(f => f.SetLocalAgentSnapshotField(...)).
+        var agentId = MakeAgentId();
+        var entry = MakeEntry();
+        var orphan = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-ct-orphan-noe",
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "r",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "x",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([orphan]);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("storage down"));
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "run-ct-orphan-noe")))
+            .Returns((PipelineRun?)null);
+
+        // A non-OCE must be swallowed by the fail-open catch and restoration must proceed
+        var act = () => _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId, CancellationToken.None);
+        await act.Should().NotThrowAsync("non-OCE from GetRunHistoryAsync must be swallowed (fail-open)");
+
+        entry.ActiveJobId.Should().Be("run-ct-orphan-noe",
+            "fail-open means restoration proceeds even when history storage fails");
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_CancelledToken_GetWorkItemRunRecordAsync_ReadWorkItem_PropagatesCancel()
+    {
+        // Arrange: CanVerifyWorkItems=true so ReadWorkItemRecordAsync is called from RestoreActiveJobAsync.
+        // An OperationCanceledException from GetWorkItemRunRecordAsync must propagate as OCE (not HubException).
+        // TODO [WARNING]: The GetWorkItemRunRecordAsync mock uses It.IsAny<CancellationToken>() and always
+        // throws OperationCanceledException regardless of which token is supplied. The test verifies that
+        // OCE propagates, not that the caller's specific token is forwarded. A stronger arrangement would
+        // capture the token via a Callback and assert it equals cts.Token.
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-ct-workitem");
+        var message = MessageWithJob(job: activeJob);
+        var entry = MakeEntry();
+
+        _facade.SetupGet(f => f.CanVerifyWorkItems).Returns(true);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _sut.RecoverOrphanedStateAsync(message, agentId, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "OCE from GetWorkItemRunRecordAsync must propagate, not be converted to HubException");
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_NonOce_GetWorkItemRunRecordAsync_ReadWorkItem_ThrowsHubException()
+    {
+        // Counterpart: a non-OCE from GetWorkItemRunRecordAsync (store unavailable) must still
+        // be re-thrown as HubException, not propagate as the original exception type.
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-ct-workitem-noe");
+        var message = MessageWithJob(job: activeJob);
+        var entry = MakeEntry();
+
+        _facade.SetupGet(f => f.CanVerifyWorkItems).Returns(true);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("store down"));
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+
+        var act = () => _sut.RecoverOrphanedStateAsync(message, agentId, CancellationToken.None);
+        await act.Should().ThrowAsync<Microsoft.AspNetCore.SignalR.HubException>(
+            "non-OCE from GetWorkItemRunRecordAsync must be wrapped in HubException");
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_CancelledToken_GetWorkItemRunRecordAsync_CrashRecovery_PropagatesCancel()
+    {
+        // Arrange: agent registers without active job, registry has an ActiveJobId (crash recovery),
+        // and GetRun returns null so TryReconstructRunFromDbAsync is called. An OCE must propagate.
+        // TODO [WARNING]: The GetWorkItemRunRecordAsync mock uses It.IsAny<CancellationToken>() and always
+        // throws OperationCanceledException regardless of which token is supplied. A regression restoring
+        // CancellationToken.None would still make this test pass. To strengthen, capture the token via a
+        // Callback and assert it equals cts.Token.
+        // TODO [WARNING]: GetActiveRunsByAgent is not set up for agentId. Moq returns null for
+        // IReadOnlyList by default with loose mock behavior. If HandleCrashRecoveryAsync calls
+        // GetActiveRunsByAgent before the branch that leads to TryReconstructRunFromDbAsync, a null
+        // return could cause a NullReferenceException before the asserted code path is reached.
+        // Verify the entry.ActiveJobId non-null branch does not call GetActiveRunsByAgent, or add
+        // an explicit setup: _facade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]).
+        var agentId = MakeAgentId();
+        const string existingJobId = "00000000-0000-0000-0000-000000000099"; // valid GUID required
+        var entry = MakeEntry();
+        entry.ActiveJobId = existingJobId;
+        entry.OrphanRestoredAt = null;
+
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        _facade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == existingJobId))).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetWorkItemRunRecordAsync(It.Is<JobId>(j => j.Value == existingJobId), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var act = () => _sut.RecoverOrphanedStateAsync(EmptyMessage(), agentId, cts.Token);
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task RecoverOrphanedStateAsync_LiveToken_DoesNotChangeExistingBehavior()
+    {
+        // Passing a live (non-cancelled) CancellationToken must not affect normal operation.
+        var agentId = MakeAgentId();
+        var activeJob = MakeActiveJob("run-live-token");
+        var message = MessageWithJob(job: activeJob);
+        var entry = MakeEntry();
+
+        _facade.Setup(f => f.GetRun(new JobId("run-live-token"))).Returns((PipelineRun?)null);
+        _facade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>() as IReadOnlyList<PipelineRunSummary>);
+        _facade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+
+        using var cts = new CancellationTokenSource();
+        // Token is NOT cancelled
+
+        var act = () => _sut.RecoverOrphanedStateAsync(message, agentId, cts.Token);
+        await act.Should().NotThrowAsync("a live token must not change existing behavior");
+
+        _facade.Verify(f => f.AddRun(It.Is<PipelineRun>(r => r.RunId == "run-live-token")), Times.Once);
     }
 }

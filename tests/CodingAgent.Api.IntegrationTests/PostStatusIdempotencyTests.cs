@@ -890,6 +890,38 @@ public sealed class PostStatusIdempotencyTests
             "ErrorMessage must not have been written because the guard returned before ApplyStatusMutation ran");
     }
 
+    /// <summary>
+    /// An agent exits 0 once it has recorded any outcome, so its Job ends Complete even for a Failed
+    /// run, and the JobController then reports Succeeded. On an already-terminal item that report is
+    /// an idempotent no-op (204), not a rejected transition (400), and the Failed outcome stands.
+    /// </summary>
+    [Theory]
+    [InlineData(WorkItemStatus.Succeeded)]
+    [InlineData(WorkItemStatus.Cancelled)]
+    public async Task WhenItemIsFailed_PostStatusOtherTerminal_ReturnsNoContentWithoutTransition(WorkItemStatus requested)
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.QualityGateExhausted);
+        var transitionService = CreateTransitionService(opts);
+        var dbFactory = CreateDbFactory(opts);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
+        var runService = new Mock<IOrchestratorRunService>().Object;
+
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, new WorkItemStatusRequest { Status = requested }, transitionService, runService,
+            lifecycleManager.Object, dbFactory);
+
+        result.Should().BeOfType<NoContent>();
+        lifecycleManager.VerifyNoOtherCalls();
+        await using var verifyCtx = new TestPipelineDbContext(opts);
+        var persisted = await verifyCtx.WorkItems.FindAsync(item.Id);
+        persisted!.Status.Should().Be(WorkItemStatus.Failed);
+        persisted.FailureReason.Should().Be(FailureReason.QualityGateExhausted);
+    }
+
     // ── BranchName persistence via ApplyStatusMutation (issue #2687) ────────────────────
 
     /// <summary>
@@ -1002,15 +1034,14 @@ public sealed class PostStatusIdempotencyTests
 
     /// <summary>
     /// Characterization test for issue #2914 prerequisites.
-    /// PostStatus(Failed) on an already-Failed WorkItem must return 204 No Content via
-    /// <see cref="TransitionResult.AlreadyAtTarget"/> from TransitionDetailedAsync
-    /// (NOT via the pre-read guard, which only short-circuits for Cancelled and Succeeded).
+    /// PostStatus(Failed) on an already-Failed WorkItem must return 204 No Content: TransitionDetailedAsync
+    /// alone already reports <see cref="TransitionResult.AlreadyAtTarget"/> for it, and the pre-read
+    /// guard short-circuits it before that.
     /// </summary>
     [Fact]
     public async Task WhenItemIsAlreadyFailed_PostStatusFailed_ReturnsNoContentViaAlreadyAtTarget()
     {
-        // Arrange: seed a Failed item — the pre-read guard does NOT cover this path;
-        // it falls through to TransitionDetailedAsync which returns AlreadyAtTarget.
+        // Arrange: seed a Failed item — the pre-read guard returns AlreadyAtTarget for it.
         var opts = CreateDbOptions();
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
             completedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
@@ -1034,7 +1065,7 @@ public sealed class PostStatusIdempotencyTests
         var result = await WorkItemAgentEndpoints.PostStatus(
             item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
 
-        // Assert: 204 No Content (idempotent no-op via AlreadyAtTarget, not via pre-read guard)
+        // Assert: 204 No Content (idempotent no-op via AlreadyAtTarget)
         result.Should().BeOfType<NoContent>(
             "PostStatus(Failed) on an already-Failed WorkItem must return 204 No Content via AlreadyAtTarget");
         lifecycleManager.VerifyNoOtherCalls();

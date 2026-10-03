@@ -12,6 +12,9 @@ namespace CodingAgent.Kubernetes;
 /// </summary>
 public static class JobSpecBuilder
 {
+    /// <summary>Name of the agent container in every Job pod.</summary>
+    public const string AgentContainerName = "agent";
+
     private static readonly JsonSerializerOptions K8sDeserializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -67,7 +70,7 @@ public static class JobSpecBuilder
         // ── Container ───────────────────────────────────────────────────────
         var container = new V1Container
         {
-            Name = "agent",
+            Name = AgentContainerName,
             Image = template.Image,
             ImagePullPolicy = template.ImagePullPolicy,
             Args = ctx.WorkItemId is not null
@@ -134,6 +137,23 @@ public static class JobSpecBuilder
                 Parallelism = 1,
                 Completions = 1,
                 BackoffLimit = 2,
+                // A drain, eviction, preemption or node loss marks the pod DisruptionTarget. That is
+                // not the agent's failure: the Job replaces the pod without spending backoffLimit,
+                // which stays reserved for pods that crash or run out of memory. podFailurePolicy
+                // requires podReplacementPolicy Failed, so a replacement starts only once the old pod
+                // has ended and two pods never run the same work item.
+                PodFailurePolicy = new V1PodFailurePolicy
+                {
+                    Rules =
+                    [
+                        new V1PodFailurePolicyRule
+                        {
+                            Action = "Ignore",
+                            OnPodConditions = [new V1PodFailurePolicyOnPodConditionsPattern { Type = "DisruptionTarget", Status = "True" }]
+                        }
+                    ]
+                },
+                PodReplacementPolicy = "Failed",
                 ActiveDeadlineSeconds = ctx.TimeoutSeconds + 60,
                 TtlSecondsAfterFinished = 3600,
                 Template = new V1PodTemplateSpec

@@ -105,7 +105,7 @@ public sealed class ReconciliationLoopTests : IDisposable
     // ─── K8s Failed event ────────────────────────────────────────────────────
 
     [Fact]
-    public async Task WhenJobFails_ShouldCallPostStatusAsync_WithFailed_AgentError()
+    public async Task WhenJobFails_AfterAgentClaimed_ShouldPost_ExitCodeFailure()
     {
         var jobName = JobNameFor(ItemId);
         var job = MakeJob(jobName, ItemId, failed: true);
@@ -114,7 +114,8 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(new V1JobList { Items = [job] });
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        // WorkItem was claimed: Running → failure is an AgentError (issue #2956)
+        // WorkItem was claimed (Running) and every counted pod failed: the agent never recorded an
+        // outcome, so the pods' exits are the failure.
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(WorkItemStatus.Running);
 
@@ -123,7 +124,7 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "ExitCodeFailure"),
             It.IsAny<CancellationToken>()), Times.Once);
 
         // Failed job reconciliation must not proactively delete the job —
@@ -160,10 +161,11 @@ public sealed class ReconciliationLoopTests : IDisposable
     }
 
     /// <summary>
-    /// Issue #2956: when GetStatusAsync fails, the fallback must still be AgentError (safe default).
+    /// When GetStatusAsync fails, the failure is classified from the Job alone: a Job that is not
+    /// past its deadline exhausted its pods, which is an ExitCodeFailure.
     /// </summary>
     [Fact]
-    public async Task WhenJobFails_AndGetStatusThrows_FallsBackTo_AgentError()
+    public async Task WhenJobFails_AndGetStatusThrows_ClassifiesFromJob_ExitCodeFailure()
     {
         var jobName = JobNameFor(ItemId);
         var job = MakeJob(jobName, ItemId, failed: true);
@@ -172,7 +174,7 @@ public sealed class ReconciliationLoopTests : IDisposable
             .ReturnsAsync(new V1JobList { Items = [job] });
         _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        // GetStatusAsync throws — must fall back to AgentError
+        // GetStatusAsync throws — classification continues from the Job alone
         _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("network error"));
 
@@ -181,14 +183,146 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "ExitCodeFailure"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
-    // TODO: [WARNING] ClassifyJobFailureReasonAsync only checks status == Dispatched; all other
-    // statuses (Running, Failed, Succeeded, null) fall through to AgentError. There is no test
-    // for the boundary where GetStatusAsync returns a terminal status (e.g. WorkItemStatus.Failed
-    // or WorkItemStatus.Succeeded — item already cleaned up via another path) to confirm the
-    // fallthrough to AgentError is intentional and not a missed classification case.
+
+    /// <summary>
+    /// A Job that Kubernetes failed for activeDeadlineSeconds (condition reason DeadlineExceeded)
+    /// is a Timeout, not a pod failure.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_WithDeadlineExceeded_ShouldPost_Timeout()
+    {
+        var job = MakeJob(JobNameFor(ItemId), ItemId, failed: true);
+        job.Status!.Conditions![0].Reason = "DeadlineExceeded";
+        job.Status!.Conditions![0].Message = "Job was active longer than specified deadline";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "Timeout"
+                && u.ErrorMessage == "Job was active longer than specified deadline"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// A pod that never started leaves the work item Dispatched; even when the Job then fails on its
+    /// deadline, no agent ran, so it stays an InfrastructureFailure.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_WithDeadlineExceeded_AndNeverClaimed_ShouldPost_InfrastructureFailure()
+    {
+        var job = MakeJob(JobNameFor(ItemId), ItemId, failed: true);
+        job.Status!.Conditions![0].Reason = "DeadlineExceeded";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Dispatched);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "InfrastructureFailure"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// The failure message names how the last counted pod ended, so an operator can tell an OOM
+    /// from a crash without reading pod events. Older and successful containers are ignored.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_ErrorMessageNamesLastFailedPodTermination()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+        job.Status!.Conditions![0].Reason = "BackoffLimitExceeded";
+        job.Status!.Conditions![0].Message = "Job has reached the specified backoff limit";
+
+        static V1Pod Pod(string name, int exitCode, string? reason, DateTime finishedAt) => new()
+        {
+            Metadata = new V1ObjectMeta { Name = name },
+            Status = new V1PodStatus
+            {
+                ContainerStatuses =
+                [
+                    new V1ContainerStatus
+                    {
+                        Name = JobSpecBuilder.AgentContainerName,
+                        State = new V1ContainerState
+                        {
+                            Terminated = new V1ContainerStateTerminated { ExitCode = exitCode, Reason = reason, FinishedAt = finishedAt }
+                        }
+                    }
+                ]
+            }
+        };
+        var now = DateTime.UtcNow;
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _k8sClient.Setup(c => c.ListPodsAsync("test-ns", $"batch.kubernetes.io/job-name={jobName}", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1PodList
+            {
+                Items =
+                [
+                    Pod("pod-first", 1, "Error", now.AddMinutes(-20)),
+                    Pod("pod-last", 137, "OOMKilled", now.AddMinutes(-1)),
+                    Pod("pod-clean", 0, "Completed", now)
+                ]
+            });
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.FailureReason == "ExitCodeFailure"
+                && u.ErrorMessage == "Job has reached the specified backoff limit Last pod pod-last: OOMKilled (exit code 137)."),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// Listing the pods is best effort: when it fails, the Job's own condition message is used.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndPodListingThrows_ErrorMessageFromConditionOnly()
+    {
+        var job = MakeJob(JobNameFor(ItemId), ItemId, failed: true);
+        job.Status!.Conditions![0].Message = "Job has reached the specified backoff limit";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+        _k8sClient.Setup(c => c.ListPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("forbidden"));
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.FailureReason == "ExitCodeFailure"
+                && u.ErrorMessage == "Job has reached the specified backoff limit"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
 
     // ─── Timeout enforcement ──────────────────────────────────────────────────
 
@@ -730,7 +864,7 @@ public sealed class ReconciliationLoopTests : IDisposable
         // while the orphan-cleanup path fires instead.
         _workItemClient.Verify(c => c.PostStatusAsync(
             ItemId,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "ExitCodeFailure"),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -1612,10 +1746,8 @@ public sealed class ReconciliationLoopTests : IDisposable
         var span = _capturedActivities.FirstOrDefault(a => a.OperationName == "Reconcile.JobFailed");
         span.Should().NotBeNull("Reconcile.JobFailed must be emitted when a K8s Job fails");
         span!.GetTagItem("work_item_id").Should().Be(ItemId);
-        // TODO: This assertion is too weak — any non-null string passes. Since GetStatusAsync returns
-        // WorkItemStatus.Running, the expected value is "AgentError". Strengthen to:
-        //   span.GetTagItem("failure_reason").Should().Be("AgentError");
-        span.GetTagItem("failure_reason").Should().NotBeNull("failure_reason tag must be set");
+        span.GetTagItem("failure_reason").Should().Be("ExitCodeFailure",
+            "a claimed (Running) work item whose Job ran out of pods is an ExitCodeFailure");
     }
 
     /// <summary>
@@ -1970,12 +2102,12 @@ public sealed class ReconciliationLoopErrorTests
             It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ─── GetJobPhase fallback to counters ─────────────────────────────────
+    // ─── GetJobPhase: only conditions are final ───────────────────────────
 
     [Fact]
-    public async Task ReconcileOnce_JobSucceededViaCounter_NotConditions_IsHandled()
+    public async Task ReconcileOnce_JobSucceededCounter_WithoutCondition_NoAction()
     {
-        // Job.Status.Succeeded = 1 but no Conditions set — fallback to counter
+        // Job.Status.Succeeded = 1 but no Complete condition yet — not final, nothing to post
         var id = Guid.NewGuid();
         var job = new V1Job
         {
@@ -2001,13 +2133,17 @@ public sealed class ReconciliationLoopErrorTests
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
-            id,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Succeeded"),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    /// <summary>
+    /// Regression: between a failed pod and its replacement the Job shows Failed = 1 and Active = 0
+    /// for the whole backoff delay, with no Failed condition. That is a Job still retrying, not a
+    /// failed one; treating it as failed marked the work item Failed and deleted the Job before the
+    /// retry pod started.
+    /// </summary>
     [Fact]
-    public async Task ReconcileOnce_JobFailedViaCounter_NotConditions_IsHandled()
+    public async Task ReconcileOnce_JobInRetryBackoff_FailedCounterWithoutCondition_NoAction()
     {
         var id = Guid.NewGuid();
         var job = new V1Job
@@ -2022,7 +2158,7 @@ public sealed class ReconciliationLoopErrorTests
                 }
             },
             Spec = new V1JobSpec { Template = new V1PodTemplateSpec { Spec = new V1PodSpec { Volumes = [] } } },
-            Status = new V1JobStatus { Failed = 1, Conditions = [] }
+            Status = new V1JobStatus { Failed = 1, Active = 0, Conditions = [] }
         };
 
         _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -2034,9 +2170,7 @@ public sealed class ReconciliationLoopErrorTests
         await loop.ReconcileOnceAsync(CancellationToken.None);
 
         _workItemClient.Verify(c => c.PostStatusAsync(
-            id,
-            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed" && u.FailureReason == "AgentError"),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
