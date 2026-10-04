@@ -24,13 +24,13 @@ $"""
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Tool augmentation encouraged.** If the ecosystem has static analysis tools (linters, compilers with warning output, dead-code detectors), install and run them. Their output is higher-confidence evidence than your own code reading. You are allowed to install tools.
+2. **Use the available tools.** Phase 0 listed them under `availableTools` in `{AgentWorkspacePaths.RefactoringConventionsFilePath}` and saved the output of the project's analyzers in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other two agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
 3. **Declare what you did NOT check.** List files/areas you skipped due to context limits in the `notChecked` field of your output.
 4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
 5. **Do NOT modify source code.** Only produce the findings output file.
 6. **Out of scope:** `{AgentWorkspacePaths.MetadataDirectory}/`, `{AgentWorkspacePaths.BrainDirectory}/`, `.git/`, generated code, and files ignored by git. These are pipeline scratch space or tooling, not project code. Never report findings in them.
 7. **Tag evidence honestly.** Each `evidenceSources` entry names how you got the evidence:
-   - `tool:<tool>:<rule-id>` — output of a compiler, linter or analyzer you actually ran. Nothing else is `tool:`.
+   - `tool:<tool>:<rule-id>` — output of a compiler, linter, analyzer or MCP tool that actually ran (by you or Phase 0). Nothing else is `tool:`.
    - `grep:<pattern>` — a text search, with the pattern you searched for.
    - `usage-search:<symbol>` — a reference search, with the result (e.g. `usage-search:FooService.Bar:0-callers`).
    - `code-reading:<file>:L<line>` — your own reading of the code.
@@ -67,6 +67,20 @@ $"""
         sb.AppendLine("5. **A sample of 5-10 representative source files** — identify the project's actual style");
         sb.AppendLine("6. **Test project structure** — understand the testing philosophy");
         sb.AppendLine();
+        sb.AppendLine("## Evidence Sources");
+        sb.AppendLine();
+        sb.AppendLine("Three detection agents run after you, at the same time, in this workspace. Prepare the tool evidence");
+        sb.AppendLine("they will use, so they do not each run builds:");
+        sb.AppendLine();
+        sb.AppendLine("1. **MCP tools.** Check your available MCP tools for additional data sources — for example code quality or");
+        sb.AppendLine("   static analysis services, issue trackers, error tracking or observability. Note the ones that hold data");
+        sb.AppendLine("   about this repository and what each reports.");
+        sb.AppendLine("2. **The project's own analyzers.** Find the build, lint and analysis commands the project uses (CI workflows,");
+        sb.AppendLine("   build scripts, README). Run the ones that report warnings without changing tracked files, once, and save");
+        sb.AppendLine($"   each raw output to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt`. You may install tools.");
+        sb.AppendLine("3. List both under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
+        sb.AppendLine("   and say why in its `reports` field.");
+        sb.AppendLine();
         sb.AppendLine("## What to Extract");
         sb.AppendLine();
         sb.AppendLine($"Produce a JSON file at `{AgentWorkspacePaths.RefactoringConventionsFilePath}` with this structure:");
@@ -93,6 +107,9 @@ $"""
         sb.AppendLine("  \"layerRules\": [");
         sb.AppendLine("    \"e.g., 'Infrastructure must not reference Presentation'\",");
         sb.AppendLine("    \"e.g., 'Agent projects communicate only through interfaces in Pipeline'\"");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"availableTools\": [");
+        sb.AppendLine($"    {{ \"name\": \"e.g., build-warnings\", \"kind\": \"command|mcp\", \"how\": \"the command, or the MCP server and tool\", \"output\": \"{AgentWorkspacePaths.RefactoringToolOutputDirectory}/build-warnings.txt, or null for MCP tools\", \"reports\": \"what it reports, or why it was skipped\" }}");
         sb.AppendLine("  ]");
         sb.AppendLine("}");
         sb.AppendLine("```");
@@ -237,9 +254,10 @@ $"""
         sb.AppendLine("3. Discard TODOs that are aspirational (\"TODO: nice to have\") — keep ones indicating broken/incomplete behavior");
         sb.AppendLine();
         sb.AppendLine("**For dead code:**");
-        sb.AppendLine("1. If static analysis tools are available for this ecosystem, install and run them to detect unused code.");
-        sb.AppendLine("   This is the highest-confidence approach. Common tools: `dotnet build` warnings (CS0219, IDE0051),");
-        sb.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`, etc.");
+        sb.AppendLine($"1. Check the tool output in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/` and the MCP tools in `availableTools` for unused-code");
+        sb.AppendLine("   reports — the highest-confidence approach. Common sources: compiler warnings (CS0219, IDE0051),");
+        sb.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`. If none covers unused code, you may install and run");
+        sb.AppendLine("   a read-only analyzer that does not build.");
         sb.AppendLine("2. If no tools available: enumerate public types/methods in key files, then search for their usages.");
         sb.AppendLine("   A public method with zero callers outside its own class is a dead code candidate.");
         sb.AppendLine("3. Check git history for recently-deleted features — their support code may linger.");
@@ -468,7 +486,7 @@ $"""
         sb.AppendLine($"- `{RefactoringCategories.StructuralDrift}`, `{RefactoringCategories.Complexity}`, `{RefactoringCategories.OverEngineering}`, `{RefactoringCategories.Todo}`, `{RefactoringCategories.StaleDocumentation}`:");
         sb.AppendLine("  may use \"code-reading:\" alone but receive a capped evidence score of 1 unless a `tool:`, `grep:` or `usage-search:` source corroborates them.");
         sb.AppendLine("- `hotspot:` is a priority signal, not evidence. It never satisfies this gate and never raises the evidence score.");
-        sb.AppendLine("- A `tool:` source counts only when it names a compiler, linter or analyzer and its rule. A search or a file read tagged `tool:` counts as `grep:` or `code-reading:`.");
+        sb.AppendLine("- A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool and its rule or query. A search or a file read tagged `tool:` counts as `grep:` or `code-reading:`.");
         sb.AppendLine();
         sb.AppendLine("### Step 4: Rank by Impact");
         sb.AppendLine();

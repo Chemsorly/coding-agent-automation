@@ -50,12 +50,25 @@ public class ConsolidationPromptBuilderRefactoringTests
     }
 
     [Fact]
+    public void BuildRefactoringContextExtractionPrompt_DiscoversMcpToolsAndRunsAnalyzersOnce()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt();
+
+        result.Should().Contain("Check your available MCP tools for additional data sources");
+        result.Should().Contain($"`{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt`");
+        result.Should().Contain("\"availableTools\"");
+    }
+
+    [Fact]
     public void BuildRefactoringStructuralDebtPrompt_IncludesPreambleWithToolAugmentation()
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt();
 
-        result.Should().Contain("Tool augmentation encouraged");
-        result.Should().Contain("install tools");
+        result.Should().Contain("Use the available tools");
+        result.Should().Contain(AgentWorkspacePaths.RefactoringToolOutputDirectory);
+        result.Should().Contain("Query the listed MCP tools");
+        // The three detection agents share one workspace: parallel builds would collide
+        result.Should().Contain("Do NOT run builds");
     }
 
     [Fact]
@@ -127,7 +140,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt();
 
-        result.Should().Contain("install and run them");
+        result.Should().Contain("install and run");
+        result.Should().Contain("read-only analyzer that does not build");
     }
 
     // ─── Phase 1, Agent C: Design Consistency ────────────────────────────
@@ -300,7 +314,7 @@ public class ConsolidationPromptBuilderRefactoringTests
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
 
         result.Should().Contain("`hotspot:` is a priority signal, not evidence");
-        result.Should().Contain("A `tool:` source counts only when it names a compiler, linter or analyzer");
+        result.Should().Contain("A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool");
     }
 
     [Fact]

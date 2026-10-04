@@ -150,6 +150,12 @@ public static class AgentWorkspacePaths
     public const string RefactoringIssueContextFilePath = ".agent/refactoring-issue-context.md";
 
     /// <summary>
+    /// The directory (relative to workspace) where refactoring Phase 0 saves the raw output of the project's
+    /// analyzers, so the parallel detection agents read it instead of each running builds in the shared workspace.
+    /// </summary>
+    public const string RefactoringToolOutputDirectory = ".agent/refactoring-tool-output";
+
+    /// <summary>
     /// The directory (relative to workspace) where open issue context files are written
     /// for the agent to consult during decomposition and refactoring detection.
     /// </summary>

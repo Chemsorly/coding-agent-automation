@@ -3,6 +3,7 @@ using CodingAgent.Agent.Executors;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Moq;
 
 namespace CodingAgent.Agent.UnitTests.Executors;
@@ -222,27 +223,25 @@ public class RefactoringExecutorTests : IDisposable
         var executor = CreateExecutor();
         var job = CreateJob();
 
-        var refactoringIssues = new PagedResult<IssueSummary>
+        var openIssues = new PagedResult<IssueSummary>
         {
-            Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5) }],
+            Items =
+            [
+                new IssueSummary
+                {
+                    Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow.AddDays(-5),
+                    Description = $"## Problem\n...\n*{RefactoringExecutor.GeneratedIssueFooter}.*"
+                },
+                new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }
+            ],
             Page = 1,
-            PageSize = 30,
-            HasMore = false
-        };
-        var allIssues = new PagedResult<IssueSummary>
-        {
-            Items = [new IssueSummary { Identifier = "200", Title = "Add caching layer", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-2) }],
-            Page = 1,
-            PageSize = 50,
+            PageSize = 100,
             HasMore = false
         };
 
         _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(refactoringIssues);
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(allIssues);
+            .Setup(x => x.ListOpenIssuesAsync(1, 100, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(openIssues);
 
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
@@ -257,10 +256,10 @@ public class RefactoringExecutorTests : IDisposable
         // Act
         await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert
+        // Assert — the scan's own issue is told apart by its footer, not by a label
         capturedPrompt.Should().Contain("Do Not Duplicate");
-        capturedPrompt.Should().Contain("Extract retry logic");
-        capturedPrompt.Should().Contain("Add caching layer");
+        capturedPrompt.Should().Contain("### Open Refactoring Scan Issues (still pending)\n- #100 \"Extract retry logic\"".ReplaceLineEndings());
+        capturedPrompt.Should().Contain("### Other Open Issues (may overlap)\n- #200 \"Add caching layer\"".ReplaceLineEndings());
     }
 
     [Fact]
@@ -290,26 +289,22 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_IssueQueryReturnsOldIssues_FilteredOut()
+    public async Task ExecuteAsync_IssueQueryReturnsOldIssues_IncludesThem()
     {
-        // Arrange
+        // Arrange — an open issue is a duplicate risk however old it is
         var executor = CreateExecutor();
         var job = CreateJob();
 
-        var emptyRefactoring = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 30, HasMore = false };
         var oldIssues = new PagedResult<IssueSummary>
         {
             Items = [new IssueSummary { Identifier = "50", Title = "Old issue", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-60) }],
             Page = 1,
-            PageSize = 50,
+            PageSize = 100,
             HasMore = false
         };
 
         _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(emptyRefactoring);
-        _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.ListOpenIssuesAsync(1, 100, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(oldIssues);
 
         _mockRepoProvider
@@ -325,9 +320,9 @@ public class RefactoringExecutorTests : IDisposable
         // Act
         await executor.ExecuteAsync(job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — old issue should be filtered out, no issue context in prompt
-        capturedPrompt.Should().NotContain("Old issue");
-        capturedPrompt.Should().NotContain("Do Not Duplicate");
+        // Assert
+        capturedPrompt.Should().Contain("Do Not Duplicate");
+        capturedPrompt.Should().Contain("#50 \"Old issue\"");
     }
 
     [Fact]
@@ -367,23 +362,29 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        var scanFooter = $"*{RefactoringExecutor.GeneratedIssueFooter}.*";
         var closedIssues = new PagedResult<IssueSummary>
         {
             Items = new[]
             {
-                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "agent:generated", "agent:done" } },
-                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "agent:generated", "agent:wont-do" } }
+                new IssueSummary { Identifier = "100", Title = "Implemented refactoring", Labels = new[] { "agent:generated", "agent:done" }, Description = scanFooter },
+                new IssueSummary { Identifier = "101", Title = "Rejected refactoring", Labels = new[] { "agent:generated", "agent:wont-do" }, Description = scanFooter },
+                // A decomposition sub-issue shares agent:generated but is not a scan proposal
+                new IssueSummary { Identifier = "102", Title = "Sub-issue of an epic", Labels = new[] { "agent:generated", "agent:done" }, Description = "## Summary\nPart 2 of the epic." }
             },
             Page = 1,
-            PageSize = 20,
+            PageSize = 50,
             HasMore = false
         };
 
         _mockIssueProvider
-            .Setup(x => x.ListClosedIssuesAsync(1, 20,
+            .Setup(x => x.ListClosedIssuesAsync(1, 50,
                 It.Is<IReadOnlyList<string>>(l => l.Contains("agent:generated")),
                 It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(closedIssues);
+        _mockIssueProvider
+            .Setup(x => x.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
 
         AgentRequest? capturedRequest = null;
         _mockAgentProvider
@@ -398,7 +399,103 @@ public class RefactoringExecutorTests : IDisposable
         capturedRequest!.Prompt.Should().Contain("Past Proposal Outcomes");
         capturedRequest.Prompt.Should().Contain("#100 \"Implemented refactoring\"");
         capturedRequest.Prompt.Should().Contain("#101 \"Rejected refactoring\"");
+        capturedRequest.Prompt.Should().NotContain("Sub-issue of an epic");
         capturedRequest.Prompt.Should().Contain("Do NOT propose refactorings similar to rejected items above.");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ClosedScanIssueHasImplementerFeedback_InjectsTheLatestIntoPrompt()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var closedIssues = new PagedResult<IssueSummary>
+        {
+            Items =
+            [
+                new IssueSummary
+                {
+                    Identifier = "3236", Title = "Stop swallowing cancellation", Labels = ["agent:generated", "agent:done"],
+                    Description = $"*{RefactoringExecutor.GeneratedIssueFooter}.*"
+                }
+            ],
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
+        };
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(closedIssues);
+
+        static IssueComment Comment(string id, string body, int day) =>
+            new() { Id = id, Author = "coding-agent-webui", Body = body, CreatedAt = new DateTime(2026, 10, day, 0, 0, 0, DateTimeKind.Utc) };
+        var older = FeedbackCommentFormatter.FormatComment(new IssueFeedback { Category = "stale", Description = "Older note." })!;
+        var latest = FeedbackCommentFormatter.FormatComment(new IssueFeedback
+        {
+            Category = "partial scope",
+            Description = "The outer catch at L777 was missed."
+        })!;
+        _mockIssueProvider
+            .Setup(x => x.ListCommentsAsync(It.Is<IssueIdentifier>(i => i.Value == "3236"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { Comment("1", "## 🤖 Agent Analysis\nplan", 1), Comment("2", older, 2), Comment("3", latest, 3) });
+
+        string? capturedPrompt = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        capturedPrompt.Should().Contain("- #3236 \"Stop swallowing cancellation\" — partial scope: The outer catch at L777 was missed.");
+        capturedPrompt.Should().NotContain("Older note.");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CommentsOfAPastIssueCannotBeRead_KeepsTheOutcomeContext()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items =
+                [
+                    new IssueSummary
+                    {
+                        Identifier = "7", Title = "Remove dead helper", Labels = ["agent:generated", "agent:done"],
+                        Description = $"*{RefactoringExecutor.GeneratedIssueFooter}.*"
+                    }
+                ],
+                Page = 1,
+                PageSize = 50,
+                HasMore = false
+            });
+        _mockIssueProvider
+            .Setup(x => x.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("rate limited"));
+
+        string? capturedPrompt = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) => capturedPrompt = req.Prompt)
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        capturedPrompt.Should().Contain("#7 \"Remove dead helper\"");
+        capturedPrompt.Should().NotContain("Implementer Feedback");
     }
 
     [Fact]
@@ -1376,11 +1473,11 @@ public class RefactoringExecutorTests : IDisposable
         {
             Items = [new IssueSummary { Identifier = "300", Title = "Remove dead helper", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-90) }],
             Page = 1,
-            PageSize = 50,
+            PageSize = 100,
             HasMore = false
         };
         _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.ListOpenIssuesAsync(1, 100, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(openIssues);
         SetupProposalsFile("""
             [
@@ -1396,7 +1493,7 @@ public class RefactoringExecutorTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // An open issue older than the 30-day prompt window still blocks a duplicate
+        // An open issue blocks a duplicate however old it is
         result.Success.Should().BeTrue();
         result.Summary.Should().Contain("No refactoring opportunities identified");
         result.Summary.Should().Contain("1 proposal(s) dropped by validation");
@@ -1414,11 +1511,11 @@ public class RefactoringExecutorTests : IDisposable
         {
             Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow }],
             Page = 1,
-            PageSize = 30,
+            PageSize = 100,
             HasMore = false
         };
         _mockIssueProvider
-            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.ListOpenIssuesAsync(1, 100, null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(openIssues);
         _mockRepoProvider
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))

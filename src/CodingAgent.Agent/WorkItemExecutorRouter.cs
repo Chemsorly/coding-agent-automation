@@ -66,7 +66,8 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             TemplateId = assignment.ConsolidationTemplateId,
             ProviderConfigs = assignment.ProviderConfigs,
             PipelineConfiguration = assignment.PipelineConfiguration,
-            AutoDispatch = assignment.AutoDispatch
+            AutoDispatch = assignment.AutoDispatch,
+            McpServers = assignment.McpServers
         };
 
         // Execute and report via the consolidation-specific hub method

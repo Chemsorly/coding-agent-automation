@@ -186,7 +186,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (refactoringIssues.Count > 0)
         {
-            sb.AppendLine("### Open Refactoring Issues (agent:generated, still pending)");
+            sb.AppendLine("### Open Refactoring Scan Issues (still pending)");
             foreach (var issue in refactoringIssues)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -194,7 +194,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (otherIssues.Count > 0)
         {
-            sb.AppendLine("### Other Recent Open Issues (may overlap)");
+            sb.AppendLine("### Other Open Issues (may overlap)");
             foreach (var issue in otherIssues)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -313,7 +313,7 @@ public static partial class ConsolidationPromptBuilder
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
-                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. `hotspot:` is a priority signal and does not corroborate anything. Sources tagged `tool:` that name no compiler, linter or analyzer rule are mislabeled searches or reads. Single-source proposals should be flagged [WARNING]",
+                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. `hotspot:` is a priority signal and does not corroborate anything. Sources tagged `tool:` that name no compiler, linter, analyzer or MCP tool are mislabeled searches or reads. Single-source proposals should be flagged [WARNING]",
                 "**Evidence not shown** — `evidence` is missing, paraphrased, or does not match the code at the cited lines. Flag [WARNING]",
                 "**Incomplete scope** — the proposal fixes some instances of a repeated pattern but not all. Run its `scopeQuery` (or your own search when it has none): every match must be in `affectedFiles` or excluded by name in `description`. Flag [WARNING] and list the missing instances",
                 "**Actual blast radius understated** — count the REAL affected files: not just `affectedFiles` but also their test files, their consumers (files importing them), and shared configuration. If the true blast radius exceeds 30 files, flag [CRITICAL]",
@@ -555,10 +555,19 @@ public static partial class ConsolidationPromptBuilder
     /// <summary>
     /// Builds a prompt section summarizing past refactoring proposal outcomes.
     /// Categorizes closed issues as implemented (agent:done) or rejected (agent:wont-do/agent:cancelled).
-    /// Issues without agent labels are excluded. Returns empty string if no categorizable issues.
+    /// Issues without agent labels are excluded. <paramref name="implementerFeedback"/> maps an issue
+    /// identifier to what the agent that implemented the issue said the issue got wrong.
+    /// Returns empty string if there are neither categorizable issues nor feedback.
     /// </summary>
-    public static string BuildProposalOutcomeContext(IReadOnlyList<IssueSummary> closedIssues)
+    public static string BuildProposalOutcomeContext(
+        IReadOnlyList<IssueSummary> closedIssues,
+        IReadOnlyDictionary<string, string>? implementerFeedback = null)
     {
+        var feedbackLines = closedIssues
+            .Where(i => implementerFeedback?.ContainsKey(i.Identifier) == true)
+            .Select(i => $"- #{i.Identifier} \"{i.Title}\" — {implementerFeedback![i.Identifier]}")
+            .ToList();
+
         var implemented = new List<IssueSummary>();
         var rejected = new List<IssueSummary>();
 
@@ -571,7 +580,7 @@ public static partial class ConsolidationPromptBuilder
             // Ambiguous closures (no agent label) are excluded
         }
 
-        if (implemented.Count == 0 && rejected.Count == 0)
+        if (implemented.Count == 0 && rejected.Count == 0 && feedbackLines.Count == 0)
             return string.Empty;
 
         var sb = new StringBuilder();
@@ -592,6 +601,15 @@ public static partial class ConsolidationPromptBuilder
             sb.AppendLine("### Rejected (avoid similar proposals)");
             foreach (var issue in rejected)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+            sb.AppendLine();
+        }
+
+        if (feedbackLines.Count > 0)
+        {
+            sb.AppendLine("### Implementer Feedback (what past issues got wrong)");
+            sb.AppendLine("The agents that implemented these issues reported gaps in the issue itself. Do not repeat them:");
+            foreach (var line in feedbackLines)
+                sb.AppendLine(line);
             sb.AppendLine();
         }
 

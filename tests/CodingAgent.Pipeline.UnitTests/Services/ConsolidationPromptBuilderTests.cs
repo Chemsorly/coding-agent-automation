@@ -145,8 +145,8 @@ public class ConsolidationPromptBuilderTests
 
         var result = ConsolidationPromptBuilder.BuildOpenIssueContext(refactoring, []);
 
-        result.Should().Contain("Open Refactoring Issues");
-        result.Should().NotContain("Other Recent Open Issues");
+        result.Should().Contain("Open Refactoring Scan Issues");
+        result.Should().NotContain("Other Open Issues");
     }
 
     [Fact]
@@ -159,8 +159,8 @@ public class ConsolidationPromptBuilderTests
 
         var result = ConsolidationPromptBuilder.BuildOpenIssueContext([], other);
 
-        result.Should().NotContain("Open Refactoring Issues");
-        result.Should().Contain("Other Recent Open Issues");
+        result.Should().NotContain("Open Refactoring Scan Issues");
+        result.Should().Contain("Other Open Issues");
     }
 
     [Fact]
@@ -233,5 +233,38 @@ public class ConsolidationPromptBuilderTests
         result.Should().Contain("#1 \"Done\"");
         result.Should().Contain("#3 \"Rejected\"");
         result.Should().NotContain("#2");
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_WithImplementerFeedback_ListsItPerIssue()
+    {
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "3236", Title = "Stop swallowing cancellation", Labels = new[] { "agent:done" } },
+            new IssueSummary { Identifier = "3240", Title = "Delete placeholder", Labels = new[] { "agent:done" } }
+        };
+        var feedback = new Dictionary<string, string> { ["3236"] = "partial scope: the outer catch at L777 was missed" };
+
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues, feedback);
+
+        result.Should().Contain("### Implementer Feedback (what past issues got wrong)");
+        result.Should().Contain("- #3236 \"Stop swallowing cancellation\" — partial scope: the outer catch at L777 was missed");
+        result.Should().NotContain("#3240 \"Delete placeholder\" —");
+    }
+
+    [Fact]
+    public void BuildProposalOutcomeContext_FeedbackOnUncategorizedIssue_StillProducesContext()
+    {
+        // An issue closed without an outcome label is not listed as implemented or rejected,
+        // but what its implementer reported is still worth learning from
+        var issues = new[]
+        {
+            new IssueSummary { Identifier = "5", Title = "Rename helpers", Labels = new[] { "agent:generated" } }
+        };
+        var feedback = new Dictionary<string, string> { ["5"] = "incomplete rename scope: tests kept the old name" };
+
+        var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues, feedback);
+
+        result.Should().Contain("- #5 \"Rename helpers\" — incomplete rename scope");
     }
 }

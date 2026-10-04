@@ -51,4 +51,11 @@ public sealed class ConsolidationJobMessage
     /// </summary>
     [Key(10)]
     public bool AutoDispatch { get; init; }
+
+    /// <summary>
+    /// The MCP servers of the run's agent profile and project, written to the agent's MCP config before
+    /// the consolidation agents run, as for pipeline runs.
+    /// </summary>
+    [Key(11)]
+    public IReadOnlyList<McpServerConfig> McpServers { get; init; } = [];
 }
