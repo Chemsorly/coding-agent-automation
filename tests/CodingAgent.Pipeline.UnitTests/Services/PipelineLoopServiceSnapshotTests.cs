@@ -566,17 +566,23 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
 
         await secondCycleDone.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-        // Snapshot the call log before stopping to exclude any partial cycle 3 recordings.
-        // If cycle 3 has already started SnapshotCycleConfigAsync it may record Templates
-        // but not Issue (cancelled mid-way), which would corrupt the LastSeq ordering check.
-        List<(int Seq, string Name)> frozenLog;
-        lock (sync) { frozenLog = [.. callLog]; }
-
+        // Stop the loop immediately so cycle 3 cannot start and contaminate the log.
+        // StopLoop() sets _stopRequested and cancels _loopCts, causing RunMultiTemplateLoopAsync
+        // to exit after the current cycle's poll delay (≤50ms). Cancelling hostCts unblocks
+        // ExecuteAsync's WaitAsync, ensuring the background service terminates promptly.
+        // Snapshot the log only after the task has fully stopped so no further writes can occur.
         svc.StopLoop();
         hostCts.Cancel();
 
         // Wait for the background service to fully stop so no further calls are made.
         try { await executeTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* cancellation or timeout */ }
+
+        // Snapshot the call log after the loop has stopped — this guarantees no cycle 3 calls
+        // can appear after the snapshot, eliminating the race where cycle 3's LoadProviderConfigs_Issue
+        // (recorded after secondCycleDone but before the old snapshot) had a higher seq number than
+        // cycle 2's GetActiveIssueIdentifiers, making the LastSeq ordering check fail spuriously.
+        List<(int Seq, string Name)> frozenLog;
+        lock (sync) { frozenLog = [.. callLog]; }
 
         // Extract ordering using the last occurrence of each step name so we compare
         // within a single runtime cycle rather than mixing startup and runtime calls.
