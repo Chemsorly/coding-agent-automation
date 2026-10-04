@@ -25,7 +25,7 @@
 
 <PageTitle>Run - Coding Agent</PageTitle>
 
-<div class="cockpit-page" data-testid="run-page">
+<div class="cockpit-page" data-testid="run-page" data-initialized="@(!_loading ? "true" : "false")">
     <a href="runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
 
     @if (_loading)

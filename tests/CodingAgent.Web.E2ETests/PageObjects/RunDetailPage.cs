@@ -41,9 +41,22 @@ public sealed class RunDetailPage
         }
         catch (TimeoutException)
         {
-            // Terminal run — no hub subscription card. Use a fixed wait long enough for
-            // the Blazor Server circuit to connect on slow CI runners (empirically > 3 s).
-            await _page.WaitForTimeoutAsync(5000);
+            // Terminal run — no hub subscription card. Wait for data-initialized='true' on the
+            // run-page root, which is set by RunPage's OnParametersSetAsync after _loading = false.
+            // This signals that the Blazor Server circuit has connected and rendered at least one
+            // interactive cycle, making event handlers live. Falls back to a fixed 8 s wait on
+            // slow CI runners if the attribute never appears (e.g. error page, no data-testid).
+            try
+            {
+                await _page.WaitForSelectorAsync(
+                    "[data-testid='run-page'][data-initialized='true']",
+                    new() { Timeout = 12_000 });
+            }
+            catch (TimeoutException)
+            {
+                // Last-resort fixed wait for CI runners where the attribute signal is unavailable.
+                await _page.WaitForTimeoutAsync(8_000);
+            }
         }
     }
 
