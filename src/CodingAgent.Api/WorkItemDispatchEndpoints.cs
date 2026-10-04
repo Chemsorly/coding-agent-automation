@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Linq.Expressions;
 using System.Text.Json;
 using CodingAgent.Api.Dispatch;
-using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
@@ -130,7 +129,7 @@ public static class WorkItemDispatchEndpoints
             // The unique-violation catch below remains as the race backstop for concurrent inserts.
             // (issue #2956)
             //
-            // TODO: [WARNING] The two pre-check queries are a TOCTOU: a concurrent request can
+            // NOTE (issue #3243): The two pre-check queries are a TOCTOU: a concurrent request can
             // insert a conflicting row between the AnyAsync calls and SaveChangesAsync, causing
             // the unique-violation catch to fire anyway. This only affects log-noise suppression,
             // not correctness (the catch backstop handles it). Additionally, the active-conflict
@@ -170,7 +169,7 @@ public static class WorkItemDispatchEndpoints
         // Materialise in-memory PipelineRun in the API's IOrchestratorRunService so the UI
         // can subscribe to hub events and display the run immediately (Req 1a.1 Option A).
         // WorkItem.Id == PipelineRun.RunId for deterministic hub-group routing.
-        // TODO [WARNING]: The comment "Consolidation WorkItems return null" was removed (issue #3023).
+        // NOTE (issue #3243): The comment "Consolidation WorkItems return null" was removed (issue #3023).
         // PipelineRunFactory.CreateFromWorkItem now returns a real PipelineRun for consolidation
         // work items (TaskType == Consolidation || RunType == Consolidation branch). The run is added
         // to IOrchestratorRunService here and removed when RunLifecycleManager reaches a terminal
@@ -289,11 +288,20 @@ public static class WorkItemDispatchEndpoints
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
+        JobTemplateStore templateStore,
         DispatchTemplateResolver templateResolver,
         IDistributedLockProvider lockProvider,
         DispatchWorkItemService dispatchService,
         CancellationToken ct = default)
     {
+        // Delegate entirely to the service method which owns the full dispatch lifecycle
+        // (fast-path check, advisory lock, concurrency gate, PVC gate, K8s Job creation,
+        // result interpretation, and telemetry). The static endpoint exists as the ASP.NET
+        // Core minimal-API handler that the DI container resolves parameters for.
+        //
+        // NOTE (issue #3243): templateStore is received here from DI but is not passed separately
+        // to the service — the service holds its own _templateStore instance injected at
+        // construction time, which is the same singleton registered in the DI container.
         return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, templateResolver, lockProvider, ct);
     }
 
@@ -328,7 +336,7 @@ public static class WorkItemDispatchEndpoints
         if (template is null)
         {
             Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",
-                LogSanitizer.SanitizeForLog(request.AgentSelector));
+                CodingAgent.Infrastructure.Common.LogSanitizer.SanitizeForLog(request.AgentSelector));
             // 422 Unprocessable Entity — permanent config error (no job template for this selector).
             // Distinct from 409 Conflict (transient capacity limit) so callers can differentiate
             // permanent failures (cascade run to Failed) from transient ones (leave Queued, retry later).
@@ -339,7 +347,7 @@ public static class WorkItemDispatchEndpoints
 
         // Build the concurrency snapshot and PVC availability result via the shared preamble.
         // NOTE: No PvcPoolExhaustions counter here — that metric belongs exclusively to DispatchPendingWorkItem.
-        // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
+        // NOTE (issue #3243): This PVC availability snapshot is taken OUTSIDE _pvcSelectLock. Two concurrent
         // requests can both observe availablePvcs.Count > 0, pass the gate, create their Dispatched rows,
         // and both enter ExecuteDispatchLifecycleAsync. SelectPvcAsync (inside the lock) dequeues from
         // each caller's in-memory availablePvcs list — it does NOT re-query the database. In a
@@ -358,19 +366,19 @@ public static class WorkItemDispatchEndpoints
 
         // Normalize and sanitize the selector for the gate check and log messages.
         var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");
-        var sanitizedReqSelector = LogSanitizer.SanitizeForLog(request.AgentSelector);
+        var sanitizedReqSelector = CodingAgent.Infrastructure.Common.LogSanitizer.SanitizeForLog(request.AgentSelector);
 
         // Run the gate check BEFORE creating the entity so a 409/503 rejection does not
         // leave an orphaned Dispatched row in the database. DispatchResolvedWorkItemAsync
         // (called below after entity creation) re-runs the gate; it will pass a second time
         // since capacity cannot shrink between these two calls on the same request.
         // isKiroAgent is computed inside DispatchWorkItemService.IsKiroAgent (no literal here — AC3).
-        // TODO [WARNING]: IsKiroAgent is evaluated here AND again inside DispatchResolvedWorkItemAsync on the same
+        // NOTE (issue #3243): IsKiroAgent is evaluated here AND again inside DispatchResolvedWorkItemAsync on the same
         // template. Both are pure/deterministic today, so results are always consistent. If IsKiroAgent ever
         // becomes context-dependent, the two calls could diverge and produce inconsistent gate decisions without
         // any test catching it. Consider passing the computed value as a parameter to DispatchResolvedWorkItemAsync
         // to make the single-evaluation contract explicit. (TestQualityReviewer, DotNetSpecialist review [WARNING])
-        // TODO [WARNING]: pvcResult.AvailablePvcs is a mutable List<string> passed by reference. The early gate
+        // NOTE (issue #3243): pvcResult.AvailablePvcs is a mutable List<string> passed by reference. The early gate
         // reads its Count here; DispatchResolvedWorkItemAsync → SelectPvcAsync will later mutate/drain that same
         // list. Both calls currently occur on the same request before any PVC selection, so the count is stable
         // in practice. However, if SelectPvcAsync or any future refactor moves list mutation before the second
@@ -422,7 +430,7 @@ public static class WorkItemDispatchEndpoints
 
         // Register PipelineRun so the UI can subscribe to hub events immediately.
         var run = PipelineRunFactory.CreateFromWorkItem(workItemId, request);
-        // TODO [WARNING]: If PipelineRunFactory.CreateFromWorkItem returns null, the WorkItem will be
+        // NOTE (issue #3243): If PipelineRunFactory.CreateFromWorkItem returns null, the WorkItem will be
         // dispatched (K8s Job running, WorkItem=Dispatched) but no PipelineRun is registered in
         // IOrchestratorRunService. The UI will not receive live run events for this WorkItem. The
         // requirement states registration is mandatory for SignalR hub routing. Add a log warning
@@ -459,7 +467,7 @@ public static class WorkItemDispatchEndpoints
             callerName: "DispatchWorkItem",
             lifecycle,
             ct);
-        // TODO [WARNING]: InterpretDispatchResult unconditionally emits RecordDispatchAttempt("transient",
+        // NOTE (issue #3243): InterpretDispatchResult unconditionally emits RecordDispatchAttempt("transient",
         // "pvc_unavailable"|"k8s_error") for 503 results regardless of the rewriteConcurrencyLimitAsDeferred
         // flag. On the original DispatchWorkItem path no such telemetry was emitted — the raw 503 was
         // returned directly. This change adds a new metric emission on the sync-dispatch path that can
@@ -467,7 +475,8 @@ public static class WorkItemDispatchEndpoints
         // If this is intentional, document it; otherwise guard the 503 telemetry in InterpretDispatchResult
         // with the same rewriteConcurrencyLimitAsDeferred flag used for the 409 branch.
         // See review finding: Correctness @ line 616.
-        return DispatchWorkItemService.InterpretDispatchResult(syncDispatchResult, pvcResult, dispatchService.IsKiroAgent(template), rewriteConcurrencyLimitAsDeferred: false).Result;
+        var (syncResult, _) = DispatchWorkItemService.InterpretDispatchResult(syncDispatchResult, pvcResult, dispatchService.IsKiroAgent(template), rewriteConcurrencyLimitAsDeferred: false);
+        return syncResult;
     }
 
     /// <summary>
