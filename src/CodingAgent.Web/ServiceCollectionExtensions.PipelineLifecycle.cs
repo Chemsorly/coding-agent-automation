@@ -21,8 +21,6 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger,
             sp.GetService<IAgentCancellationSender>()));
-        services.AddSingleton<ILifecycleShutdownAction>(sp =>
-            sp.GetRequiredService<PipelineRunLifecycleService>());
 
         services.AddSingleton<IBrainSyncService>(sp => new BrainSyncService(
             sp.GetRequiredService<IBrainUpdateService>(), Log.Logger));

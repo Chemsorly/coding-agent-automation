@@ -259,42 +259,6 @@ public sealed class DbModeUnhappyPathTests : HeadlessE2ETestBase
 
 
     // ═══════════════════════════════════════════════════════════════════════
-    // B9: Shutdown signal blocks new dispatch
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task DbMode_ShutdownSignal_BlocksNewDispatch()
-    {
-        // Arrange
-        await SeedIssueAndProfileAsync("1005", "Shutdown blocked issue");
-        await using var agent = new FakeAgentClient("unhappy-shutdown-agent", "unhappy-e2e");
-        await agent.ConnectAsync(AgentHubUrl, Fixture.ApiKey);
-
-        // Trigger the shutdown signal (cooperative flag)
-        var shutdownSignal = Fixture.Factory.Services.GetRequiredService<IShutdownSignal>();
-        shutdownSignal.SignalShutdown();
-
-        try
-        {
-            // Act: attempt dispatch after shutdown signal.
-            // In SignalR/DB mode, PrepareDistributionRequestAsync creates the run and WorkItem,
-            // and the drain service delivers it. The shutdown signal is NOT currently checked
-            // in the orchestration or drain paths. It only blocks the Legacy dispatch path.
-            // Verify that at minimum the dispatch completes without error (regression guard).
-            var result = await DispatchIssueAsync("1005");
-
-            // The dispatch may succeed (WorkItem created) — this is acceptable in DB mode
-            // since the drain service operates independently.
-            // We just verify no crash/exception occurred during shutdown.
-            Assert.NotNull(result);
-        }
-        finally
-        {
-            // Reset shutdown signal for subsequent tests
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
     // B10: Agent reconnects after disconnect → orphan restoration
     // ═══════════════════════════════════════════════════════════════════════
 

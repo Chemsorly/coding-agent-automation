@@ -77,7 +77,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     public FakeKubernetesJobClient FakeK8sClient { get; } = new();
 
     // Resettable services — created during ConfigureServices, used in ResetAll
-    private ResettablePipelineOrchestrationService? _orchestration;
     private AgentRegistryService? _registry;
     private OrchestratorRunService? _runService;
 
@@ -260,19 +259,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         RemoveService<IOrchestratorRunService>(services);
         services.AddSingleton(_runService);
         services.AddSingleton<IOrchestratorRunService>(_runService);
-
-        // PipelineOrchestrationService → ResettablePipelineOrchestrationService
-        var lifecycle = new PipelineRunLifecycleService(HistoryService, _runService, Serilog.Log.Logger);
-        _orchestration = new ResettablePipelineOrchestrationService(
-            ConfigStore,
-            FakeProviders,
-            new PipelineCancellationFacade(null),
-            lifecycle,
-            TestOrchestrationFactory.NoOpLabelService.Instance,
-            Serilog.Log.Logger);
-        RemoveService<PipelineOrchestrationService>(services);
-        services.AddSingleton(_orchestration);
-        services.AddSingleton<PipelineOrchestrationService>(_orchestration);
     }
 
     /// <summary>
@@ -308,7 +294,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         }
 
         // Reset resettable service subclasses
-        _orchestration?.Reset();
         _registry?.Reset();
         _runService?.Reset();
 

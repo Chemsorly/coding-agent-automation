@@ -16,7 +16,7 @@ public partial class LayerBoundaryTests
 {
     // Assembly anchors for each layer
     private static readonly System.Reflection.Assembly PipelineAssembly =
-        typeof(Pipeline.Services.PipelineOrchestrationService).Assembly;
+        typeof(Pipeline.Services.PipelineRunLifecycleService).Assembly;
 
     // Spec 048 Phase 1: Contracts is the extracted shared surface. Its types keep the
     // CodingAgent.Pipeline.* namespaces (namespace-preserving move), so the boundary
