@@ -150,30 +150,30 @@
                                     </td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
                                     <td style="text-align: right;" @onclick:stopPropagation="true">
-                                        @if (!Access.CanOperate(a.ProjectId))
+                                        @if (Access.CanOperate(a.ProjectId))
                                         {
                                             @* Spec 049: cancelling needs operator on the item's project. *@
-                                        }
-                                        else if (_cancelling.Contains(a.Id))
-                                        {
-                                            <span class="monitoring-muted" style="font-size: 12px;">Cancelling…</span>
-                                        }
-                                        else if (_confirmCancelId == a.Id)
-                                        {
-                                            <span style="font-size: 12px; color: var(--text-muted); margin-right: 4px;">Cancel run #@a.IssueIdentifier?</span>
-                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                                    data-testid="confirm-cancel-btn-@a.Id"
-                                                    @onclick="() => CancelWorkItemAsync(a.Id)">Yes</button>
-                                            <button class="btn-cancel-small" style="margin-left: 4px;"
-                                                    data-testid="dismiss-cancel-btn-@a.Id"
-                                                    @onclick="() => _confirmCancelId = null">No</button>
-                                        }
-                                        else
-                                        {
-                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                                    title="Cancel this in-flight run"
-                                                    data-testid="cancel-btn-@a.Id"
-                                                    @onclick="() => _confirmCancelId = a.Id">Cancel</button>
+                                            if (_cancelling.Contains(a.Id))
+                                            {
+                                                <span class="monitoring-muted" style="font-size: 12px;">Cancelling…</span>
+                                            }
+                                            else if (_confirmCancelId == a.Id)
+                                            {
+                                                <span style="font-size: 12px; color: var(--text-muted); margin-right: 4px;">Cancel run #@a.IssueIdentifier?</span>
+                                                <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                        data-testid="confirm-cancel-btn-@a.Id"
+                                                        @onclick="() => CancelWorkItemAsync(a.Id)">Yes</button>
+                                                <button class="btn-cancel-small" style="margin-left: 4px;"
+                                                        data-testid="dismiss-cancel-btn-@a.Id"
+                                                        @onclick="() => _confirmCancelId = null">No</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                        title="Cancel this in-flight run"
+                                                        data-testid="cancel-btn-@a.Id"
+                                                        @onclick="() => _confirmCancelId = a.Id">Cancel</button>
+                                            }
                                         }
                                     </td>
                                 </tr>

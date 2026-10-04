@@ -56,10 +56,10 @@ internal static class AuthEndpoints
         var returnUrl = SafeReturnUrl(form.ReturnUrl);
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
-        // Non-short-circuit '&' so a wrong username costs the same as a wrong password.
-        var valid = string.Equals(form.Username?.Trim(), LocalAdminOptions.Username, StringComparison.Ordinal)
-                    & PasswordMatches(form.Password, auth.Admin.Password ?? "");
-        if (!valid)
+        // Both checks always run, so a wrong username costs the same as a wrong password.
+        var usernameMatches = string.Equals(form.Username?.Trim(), LocalAdminOptions.Username, StringComparison.Ordinal);
+        var passwordMatches = PasswordMatches(form.Password, auth.Admin.Password ?? "");
+        if (!(usernameMatches && passwordMatches))
         {
             logger.LogWarning("Login failed for user '{Username}' from {ClientIp}",
                 LogSanitizer.SanitizeForLog(form.Username), clientIp);

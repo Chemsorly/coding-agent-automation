@@ -20,7 +20,7 @@ public class AccessPoliciesTests
     };
 
     [Theory]
-    [MemberData(nameof(Matrix))]
+    [MemberData(nameof(Matrix), DisableDiscoveryEnumeration = true)]
     public void PolicyMatrix(string name, AccessGrant grant, bool anyAccess, bool anyOperator, bool globalRead, bool admin)
     {
         AccessAuthorizationHandler.IsSatisfied(grant, AccessPolicyKind.AnyAccess).Should().Be(anyAccess, name);

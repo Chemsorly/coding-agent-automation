@@ -721,7 +721,7 @@ public class AgentChatAccessTests : BunitContext
             new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
     }
 
-    private string[] ProjectOptions(IRenderedComponent<AgentChat> cut) =>
+    private static string[] ProjectOptions(IRenderedComponent<AgentChat> cut) =>
         cut.FindAll("#project-select-k8s option").Select(o => o.GetAttribute("value") ?? "").ToArray();
 
     [Fact]

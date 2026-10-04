@@ -274,11 +274,8 @@
         }
     }
 
-    @if (!CanEdit)
-    {
-        @* Spec 049: template configuration is admin-only; the add form and confirmations are never rendered. *@
-    }
-    else if (ShowAddForm)
+    @* Spec 049: template configuration is admin-only; the add form and confirmations are never rendered. *@
+    @if (CanEdit && ShowAddForm)
     {
         <TemplateAddForm Form="AddForm" FormError="@FormError" Projects="Projects"
             IssueProviders="IssueProviders" RepoProviders="RepoProviders"
@@ -286,7 +283,7 @@
             LabelPreview="@(!string.IsNullOrEmpty(AddForm.RepoProviderId) ? GetLabelPreview(AddForm.RepoProviderId) : new LabelPreviewResult())"
             OnSave="OnAddTemplate" OnCancel="OnCancelAdd" />
     }
-    else if (!IsLoopActive)
+    else if (CanEdit && !IsLoopActive)
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="() => OnShowAddForm.InvokeAsync()">+ Add Template</button>
     }

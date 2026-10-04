@@ -5,7 +5,8 @@
     // Full page load so the login page renders statically and the cookie handler sees the request.
     protected override void OnInitialized()
     {
-        var returnUrl = "/" + Nav.ToBaseRelativePath(Nav.Uri);
+        // Sign-in requires the UI at the root of its host, so the path is the app-relative URL.
+        var returnUrl = new Uri(Nav.Uri).PathAndQuery;
         Nav.NavigateTo($"{AuthPaths.Login.TrimStart('/')}?{AuthPaths.ReturnUrlParameter}={Uri.EscapeDataString(returnUrl)}", forceLoad: true);
     }
 }
