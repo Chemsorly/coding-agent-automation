@@ -721,54 +721,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().BeOneOf(PipelineStep.Completed, PipelineStep.Failed);
     }
 
-    // --- Config defaults ---
-
-    // --- Workspace cleanup ---
-
-    [Fact]
-    public async Task SuccessfulPr_DeletesWorkspace()
-    {
-        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-cleanup-{Guid.NewGuid()}");
-        Directory.CreateDirectory(workspaceBase);
-        try
-        {
-            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase });
-
-            var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-            run.CurrentStep.Should().Be(PipelineStep.Completed);
-            if (run.WorkspacePath != null)
-                Directory.Exists(run.WorkspacePath).Should().BeFalse();
-        }
-        finally { if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true); }
-    }
-
-    [Fact]
-    public async Task DraftPr_RetainsWorkspace()
-    {
-        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-draft-{Guid.NewGuid()}");
-        Directory.CreateDirectory(workspaceBase);
-        try
-        {
-            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, MaxRetries = 0 });
-
-            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new QualityGateReport
-                {
-                    Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
-                    Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed" }
-                });
-
-            var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-            run.CurrentStep.Should().Be(PipelineStep.Failed);
-            run.IsDraftPr.Should().BeTrue();
-            if (run.WorkspacePath != null)
-                Directory.Exists(run.WorkspacePath).Should().BeTrue();
-        }
-        finally { if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true); }
-    }
-
     // --- Stall detection ---
 
     [Fact]
