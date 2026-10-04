@@ -186,7 +186,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (refactoringIssues.Count > 0)
         {
-            sb.AppendLine("### Open Refactoring Scan Issues (still pending)");
+            sb.AppendLine("### Open Refactoring Issues (agent:generated, still pending)");
             foreach (var issue in refactoringIssues)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -194,7 +194,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (otherIssues.Count > 0)
         {
-            sb.AppendLine("### Other Open Issues (may overlap)");
+            sb.AppendLine("### Other Recent Open Issues (may overlap)");
             foreach (var issue in otherIssues)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -308,21 +308,18 @@ public static partial class ConsolidationPromptBuilder
             - `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` (Agent B)
             - `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` (Agent C)
             - `{AgentWorkspacePaths.RefactoringConventionsFilePath}` (project conventions)
-            If `{AgentWorkspacePaths.RefactoringIssueContextFilePath}` exists, read it: it lists the open issues and past proposals the new proposals must not duplicate.
             """,
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
-                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. `hotspot:` is a priority signal and does not corroborate anything. Sources tagged `tool:` that name no compiler, linter, analyzer or MCP tool are mislabeled searches or reads. Single-source proposals should be flagged [WARNING]",
-                "**Evidence not shown** — `evidence` is missing, paraphrased, or does not match the code at the cited lines. Flag [WARNING]",
-                "**Incomplete scope** — the proposal fixes some instances of a repeated pattern but not all. Run its `scopeQuery` (or your own search when it has none): every match must be in `affectedFiles` or excluded by name in `description`. Flag [WARNING] and list the missing instances",
+                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. Multi-source evidence (tool + hotspot + code reading) is expected for high-quality proposals. Single-source proposals should be flagged [WARNING]",
                 "**Actual blast radius understated** — count the REAL affected files: not just `affectedFiles` but also their test files, their consumers (files importing them), and shared configuration. If the true blast radius exceeds 30 files, flag [CRITICAL]",
                 "**Failure mode not committed** — rationales that say \"could lead to issues\" or \"might cause confusion\" without stating WHAT specifically goes wrong. A valid rationale commits: \"X causes Y because Z.\" Hedged language indicates low confidence — flag [WARNING]",
-                "**Bug without a reproduction** — a `bug` proposal whose rationale has no concrete failure scenario, or whose acceptance criteria have no test that reproduces it. Flag [WARNING]",
                 "**Convention contradiction** — proposals that flag patterns listed in `intentionalPatterns` or `knownDebt` from conventions.json. The aggregation step should have caught these, but verify. Flag [CRITICAL] if found",
                 "Bundled concerns that should be separate proposals",
                 "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects. Flag [CRITICAL] with a suggestion to split",
-                "**Overlap with existing issues** — check if any proposal substantially duplicates an open issue or re-proposes a past proposal listed in the issue context file. Flag [WARNING] if overlap detected",
+                $"**Shallow exploration** — if `{AgentWorkspacePaths.RefactoringAnalysisFilePath}` is missing or shows fewer than 15 total findings were received from sub-agents, flag [CRITICAL] because the analysis pipeline produced insufficient coverage",
+                "**Overlap with existing issues** — check if any proposal substantially duplicates an issue listed in the \"Existing Open Issues\" section of the analysis. Flag [WARNING] if overlap detected",
                 "**Unverifiable acceptance criteria** — criteria requiring runtime execution, benchmarks, manual testing, or subjective judgment. The review agent can only verify from diff + test results. Flag [WARNING]",
                 "**Implementation-prescriptive acceptance criteria** — criteria that dictate specific file names, class names, or implementation patterns rather than observable post-conditions. These block valid alternative approaches. Flag [WARNING]",
             ],
@@ -398,8 +395,6 @@ public static partial class ConsolidationPromptBuilder
                 "You may remove proposals that the reviewer correctly identified as invalid",
                 "You may reduce the proposal count if warranted",
                 "Do not add new proposals — only refine or remove existing ones",
-                "When the reviewer lists missing instances of a pattern, add them to `affectedFiles` and fix `scopeQuery` — or remove the proposal if the full scope exceeds ~30 files",
-                "Keep each `category` value exactly as the schema lists it",
             ]);
     }
 
@@ -555,19 +550,10 @@ public static partial class ConsolidationPromptBuilder
     /// <summary>
     /// Builds a prompt section summarizing past refactoring proposal outcomes.
     /// Categorizes closed issues as implemented (agent:done) or rejected (agent:wont-do/agent:cancelled).
-    /// Issues without agent labels are excluded. <paramref name="implementerFeedback"/> maps an issue
-    /// identifier to what the agent that implemented the issue said the issue got wrong.
-    /// Returns empty string if there are neither categorizable issues nor feedback.
+    /// Issues without agent labels are excluded. Returns empty string if no categorizable issues.
     /// </summary>
-    public static string BuildProposalOutcomeContext(
-        IReadOnlyList<IssueSummary> closedIssues,
-        IReadOnlyDictionary<string, string>? implementerFeedback = null)
+    public static string BuildProposalOutcomeContext(IReadOnlyList<IssueSummary> closedIssues)
     {
-        var feedbackLines = closedIssues
-            .Where(i => implementerFeedback?.ContainsKey(i.Identifier) == true)
-            .Select(i => $"- #{i.Identifier} \"{i.Title}\" — {implementerFeedback![i.Identifier]}")
-            .ToList();
-
         var implemented = new List<IssueSummary>();
         var rejected = new List<IssueSummary>();
 
@@ -580,7 +566,7 @@ public static partial class ConsolidationPromptBuilder
             // Ambiguous closures (no agent label) are excluded
         }
 
-        if (implemented.Count == 0 && rejected.Count == 0 && feedbackLines.Count == 0)
+        if (implemented.Count == 0 && rejected.Count == 0)
             return string.Empty;
 
         var sb = new StringBuilder();
@@ -590,7 +576,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (implemented.Count > 0)
         {
-            sb.AppendLine("### Implemented (completed by an agent — this alone does not show the team valued them)");
+            sb.AppendLine("### Implemented (team valued these)");
             foreach (var issue in implemented)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -604,17 +590,8 @@ public static partial class ConsolidationPromptBuilder
             sb.AppendLine();
         }
 
-        if (feedbackLines.Count > 0)
-        {
-            sb.AppendLine("### Implementer Feedback (what past issues got wrong)");
-            sb.AppendLine("The agents that implemented these issues reported gaps in the issue itself. Do not repeat them:");
-            foreach (var line in feedbackLines)
-                sb.AppendLine(line);
-            sb.AppendLine();
-        }
-
         sb.AppendLine("Do NOT propose refactorings similar to rejected items above.");
-        sb.AppendLine("Do NOT re-propose implemented items: check the current code first — the change may already be in place.");
+        sb.AppendLine("Proposals similar to implemented items are encouraged — the team values this type of improvement.");
 
         return sb.ToString();
     }

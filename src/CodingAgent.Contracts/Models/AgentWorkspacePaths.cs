@@ -58,6 +58,11 @@ public static class AgentWorkspacePaths
     public const string RefactoringProposalsFilePath = ".agent/refactoring-proposals.json";
 
     /// <summary>
+    /// The file path (relative to workspace) where the aggregation phase writes its analysis log.
+    /// </summary>
+    public const string RefactoringAnalysisFilePath = ".agent/refactoring-analysis.md";
+
+    /// <summary>
     /// The file path (relative to workspace) where the analysis review agent writes its feedback.
     /// </summary>
     public const string AnalysisReviewFilePath = ".agent/analysis-review.md";

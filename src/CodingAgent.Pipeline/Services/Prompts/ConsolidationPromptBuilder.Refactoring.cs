@@ -20,21 +20,14 @@ public static partial class ConsolidationPromptBuilder
     // ─────────────────────────────────────────────────────────────────────
 
     private const string RefactoringSubAgentPreamble =
-$"""
+"""
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Use the available tools.** Phase 0 listed them under `availableTools` in `{AgentWorkspacePaths.RefactoringConventionsFilePath}` and saved the output of the project's analyzers in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/`. Tool output is higher-confidence evidence than your own code reading. Query the listed MCP tools for data about the code you examine. Do NOT run builds or other commands that write build output: the other two agents work in this workspace at the same time. Read-only analyzers that do not build are fine, and you are allowed to install them.
-3. **Declare what you did NOT check.** List files/areas you skipped due to context limits in the `notChecked` field of your output.
+2. **Tool augmentation encouraged.** If the ecosystem has static analysis tools (linters, compilers with warning output, dead-code detectors), install and run them. Their output is higher-confidence evidence than your own code reading. You are allowed to install tools.
+3. **Declare what you did NOT check.** At the end of your output, list files/areas you skipped due to context limits.
 4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
 5. **Do NOT modify source code.** Only produce the findings output file.
-6. **Out of scope:** `{AgentWorkspacePaths.MetadataDirectory}/`, `{AgentWorkspacePaths.BrainDirectory}/`, `.git/`, generated code, and files ignored by git. These are pipeline scratch space or tooling, not project code. Never report findings in them.
-7. **Tag evidence honestly.** Each `evidenceSources` entry names how you got the evidence:
-   - `tool:<tool>:<rule-id>` — output of a compiler, linter, analyzer or MCP tool that actually ran (by you or Phase 0). Nothing else is `tool:`.
-   - `grep:<pattern>` — a text search, with the pattern you searched for.
-   - `usage-search:<symbol>` — a reference search, with the result (e.g. `usage-search:FooService.Bar:0-callers`).
-   - `code-reading:<file>:L<line>` — your own reading of the code.
-   - `hotspot:<file>` — change frequency. This says how often a file changes, not that anything is wrong with it.
 
 """;
 
@@ -45,7 +38,7 @@ $"""
     /// <summary>
     /// Phase 0 prompt: extracts project conventions, layer rules, and intentional
     /// design choices. Output grounds subsequent phases — prevents flagging
-    /// idiomatic patterns as smells (SmellBench: 63% of detected smells were false positives).
+    /// idiomatic patterns as smells (SmellBench: 63% FP rate without context).
     /// </summary>
     public static string BuildRefactoringContextExtractionPrompt()
     {
@@ -63,29 +56,15 @@ $"""
         sb.AppendLine("1. **README.md** and any top-level documentation");
         sb.AppendLine("2. **Architecture docs** in `docs/` or `.brain/` if present");
         sb.AppendLine("3. **Solution structure** — list all projects, identify layers and their intended relationships");
-        sb.AppendLine("4. **Key configuration files** — `.editorconfig`, `Directory.Build.props`, `package.json`, `pyproject.toml`, linter configs");
+        sb.AppendLine("4. **Key configuration files** — `.editorconfig`, `Directory.Build.props`, linter configs");
         sb.AppendLine("5. **A sample of 5-10 representative source files** — identify the project's actual style");
         sb.AppendLine("6. **Test project structure** — understand the testing philosophy");
         sb.AppendLine();
-        sb.AppendLine("## Evidence Sources");
-        sb.AppendLine();
-        sb.AppendLine("Three detection agents run after you, at the same time, in this workspace. Prepare the tool evidence");
-        sb.AppendLine("they will use, so they do not each run builds:");
-        sb.AppendLine();
-        sb.AppendLine("1. **MCP tools.** Check your available MCP tools for additional data sources — for example code quality or");
-        sb.AppendLine("   static analysis services, issue trackers, error tracking or observability. Note the ones that hold data");
-        sb.AppendLine("   about this repository and what each reports.");
-        sb.AppendLine("2. **The project's own analyzers.** Find the build, lint and analysis commands the project uses (CI workflows,");
-        sb.AppendLine("   build scripts, README). Run the ones that report warnings without changing tracked files, once, and save");
-        sb.AppendLine($"   each raw output to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt`. You may install tools.");
-        sb.AppendLine("3. List both under `availableTools` below. If a source fails or needs credentials you do not have, skip it");
-        sb.AppendLine("   and say why in its `reports` field.");
-        sb.AppendLine();
         sb.AppendLine("## What to Extract");
         sb.AppendLine();
-        sb.AppendLine($"Produce a JSON file at `{AgentWorkspacePaths.RefactoringConventionsFilePath}` with this structure:");
+        sb.AppendLine("Produce a JSON file at `.agent/refactoring-conventions.json` with this structure:");
         sb.AppendLine();
-        sb.AppendLine(JsonCodeFence);
+        sb.AppendLine("```json");
         sb.AppendLine("{");
         sb.AppendLine("  \"techStack\": \"e.g., .NET 9, ASP.NET Core, Blazor Server, EF Core\",");
         sb.AppendLine("  \"projectStructure\": [");
@@ -107,21 +86,16 @@ $"""
         sb.AppendLine("  \"layerRules\": [");
         sb.AppendLine("    \"e.g., 'Infrastructure must not reference Presentation'\",");
         sb.AppendLine("    \"e.g., 'Agent projects communicate only through interfaces in Pipeline'\"");
-        sb.AppendLine("  ],");
-        sb.AppendLine("  \"availableTools\": [");
-        sb.AppendLine($"    {{ \"name\": \"e.g., build-warnings\", \"kind\": \"command|mcp\", \"how\": \"the command, or the MCP server and tool\", \"output\": \"{AgentWorkspacePaths.RefactoringToolOutputDirectory}/build-warnings.txt, or null for MCP tools\", \"reports\": \"what it reports, or why it was skipped\" }}");
         sb.AppendLine("  ]");
         sb.AppendLine("}");
-        sb.AppendLine("```");
+        sb.AppendLine(JsonCodeFence);
         sb.AppendLine();
         sb.AppendLine("## Rules");
         sb.AppendLine();
         sb.AppendLine("- **Observe, don't judge.** This phase extracts what IS, not what should be.");
         sb.AppendLine("- **intentionalPatterns is critical.** If a pattern looks unusual but is clearly deliberate");
         sb.AppendLine("  (used consistently, matches docs/comments, has tests), list it here.");
-        sb.AppendLine("- **knownDebt** lists debt the team acknowledged in documentation, decision records, the brain, or the issue tracker.");
-        sb.AppendLine("  Do NOT copy inline TODO/FIXME/HACK comments into knownDebt — a later agent checks each of those against the current code.");
-        sb.AppendLine($"- Describe the project code only. Do NOT describe `{AgentWorkspacePaths.MetadataDirectory}/` or `{AgentWorkspacePaths.BrainDirectory}/` — they are pipeline scratch space, not project code.");
+        sb.AppendLine("- **knownDebt** should include anything acknowledged in TODOs, READMEs, or issue trackers.");
         sb.AppendLine("- If `.brain/` exists, consult project SKILL.md files — they contain curated context.");
         sb.AppendLine("- Keep the output concise. Each field should be 1-3 sentences, not paragraphs.");
 
@@ -163,40 +137,45 @@ $"""
         sb.AppendLine("   methods with >4 levels of nesting. Focus on hotspot files — complexity in rarely-touched code");
         sb.AppendLine("   is low priority.");
         sb.AppendLine();
-        sb.AppendLine("4. **Over-engineering & unnecessary abstraction** — Wrapper classes that pass through without logic;");
-        sb.AppendLine("   factory/builder patterns where a constructor would suffice; configuration options nobody uses.");
-        sb.AppendLine("   **This category has the highest false-positive rate in published benchmarks.** An interface with one");
-        sb.AppendLine("   production implementation is NOT a finding when it is registered for dependency injection, has test");
-        sb.AppendLine("   doubles (mocks or fakes in test projects), or is the seam across a project boundary.");
+        sb.AppendLine("4. **Over-engineering & unnecessary abstraction** — Interfaces with only one implementation that add");
+        sb.AppendLine("   indirection without value; wrapper classes that pass-through without logic; factory/builder");
+        sb.AppendLine("   patterns where a constructor would suffice; configuration options nobody uses.");
         sb.AppendLine("   **Check `.agent/refactoring-conventions.json` → `intentionalPatterns` before flagging.**");
         sb.AppendLine("   If the project's philosophy is \"minimal interfaces\", a missing interface is NOT a finding.");
         sb.AppendLine();
         sb.AppendLine("## Exploration Strategy");
         sb.AppendLine();
-        sb.AppendLine($"1. Read `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — start with the top 15 most-changed files");
+        sb.AppendLine("1. Read `.agent/hotspot-analysis.txt` — start with the top 15 most-changed files");
         sb.AppendLine("2. Read `.agent/refactoring-conventions.json` — understand what's intentional vs accidental");
         sb.AppendLine("3. For each hotspot file: read it, assess structural health against the 4 categories above");
         sb.AppendLine("4. Then read 5 files NOT in the hotspot list (stable but potentially problematic)");
         sb.AppendLine("5. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
         sb.AppendLine();
-
-        AppendFindingsOutputFormat(
-            sb,
-            AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
-            RefactoringCategories.Structural,
-            "Concrete code snippet or line reference proving the issue",
-            "\"code-reading:File.cs:L42\", \"grep:catch (Exception ex)\", \"tool:dotnet-build:CA1502\"",
-            "Second file/location that corroborates (duplication partner, drift boundary, etc.)",
-            "What goes wrong because of this — be specific",
-            "Brief approach, not full implementation");
-
+        sb.AppendLine(OutputFormatHeading);
+        sb.AppendLine();
+        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` as a JSON array:");
+        sb.AppendLine();
+        sb.AppendLine(JsonCodeFence);
+        sb.AppendLine("[");
+        sb.AppendLine("  {");
+        sb.AppendLine("    \"title\": \"Short descriptive title\",");
+        sb.AppendLine("    \"category\": \"duplication|structural-drift|complexity|over-engineering\",");
+        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine("    \"evidence\": \"Concrete code snippet or line reference proving the issue\",");
+        sb.AppendLine("    \"evidenceSources\": [\"code-reading:File.cs:L42\", \"hotspot:18-changes\", \"tool:eslint-unused-vars\"],");
+        sb.AppendLine("    \"crossReference\": \"Second file/location that corroborates (duplication partner, drift boundary, etc.)\",");
+        sb.AppendLine("    \"impact\": \"What goes wrong because of this — be specific\",");
+        sb.AppendLine("    \"suggestedFix\": \"Brief approach, not full implementation\"");
+        sb.AppendLine("  }");
+        sb.AppendLine("]");
+        sb.AppendLine("```");
+        sb.AppendLine();
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
         sb.AppendLine("- Every finding MUST have `crossReference` — a second location proving the issue isn't isolated.");
         sb.AppendLine("  For duplication: the other copy. For drift: the layer rule violated + the import. For complexity: the callers affected.");
-        sb.AppendLine("- For duplication, find EVERY copy, not just two: put the search that lists them in `scopeQuery`.");
         sb.AppendLine("- Findings about over-engineering require proof the abstraction is never extended: check all implementations");
-        sb.AppendLine("  of the interface, check test mocks, check DI registrations, check git history for attempts to add implementations.");
+        sb.AppendLine("  of the interface, check test mocks, check git history for attempts to add implementations.");
         sb.AppendLine("- **Do NOT flag patterns listed in `intentionalPatterns`.** If unsure, skip it.");
         sb.AppendLine("- Prefer fewer high-quality findings over many shallow ones. Maximum 10 findings.");
 
@@ -226,8 +205,6 @@ $"""
         sb.AppendLine();
         sb.AppendLine("1. **TODO/HACK/FIXME comments** — Left by previous work, indicating incomplete implementation.");
         sb.AppendLine("   Not all TODOs are actionable — only flag ones that indicate a real gap or risk.");
-        sb.AppendLine("   Some TODOs are deferred review findings (e.g. `TODO [WARNING]`). Treat them like any other TODO:");
-        sb.AppendLine("   verify the problem still exists in the current code, and drop it if the code already handles it.");
         sb.AppendLine();
         sb.AppendLine("2. **Dead code & unused artifacts** — Unreferenced methods, classes, interfaces, or files.");
         sb.AppendLine("   Includes: unused using directives beyond IDE cleanup, orphaned files from removed features,");
@@ -254,10 +231,9 @@ $"""
         sb.AppendLine("3. Discard TODOs that are aspirational (\"TODO: nice to have\") — keep ones indicating broken/incomplete behavior");
         sb.AppendLine();
         sb.AppendLine("**For dead code:**");
-        sb.AppendLine($"1. Check the tool output in `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/` and the MCP tools in `availableTools` for unused-code");
-        sb.AppendLine("   reports — the highest-confidence approach. Common sources: compiler warnings (CS0219, IDE0051),");
-        sb.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`. If none covers unused code, you may install and run");
-        sb.AppendLine("   a read-only analyzer that does not build.");
+        sb.AppendLine("1. If static analysis tools are available for this ecosystem, install and run them to detect unused code.");
+        sb.AppendLine("   This is the highest-confidence approach. Common tools: `dotnet build` warnings (CS0219, IDE0051),");
+        sb.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`, etc.");
         sb.AppendLine("2. If no tools available: enumerate public types/methods in key files, then search for their usages.");
         sb.AppendLine("   A public method with zero callers outside its own class is a dead code candidate.");
         sb.AppendLine("3. Check git history for recently-deleted features — their support code may linger.");
@@ -266,25 +242,31 @@ $"""
         sb.AppendLine("1. Focus on hotspot files (high churn = more likely to contain recent regressions)");
         sb.AppendLine("2. Read error handling paths specifically — bugs hide in catch blocks and edge cases");
         sb.AppendLine("3. Check null safety: follow nullable references through code paths and verify guards exist");
-        sb.AppendLine("4. When a bug is one instance of a pattern (the same faulty catch, guard or call in several places),");
-        sb.AppendLine("   search for every instance and put the search in `scopeQuery`. A fix for half the instances is not a fix.");
         sb.AppendLine();
         sb.AppendLine("**For stale docs:**");
         sb.AppendLine("1. Read method signatures, then read their XML doc comments — do they match?");
         sb.AppendLine("2. Check README.md for references to files/features that no longer exist");
         sb.AppendLine("3. Check inline comments that reference specific behavior — verify the behavior still exists");
         sb.AppendLine();
-
-        AppendFindingsOutputFormat(
-            sb,
-            AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
-            RefactoringCategories.Correctness,
-            "The exact code snippet or comment text proving the issue",
-            "\"grep:TODO\", \"tool:dotnet-build:IDE0051\", \"usage-search:FooService.Bar:0-callers\"",
-            "For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.",
-            "What goes wrong or what cognitive cost this imposes",
-            "Brief approach");
-
+        sb.AppendLine(OutputFormatHeading);
+        sb.AppendLine();
+        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` as a JSON array:");
+        sb.AppendLine();
+        sb.AppendLine(JsonCodeFence);
+        sb.AppendLine("[");
+        sb.AppendLine("  {");
+        sb.AppendLine("    \"title\": \"Short descriptive title\",");
+        sb.AppendLine("    \"category\": \"todo|dead-code|bug|stale-documentation\",");
+        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine("    \"evidence\": \"The exact code snippet or comment text proving the issue\",");
+        sb.AppendLine("    \"evidenceSources\": [\"grep:TODO:File.cs:L15\", \"tool:IDE0051\", \"usage-search:zero-callers\"],");
+        sb.AppendLine("    \"crossReference\": \"For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.\",");
+        sb.AppendLine("    \"impact\": \"What goes wrong or what cognitive cost this imposes\",");
+        sb.AppendLine("    \"suggestedFix\": \"Brief approach\"");
+        sb.AppendLine("  }");
+        sb.AppendLine("]");
+        sb.AppendLine("```");
+        sb.AppendLine();
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
         sb.AppendLine("- **Dead code findings MUST include proof of zero usage** — either tool output or a usage search showing no callers.");
@@ -293,7 +275,7 @@ $"""
         sb.AppendLine("- **TODO findings must include the surrounding context** — the comment alone is not enough. Show what's incomplete or broken.");
         sb.AppendLine("- **Stale doc findings must show both** the documented claim AND the actual code behavior side-by-side.");
         sb.AppendLine("- Findings sourced from deterministic tools (grep, linter, compiler warnings) are inherently higher quality.");
-        sb.AppendLine("  Tag them as described in the critical rules.");
+        sb.AppendLine("  Mark them in `evidenceSources` with a `tool:` prefix.");
         sb.AppendLine("- Maximum 10 findings. Prefer bugs > dead code > stale docs > TODOs (by impact).");
 
         return sb.ToString();
@@ -357,68 +339,36 @@ $"""
         sb.AppendLine("4. Check switch statements over enums — if the same enum is switched over in 4+ locations,");
         sb.AppendLine("   it may be a candidate for polymorphism (but check `intentionalPatterns` first).");
         sb.AppendLine();
-
-        AppendFindingsOutputFormat(
-            sb,
-            AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
-            RefactoringCategories.Design,
-            "The specific naming deviation or primitive usage with concrete examples",
-            "\"grep:string repositoryUrl\", \"usage-search:repositoryUrl:5-signatures\"",
-            "For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.",
-            "Cognitive cost, confusion risk, or bug risk from the inconsistency",
-            "Brief approach — rename to X, introduce value type Y, extract constant Z");
-
+        sb.AppendLine(OutputFormatHeading);
+        sb.AppendLine();
+        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` as a JSON array:");
+        sb.AppendLine();
+        sb.AppendLine(JsonCodeFence);
+        sb.AppendLine("[");
+        sb.AppendLine("  {");
+        sb.AppendLine("    \"title\": \"Short descriptive title\",");
+        sb.AppendLine("    \"category\": \"naming-inconsistency|primitive-obsession\",");
+        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine("    \"evidence\": \"The specific naming deviation or primitive usage with concrete examples\",");
+        sb.AppendLine("    \"evidenceSources\": [\"convention-rule:services-suffix\", \"grep:repositoryUrl:5-occurrences\"],");
+        sb.AppendLine("    \"crossReference\": \"For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.\",");
+        sb.AppendLine("    \"impact\": \"Cognitive cost, confusion risk, or bug risk from the inconsistency\",");
+        sb.AppendLine("    \"suggestedFix\": \"Brief approach — rename to X, introduce value type Y, extract constant Z\"");
+        sb.AppendLine("  }");
+        sb.AppendLine("]");
+        sb.AppendLine("```");
+        sb.AppendLine();
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
         sb.AppendLine("- **Naming findings require a convention rule reference.** \"This name seems odd\" is not a finding.");
         sb.AppendLine("  \"Convention says services end with 'Service' but `FooHandler` doesn't follow this\" IS a finding.");
         sb.AppendLine("- **Primitive obsession findings require 3+ occurrences.** A single string parameter is not primitive obsession.");
         sb.AppendLine("  The same concept passed as raw string through 3+ call sites IS primitive obsession.");
-        sb.AppendLine("- Every naming and primitive-obsession finding needs a `scopeQuery` that lists all occurrences, so the fix is complete.");
         sb.AppendLine("- **Do NOT flag naming in test projects** unless conventions.json explicitly covers test naming.");
         sb.AppendLine("- **Do NOT flag names that match `intentionalPatterns`** from conventions.json.");
         sb.AppendLine("- This agent has the highest false-positive risk. Be conservative. Maximum 8 findings.");
 
         return sb.ToString();
-    }
-
-    /// <summary>
-    /// Appends the findings output format shared by the three Phase 1 agents: a JSON object with the
-    /// findings and the areas the agent did not check.
-    /// </summary>
-    private static void AppendFindingsOutputFormat(
-        StringBuilder sb,
-        string outputPath,
-        IReadOnlyList<string> categories,
-        string evidenceHint,
-        string evidenceSourcesExample,
-        string crossReferenceHint,
-        string impactHint,
-        string suggestedFixHint)
-    {
-        sb.AppendLine(OutputFormatHeading);
-        sb.AppendLine();
-        sb.AppendLine($"Write findings to `{outputPath}` as a JSON object:");
-        sb.AppendLine();
-        sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("{");
-        sb.AppendLine("  \"findings\": [");
-        sb.AppendLine("    {");
-        sb.AppendLine("      \"title\": \"Short descriptive title\",");
-        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(categories)}\",");
-        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine($"      \"evidence\": \"{evidenceHint}\",");
-        sb.AppendLine($"      \"evidenceSources\": [{evidenceSourcesExample}],");
-        sb.AppendLine($"      \"crossReference\": \"{crossReferenceHint}\",");
-        sb.AppendLine("      \"scopeQuery\": \"When the finding is one instance of a repeated pattern: the search that lists every instance, e.g. git grep -n 'pattern' -- src\",");
-        sb.AppendLine($"      \"impact\": \"{impactHint}\",");
-        sb.AppendLine($"      \"suggestedFix\": \"{suggestedFixHint}\"");
-        sb.AppendLine("    }");
-        sb.AppendLine("  ],");
-        sb.AppendLine("  \"notChecked\": [\"Files or areas you skipped, and why\"]");
-        sb.AppendLine("}");
-        sb.AppendLine("```");
-        sb.AppendLine();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -452,10 +402,6 @@ $"""
         sb.AppendLine($"4. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
         sb.AppendLine($"5. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
         sb.AppendLine();
-        sb.AppendLine("Each findings file holds a `findings` array and a `notChecked` list.");
-        sb.AppendLine("If a findings file is missing or is not valid JSON, that agent failed. Continue with the other files");
-        sb.AppendLine("and record the failure in the analysis log.");
-        sb.AppendLine();
 
         sb.AppendLine("## Aggregation Steps");
         sb.AppendLine();
@@ -464,35 +410,19 @@ $"""
         sb.AppendLine("Multiple agents may flag the same file or overlapping concerns:");
         sb.AppendLine("- If two findings reference the same file with related issues → merge into one proposal");
         sb.AppendLine("- If a structural finding and a correctness finding describe the same root cause → keep the one with stronger evidence");
-        sb.AppendLine("- Preserve the best `evidence`, `crossReference` and `scopeQuery` from both when merging");
+        sb.AppendLine("- Preserve the best `evidence` and `crossReference` from both when merging");
         sb.AppendLine();
         sb.AppendLine("### Step 2: Filter Against Conventions");
         sb.AppendLine();
         sb.AppendLine("For each remaining finding, check against `refactoring-conventions.json`:");
         sb.AppendLine("- Does it flag something listed in `intentionalPatterns`? → **DROP IT**");
-        sb.AppendLine($"- Does it flag something listed in `knownDebt`? → **DROP IT** (team already knows). This does not apply to `{RefactoringCategories.Todo}` findings: they come from inline comments, which knownDebt does not cover.");
+        sb.AppendLine("- Does it flag something listed in `knownDebt`? → **DROP IT** (team already knows)");
         sb.AppendLine("- Does it contradict `abstractionPhilosophy`? (e.g., flagging missing interface when philosophy says \"minimal interfaces\") → **DROP IT**");
         sb.AppendLine("- Does it contradict `testingPhilosophy`? → **DROP IT**");
-        sb.AppendLine($"- Does it target `{AgentWorkspacePaths.MetadataDirectory}/`, `{AgentWorkspacePaths.BrainDirectory}/`, generated code, or files ignored by git? → **DROP IT**");
         sb.AppendLine();
-        sb.AppendLine("### Step 3: Evidence Quality Gate");
+        sb.AppendLine("### Step 3: Rank by Impact");
         sb.AppendLine();
-        sb.AppendLine("Reject findings whose evidence does not meet the bar for their category:");
-        sb.AppendLine($"- `{RefactoringCategories.Bug}`: `evidence` MUST show a concrete failure scenario — the input or state, the line that goes wrong, and the wrong outcome. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.DeadCode}`: MUST have a `usage-search:` or `tool:` source showing zero references. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.Duplication}`: `crossReference` MUST name the other copy. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.NamingInconsistency}`: MUST cite the convention rule it violates. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.PrimitiveObsession}`: MUST show 3+ occurrences with a `grep:` or `usage-search:` source. Otherwise DROP the proposal.");
-        sb.AppendLine($"- `{RefactoringCategories.StructuralDrift}`, `{RefactoringCategories.Complexity}`, `{RefactoringCategories.OverEngineering}`, `{RefactoringCategories.Todo}`, `{RefactoringCategories.StaleDocumentation}`:");
-        sb.AppendLine("  may use \"code-reading:\" alone but receive a capped evidence score of 1 unless a `tool:`, `grep:` or `usage-search:` source corroborates them.");
-        sb.AppendLine("- `hotspot:` is a priority signal, not evidence. It never satisfies this gate and never raises the evidence score.");
-        sb.AppendLine("- A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool and its rule or query. A search or a file read tagged `tool:` counts as `grep:` or `code-reading:`.");
-        sb.AppendLine();
-        sb.AppendLine("### Step 4: Rank by Impact");
-        sb.AppendLine();
-        sb.AppendLine($"1. **Bugs first.** Every `{RefactoringCategories.Bug}` finding that passed the gate ranks above all other findings —");
-        sb.AppendLine("   wrong behavior today matters more than any cleanup. Order bugs by evidence strength.");
-        sb.AppendLine("2. Score every other surviving finding on three axes (each 1-3):");
+        sb.AppendLine("Score each surviving finding on three axes (each 1-3):");
         sb.AppendLine();
         sb.AppendLine("| Axis | 3 (high) | 2 (medium) | 1 (low) |");
         sb.AppendLine("|------|----------|------------|---------|");
@@ -500,13 +430,20 @@ $"""
         sb.AppendLine("| **Evidence strength** | Tool-confirmed or multi-source | Code reading with crossReference | Single observation |");
         sb.AppendLine("| **Scope feasibility** | <10 files affected | 10-20 files | 20-30 files |");
         sb.AppendLine();
-        sb.AppendLine("   Final score = hotspot × evidence × scope. Rank descending.");
-        sb.AppendLine("3. **Spread the work.** Select at most one proposal per primary file (the first entry of `affectedFiles`).");
-        sb.AppendLine("   Skip a finding whose primary file is the main subject of an open issue listed below — that file already has work queued.");
+        sb.AppendLine("Final score = hotspot × evidence × scope. Rank descending. Take top N.");
         sb.AppendLine();
-        sb.AppendLine("### Step 5: Format as Proposals");
+        sb.AppendLine("### Step 3.5: Evidence Quality Gate");
         sb.AppendLine();
-        sb.AppendLine($"Select the top **{maxProposals}** findings by rank and convert them into the final proposal format.");
+        sb.AppendLine("Before ranking, reject proposals that fail evidence quality:");
+        sb.AppendLine("- Categories `refactoring`, `bug`, `dead-code`: MUST have at least one evidence source");
+        sb.AppendLine("  that is NOT \"code-reading:\" only. If all sources are \"code-reading:\", DROP the proposal.");
+        sb.AppendLine("- Categories `simplification`, `documentation`: may use \"code-reading:\" alone but");
+        sb.AppendLine("  receive a capped evidence score of 1 regardless of other evidence quality.");
+        sb.AppendLine("- Valid non-code-reading sources: \"hotspot:\", \"grep:\", \"usage-search:\", \"tool:\"");
+        sb.AppendLine();
+        sb.AppendLine("### Step 4: Format as Proposals");
+        sb.AppendLine();
+        sb.AppendLine($"Select the top **{maxProposals}** findings by score and convert them into the final proposal format.");
         sb.AppendLine();
 
         // Insert issue context (open issues to avoid duplicating)
@@ -531,13 +468,11 @@ $"""
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
-        sb.AppendLine($"    \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.All)}\",");
+        sb.AppendLine("    \"category\": \"refactoring|simplification|bug|documentation|dead-code\",");
         sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
-        sb.AppendLine("    \"rationale\": \"The problem: what goes wrong or what it costs, and why it matters\",");
-        sb.AppendLine("    \"description\": \"The change: what to change, as one concrete approach\",");
-        sb.AppendLine("    \"evidence\": \"File.cs:L42-L47\\n<the decisive code or tool output, quoted verbatim>\",");
-        sb.AppendLine("    \"evidenceSources\": [\"tool:dotnet-build:IDE0051\", \"usage-search:Foo.Bar:0-callers\", \"code-reading:File.cs:L42\"],");
-        sb.AppendLine("    \"scopeQuery\": \"git grep -n 'pattern' -- src\",");
+        sb.AppendLine("    \"description\": \"Detailed description of what should be changed and how\",");
+        sb.AppendLine("    \"rationale\": \"Why — referencing concrete evidence from the sub-agent findings\",");
+        sb.AppendLine("    \"evidenceSources\": [\"tool:IDE0051\", \"hotspot:18-changes\", \"code-reading:File.cs:L42\"],");
         sb.AppendLine("    \"prerequisites\": [\"Add characterization tests for X before refactoring\"],");
         sb.AppendLine("    \"dependsOn\": [\"Exact title of another proposal this depends on\"],");
         sb.AppendLine("    \"estimatedEffort\": \"small|medium|large\",");
@@ -553,19 +488,9 @@ $"""
         sb.AppendLine();
         sb.AppendLine("### Field Definitions");
         sb.AppendLine();
-        sb.AppendLine("- **category** (required) — the category of the finding the proposal comes from, exactly as listed in the schema above.");
-        sb.AppendLine("- **rationale** (required) — the problem. State what goes wrong, or what it costs, and commit to it: \"X causes Y because Z.\"");
-        sb.AppendLine($"  For `{RefactoringCategories.Bug}`, state the failure scenario: the input or state, and the wrong outcome.");
-        sb.AppendLine("- **description** (required) — the change. Propose ONE approach; do not offer alternatives (\"X or Y\").");
-        sb.AppendLine("- **evidence** (required) — the decisive code or tool output, quoted verbatim, starting with the file and line range.");
-        sb.AppendLine("  Copy it from the sub-agent finding; do not paraphrase.");
         sb.AppendLine("- **evidenceSources** (required) — list of evidence that supports this proposal. Prefix with type:");
-        sb.AppendLine("  `tool:` (linter/compiler output), `code-reading:` (manual inspection), `grep:` (pattern search),");
-        sb.AppendLine("  `usage-search:` (reference count), `hotspot:` (git frequency). Multi-source proposals are higher quality.");
-        sb.AppendLine("- **scopeQuery** — the search that lists every instance this proposal must change. Required when the finding is one");
-        sb.AppendLine($"  instance of a repeated pattern (always for `{RefactoringCategories.Duplication}`, `{RefactoringCategories.NamingInconsistency}`, `{RefactoringCategories.PrimitiveObsession}`).");
-        sb.AppendLine("  Every match is in scope unless `description` excludes it by name. Run it before you finish: every file it");
-        sb.AppendLine("  matches must be in `affectedFiles` or excluded in `description`.");
+        sb.AppendLine("  `tool:` (linter/compiler output), `hotspot:` (git frequency), `code-reading:` (manual inspection),");
+        sb.AppendLine("  `grep:` (pattern search), `usage-search:` (reference count). Multi-source proposals are higher quality.");
         sb.AppendLine("- **prerequisites** — prep work needed. If affected files lack test coverage, MUST include");
         sb.AppendLine("  \"Add characterization tests for X before refactoring\". Do NOT reference other proposals by number");
         sb.AppendLine("  (e.g., \"proposal #1\") — GitHub will autolink #N to wrong issues.");
@@ -585,23 +510,13 @@ $"""
         sb.AppendLine("  - Do NOT repeat pipeline invariants (\"build passes\", \"tests pass\") — those are enforced separately.");
         sb.AppendLine("  - Each criterion must test a DISTINCT concern. No rephrased duplicates.");
         sb.AppendLine("  - Prefer negative assertions (\"no references remain\", \"no callers exist\") — they catch incomplete implementations.");
-        sb.AppendLine("  - When `scopeQuery` is set, one criterion MUST state that no match of the pattern remains (apart from the exclusions in `description`).");
-        sb.AppendLine($"  - For `{RefactoringCategories.Bug}`, one criterion MUST require a test that reproduces the failure scenario and passes after the fix.");
         sb.AppendLine("  - Do NOT use #N notation — GitHub autolinks to wrong issues.");
         sb.AppendLine();
         sb.AppendLine("  Examples by category:");
         sb.AppendLine("  - dead-code: \"No remaining callers or references to deleted methods in .cs files\"");
         sb.AppendLine("  - rename: \"Zero occurrences of old name in source, test, and configuration files\"");
         sb.AppendLine("  - extract-class: \"Original class no longer contains the extracted methods\", \"New class is registered in DI\"");
-        sb.AppendLine("  - duplication: \"Duplicated logic consolidated to single call site\"");
-        sb.AppendLine("  - bug: \"A test that sets X to null before calling Y fails before the fix and passes after it\"");
-        sb.AppendLine();
-        sb.AppendLine("## Writing for the Implementer");
-        sb.AppendLine();
-        sb.AppendLine("Each proposal becomes an issue for an engineer who has not seen this analysis:");
-        sb.AppendLine("- Do NOT mention the analysis agents (A, B, C), phases, scores, rankings, or this scan in any text field.");
-        sb.AppendLine("- Keep the issue self-contained: name the files, symbols and line ranges the engineer needs.");
-        sb.AppendLine("- Keep it short. A shorter, well-scoped issue is more likely to be implemented correctly.");
+        sb.AppendLine("  - simplification: \"Duplicated logic consolidated to single call site\"");
         sb.AppendLine();
         sb.AppendLine("## Scope Constraints");
         sb.AppendLine();
@@ -611,7 +526,6 @@ $"""
         sb.AppendLine("- Each phase must leave the codebase buildable");
         sb.AppendLine("- Prefer mechanical, low-risk changes over sweeping architectural ones");
         sb.AppendLine("- Do NOT propose changes spanning serialization boundaries simultaneously");
-        sb.AppendLine("- One concern per proposal: do not bundle two classes' decompositions into one proposal");
         sb.AppendLine();
         sb.AppendLine("## Dependency Ordering");
         sb.AppendLine();
@@ -624,11 +538,10 @@ $"""
         sb.AppendLine("## Also Produce");
         sb.AppendLine();
         sb.AppendLine($"Write a brief analysis log at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}` containing:");
-        sb.AppendLine("- Total findings received from agents A, B, C, and any agent whose findings file was missing or invalid");
-        sb.AppendLine("- How many were dropped (duplicates, convention-filtered, evidence gate, scope-exceeded)");
+        sb.AppendLine("- Total findings received from agents A, B, C");
+        sb.AppendLine("- How many were dropped (duplicates, convention-filtered, scope-exceeded)");
         sb.AppendLine("- The ranking scores for the top candidates");
         sb.AppendLine("- Which findings were dropped and why (one line each)");
-        sb.AppendLine("- The `notChecked` areas the agents reported");
 
         return sb.ToString();
     }
