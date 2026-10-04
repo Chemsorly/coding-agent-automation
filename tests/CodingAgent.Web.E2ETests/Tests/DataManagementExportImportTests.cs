@@ -281,6 +281,11 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
             var configAfterImport = await _fixture.ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
             Assert.Equal(3, configAfterImport.MaxRetries);
 
+            // TODO [WARNING]: Projects and job templates are not asserted after import. The issue
+            // requires the round-trip to restore "the seeded template and provider". A regression in
+            // project or template restore in the fake's ImportConfigAsync would not be caught here.
+            // Assert that the original project IDs and template IDs are present after import.
+
             // Assert: page reflects imported state without reload — navigate to Settings to verify
             // the provider list is still there (UI auto-refresh on import)
             var settingsPage = new SettingsPage(_page, BaseUrl);
@@ -317,9 +322,21 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
 
         try
         {
-            // Remember original quality gate count
-            var originalQg = await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            var originalCount = originalQg.Count;
+            // Snapshot original state across all entity types before the bad import attempt
+            var originalQgIds = (await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None))
+                .Select(q => q.Id).OrderBy(id => id).ToList();
+            var originalProviderIds = (await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            var originalProfileIds = (await _fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            var originalProjectIds = (await _fixture.ConfigStore.LoadProjectsAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            // TODO [WARNING]: reviewerConfigs are not snapshotted or asserted here. ImportConfigAsync
+            // clears reviewer configs before projects/templates. A partial-clear bug that corrupts
+            // reviewers would be invisible to this test. Add a snapshot of reviewer IDs and a
+            // corresponding Assert.Equal after the import attempt.
 
             // Act: select malformed file
             await section.SelectImportFileAsync(badFilePath);
@@ -333,14 +350,25 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
             Assert.True(await section.IsErrorMessageVisibleAsync(),
                 "Error message must appear after importing malformed JSON");
 
-            // Assert: config unchanged — quality gate count still the same
-            // TODO [WARNING]: Count-only check is insufficient. A bad import that deletes all QGs
-            // and adds the same number of different ones would pass. Also, if provider/profile/reviewer
-            // configs were partially cleared by a non-atomic import before the exception, this
-            // assertion would not detect it. Assert full set identity (same IDs or display names)
-            // and check other entity types for completeness.
-            var qgAfterBadImport = await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            Assert.Equal(originalCount, qgAfterBadImport.Count);
+            // Assert: all entity types unchanged — check full identity set to detect partial-clear
+            // from the non-atomic import path (providers cleared first, then profiles, then QGs)
+            var qgAfterBadImport = (await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None))
+                .Select(q => q.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalQgIds, qgAfterBadImport);
+
+            var providerAfterBadImport = (await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalProviderIds, providerAfterBadImport);
+
+            var profileAfterBadImport = (await _fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalProfileIds, profileAfterBadImport);
+
+            var projectAfterBadImport = (await _fixture.ConfigStore.LoadProjectsAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalProjectIds, projectAfterBadImport);
         }
         finally
         {
@@ -364,8 +392,21 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
 
         try
         {
-            var originalQg = await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            var originalCount = originalQg.Count;
+            // Snapshot original state across all entity types before the bad import attempt
+            var originalQgIds = (await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None))
+                .Select(q => q.Id).OrderBy(id => id).ToList();
+            var originalProviderIds = (await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            var originalProfileIds = (await _fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            var originalProjectIds = (await _fixture.ConfigStore.LoadProjectsAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            // TODO [WARNING]: reviewerConfigs are not snapshotted or asserted here. ImportConfigAsync
+            // clears reviewer configs before projects/templates. A partial-clear bug that corrupts
+            // reviewers would be invisible to this test. Add a snapshot of reviewer IDs and a
+            // corresponding Assert.Equal after the import attempt.
 
             await section.SelectImportFileAsync(emptyFilePath);
             Assert.True(await section.IsImportButtonVisibleAsync(),
@@ -377,11 +418,25 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
             Assert.True(await section.IsErrorMessageVisibleAsync(),
                 "Error message must appear after importing an empty file");
 
-            // Assert: config unchanged
-            // TODO [WARNING]: Same weak count-only assertion as Import_MalformedJson_ShowsError_ConfigUnchanged.
-            // Assert full set identity (same IDs or display names) to catch partial-clear scenarios.
-            var qgAfterBadImport = await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            Assert.Equal(originalCount, qgAfterBadImport.Count);
+            // Assert: all entity types unchanged — check full identity set to detect partial-clear
+            // from the non-atomic import path (providers cleared first, then profiles, then QGs)
+            var qgAfterBadImport = (await _fixture.ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None))
+                .Select(q => q.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalQgIds, qgAfterBadImport);
+
+            var providerAfterBadImport = (await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None))
+                .Concat(await _fixture.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalProviderIds, providerAfterBadImport);
+
+            var profileAfterBadImport = (await _fixture.ConfigStore.LoadAgentProfilesAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalProfileIds, profileAfterBadImport);
+
+            var projectAfterBadImport = (await _fixture.ConfigStore.LoadProjectsAsync(CancellationToken.None))
+                .Select(p => p.Id).OrderBy(id => id).ToList();
+            Assert.Equal(originalProjectIds, projectAfterBadImport);
         }
         finally
         {
