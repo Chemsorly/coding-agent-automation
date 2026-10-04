@@ -283,4 +283,62 @@ public class DispatchDrawerBaseTests : BunitContext
 
         Assert.Equal(-1, drawer.GetHighlightedIndex());
     }
+
+    [Fact]
+    public async Task OnParametersSet_SameItems_KeepsHighlight()
+    {
+        var items = new[] { new TestItem("1", "A"), new TestItem("2", "B"), new TestItem("3", "C") };
+        var drawer = CreateDrawer(items);
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+
+        drawer.InvokeOnParametersSet();
+
+        Assert.Equal(1, drawer.GetHighlightedIndex());
+    }
+
+    [Fact]
+    public async Task OnParametersSet_Closed_ClearsHighlight()
+    {
+        var drawer = CreateDrawer([new TestItem("1", "A"), new TestItem("2", "B")]);
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+
+        typeof(DispatchDrawerBase<TestItem>).GetProperty(nameof(DispatchDrawerBase<TestItem>.IsOpen))!
+            .SetValue(drawer, false);
+        drawer.InvokeOnParametersSet();
+
+        Assert.Equal(-1, drawer.GetHighlightedIndex());
+    }
+
+    [Fact]
+    public void PrDispatchDrawer_ParentReRender_KeepsKeyboardHighlight()
+    {
+        PullRequestSummary Pr(int n) => new()
+        {
+            Number = n, Identifier = n.ToString(), Title = $"PR {n}", Description = "", Labels = [],
+            BranchName = $"feat/{n}", TargetBranch = "main", Url = $"https://example.test/pull/{n}", IsDraft = false
+        };
+        var prs = new[] { Pr(1), Pr(2) };
+        void Parameters(ComponentParameterCollectionBuilder<PrDispatchDrawer> p) => p
+            .Add(c => c.IsOpen, true)
+            .Add(c => c.Template, new PipelineJobTemplate { Id = "t", Name = "T", IssueProviderId = "i", RepoProviderId = "r" })
+            .Add(c => c.PullRequests, prs)
+            .Add(c => c.IsLoading, false)
+            .Add(c => c.IsDispatching, false)
+            .Add(c => c.HasMore, false)
+            .Add(c => c.Page, 1)
+            .Add(c => c.GetProcessingStatus, _ => null);
+
+        var cut = Render<PrDispatchDrawer>(Parameters);
+        cut.Find(".agent-history-list").KeyDown(new KeyboardEventArgs { Key = "ArrowDown" });
+        cut.Find(".agent-history-list").KeyDown(new KeyboardEventArgs { Key = "ArrowDown" });
+        Assert.Contains("drawer-item-highlighted", cut.Find("[data-testid='pr-row-2']").ClassName);
+
+        // What AgentCoding does when something else on the page changes: render the drawer again
+        // with the same data.
+        cut.Render(Parameters);
+
+        Assert.Contains("drawer-item-highlighted", cut.Find("[data-testid='pr-row-2']").ClassName);
+        Assert.DoesNotContain("drawer-item-highlighted", cut.Find("[data-testid='pr-row-1']").ClassName);
+    }
 }
