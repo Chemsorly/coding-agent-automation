@@ -269,6 +269,17 @@ public sealed record JobAssignmentMessage
     /// </summary>
     [Key(40)]
     public IReadOnlyList<RepositoryTarget>? ProjectReviewRepositories { get; init; }
+
+    /// <summary>
+    /// When the last consolidation of the same type and scope succeeded. Null for other task types, or when
+    /// there is none in the run history.
+    /// </summary>
+    [Key(41)]
+    public DateTimeOffset? ConsolidationLastSuccessfulRunUtc { get; init; }
+
+    /// <summary>For harness suggestions: the run feedback collected since the last successful run, as JSON.</summary>
+    [Key(42)]
+    public string? ConsolidationFeedbackDataJson { get; init; }
 }
 
 /// <summary>

@@ -80,9 +80,7 @@ public class RefactoringExecutorReviewTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
     }

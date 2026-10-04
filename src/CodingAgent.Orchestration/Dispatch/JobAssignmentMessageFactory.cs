@@ -67,6 +67,8 @@ public static class JobAssignmentMessageFactory
             TaskType = request.TaskType,
             ConsolidationRunType = request.ConsolidationRunType,
             ConsolidationTemplateId = request.ConsolidationTemplateId,
+            ConsolidationLastSuccessfulRunUtc = request.ConsolidationLastSuccessfulRunUtc,
+            ConsolidationFeedbackDataJson = request.ConsolidationFeedbackDataJson,
             AutoDispatch = request.AutoDispatch,
             StalenessSignal = request.StalenessSignal,
             AnalysisRefreshCount = request.AnalysisRefreshCount

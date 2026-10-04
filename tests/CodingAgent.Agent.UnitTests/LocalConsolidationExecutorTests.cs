@@ -669,6 +669,43 @@ public class LocalConsolidationExecutorTests : IAsyncDisposable
             PipelineConfiguration = new PipelineConfiguration()
         };
 
+    [Fact]
+    public void WriteMcpConfig_JobWithMcpServers_WritesThemToTheAgentConfig()
+    {
+        var configPath = Path.Combine(Path.GetTempPath(), $"consolidation-mcp-{Guid.NewGuid():N}", "mcp.json");
+        try
+        {
+            var job = CreateMcpJob([new McpServerConfig { Name = "code-quality", Type = "http", Url = "https://example.test/mcp" }]);
+
+            LocalConsolidationExecutor.WriteMcpConfig(job, configPath, _mockLogger.Object);
+
+            File.ReadAllText(configPath).Should().Contain("code-quality").And.Contain("https://example.test/mcp");
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(configPath)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void WriteMcpConfig_JobWithoutMcpServers_LeavesTheAgentConfigAlone()
+    {
+        var configPath = Path.Combine(Path.GetTempPath(), $"consolidation-mcp-{Guid.NewGuid():N}", "mcp.json");
+
+        LocalConsolidationExecutor.WriteMcpConfig(CreateMcpJob([]), configPath, _mockLogger.Object);
+
+        File.Exists(configPath).Should().BeFalse();
+    }
+
+    private static ConsolidationJobMessage CreateMcpJob(IReadOnlyList<McpServerConfig> servers) => new()
+    {
+        JobId = "mcp-job",
+        Type = ConsolidationRunType.RefactoringDetection,
+        ProviderConfigs = [],
+        PipelineConfiguration = new PipelineConfiguration(),
+        McpServers = servers
+    };
+
     private static HubConnection CreateDisconnectedHubConnection()
     {
         return new HubConnectionBuilder()
