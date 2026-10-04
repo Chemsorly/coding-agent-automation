@@ -300,29 +300,29 @@ public static partial class ConsolidationPromptBuilder
         return BuildAdversarialReviewPrompt(
             "Refactoring Proposals Review",
             "refactoring proposals",
-            "the proposals file, the analysis report, the sub-agent findings files, the issue context, and the actual codebase",
+            "the proposals file, the analysis report, the sub-agent findings files, and the actual codebase",
             $"""
             Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}`.
-            Also read the open-issues context at `{AgentWorkspacePaths.RefactoringIssueContextFilePath}` (if present) to check for duplicates.
             Also read the sub-agent findings for cross-reference:
             - `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` (Agent A)
             - `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` (Agent B)
             - `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` (Agent C)
             - `{AgentWorkspacePaths.RefactoringConventionsFilePath}` (project conventions)
+            If `{AgentWorkspacePaths.RefactoringIssueContextFilePath}` exists, read it: it lists the open issues and past proposals the new proposals must not duplicate.
             """,
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
-                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. Multi-source evidence (tool + hotspot + code reading) is expected for high-quality proposals. Single-source proposals should be flagged [WARNING]",
-                "**Evidence not shown** — the `evidence` field is empty or only restates the title. Flag [WARNING] when no concrete code fragment, tool output, or grep result is provided.",
+                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. `hotspot:` is a priority signal and does not corroborate anything. Sources tagged `tool:` that name no compiler, linter, analyzer or MCP tool are mislabeled searches or reads. Single-source proposals should be flagged [WARNING]",
+                "**Evidence not shown** — `evidence` is missing, paraphrased, or does not match the code at the cited lines. Flag [WARNING]",
+                "**Incomplete scope** — the proposal fixes some instances of a repeated pattern but not all. Run its `scopeQuery` (or your own search when it has none): every match must be in `affectedFiles` or excluded by name in `description`. Flag [WARNING] and list the missing instances",
                 "**Actual blast radius understated** — count the REAL affected files: not just `affectedFiles` but also their test files, their consumers (files importing them), and shared configuration. If the true blast radius exceeds 30 files, flag [CRITICAL]",
-                "**Incomplete scope** — run the `scopeQuery` and verify all matches are listed in `affectedFiles`. If the query returns files not in the list, flag [CRITICAL]",
                 "**Failure mode not committed** — rationales that say \"could lead to issues\" or \"might cause confusion\" without stating WHAT specifically goes wrong. A valid rationale commits: \"X causes Y because Z.\" Hedged language indicates low confidence — flag [WARNING]",
-                "**Bug without a reproduction** — a `bug` category proposal whose acceptance criteria do not include a test that reproduces the failure. Flag [CRITICAL]",
+                "**Bug without a reproduction** — a `bug` proposal whose rationale has no concrete failure scenario, or whose acceptance criteria have no test that reproduces it. Flag [WARNING]",
                 "**Convention contradiction** — proposals that flag patterns listed in `intentionalPatterns` or `knownDebt` from conventions.json. The aggregation step should have caught these, but verify. Flag [CRITICAL] if found",
                 "Bundled concerns that should be separate proposals",
                 "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects. Flag [CRITICAL] with a suggestion to split",
-                "**Overlap with existing issues** — check if any proposal substantially duplicates an issue listed in the \"Existing Open Issues\" section of the analysis or the issue context file. Flag [WARNING] if overlap detected",
+                "**Overlap with existing issues** — check if any proposal substantially duplicates an open issue or re-proposes a past proposal listed in the issue context file. Flag [WARNING] if overlap detected",
                 "**Unverifiable acceptance criteria** — criteria requiring runtime execution, benchmarks, manual testing, or subjective judgment. The review agent can only verify from diff + test results. Flag [WARNING]",
                 "**Implementation-prescriptive acceptance criteria** — criteria that dictate specific file names, class names, or implementation patterns rather than observable post-conditions. These block valid alternative approaches. Flag [WARNING]",
             ],
@@ -398,7 +398,8 @@ public static partial class ConsolidationPromptBuilder
                 "You may remove proposals that the reviewer correctly identified as invalid",
                 "You may reduce the proposal count if warranted",
                 "Do not add new proposals — only refine or remove existing ones",
-                "If a reviewer flagged **Incomplete scope**, run the `scopeQuery` yourself; add them to `affectedFiles` and fix `scopeQuery` if needed",
+                "When the reviewer lists missing instances of a pattern, add them to `affectedFiles` and fix `scopeQuery` — or remove the proposal if the full scope exceeds ~30 files",
+                "Keep each `category` value exactly as the schema lists it",
             ]);
     }
 
@@ -554,13 +555,19 @@ public static partial class ConsolidationPromptBuilder
     /// <summary>
     /// Builds a prompt section summarizing past refactoring proposal outcomes.
     /// Categorizes closed issues as implemented (agent:done) or rejected (agent:wont-do/agent:cancelled).
-    /// Issues without agent labels are excluded from outcome sections but still appear in the feedback section
-    /// if implementer feedback is available. Returns empty string if there is nothing to show.
+    /// Issues without agent labels are excluded. <paramref name="implementerFeedback"/> maps an issue
+    /// identifier to what the agent that implemented the issue said the issue got wrong.
+    /// Returns empty string if there are neither categorizable issues nor feedback.
     /// </summary>
     public static string BuildProposalOutcomeContext(
         IReadOnlyList<IssueSummary> closedIssues,
         IReadOnlyDictionary<string, string>? implementerFeedback = null)
     {
+        var feedbackLines = closedIssues
+            .Where(i => implementerFeedback?.ContainsKey(i.Identifier) == true)
+            .Select(i => $"- #{i.Identifier} \"{i.Title}\" — {implementerFeedback![i.Identifier]}")
+            .ToList();
+
         var implemented = new List<IssueSummary>();
         var rejected = new List<IssueSummary>();
 
@@ -570,21 +577,10 @@ public static partial class ConsolidationPromptBuilder
                 implemented.Add(issue);
             else if (issue.Labels.Contains(AgentLabels.WontDo) || issue.Labels.Contains(AgentLabels.Cancelled))
                 rejected.Add(issue);
-            // Ambiguous closures (no agent label) are excluded from outcome sections
+            // Ambiguous closures (no agent label) are excluded
         }
 
-        // Collect feedback entries that have content
-        var feedbackEntries = new List<(IssueSummary Issue, string Feedback)>();
-        if (implementerFeedback is { Count: > 0 })
-        {
-            foreach (var issue in closedIssues)
-            {
-                if (implementerFeedback.TryGetValue(issue.Identifier, out var fb) && !string.IsNullOrWhiteSpace(fb))
-                    feedbackEntries.Add((issue, fb));
-            }
-        }
-
-        if (implemented.Count == 0 && rejected.Count == 0 && feedbackEntries.Count == 0)
+        if (implemented.Count == 0 && rejected.Count == 0 && feedbackLines.Count == 0)
             return string.Empty;
 
         var sb = new StringBuilder();
@@ -594,7 +590,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (implemented.Count > 0)
         {
-            sb.AppendLine("### Implemented (completed by an agent — do not re-propose)");
+            sb.AppendLine("### Implemented (completed by an agent — this alone does not show the team valued them)");
             foreach (var issue in implemented)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -608,18 +604,17 @@ public static partial class ConsolidationPromptBuilder
             sb.AppendLine();
         }
 
-        if (feedbackEntries.Count > 0)
+        if (feedbackLines.Count > 0)
         {
             sb.AppendLine("### Implementer Feedback (what past issues got wrong)");
-            foreach (var (issue, fb) in feedbackEntries)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\" — {fb}");
+            sb.AppendLine("The agents that implemented these issues reported gaps in the issue itself. Do not repeat them:");
+            foreach (var line in feedbackLines)
+                sb.AppendLine(line);
             sb.AppendLine();
         }
 
-        if (rejected.Count > 0)
-            sb.AppendLine("Do NOT propose refactorings similar to rejected items above.");
-        if (implemented.Count > 0)
-            sb.AppendLine("Do NOT re-propose implemented items — they are already done.");
+        sb.AppendLine("Do NOT propose refactorings similar to rejected items above.");
+        sb.AppendLine("Do NOT re-propose implemented items: check the current code first — the change may already be in place.");
 
         return sb.ToString();
     }
