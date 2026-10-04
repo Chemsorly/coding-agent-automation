@@ -180,10 +180,6 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         return entity is null ? null : DeserializeSummary(entity);
     }
 
-    /// <inheritdoc />
-    public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory)
-        => WorkspaceDeletionGuard.TryDelete(workspacePath?.Value, runId, workspaceBaseDirectory, _logger);
-
     // ── Async internals ─────────────────────────────────────────────────
 
     /// <summary>

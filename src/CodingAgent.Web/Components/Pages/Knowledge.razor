@@ -145,8 +145,6 @@
         }
     }
 
-    private int Pct(int count) => _total > 0 ? (int)Math.Round(100.0 * count / _total) : 0;
-
     public void Dispose()
     {
         State.OnProjectChanged -= HandleProjectChanged;

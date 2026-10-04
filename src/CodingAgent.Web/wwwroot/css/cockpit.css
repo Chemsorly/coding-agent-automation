@@ -128,19 +128,19 @@
    this rule here (a global stylesheet) makes it available in TemplateTableSection,
    PipelineLoopSection, QualityGateConfigSection, and ReviewerConfigSection too.
    The scoped copies in *.razor.css remain as-is (they are harmless duplicates). */
-:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch {
+:where(.cockpit, .settings-page) .toggle-switch {
     position: relative;
     display: inline-block;
     width: 36px;
     height: 20px;
     vertical-align: middle;
 }
-:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch input {
+:where(.cockpit, .settings-page) .toggle-switch input {
     opacity: 0;
     width: 0;
     height: 0;
 }
-:where(.cockpit, .settings-page, .agent-coding-page) .toggle-slider {
+:where(.cockpit, .settings-page) .toggle-slider {
     position: absolute;
     cursor: pointer;
     inset: 0;
@@ -148,7 +148,7 @@
     border-radius: 20px;
     transition: background 0.2s;
 }
-:where(.cockpit, .settings-page, .agent-coding-page) .toggle-slider::before {
+:where(.cockpit, .settings-page) .toggle-slider::before {
     content: "";
     position: absolute;
     height: 14px;
@@ -159,10 +159,10 @@
     border-radius: 50%;
     transition: transform 0.2s;
 }
-:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch input:checked + .toggle-slider {
+:where(.cockpit, .settings-page) .toggle-switch input:checked + .toggle-slider {
     background: var(--success);
 }
-:where(.cockpit, .settings-page, .agent-coding-page) .toggle-switch input:checked + .toggle-slider::before {
+:where(.cockpit, .settings-page) .toggle-switch input:checked + .toggle-slider::before {
     transform: translateX(16px);
 }
 
@@ -225,29 +225,6 @@
 
 .cockpit-nav-link.is-disabled { color: var(--text-faint); cursor: default; pointer-events: none; }
 .cockpit-nav-link.is-disabled .cockpit-nav-icon { color: var(--text-faint); opacity: .7; }
-.cockpit-nav-soon {
-    margin-left: auto;
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-}
-
-.cockpit-nav-badge {
-    min-width: 18px;
-    height: 18px;
-    padding: 0 5px;
-    margin-left: auto;
-    border-radius: 999px;
-    background: #F59E0B;
-    color: #fff;
-    font-size: 11px;
-    font-weight: 700;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
 
 .cockpit-nav-sep { height: 1px; background: var(--hairline); margin: 10px 8px; }
 .cockpit-nav-group {
@@ -379,7 +356,6 @@
 }
 .cockpit-seg-btn:hover { color: var(--text); }
 .cockpit-seg-btn.is-active { background: var(--surface); color: var(--nav-active-fg); box-shadow: 0 1px 2px rgba(15, 19, 32, .06); }
-.cockpit-view-hint { font-size: 11.5px; color: var(--text-faint); }
 
 .cockpit-pager { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .cockpit-pager-info { font-size: 12.5px; color: var(--text-muted); }

@@ -344,7 +344,7 @@ Spec 049: render-time validation of the auth values (the web host validates them
     {{- fail (printf "auth.rbac.bindings[%d] binds role admin to project %q. The admin role can only be bound globally." $i $b.project) }}
   {{- end }}
 {{- end }}
-{{- $web := mergeOverwrite (deepCopy (.Values.web | default dict)) (.Values.orchestrator | default dict) -}}
+{{- $web := .Values.web | default dict -}}
 {{- if and (gt (int ($web.replicas | default 1)) 1) (empty ((.Values.signalr | default dict).redis | default dict).connectionString) }}
   {{- fail "web.replicas is greater than 1 but signalr.redis.connectionString is empty. Login sessions are encrypted with a key ring shared through Redis; without it a session created on one web pod is rejected by the others. Set signalr.redis.connectionString or web.replicas: 1." }}
 {{- end }}

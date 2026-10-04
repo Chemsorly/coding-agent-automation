@@ -149,7 +149,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
                 new DispatchInfrastructure(
                     _mockTokenVending.Object, _mockProviderFactory.Object,
                     _mockLabelService.Object,
-                    new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
+                    new DispatchResolutionService(new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object)),
                 new Mock<IWorkDistributor>().Object,
                 _mockConfigStore.Object,
                 _mockConfigStore.Object,

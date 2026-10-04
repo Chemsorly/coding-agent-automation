@@ -266,12 +266,4 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Error(ex, "Failed to save harness suggestions");
         }
     }
-
-    /// <summary>Clears in-memory concurrency state. Used by E2E tests for isolation.</summary>
-    /// <remarks>
-    /// _runningRuns was removed in issue #3027 — dedup is now fully DB-layer via the partial
-    /// unique index on (IssueIdentifier, IssueProviderConfigId). This method is kept as a
-    /// no-op to avoid breaking call sites in E2E infrastructure until they are updated.
-    /// </remarks>
-    internal void Reset() { /* no-op: _runningRuns removed in issue #3027 */ }
 }

@@ -62,7 +62,7 @@ public class AgentChatComponentTests : BunitContext
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(JobTemplateStore.CreateEmpty());
-        Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+        Services.AddSingleton(Mock.Of<IChatJobDispatcher>());
 
         // IAgentHubConnection — no-op mock (chat component starts the hub and registers event handlers)
         var mockHub = new Mock<IAgentHubConnection>();
@@ -711,7 +711,7 @@ public class AgentChatAccessTests : BunitContext
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(JobTemplateStore.CreateEmpty());
-        Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+        Services.AddSingleton(Mock.Of<IChatJobDispatcher>());
         var mockHub = new Mock<IAgentHubConnection>();
         mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
         Services.AddSingleton(mockHub.Object);

@@ -208,7 +208,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         PipelineStepContext? ctx = null;
 
-        var callbacks = new TestCallbacks(_lifecycle, run, providerManager, _prOrchestrator, _brainSync, _historyService, () => ctx);
+        var callbacks = new TestCallbacks(_lifecycle, run, providerManager, _prOrchestrator, _brainSync, () => ctx);
         ctx = PipelineStepContext.ForOrchestrator(
             services: new PipelineStepContextServices
             {
@@ -298,7 +298,6 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         PipelineProviderManager providerManager,
         PullRequestOrchestrator prOrchestrator,
         IBrainSyncService brainSync,
-        IPipelineRunHistoryService historyService,
         Func<PipelineStepContext?> ctxAccessor) : IPipelineCallbacks
     {
         public void TransitionTo(PipelineStep step) => lifecycle.TransitionTo(run, step);
@@ -487,18 +486,6 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             if (finalStep == PipelineStep.Completed)
             {
                 lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
-                // Workspace cleanup on success (match production).
-                // Guard both null and empty: WorkspacePath's implicit conversion throws ArgumentException
-                // for empty strings, but the prior string? signature forwarded "" to WorkspaceDeletionGuard
-                // which skips it via IsNullOrEmpty. Use IsNullOrEmpty to preserve that behaviour.
-                // TODO [WARNING]: run.WorkspacePath is string? — the IsNullOrEmpty check handles null and
-                // empty, but the implicit string→WorkspacePath conversion may also throw for other invalid
-                // values (e.g. whitespace-only strings) that pass IsNullOrEmpty. The current production
-                // WorkspacePath constructor validates with ArgumentException.ThrowIfNullOrEmpty, which
-                // passes for whitespace, so the risk is narrow. However, callers should be aware that
-                // non-null non-empty but semantically invalid paths (e.g. " ") will reach TryDeleteWorkspace
-                // unguarded and be passed to WorkspaceDeletionGuard as-is.
-                historyService.TryDeleteWorkspace(string.IsNullOrEmpty(run.WorkspacePath) ? (WorkspacePath?)null : run.WorkspacePath, run.RunId, config?.WorkspaceBaseDirectory ?? "");
             }
             else
                 lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");

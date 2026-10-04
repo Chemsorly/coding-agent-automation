@@ -327,11 +327,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         // Reset consolidation badge service
         var badgeService = Services.GetRequiredService<ConsolidationBadgeService>();
         badgeService.Reset();
-
-        // Reset consolidation service in-memory concurrency state
-        var consolidationService = Services.GetRequiredService<IConsolidationService>();
-        if (consolidationService is ConsolidationService cs)
-            cs.Reset();
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class

@@ -44,16 +44,6 @@ public class NullPipelineRunHistoryServiceTests
     }
 
     [Fact]
-    public void TryDeleteWorkspace_DoesNotThrow()
-    {
-        var sut = new NullPipelineRunHistoryService();
-
-        var act = () => sut.TryDeleteWorkspace("/tmp/ws", "run-1", "/tmp");
-
-        act.Should().NotThrow();
-    }
-
-    [Fact]
     public async Task QualityGateExecutor_WithNullHistoryService_DoesNotThrow()
     {
         // Arrange: construct QualityGateExecutor with NullPipelineRunHistoryService

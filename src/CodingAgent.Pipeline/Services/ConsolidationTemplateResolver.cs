@@ -65,25 +65,4 @@ public sealed class ConsolidationTemplateResolver
 
         return (null, null);
     }
-
-    /// <summary>
-    /// Returns all enabled templates from all enabled projects, resolved via IProjectStore.
-    /// </summary>
-    public async Task<IReadOnlyList<PipelineJobTemplate>> GetEnabledTemplatesFromProjectsAsync(CancellationToken ct)
-    {
-        var projects = await _projectStore.LoadProjectsAsync(ct);
-        var templateLookup = (await _projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
-
-        var result = new List<PipelineJobTemplate>();
-        foreach (var project in projects.Where(p => p.Enabled).OrderBy(p => p.Name, StringComparer.Ordinal))
-        {
-            foreach (var tid in project.TemplateIds)
-            {
-                if (templateLookup.TryGetValue(tid, out var template) && template.Enabled)
-                    result.Add(template);
-            }
-        }
-
-        return result;
-    }
 }

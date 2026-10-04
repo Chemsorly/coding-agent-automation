@@ -26,7 +26,6 @@ public class RetentionSweepIntegrationTests : IDisposable
     private readonly SqliteConnection _sqliteConnection;
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
-    private readonly Mock<IConsolidationService> _mockConsolidation;
     private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly IConfiguration _configuration;
 
@@ -48,7 +47,6 @@ public class RetentionSweepIntegrationTests : IDisposable
 
         _dbFactory = new TestDbContextFactory(_dbOptions);
 
-        _mockConsolidation = new Mock<IConsolidationService>();
 
         _mockConfigStore = new Mock<IPipelineConfigStore>();
 
@@ -310,7 +308,7 @@ public class RetentionSweepIntegrationTests : IDisposable
 
         var faultFactory = new FaultingDbContextFactory(_dbFactory, throwOnFirstCall: true);
         var svc = new DatabaseMaintenanceService(
-            faultFactory, _mockConsolidation.Object,
+            faultFactory,
             _configuration, _mockConfigStore.Object);
 
         await svc.Invoking(s => s.SweepPipelineRunRetentionAsync(CancellationToken.None))
@@ -336,7 +334,7 @@ public class RetentionSweepIntegrationTests : IDisposable
 
         var faultFactory = new FaultingDbContextFactory(_dbFactory, throwOnFirstCall: true);
         var svc = new DatabaseMaintenanceService(
-            faultFactory, _mockConsolidation.Object,
+            faultFactory,
             _configuration, _mockConfigStore.Object);
 
         await svc.Invoking(s => s.SweepPipelineRunRetentionAsync(CancellationToken.None))
@@ -377,7 +375,7 @@ public class RetentionSweepIntegrationTests : IDisposable
         // which absorbs it and returns 0. SweepWorkItemRetentionAsync is inherited from
         // TestableRetentionService and uses the SQLite-compatible shim.
         var svc = new PipelineRunFaultingRetentionService(
-            _dbFactory, _mockConsolidation.Object, _configuration, _mockConfigStore.Object);
+            _dbFactory, _configuration, _mockConfigStore.Object);
 
         // Act: call the orchestrator method, not individual sweep methods.
         // NotThrowAsync makes a regression (exception escaping RunRetentionSweepAsync) produce a
@@ -430,7 +428,7 @@ public class RetentionSweepIntegrationTests : IDisposable
         // which absorbs it and returns 0. SweepPipelineRunRetentionAsync is inherited from
         // TestableRetentionService and uses the SQLite-compatible shim.
         var svc = new WorkItemFaultingRetentionService(
-            _dbFactory, _mockConsolidation.Object, _configuration, _mockConfigStore.Object);
+            _dbFactory, _configuration, _mockConfigStore.Object);
 
         // Act: call the orchestrator method, not individual sweep methods.
         // NotThrowAsync makes a regression (exception escaping RunRetentionSweepAsync) produce a
@@ -473,7 +471,7 @@ public class RetentionSweepIntegrationTests : IDisposable
     {
         var mockProvider = new Mock<IServiceProvider>();
         return new TestableRetentionService(
-            _dbFactory, _mockConsolidation.Object,
+            _dbFactory,
             _configuration, _mockConfigStore.Object);
     }
 
@@ -535,10 +533,9 @@ public class RetentionSweepIntegrationTests : IDisposable
     {
         public TestableRetentionService(
             IDbContextFactory<PipelineDbContext> dbFactory,
-            IConsolidationService consolidationService,
             IConfiguration configuration,
             IPipelineConfigStore configStore)
-            : base(dbFactory, consolidationService, configuration, configStore) { }
+            : base(dbFactory, configuration, configStore) { }
 
         internal override async Task<int> SweepPipelineRunRetentionAsync(CancellationToken ct)
         {
@@ -628,10 +625,9 @@ public class RetentionSweepIntegrationTests : IDisposable
     {
         public PipelineRunFaultingRetentionService(
             IDbContextFactory<PipelineDbContext> dbFactory,
-            IConsolidationService consolidationService,
             IConfiguration configuration,
             IPipelineConfigStore configStore)
-            : base(dbFactory, consolidationService, configuration, configStore) { }
+            : base(dbFactory, configuration, configStore) { }
 
         internal override Task<int> SweepPipelineRunRetentionAsync(CancellationToken ct)
         {
@@ -655,10 +651,9 @@ public class RetentionSweepIntegrationTests : IDisposable
     {
         public WorkItemFaultingRetentionService(
             IDbContextFactory<PipelineDbContext> dbFactory,
-            IConsolidationService consolidationService,
             IConfiguration configuration,
             IPipelineConfigStore configStore)
-            : base(dbFactory, consolidationService, configuration, configStore) { }
+            : base(dbFactory, configuration, configStore) { }
 
         internal override Task<int> SweepWorkItemRetentionAsync(CancellationToken ct)
         {
