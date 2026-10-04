@@ -405,9 +405,13 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Mark the circuit as interactive on the first render so E2E tests can wait for
-        // data-interactive="true" before clicking buttons.
-        if (firstRender && !_interactive)
+        // Mark the circuit as interactive on the first OnAfterRenderAsync call for this
+        // page instance. OnAfterRenderAsync is only called in interactive render contexts
+        // (never during static prerendering), so this reliably signals the circuit is connected.
+        // Using !_interactive rather than firstRender because Blazor 8 enhanced navigation
+        // reuses the circuit across page transitions — OnAfterRenderAsync fires with
+        // firstRender=false when the user navigates from another page in the same session.
+        if (!_interactive)
         {
             _interactive = true;
             StateHasChanged();
