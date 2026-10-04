@@ -200,4 +200,20 @@ public sealed class JobAssignmentMessageFactoryTests
         msg.ProjectReviewers.Should().BeEmpty();
         msg.ProjectReviewRepositories.Should().BeNull();
     }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_CopiesConsolidationHistoryContext()
+    {
+        var lastSuccess = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        var req = MinimalRequest() with
+        {
+            ConsolidationLastSuccessfulRunUtc = lastSuccess,
+            ConsolidationFeedbackDataJson = "[{\"outcome\":\"Failure\"}]"
+        };
+
+        var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
+
+        msg.ConsolidationLastSuccessfulRunUtc.Should().Be(lastSuccess);
+        msg.ConsolidationFeedbackDataJson.Should().Be("[{\"outcome\":\"Failure\"}]");
+    }
 }

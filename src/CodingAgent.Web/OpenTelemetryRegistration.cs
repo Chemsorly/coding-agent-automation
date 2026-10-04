@@ -1,4 +1,5 @@
 using CodingAgent.Infrastructure.GitHub;
+using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline.Telemetry;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -17,7 +18,6 @@ internal static class OpenTelemetryRegistration
     /// </summary>
     internal static IServiceCollection AddApplicationTelemetry(
         this IServiceCollection services,
-        string? dbConnectionString,
         string? redisConnectionString)
     {
         services.AddOpenTelemetry()
@@ -26,15 +26,17 @@ internal static class OpenTelemetryRegistration
                 serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
             .WithTracing(t =>
             {
-                t.AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation()
+                t.AddAspNetCoreInstrumentation(opts =>
+                    opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
+                    .AddHttpClientInstrumentation(opts =>
+                    {
+                        opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
+                        opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
+                    })
                     .AddSource(PipelineTelemetry.SourceName)
                     .AddSource("Microsoft.AspNetCore.SignalR.Server")
+                    .AddProcessor(new OtelNoiseSpanDropProcessor())
                     .AddOtlpExporter();
-
-                // DB mode: Npgsql tracing for query spans
-                if (!string.IsNullOrEmpty(dbConnectionString))
-                    t.AddSource("Npgsql");
 
                 // Redis backplane: trace Redis commands
                 if (!string.IsNullOrEmpty(redisConnectionString))
@@ -45,6 +47,8 @@ internal static class OpenTelemetryRegistration
                 m.AddAspNetCoreInstrumentation()
                     .AddHttpClientInstrumentation()
                     .AddMeter(PipelineTelemetry.SourceName)
+                    // .NET runtime metrics (GC, thread pool, CPU, memory) — built-in since .NET 8.
+                    .AddMeter("System.Runtime")
                     // Drop low-value built-in ASP.NET Core metrics to reduce OTLP cardinality.
                     // aspnetcore.components.active_circuits (circuit count) is intentionally kept;
                     // the other components.* and memory_pool.* instruments are high-volume noise.

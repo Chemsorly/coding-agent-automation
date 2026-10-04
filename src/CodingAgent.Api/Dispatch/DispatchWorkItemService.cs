@@ -917,37 +917,42 @@ internal sealed class DispatchWorkItemService
 
         // Branch exclusively on the explicit outcome discriminator (issue #3260).
         // No reference-equality or re-matched status-code checks remain here.
-        // TODO [WARNING]: The `_` catch-all arm silently delegates to DispatchSuccessFallThrough(),
-        // emitting RecordDispatchAttempt("dispatched","none") and returning 200/DispatchPendingResponse(true,"none")
-        // for any future DispatchInterpretOutcome value not listed here. If a new variant is added
-        // (e.g. RateLimited429) without updating this switch, the caller will misreport an error as
-        // a successful dispatch. Make this switch exhaustive by enumerating PassThrough explicitly and
-        // adding `_ => throw new UnreachableException(...)` as the final arm to surface the bug at
-        // runtime instead of silently producing a wrong response.
-        // See review findings: Correctness @ line 439, DotNetSpecialist @ line 444.
-        return outcome switch
+        return ApplyDispatchOutcomeSwitch(outcome, interpretedResult);
+    }
+
+    /// <summary>
+    /// Maps a <see cref="DispatchInterpretOutcome"/> to the final <see cref="IResult"/> for the
+    /// <c>DispatchPendingWorkItemAsync</c> path. Extracted from the inline switch so the
+    /// <c>UnreachableException</c> arm is directly testable (issue #3309).
+    /// </summary>
+    /// <param name="outcome">The outcome discriminator returned by <see cref="InterpretDispatchResult"/>.</param>
+    /// <param name="interpretedResult">The (possibly rewritten) <see cref="IResult"/> from <see cref="InterpretDispatchResult"/>.</param>
+    /// <returns>The <see cref="IResult"/> to return to the caller.</returns>
+    /// <exception cref="UnreachableException">
+    /// Thrown when <paramref name="outcome"/> is not a known <see cref="DispatchInterpretOutcome"/> value.
+    /// This arm is dead code under current callers — it fires only if a new enum variant is added
+    /// without updating this switch (issue #3309).
+    /// </exception>
+    internal static IResult ApplyDispatchOutcomeSwitch(DispatchInterpretOutcome outcome, IResult interpretedResult) =>
+        outcome switch
         {
             DispatchInterpretOutcome.ConcurrencyLimitRewritten => interpretedResult,
             DispatchInterpretOutcome.PvcExhausted503 => EmitPvcExhaustionAndReturn(interpretedResult),
             DispatchInterpretOutcome.K8sError503 => interpretedResult,
-            _ => DispatchSuccessFallThrough()
+            DispatchInterpretOutcome.PassThrough => DispatchSuccessFallThrough(),
+            _ => throw new UnreachableException($"Unhandled DispatchInterpretOutcome value: {outcome}")
         };
 
-        // PvcPoolExhaustions counter belongs exclusively to this path — not inside the helper.
-        IResult EmitPvcExhaustionAndReturn(IResult r)
-        {
-            WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
-            return r;
-        }
+    private static IResult EmitPvcExhaustionAndReturn(IResult r)
+    {
+        WorkDistributionTelemetry.PvcPoolExhaustions.Add(1);
+        return r;
+    }
 
-        // ── Dispatch succeeded (onSuccess returned Ok<Guid>) ──
-        // Replace the raw-id 200 response with the structured body the client now expects.
-        // RecordDispatchAttempt("dispatched","none") belongs exclusively to this path.
-        IResult DispatchSuccessFallThrough()
-        {
-            WorkDistributionTelemetry.RecordDispatchAttempt("dispatched", "none");
-            return TypedResults.Ok(new DispatchPendingResponse(true, "none"));
-        }
+    private static IResult DispatchSuccessFallThrough()
+    {
+        WorkDistributionTelemetry.RecordDispatchAttempt("dispatched", "none");
+        return TypedResults.Ok(new DispatchPendingResponse(true, "none"));
     }
 
     // ── Moved helpers (from WorkItemDispatchEndpoints, issue #3286) ──────────────

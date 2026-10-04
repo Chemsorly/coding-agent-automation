@@ -90,8 +90,8 @@ public class OpenCodeExceptionContainmentPropertyTests
     [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 20)]
     public async Task CallerCancellation_PropagatesOperationCanceledException(CallerCancellationOutcome outcome)
     {
-        // Arrange — use a handler that delays the message endpoint so cancellation can fire
-        var handler = new CancellationTestHandler(outcome.DelayBeforeCancelMs);
+        // Arrange — the handler holds the message request open until the caller cancels
+        var handler = new CancellationTestHandler();
         var factory = new ThrowingClientFactory(handler);
         var provider = new OpenCodeAgentProvider(factory, null);
 
@@ -104,14 +104,19 @@ public class OpenCodeExceptionContainmentPropertyTests
             Timeout = TimeSpan.FromMinutes(5) // long timeout so it doesn't interfere
         };
 
-        // Cancel after the generated delay — the minimum of 3000ms ensures the provider
-        // has time to create the session and reach the message endpoint before cancellation fires.
-        // Smaller values (500–800ms, 1500–2500ms) were too tight on slow CI runners.
+        var execution = provider.ExecuteAsync(request, cts.Token);
+
+        // Start the cancel delay only once the provider is blocked in the message request, so the
+        // cancel lands mid-request however slowly the runner schedules session setup. A fixed delay
+        // from the start raced a message request that completed on its own 5s later: on a starved
+        // CI runner the cancel callback ran after it (FsCheck: "No exception was thrown", DelayMs=2206).
+        var first = await Task.WhenAny(handler.MessageRequestStarted, execution).WaitAsync(TimeSpan.FromSeconds(60));
+        Assert.True(first == handler.MessageRequestStarted,
+            "ExecuteAsync finished before its message request reached the handler");
         cts.CancelAfter(TimeSpan.FromMilliseconds(outcome.DelayBeforeCancelMs));
 
         // Act & Assert — OperationCanceledException should propagate
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => provider.ExecuteAsync(request, cts.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execution);
     }
 }
 
@@ -133,7 +138,7 @@ public sealed class ThrowingExceptionOutcome
 /// </summary>
 public sealed class CallerCancellationOutcome
 {
-    /// <summary>Delay in milliseconds before the caller cancels the token.</summary>
+    /// <summary>Delay in milliseconds between the message request starting and the caller cancelling the token.</summary>
     public required int DelayBeforeCancelMs { get; init; }
 
     public override string ToString() =>
@@ -190,18 +195,14 @@ public static class ExceptionContainmentArbitrary
     }
 
     /// <summary>
-    /// Generates caller cancellation outcomes with delays large enough to guarantee the provider
-    /// has created the session and is blocked at the message endpoint before cancellation fires.
-    /// On slow CI runners 500–800ms was insufficient — the cancel fired during session setup,
-    /// causing the OperationCanceledException to be swallowed rather than propagated.
-    /// 1500–2500ms was also observed to be insufficient on slow runners (DelayMs=2206 failed).
-    /// Using 3000–5000ms provides a wide enough window for session creation + message dispatch
-    /// on any CI runner speed.
+    /// Generates the delay between the message request reaching the handler and the caller's
+    /// cancel. The test starts the delay only after the request arrives, so every value cancels
+    /// mid-request.
     /// </summary>
     public static Arbitrary<CallerCancellationOutcome> CallerCancellationOutcomeArb()
     {
         var gen =
-            from delayMs in FsCheck.Fluent.Gen.Choose(3000, 5000)
+            from delayMs in FsCheck.Fluent.Gen.Choose(0, 500)
             select new CallerCancellationOutcome { DelayBeforeCancelMs = delayMs };
 
         return gen.ToArbitrary();
@@ -274,17 +275,16 @@ internal sealed class ThrowingHandler : HttpMessageHandler
 }
 
 /// <summary>
-/// A custom HttpMessageHandler that delays the message endpoint to allow
-/// caller cancellation to fire. Used for testing OperationCanceledException propagation.
+/// A custom HttpMessageHandler that holds the message request open until the caller cancels.
+/// Used for testing OperationCanceledException propagation.
 /// </summary>
 internal sealed class CancellationTestHandler : HttpMessageHandler
 {
-    private readonly int _delayMs;
+    private readonly TaskCompletionSource _messageRequestStarted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    public CancellationTestHandler(int delayMs)
-    {
-        _delayMs = delayMs;
-    }
+    /// <summary>Completes when the provider's message request reaches this handler.</summary>
+    public Task MessageRequestStarted => _messageRequestStarted.Task;
 
     protected override async Task<HttpResponseMessage> SendAsync(
         HttpRequestMessage request, CancellationToken cancellationToken)
@@ -317,19 +317,13 @@ internal sealed class CancellationTestHandler : HttpMessageHandler
             return new HttpResponseMessage(HttpStatusCode.OK);
         }
 
-        // Message endpoint — delay long enough for cancellation to fire
+        // Message endpoint — only the caller's cancellation ends this request
         if (path.Contains("/message"))
         {
-            // Wait much longer than the cancel delay to ensure cancellation fires
-            await Task.Delay(_delayMs + 5000, cancellationToken);
-            // If we get here, cancellation didn't fire (shouldn't happen)
-            var responseJson = JsonSerializer.Serialize(
-                new SendMessageResponse { Parts = [new MessagePart { Type = "text", Text = "response" }] },
-                OpenCodeJson.JsonOptions);
-            return new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
-            };
+            _messageRequestStarted.TrySetResult();
+            await Task.Delay(TimeSpan.FromMinutes(1), cancellationToken);
+            // Bounded so a regression fails the test instead of hanging the run.
+            throw new InvalidOperationException("Caller cancellation never reached the message request");
         }
 
         // Abort endpoint — respond immediately

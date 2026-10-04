@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
 using AwesomeAssertions;
@@ -752,9 +753,13 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
     private DispatchLifecycleService CreateLifecycleService(
         IKubernetesJobClient? k8sClient = null,
-        IReadOnlyList<string>? pvcPool = null)
+        IReadOnlyList<string>? pvcPool = null,
+        IDbContextFactory<PipelineDbContext>? lifecycleDbFactory = null)
     {
-        var dbFactory = CreateDbFactory();
+        // lifecycleDbFactory lets a test inject a CountingDbContextFactory to count the
+        // FailWorkItemAsync calls, which are the only calls routed through the transition
+        // service's factory rather than the endpoint's dbFactory.
+        var dbFactory = lifecycleDbFactory ?? CreateDbFactory();
         var transitionSvc = new WorkItemTransitionService(
             dbFactory,
             Mock.Of<ILogger<WorkItemTransitionService>>());
@@ -1381,6 +1386,59 @@ public sealed class DispatchPendingWorkItemEndpointTests
             "PVC must be released after K8s failure — Failed item no longer holds the credential slot");
         var ok2 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result2;
         ok2.Value!.Dispatched.Should().BeTrue();
+    }
+
+    // ── AC #3 (issue #2818): existing-Pending path does NOT call SafelyCancelOrphanedDispatchedWorkItemAsync ──
+
+    /// <summary>
+    /// When K8s Job creation fails on the existing-Pending path, the item was never written as
+    /// <c>Dispatched</c>, so there is no orphaned row to cancel: the lifecycle's own
+    /// <c>FailWorkItemAsync</c> (Pending→Failed) must be the only cleanup.
+    /// <para>
+    /// <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> calls <c>lifecycle.FailWorkItemAsync</c>,
+    /// which opens a context on the lifecycle's transition-service factory. A
+    /// <see cref="CountingDbContextFactory"/> on that factory therefore counts the
+    /// <c>FailWorkItemAsync</c> calls: exactly 1 is correct, 2 means the orphan cleanup ran on this
+    /// path too. The count does not depend on the item's state, so the assertion is not vacuous.
+    /// </para>
+    /// The create-as-Dispatched counterpart, where the cleanup must run, is
+    /// <see cref="SynchronousDispatchEndpointTests.DispatchWorkItem_WhenK8sJobCreationFails_Returns503_AndCleansUpWorkItem"/>.
+    /// </summary>
+    [Fact]
+    public async Task DispatchPendingWorkItem_OnK8sFailure_DoesNotCallSafelyCancelOrphanedDispatchedWorkItemAsync()
+    {
+        var dbFactory = CreateDbFactory();
+        var entity = await SeedPendingItemAsync(dbFactory, "kiro,dotnet");
+
+        var templateStore = CreateTemplateStore("kiro,dotnet", maxConcurrent: 5);
+        var k8sMock = new Mock<IKubernetesJobClient>();
+        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("K8s API unavailable"));
+
+        // The counting factory wraps the same in-memory database, and the lifecycle uses it only
+        // for its transition calls, so the endpoint's own reads through dbFactory are not counted.
+        var countingLifecycleFactory = new CountingDbContextFactory(CreateDbFactory());
+        var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"], lifecycleDbFactory: countingLifecycleFactory);
+        var resolver = CreateTemplateResolver(templateStore);
+        var lockProvider = CreateNoOpLockProvider();
+
+        var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
+            entity.Id, dbFactory, lifecycle, resolver, lockProvider, CancellationToken.None);
+
+        var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
+        statusResult.Should().NotBeNull("K8s failure must return 503");
+        statusResult!.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+
+        countingLifecycleFactory.CreateDbContextAsyncCallCount.Should().Be(1,
+            "exactly one FailWorkItemAsync call must have occurred (the lifecycle's own Pending→Failed " +
+            "transition). A second call would indicate SafelyCancelOrphanedDispatchedWorkItemAsync was " +
+            "incorrectly invoked on the existing-Pending path, which has no orphaned Dispatched row.");
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == entity.Id);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Failed,
+            "the lifecycle must have transitioned the Pending item to Failed after K8s failure");
     }
 
     // ── Test 17: FailWorkItemAsync throws → 503, Warning logged, item remains Pending ──
@@ -3001,6 +3059,38 @@ public sealed class ExtractedHelperIsolationTests
         outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
             "a success result must produce PassThrough so the caller emits RecordDispatchAttempt(\"dispatched\",\"none\")");
     }
+
+    // TODO [WARNING]: ApplyDispatchOutcomeSwitch is tested only for the unknown-outcome (_) arm.
+    // None of the four known arms (ConcurrencyLimitRewritten, PvcExhausted503, K8sError503, PassThrough)
+    // are exercised through ApplyDispatchOutcomeSwitch directly. If the arm bodies were swapped
+    // (e.g. ConcurrencyLimitRewritten returned DispatchSuccessFallThrough() instead of interpretedResult),
+    // no current test would catch it. Add direct tests for each known arm to lock in the arm-body mapping.
+    // (issue #3309 review finding: TestQualityReviewer)
+
+    // TODO [WARNING]: No test for ApplyDispatchOutcomeSwitch with PvcExhausted503 verifies that
+    // WorkDistributionTelemetry.PvcPoolExhaustions is incremented by EmitPvcExhaustionAndReturn.
+    // The pre-existing InterpretDispatchResult_503Input_PvcExhausted_* tests do not assert telemetry
+    // emission either. Add a test for ApplyDispatchOutcomeSwitch(PvcExhausted503, ...) that asserts
+    // the counter is incremented, to lock in this behavior after the local-function-to-static-method refactor.
+    // (issue #3309 review finding: TestQualityReviewer)
+
+    /// <summary>
+    /// Characterization: an out-of-range <see cref="DispatchInterpretOutcome"/> cast must cause
+    /// <see cref="DispatchWorkItemService.ApplyDispatchOutcomeSwitch"/> to throw
+    /// <see cref="UnreachableException"/> rather than silently delegating to the success path
+    /// (issue #3309: Replace Catch-All with Exhaustive Switch).
+    /// </summary>
+    [Fact]
+    public void ApplyDispatchOutcomeSwitch_UnknownOutcome_ThrowsUnreachableException()
+    {
+        var interpretedResult = TypedResults.Ok(Guid.NewGuid());
+        var unknownOutcome = (DispatchInterpretOutcome)99;
+
+        var act = () => DispatchWorkItemService.ApplyDispatchOutcomeSwitch(unknownOutcome, interpretedResult);
+
+        act.Should().ThrowExactly<UnreachableException>(
+            "an unrecognised DispatchInterpretOutcome must throw UnreachableException rather than silently returning a success response");
+    }
 }
 
 // ── Test infrastructure helpers ──────────────────────────────────────────────
@@ -3216,5 +3306,42 @@ file sealed class PrepopulatedThrowingDbContextFactory : IDbContextFactory<Pipel
         }
         // Subsequent contexts: reads from the pre-populated DB to find the "existing" item.
         return new TestPipelineDbContext(_readOpts);
+    }
+}
+
+/// <summary>
+/// An <see cref="IDbContextFactory{TContext}"/> decorator that counts
+/// <see cref="CreateDbContextAsync"/> calls. Used by
+/// <see cref="DispatchPendingWorkItemEndpointTests.DispatchPendingWorkItem_OnK8sFailure_DoesNotCallSafelyCancelOrphanedDispatchedWorkItemAsync"/>
+/// to count <c>FailWorkItemAsync</c> calls on the lifecycle's transition service.
+///
+/// <para>
+/// <c>DispatchLifecycleService.FailWorkItemAsync</c> calls
+/// <c>WorkItemTransitionService.TransitionAsync</c>, which calls
+/// <c>_dbFactory.CreateDbContextAsync</c> exactly once per invocation (even when the item is
+/// already at the target status — <c>AlreadyAtTarget</c> returns after the first read, before the
+/// save, but after <c>CreateDbContextAsync</c>). By injecting this factory as the lifecycle's
+/// transition-service factory, callers can assert on <see cref="CreateDbContextAsyncCallCount"/>
+/// to verify the exact number of <c>FailWorkItemAsync</c> invocations, which is not observable
+/// via item state alone.
+/// </para>
+/// </summary>
+file sealed class CountingDbContextFactory(IDbContextFactory<PipelineDbContext> inner)
+    : IDbContextFactory<PipelineDbContext>
+{
+    private int _createDbContextAsyncCallCount;
+
+    /// <summary>
+    /// The number of times <see cref="CreateDbContextAsync"/> has been called.
+    /// Each <c>FailWorkItemAsync</c> invocation increments this counter by exactly 1.
+    /// </summary>
+    public int CreateDbContextAsyncCallCount => _createDbContextAsyncCallCount;
+
+    public PipelineDbContext CreateDbContext() => inner.CreateDbContext();
+
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+    {
+        Interlocked.Increment(ref _createDbContextAsyncCallCount);
+        return inner.CreateDbContextAsync(ct);
     }
 }

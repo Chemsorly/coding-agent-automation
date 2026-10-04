@@ -22,6 +22,11 @@ public class CiFailureClassifierTests
     [InlineData("Error response from daemon: dial tcp 127.0.0.1:2376: connection refused")]
     [InlineData("Cache service responded with 503")]
     [InlineData("Package restore failed: Unable to load the service index for source")]
+    // Container registry outages during an image build (PR #3300, issue #3111): buildah and BuildKit
+    // messages for a 5xx while pulling a base image layer.
+    [InlineData("Error: creating build container: copying system image from manifest list: reading blob sha256:32bc87: fetching blob: received unexpected HTTP status: 503 Service Unavailable")]
+    [InlineData("failed to copy: httpReadSeeker: failed open: unexpected status code https://mcr.microsoft.com/v2/dotnet/sdk/blobs/sha256:32bc87: 503 Service Unavailable")]
+    [InlineData("reading manifest 10.0.401 in mcr.microsoft.com/dotnet/sdk: received unexpected HTTP status: 502 Bad Gateway")]
     public void Classify_InfrastructurePattern_ReturnsInfrastructure(string logContent)
     {
         var status = CreateStatus(logContent);
