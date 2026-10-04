@@ -102,6 +102,20 @@ The web host reads the client's scheme from `X-Forwarded-Proto`, so TLS can end 
 
 Running several web replicas requires `signalr.redis.connectionString`: sessions are encrypted with a key ring shared through Redis. The chart refuses `web.replicas > 1` without it.
 
+Several web replicas also need sticky sessions at the ingress. Each open page is a Blazor Server circuit that lives in one pod's memory; its connection and every reconnect must reach that pod. Without stickiness the browser's connection is routed to a pod that does not know it, and the page stays unresponsive. With Traefik, set the annotations on the web Service:
+
+```yaml
+web:
+  service:
+    annotations:
+      traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+      traefik.ingress.kubernetes.io/service.sticky.cookie.name: ca_affinity
+      traefik.ingress.kubernetes.io/service.sticky.cookie.secure: "true"
+      traefik.ingress.kubernetes.io/service.sticky.cookie.httponly: "true"
+```
+
+With ingress-nginx, set `nginx.ingress.kubernetes.io/affinity: cookie` in `web.ingress.annotations`.
+
 ## Keycloak
 
 1. Create a client, for example `coding-agent`: **Client authentication** on (confidential), **Standard flow** on, everything else off.
@@ -138,3 +152,4 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client secret or issuer, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
 | Signed out on every request with several web replicas | Configure `signalr.redis.connectionString`. |
+| Pages load but stay unresponsive with several web replicas; the browser console shows "No Connection with that ID" | Enable sticky sessions at the ingress (see [Exposing the UI](#exposing-the-ui)). |

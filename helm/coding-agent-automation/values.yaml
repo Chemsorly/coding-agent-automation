@@ -31,6 +31,12 @@ web:
   service:
     type: ClusterIP
     port: 8080
+    # Annotations on the web Service. More than one replica needs sticky sessions: each open page
+    # (a Blazor Server circuit) lives in one pod's memory, and its connection and reconnects must
+    # reach that pod. Traefik reads stickiness from the Service:
+    #   traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    # ingress-nginx reads it from web.ingress.annotations (nginx.ingress.kubernetes.io/affinity: cookie).
+    annotations: {}
   resources:
     requests:
       cpu: 100m
