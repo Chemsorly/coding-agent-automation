@@ -43,17 +43,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
         mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
-        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<WorkspacePath?>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Callback<WorkspacePath?, string, string>((path, _, _) =>
-            {
-                // TODO [WARNING]: WorkspacePath has an implicit WorkspacePath→string conversion, so
-                // Directory.Exists(path) resolves via that operator. If the conversion were broken, this
-                // callback would silently fail to delete. No assertion verifies that cleanup actually
-                // occurred after a successful run. Consider adding a Verify call that TryDeleteWorkspace
-                // was invoked with the expected path, or asserting the directory no longer exists.
-                if (path != null && Directory.Exists(path))
-                    Directory.Delete(path, true);
-            });
 
         _service = new TestPipelineRunner(
             _mockConfigStore.Object,
@@ -730,54 +719,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().BeOneOf(PipelineStep.Completed, PipelineStep.Failed);
-    }
-
-    // --- Config defaults ---
-
-    // --- Workspace cleanup ---
-
-    [Fact]
-    public async Task SuccessfulPr_DeletesWorkspace()
-    {
-        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-cleanup-{Guid.NewGuid()}");
-        Directory.CreateDirectory(workspaceBase);
-        try
-        {
-            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase });
-
-            var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-            run.CurrentStep.Should().Be(PipelineStep.Completed);
-            if (run.WorkspacePath != null)
-                Directory.Exists(run.WorkspacePath).Should().BeFalse();
-        }
-        finally { if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true); }
-    }
-
-    [Fact]
-    public async Task DraftPr_RetainsWorkspace()
-    {
-        var workspaceBase = Path.Combine(Path.GetTempPath(), $"ws-draft-{Guid.NewGuid()}");
-        Directory.CreateDirectory(workspaceBase);
-        try
-        {
-            _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = workspaceBase, MaxRetries = 0 });
-
-            _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new QualityGateReport
-                {
-                    Compilation = new GateResult { GateName = "Compilation", Passed = false, Details = "Build failed" },
-                    Tests = new GateResult { GateName = "Tests", Passed = false, Details = "Tests failed" }
-                });
-
-            var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-            run.CurrentStep.Should().Be(PipelineStep.Failed);
-            run.IsDraftPr.Should().BeTrue();
-            if (run.WorkspacePath != null)
-                Directory.Exists(run.WorkspacePath).Should().BeTrue();
-        }
-        finally { if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true); }
     }
 
     // --- Stall detection ---
@@ -1662,17 +1603,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
         mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
-        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<WorkspacePath?>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Callback<WorkspacePath?, string, string>((path, _, _) =>
-            {
-                // TODO [WARNING]: WorkspacePath has an implicit WorkspacePath→string conversion, so
-                // Directory.Exists(path) resolves via that operator. If the conversion were broken, this
-                // callback would silently fail to delete. No assertion verifies that cleanup actually
-                // occurred after a successful run. Consider adding a Verify call that TryDeleteWorkspace
-                // was invoked with the expected path, or asserting the directory no longer exists.
-                if (path != null && Directory.Exists(path))
-                    Directory.Delete(path, true);
-            });
 
         var service = new TestPipelineRunner(
             mockConfigStore.Object,

@@ -21,7 +21,6 @@ public class DatabaseMaintenanceServiceTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
-    private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly IConfiguration _configuration;
 
@@ -37,7 +36,6 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             ctx.Database.EnsureCreated();
 
         _dbFactory = new TestDbContextFactory(_dbOptions);
-        _mockConsolidationService = new Mock<IConsolidationService>();
 
         // Default: both retention counts = -1 (disabled), so sweep methods are no-ops
         _mockConfigStore = new Mock<IPipelineConfigStore>();
@@ -259,7 +257,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     private DatabaseMaintenanceService CreateService()
     {
         return new DatabaseMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, _configuration,
+            _dbFactory, _configuration,
             _mockConfigStore.Object);
     }
 

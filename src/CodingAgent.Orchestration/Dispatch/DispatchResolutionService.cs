@@ -1,61 +1,32 @@
-using CodingAgent.Infrastructure.Common;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Orchestration.Dispatch;
 
 /// <summary>
-/// Groups dispatch-time resolution concerns: profile, quality gate, and reviewer resolution.
+/// Groups dispatch-time resolution concerns: quality gate and reviewer resolution.
 /// Centralises resolution concerns to reduce constructor parameter count.
 /// </summary>
 public sealed class DispatchResolutionService
 {
-    private readonly ProfileResolver _profileResolver;
     private readonly QualityGateResolver _qualityGateResolver;
     private readonly ReviewerResolver _reviewerResolver;
-    private readonly ILogger _logger;
 
     internal IConfigurationStore ConfigStore { get; }
 
     public DispatchResolutionService(
-        ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
         ReviewerResolver reviewerResolver,
-        IConfigurationStore configStore,
-        ILogger logger)
+        IConfigurationStore configStore)
     {
-        ArgumentNullException.ThrowIfNull(profileResolver);
         ArgumentNullException.ThrowIfNull(qualityGateResolver);
         ArgumentNullException.ThrowIfNull(reviewerResolver);
         ArgumentNullException.ThrowIfNull(configStore);
-        ArgumentNullException.ThrowIfNull(logger);
 
-        _profileResolver = profileResolver;
         _qualityGateResolver = qualityGateResolver;
         _reviewerResolver = reviewerResolver;
         ConfigStore = configStore;
-        _logger = logger;
-    }
-
-    /// <summary>
-    /// Resolves the agent profile by loading all profiles and matching against the agent's labels.
-    /// Returns <c>null</c> (with a warning log) if no profile matches.
-    /// </summary>
-    public async Task<AgentProfile?> ResolveProfileAsync(AgentEntry agent, CancellationToken ct)
-    {
-        var profiles = await ConfigStore.LoadAgentProfilesAsync(ct);
-        var profile = _profileResolver.Resolve(profiles, agent.Labels);
-        if (profile is null)
-        {
-            // Labels are self-reported by the agent at registration.
-            var labelsStr = LogSanitizer.SanitizeForLog(string.Join(", ", agent.Labels));
-            _logger.Warning("No profile matches agent {AgentId} labels [{Labels}]", agent.AgentId, labelsStr);
-        }
-
-        return profile;
     }
 
     /// <summary>

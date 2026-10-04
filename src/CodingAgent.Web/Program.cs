@@ -159,11 +159,10 @@ var app = builder.Build();
 
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
-// Ordering: ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, then MapApplicationEndpoints.
+// Ordering: ValidateShutdownBudget, ValidateDiWiring, then MapApplicationEndpoints.
 
 app.ValidateShutdownBudget();
 app.ValidateDiWiring();
-app.RegisterObservableGauges();
 app.MapApplicationEndpoints();
 
 // Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works

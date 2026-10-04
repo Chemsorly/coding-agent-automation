@@ -2,7 +2,6 @@ using System.Text.Json;
 using CodingAgent.Infrastructure.Locking;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
-using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
@@ -44,27 +43,6 @@ public sealed class DatabaseStartupService
         _logger = logger;
         _probe = probe;
         _timeProvider = timeProvider ?? TimeProvider.System;
-    }
-
-    /// <summary>
-    /// Validates DB connectivity, applies/verifies migrations, and imports JSON config if DB is empty.
-    /// Throws on unrecoverable failure (caller should prevent app startup).
-    /// </summary>
-    public async Task InitializeAsync(CancellationToken ct)
-    {
-        await WaitForDatabaseConnectionAsync(ct);
-        await HandleMigrationsAsync(ct);
-        await ImportJsonConfigIfNeededAsync(ct);
-        // NOTE: InitializeAsync does not call SeedDefaultProjectIfNeededAsync. It seeds
-        // reviewer configs and repairs orphans but not the Default project row. ClaimOrphanedTemplatesAsync
-        // will log a warning and skip orphan repair if the Default project is absent. The API startup path
-        // (ApiStartupExtensions.RunApiMigrationsAsync) uses RunStartupSeedingAsync instead of InitializeAsync
-        // and is not affected. Any future caller of InitializeAsync that relies on orphan repair (e.g. a
-        // worker host) will silently skip it unless the Default project already exists. Add a call to
-        // SeedDefaultProjectIfNeededAsync here (before SeedDefaultReviewerConfigsIfNeededAsync) if
-        // InitializeAsync is ever used in a path that needs the full seed-and-repair sequence.
-        await SeedDefaultReviewerConfigsIfNeededAsync(ct);
-        await ClaimOrphanedTemplatesAsync(ct);
     }
 
     /// <summary>
@@ -166,22 +144,6 @@ public sealed class DatabaseStartupService
             }
 
             _logger.Information("Database schema verification passed — no pending migrations");
-        }
-    }
-
-    /// <summary>
-    /// If the database is empty (no PipelineConfig row), imports configuration from JSON files.
-    /// This enables seamless transition from Legacy (JSON) mode to DB mode.
-    /// </summary>
-    internal async Task ImportJsonConfigIfNeededAsync(CancellationToken ct, string? configBasePath = null)
-    {
-        var migrationService = new ConfigMigrationService(_dbFactory, _lockProvider,
-            configBasePath ?? CodingAgent.Pipeline.Models.PipelineConstants.ConfigBaseDirectory);
-        var migrated = await migrationService.MigrateIfNeededAsync(ct);
-
-        if (migrated)
-        {
-            _logger.Information("JSON config imported into database successfully");
         }
     }
 

@@ -177,7 +177,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     // ── Cached provider context (set at open/switch time) ──
 
     private IReadOnlyList<ProviderConfig>? _cachedIssueProviders;
-    private IReadOnlyList<ProviderConfig>? _cachedRepoProviders;
 
     // ── Dispatch ──
 
@@ -335,7 +334,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     {
         // Cache providers so the DrawerStateService dispatch callback can reach them
         _cachedIssueProviders = issueProviders;
-        _cachedRepoProviders = repoProviders;
 
         _issueDrawer.IsDispatching = true;
         try
@@ -424,7 +422,6 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
         IReadOnlyList<ProviderConfig> repoProviders)
     {
         _cachedIssueProviders = issueProviders;
-        _cachedRepoProviders = repoProviders;
     }
 
     // ── IDisposable ──

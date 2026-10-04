@@ -36,6 +36,7 @@ public class DispatchDrawerBaseTests : BunitContext
         public void SetItems(IReadOnlyList<TestItem> items) => Items = items;
         public void SetFilter(string filter) => _filter = filter;
         public void InvokeApplyFilter() => ApplyFilter();
+        public void InvokeOnParametersSet() => OnParametersSet();
         public void InvokeSelectItem(TestItem item) => SelectItem(item);
         public List<TestItem> GetFilteredItems() => FilteredItems;
         public TestItem? GetSelectedItem() => SelectedItem;
@@ -251,6 +252,35 @@ public class DispatchDrawerBaseTests : BunitContext
         // Changing filter resets
         drawer.SetFilter("Sec");
         drawer.InvokeApplyFilter();
+        Assert.Equal(-1, drawer.GetHighlightedIndex());
+    }
+
+    [Fact]
+    public async Task OnParametersSet_ParentRerender_KeepsHighlightOnSameItem()
+    {
+        var drawer = CreateDrawer(new[] { new TestItem("1", "A"), new TestItem("2", "B"), new TestItem("3", "C") });
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        Assert.Equal(1, drawer.GetHighlightedIndex());
+
+        // The refreshed list puts item "2" first.
+        drawer.SetItems(new[] { new TestItem("2", "B"), new TestItem("3", "C") });
+        drawer.InvokeOnParametersSet();
+
+        Assert.Equal(0, drawer.GetHighlightedIndex());
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        Assert.Equal(1, drawer.GetHighlightedIndex());
+    }
+
+    [Fact]
+    public async Task OnParametersSet_HighlightedItemGone_ClearsHighlight()
+    {
+        var drawer = CreateDrawer(new[] { new TestItem("1", "A"), new TestItem("2", "B") });
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+
+        drawer.SetItems(new[] { new TestItem("2", "B") });
+        drawer.InvokeOnParametersSet();
+
         Assert.Equal(-1, drawer.GetHighlightedIndex());
     }
 }

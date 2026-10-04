@@ -9,11 +9,6 @@ namespace CodingAgent.Pipeline.Services;
 /// </summary>
 public static class SubIssueFileParser
 {
-    private static readonly JsonSerializerOptions s_jsonOptions = new()
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     /// <summary>
     /// Reads all JSON files from the sub-issues directory, validates schema,
     /// and returns valid proposals in alphabetical file-name order.

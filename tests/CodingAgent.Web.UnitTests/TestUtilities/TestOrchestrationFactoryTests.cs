@@ -122,14 +122,6 @@ public class TestOrchestrationFactoryTests
         page2.HasMore.Should().BeFalse();
     }
 
-    [Fact]
-    public void NullHistoryService_TryDeleteWorkspace_DoesNotThrow()
-    {
-        var svc = new TestOrchestrationFactory.NullHistoryService();
-        var act = () => svc.TryDeleteWorkspace("/tmp/workspace", "run-1", "/tmp");
-        act.Should().NotThrow();
-    }
-
     // ── CreateMinimalOptions ──────────────────────────────────────────────
 
     [Fact]

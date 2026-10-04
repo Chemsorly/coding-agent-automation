@@ -195,41 +195,4 @@ public class CostFormatterPropertyTests
             result.Should().NotBe("\u2014");
         });
     }
-
-    // ── FormatBadge crash-freedom ────────────────────────────────────────
-
-    [Property(MaxTest = 20)]
-    public Property FormatBadge_NeverThrows_ForAnyInput()
-    {
-        var gen =
-            from tokens in Gen.Choose(-1000, 10_000_000).Select(i => (long)i)
-            from costRaw in Gen.Choose(-100, 10000).Select(i => (decimal)i / 100)
-            from isNull in Gen.Elements(true, false)
-            select (tokens, isNull ? (decimal?)null : costRaw);
-
-        return Prop.ForAll(gen.ToArbitrary(), tuple =>
-        {
-            var (tokens, cost) = tuple;
-            var result = CostFormatter.FormatBadge(tokens, cost);
-            result.Should().NotBeNullOrEmpty();
-        });
-    }
-
-    [Fact]
-    public void FormatBadge_BothZero_ReturnsDash()
-    {
-        CostFormatter.FormatBadge(0, null).Should().Be("\u2014");
-    }
-
-    [Fact]
-    public void FormatBadge_CostPreferred_WhenBothPositive()
-    {
-        CostFormatter.FormatBadge(5000, 1.23m).Should().Be("$1.23");
-    }
-
-    [Fact]
-    public void FormatBadge_TokensFallback_WhenCostNull()
-    {
-        CostFormatter.FormatBadge(5000, null).Should().Be("5.0K tok");
-    }
 }

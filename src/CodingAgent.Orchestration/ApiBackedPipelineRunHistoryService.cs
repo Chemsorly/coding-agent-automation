@@ -94,11 +94,4 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
     /// <inheritdoc />
     public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)
         => await _client.GetRunAsync(runId, ct);
-
-    /// <inheritdoc />
-    public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory)
-    {
-        // The orchestrator has no local workspace — no-op.
-        // The API host (CodingAgent.Api) owns workspace cleanup in K8s mode.
-    }
 }

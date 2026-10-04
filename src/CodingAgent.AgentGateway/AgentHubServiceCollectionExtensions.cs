@@ -57,9 +57,6 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             Log.Logger));
 
-        services.AddSingleton<IGateCommentFormatter>(sp => new GateCommentFormatter(
-            Log.Logger));
-
         // ── IHubConsolidationOperations (T10: extracted from AgentHub) ──────────────
         services.AddSingleton<IHubConsolidationOperations>(sp => new HubConsolidationOperations(
             sp.GetRequiredService<ModelFetchService>(),
@@ -81,7 +78,6 @@ public static class AgentHubServiceCollectionExtensions
             sp.GetRequiredService<IHubIssueOperations>(),
             sp.GetRequiredService<IAgentJobLifecycleService>(),
             sp.GetRequiredService<IAgentTokenRefreshService>(),
-            sp.GetRequiredService<IGateCommentFormatter>(),
             Log.Logger,
             sp.GetRequiredService<IAgentOrphanRecoveryService>(),
             sp.GetRequiredService<Microsoft.AspNetCore.SignalR.IHubContext<AgentHub>>()));

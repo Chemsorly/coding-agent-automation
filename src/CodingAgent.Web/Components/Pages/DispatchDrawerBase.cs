@@ -34,7 +34,14 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
+        // The parent re-renders on agent and status updates. Keep the keyboard highlight on the
+        // same item across those re-renders; only a filter change resets it.
+        var highlightedId = _highlightedIndex >= 0 && _highlightedIndex < FilteredItems.Count
+            ? GetIdentifier(FilteredItems[_highlightedIndex])
+            : null;
         ApplyFilter();
+        if (highlightedId is not null)
+            _highlightedIndex = FilteredItems.FindIndex(i => GetIdentifier(i) == highlightedId);
         if (!IsOpen) { SelectedItem = default; _filter = ""; _highlightedIndex = -1; }
     }
 

@@ -9,14 +9,13 @@ namespace CodingAgent.Infrastructure;
 
 /// <summary>
 /// Registration-based provider factory. New provider types can be added via
-/// RegisterIssueProvider/RegisterRepositoryProvider/RegisterAgentProvider/RegisterPipelineProvider
+/// RegisterIssueProvider/RegisterRepositoryProvider/RegisterPipelineProvider
 /// without modifying this class.
 /// </summary>
 public class ProviderFactory : IProviderFactory
 {
     private readonly Dictionary<string, Func<ProviderConfig, IIssueProvider>> _issueFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, IRepositoryProvider>> _repoFactories = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, Func<ProviderConfig, IAgentProvider>> _agentFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, Func<ProviderConfig, TimeSpan, IPipelineProvider>> _pipelineFactories = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, GitHubAppAuthService> _authServiceCache = new(StringComparer.Ordinal);
     private readonly IPipelineConfigStore _pipelineConfigStore;
@@ -112,9 +111,6 @@ public class ProviderFactory : IProviderFactory
     private void RegisterRepositoryProvider(string providerType, Func<ProviderConfig, IRepositoryProvider> factory)
         => _repoFactories[providerType] = factory;
 
-    private void RegisterAgentProvider(string providerType, Func<ProviderConfig, IAgentProvider> factory)
-        => _agentFactories[providerType] = factory;
-
     private void RegisterPipelineProvider(string providerType, Func<ProviderConfig, TimeSpan, IPipelineProvider> factory)
         => _pipelineFactories[providerType] = factory;
 
@@ -139,10 +135,9 @@ public class ProviderFactory : IProviderFactory
     public IAgentProvider CreateAgentProvider(ProviderConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
-        if (_agentFactories.TryGetValue(config.ProviderType, out var factory))
-            return factory(config);
+        // Agent providers run only inside agent pods, which build them with their own factory.
         throw new NotSupportedException(
-            $"Unsupported agent provider type: '{config.ProviderType}'. Supported: {string.Join(", ", _agentFactories.Keys)}");
+            $"Unsupported agent provider type: '{config.ProviderType}'. Agent providers are created inside agent pods.");
     }
 
     public async Task<IPipelineProvider> CreatePipelineProviderAsync(ProviderConfig config, CancellationToken ct)

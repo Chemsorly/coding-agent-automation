@@ -31,11 +31,9 @@ public class IssueContextBuilderTests
     private DispatchInfrastructure CreateInfrastructure()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockConfigStore.Object,
-            new Mock<ILogger>().Object);
+            _mockConfigStore.Object);
 
         return new DispatchInfrastructure(
             _mockTokenVending.Object,
@@ -486,11 +484,9 @@ public class IssueContextBuilderImageExtractionFailureTests
     private DispatchInfrastructure CreateThrowingInfrastructure()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockConfigStore.Object,
-            new Mock<ILogger>().Object);
+            _mockConfigStore.Object);
 
         return new ThrowingExtractInfrastructure(
             _mockTokenVending.Object,

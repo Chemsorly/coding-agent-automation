@@ -20,7 +20,6 @@ public sealed record AgentHubDependencies(
     IHubIssueOperations IssueOps,
     IAgentJobLifecycleService LifecycleService,
     IAgentTokenRefreshService TokenRefreshService,
-    IGateCommentFormatter GateCommentFormatter,
     ILogger Logger,
     IAgentOrphanRecoveryService OrphanRecoveryService,
     IHubContext<AgentHub> UiContext);

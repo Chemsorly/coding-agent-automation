@@ -25,7 +25,6 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IHubIssueOperations _issueOps;
     private readonly IAgentJobLifecycleService _lifecycleService;
     private readonly IAgentTokenRefreshService _tokenRefreshService;
-    private readonly IGateCommentFormatter _gateCommentFormatter;
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
     private readonly IHubContext<AgentHub> _uiContext;
@@ -45,7 +44,6 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _issueOps = deps.IssueOps;
         _lifecycleService = deps.LifecycleService;
         _tokenRefreshService = deps.TokenRefreshService;
-        _gateCommentFormatter = deps.GateCommentFormatter;
         _orphanRecoveryService = deps.OrphanRecoveryService;
         _logger = deps.Logger;
         _uiContext = deps.UiContext;
