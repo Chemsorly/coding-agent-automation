@@ -68,6 +68,20 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             new PageWaitForFunctionOptions { Timeout = 5_000 });
     }
 
+    /// <summary>
+    /// Counts the distinct work items for an issue across the pending and active lists. The connected
+    /// fake agent can pick an item up between the two reads, so pending is read first: the item then shows
+    /// up in both lists and is counted once, instead of in neither.
+    /// </summary>
+    private async Task<int> CountWorkItemsForIssueAsync(string issueIdentifier)
+    {
+        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
+        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
+        return pending.Where(w => w.IssueIdentifier == issueIdentifier).Select(w => w.Id)
+            .Union(active.Where(w => w.IssueIdentifier == issueIdentifier).Select(w => w.Id))
+            .Count();
+    }
+
     // ── Scenario 1: Arrow key navigation ────────────────────────────────────────
 
     [Fact]
@@ -197,11 +211,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // fixture interprets this as "items created within the last hour" (absolute age < 3600s).
         // If the implementation treats it literally as "older than -3600 seconds" the result set may
         // always be empty and the assertion below would fail for the wrong reason.
-        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-        var countFor21 = active.Count(w => w.IssueIdentifier == "21") +
-                         pending.Count(w => w.IssueIdentifier == "21");
-        Assert.Equal(1, countFor21);
+        Assert.Equal(1, await CountWorkItemsForIssueAsync("21"));
 
         // Press Enter a second time quickly (self-disabling after first dispatch) — no second item
         await Page.Keyboard.PressAsync("Enter");
@@ -218,20 +228,12 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         var stableDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
         while (DateTime.UtcNow < stableDeadline)
         {
-            active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-            pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-            var countMid = active.Count(w => w.IssueIdentifier == "21") +
-                           pending.Count(w => w.IssueIdentifier == "21");
-            Assert.Equal(1, countMid);
+            Assert.Equal(1, await CountWorkItemsForIssueAsync("21"));
             await Task.Delay(50);
         }
 
         // Final snapshot after the stability window
-        active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-        pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-        var countFor21After = active.Count(w => w.IssueIdentifier == "21") +
-                              pending.Count(w => w.IssueIdentifier == "21");
-        Assert.Equal(1, countFor21After);
+        Assert.Equal(1, await CountWorkItemsForIssueAsync("21"));
     }
 
     // ── Scenario 3: Enter on a blocked issue is a no-op ─────────────────────────
@@ -542,10 +544,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // work item with IssueIdentifier set to the PR's Identifier field ("200"). If it uses a
         // different field (e.g. PrNumber, BranchName) the assertion will always be false and the
         // test will fail for the wrong reason. Verify against the WorkItem model.
-        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-        Assert.True(
-            active.Any(w => w.IssueIdentifier == "200") || pending.Any(w => w.IssueIdentifier == "200"),
+        Assert.True(await CountWorkItemsForIssueAsync("200") > 0,
             "Work item for PR #200 must exist after keyboard dispatch");
     }
 
@@ -621,10 +620,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         Assert.Contains("300", toastText);
 
         // Confirm one work item was created
-        var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
-        var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
-        Assert.True(
-            active.Any(w => w.IssueIdentifier == "300") || pending.Any(w => w.IssueIdentifier == "300"),
+        Assert.True(await CountWorkItemsForIssueAsync("300") > 0,
             "Work item for epic #300 must exist after keyboard dispatch");
     }
 }
