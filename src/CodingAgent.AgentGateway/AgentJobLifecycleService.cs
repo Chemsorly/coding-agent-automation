@@ -512,13 +512,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // If captured inside the if-block only, a subsequent null-metadata call would leave
             // previousSubIssuesAttempted=0 while run.DecompositionSubIssuesAttempted is already >0,
             // causing the once-per-run guard to fire again and double-emit the counters.
-            // TODO: [WARNING] previousSubIssuesCreated is declared for symmetry / future use but is
-            // not currently read. The guard only needs previousSubIssuesAttempted to enforce
-            // once-per-run semantics. Remove or use previousSubIssuesCreated if a finer guard
-            // (e.g. re-emit when created count increases) is ever needed. See review findings
-            // [WARNING] DotNetSpecialist L516.
             int previousSubIssuesAttempted = run.DecompositionSubIssuesAttempted;
-            int previousSubIssuesCreated = run.DecompositionSubIssuesCreated;
             if (metadata is { Count: > 0 })
             {
                 StepMetadataApplier.Apply(run, metadata);

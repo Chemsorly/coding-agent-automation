@@ -126,6 +126,56 @@ public class WorkItemExecutorRouterTests
     }
 
     [Fact]
+    public async Task ExecuteAsync_ConsolidationTask_PassesTheAssignmentMcpServersOn()
+    {
+        // Consolidation agents must get the project's MCP servers, as pipeline runs do
+        ConsolidationJobMessage? captured = null;
+        var consolidationExecutor = new Mock<IConsolidationExecutor>();
+        consolidationExecutor
+            .Setup(x => x.ExecuteAsync(It.IsAny<ConsolidationJobMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken>((job, _, _) => captured = job)
+            .ReturnsAsync(new ConsolidationJobResult { JobId = "test-job-1", Success = true });
+        var router = new WorkItemExecutorRouter(
+            Mock.Of<IPipelineExecutor>(), consolidationExecutor.Object, Mock.Of<Serilog.ILogger>());
+        var servers = new[] { new McpServerConfig { Name = "code-quality", Type = "http", Url = "https://example.test/mcp" } };
+        var assignment = CreateMinimalAssignment(WorkItemTaskType.Consolidation) with { McpServers = servers };
+
+        await router.ExecuteAsync(assignment, CreateDisconnectedConnection(), new OutputBatcher(), _ => { }, CancellationToken.None);
+
+        captured.Should().NotBeNull();
+        captured!.McpServers.Should().Equal(servers);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ConsolidationTask_PassesHistoryContextAndTraceOn()
+    {
+        // Brain consolidation needs its last successful run, harness suggestions their feedback data;
+        // without these the executors treat every run as the first one / as having no feedback
+        ConsolidationJobMessage? captured = null;
+        var consolidationExecutor = new Mock<IConsolidationExecutor>();
+        consolidationExecutor
+            .Setup(x => x.ExecuteAsync(It.IsAny<ConsolidationJobMessage>(), It.IsAny<Microsoft.AspNetCore.SignalR.Client.HubConnection>(), It.IsAny<CancellationToken>()))
+            .Callback<ConsolidationJobMessage, Microsoft.AspNetCore.SignalR.Client.HubConnection, CancellationToken>((job, _, _) => captured = job)
+            .ReturnsAsync(new ConsolidationJobResult { JobId = "test-job-1", Success = true });
+        var router = new WorkItemExecutorRouter(
+            Mock.Of<IPipelineExecutor>(), consolidationExecutor.Object, Mock.Of<Serilog.ILogger>());
+        var lastSuccess = new DateTimeOffset(2026, 10, 1, 14, 0, 0, TimeSpan.FromHours(2));
+        var trace = new Dictionary<string, string> { ["traceparent"] = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" };
+        var assignment = CreateMinimalAssignment(WorkItemTaskType.Consolidation) with
+        {
+            ConsolidationLastSuccessfulRunUtc = lastSuccess,
+            ConsolidationFeedbackDataJson = "[{\"outcome\":\"Failure\"}]",
+            TraceContext = trace
+        };
+
+        await router.ExecuteAsync(assignment, CreateDisconnectedConnection(), new OutputBatcher(), _ => { }, CancellationToken.None);
+
+        captured!.LastSuccessfulRunUtc.Should().Be(new DateTime(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc));
+        captured.FeedbackDataJson.Should().Be("[{\"outcome\":\"Failure\"}]");
+        captured.TraceContext.Should().BeSameAs(trace);
+    }
+
+    [Fact]
     public async Task ExecuteAsync_ReviewTask_DelegatesToPipelineExecutor()
     {
         var router = CreateRouter();

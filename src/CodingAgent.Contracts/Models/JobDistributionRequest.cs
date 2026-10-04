@@ -157,6 +157,18 @@ public record JobDistributionRequest
     public string? ConsolidationTemplateId { get; init; }
 
     /// <summary>
+    /// When the last consolidation of the same type and scope succeeded; null when there is none in the run
+    /// history. Set at delivery time; brain consolidation focuses on what changed since.
+    /// </summary>
+    public DateTimeOffset? ConsolidationLastSuccessfulRunUtc { get; init; }
+
+    /// <summary>
+    /// For harness suggestions: the <see cref="RunFeedback"/> entries collected since the last successful
+    /// harness suggestion run, as JSON. Set at delivery time; null when there is none.
+    /// </summary>
+    public string? ConsolidationFeedbackDataJson { get; init; }
+
+    /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and
     /// <c>agent:next</c> labels. Propagated through the queue/drain/K8s path to ensure
     /// the flag reaches the executor even when the job is enqueued and dispatched later.
