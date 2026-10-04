@@ -1,0 +1,16 @@
+@inject CurrentAccess Access
+
+@* Top-bar user menu (Req 9.3). Log out is a plain form post: an interactive circuit cannot clear the cookie. *@
+<details class="cockpit-user-menu" data-testid="user-menu">
+    <summary title="Signed in as @Access.Username">
+        <Icon Name="user" Size="14" />
+        <span data-testid="user-menu-name">@(Access.Username ?? "Account")</span>
+    </summary>
+    <div class="cockpit-user-menu-panel">
+        <a href="@AuthPaths.Profile.TrimStart('/')" data-testid="user-menu-profile">Profile</a>
+        <form method="post" action="@AuthEndpoints.LogoutEndpoint.TrimStart('/')" data-testid="logout-form">
+            <AntiforgeryToken />
+            <button type="submit" data-testid="logout-button">Log out</button>
+        </form>
+    </div>
+</details>

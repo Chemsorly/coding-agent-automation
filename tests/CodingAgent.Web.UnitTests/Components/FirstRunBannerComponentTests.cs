@@ -1,3 +1,6 @@
+using CodingAgent.Web.Auth;
+using AwesomeAssertions;
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Shared;
@@ -18,6 +21,7 @@ public class FirstRunBannerComponentTests : BunitContext
 
     public FirstRunBannerComponentTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         Services.AddSingleton(_configClient.Object);
 
         // Default: no enabled templates, not dismissed, route is "/"
@@ -193,5 +197,19 @@ public class FirstRunBannerComponentTests : BunitContext
         var nav = Services.GetRequiredService<NavigationManager>();
         // bUnit's NavigationManager is a fake that supports NavigateTo, changing the current URI
         nav.NavigateTo(url);
+    }
+
+    // ── Spec 049: dismissing is shared configuration ──────────────────────────
+
+    [Fact]
+    public void Access_NonAdminDismiss_DoesNotWriteConfiguration()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Operator));
+        SetCurrentUrl("http://localhost/");
+        var cut = Render<FirstRunBanner>();
+
+        cut.Find(".first-run-banner-dismiss").Click();
+
+        _configClient.Verify(s => s.SetKeyValueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 }

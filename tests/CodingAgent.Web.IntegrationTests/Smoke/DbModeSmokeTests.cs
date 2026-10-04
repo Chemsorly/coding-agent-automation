@@ -1,3 +1,4 @@
+using CodingAgent.Web.IntegrationTests.Helpers;
 using System.Net;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence;
@@ -43,7 +44,7 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     [Fact]
     public async Task AppServesRequests_InDbMode()
     {
-        using var client = _factory.CreateClient();
+        using var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
         // Root page (Blazor) — verifies the app responds to HTTP requests
         var response = await client.GetAsync("/");
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -124,7 +125,7 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     [Fact]
     public async Task SettingsPage_DoesNotCrash_InDbMode()
     {
-        using var client = _factory.CreateClient();
+        using var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
         var response = await client.GetAsync("/settings");
 
         // Blazor routes may return 200 (SSR) or 404 (client-side routing),
@@ -136,7 +137,7 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     [Fact]
     public async Task AgentCodingPage_Returns_OK_InDbMode()
     {
-        using var client = _factory.CreateClient();
+        using var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
         var response = await client.GetAsync("/");
 
         response.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -145,7 +146,7 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     [Fact]
     public async Task MonitoringPage_DoesNotCrash_InDbMode()
     {
-        using var client = _factory.CreateClient();
+        using var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
         var response = await client.GetAsync("/monitoring");
 
         ((int)response.StatusCode).Should().BeLessThan(500,

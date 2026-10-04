@@ -11,6 +11,13 @@ public partial class TemplateTableSection
 {
     [Parameter, EditorRequired] public IReadOnlyList<PipelineJobTemplate> Templates { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<PipelineProject> Projects { get; set; } = [];
+
+    /// <summary>
+    /// Spec 049: whether the signed-in user may change template configuration (global admin). When
+    /// false the toggles, edit/remove/move and add controls are not rendered. The page service
+    /// enforces the same rule on the server.
+    /// </summary>
+    [Parameter] public bool CanEdit { get; set; } = true;
     // TODO: IssueProviders, RepoProviders, BrainProviders, and PipelineProviders should be IReadOnlyList<ProviderConfig>
     // to prevent child components from accidentally mutating parent state (same rationale as Templates/RecentlyToggled).
     // Update GetProviderDisplayName and GetLabelPreview signatures at the same time to avoid a compile error.

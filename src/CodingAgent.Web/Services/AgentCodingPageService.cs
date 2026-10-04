@@ -1,4 +1,6 @@
+using System.Runtime.CompilerServices;
 using CodingAgent.Api.Client;
+using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -19,14 +21,20 @@ public class AgentCodingPageService
     private readonly IIssueDrawerService _issueDrawerService;
     private readonly IPrReviewDrawerService _prReviewDrawerService;
     private readonly IEpicDrawerService _epicDrawerService;
+    private readonly CurrentAccess _access;
+    private readonly IAccessGuard _guard;
 
     public AgentCodingPageService(
         ISchedulerApiClient schedulerClient,
         IPipelineApiConfigClient configClient,
         IIssueDrawerService issueDrawerService,
         IPrReviewDrawerService prReviewDrawerService,
-        IEpicDrawerService epicDrawerService)
+        IEpicDrawerService epicDrawerService,
+        CurrentAccess access,
+        IAccessGuard guard)
     {
+        _access = access;
+        _guard = guard;
         _schedulerClient = schedulerClient;
         _configClient = configClient;
         _issueDrawerService = issueDrawerService;
@@ -117,6 +125,7 @@ public class AgentCodingPageService
     {
         try
         {
+            await _access.InitializeAsync();
             IssueProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, CancellationToken.None)).ToList();
             var allRepoProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, CancellationToken.None)).ToList();
             PipelineProviders = (await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, CancellationToken.None)).ToList();
@@ -125,9 +134,12 @@ public class AgentCodingPageService
 
             var config = await _configClient.GetPipelineConfigAsync(CancellationToken.None);
             MaxRetries = config.MaxRetries;
-            Templates = (await _configClient.GetAllTemplatesAsync(CancellationToken.None)).ToList();
             PipelineConfig = config;
-            Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
+            await LoadProjectsAsync();
+            // Spec 049 Req 6.3/8.6: only templates of readable projects (a template without a project is global).
+            Templates = (await _configClient.GetAllTemplatesAsync(CancellationToken.None))
+                .Where(t => GetParentProject(t.Id) is not null || _access.HasGlobalRead)
+                .ToList();
             QualityGateConfigs = await _configClient.GetQualityGateConfigsAsync(CancellationToken.None);
             ReviewerConfigs = await _configClient.GetReviewerConfigsAsync(CancellationToken.None);
             AgentProfiles = await _configClient.GetAgentProfilesAsync(CancellationToken.None);
@@ -189,6 +201,7 @@ public class AgentCodingPageService
         Func<PipelineJobTemplate, bool, PipelineJobTemplate> updater,
         bool enabled)
     {
+        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied);
         var idx = Templates.FindIndex(t => t.Id == template.Id);
         if (idx < 0) return (true, null);
         var updated = updater(template, enabled);
@@ -219,6 +232,7 @@ public class AgentCodingPageService
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> AddTemplateAsync(TemplateTableSection.TemplateFormModel form)
     {
+        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         var newTemplate = new PipelineJobTemplate
         {
             Id = Guid.NewGuid().ToString(), Name = form.Name.Trim(),
@@ -236,7 +250,7 @@ public class AgentCodingPageService
         try { await _configClient.SaveTemplateAsync(targetProjectId, newTemplate, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}", null); }
         Templates.Add(newTemplate);
-        Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
+        await LoadProjectsAsync();
         return (true, null, $"Template \"{newTemplate.Name}\" added.");
     }
 
@@ -261,6 +275,7 @@ public class AgentCodingPageService
     /// </summary>
     public async Task<(bool Success, string? Error, string? SuccessMessage)> UpdateTemplateAsync(TemplateTableSection.TemplateFormModel form)
     {
+        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         var idx = Templates.FindIndex(t => t.Id == form.EditingTemplateId);
         if (idx < 0) return (false, "The template no longer exists.", null);
 
@@ -288,17 +303,19 @@ public class AgentCodingPageService
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> RemoveTemplateAsync(PipelineJobTemplate template)
     {
+        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
         try { await _configClient.DeleteTemplateAsync(projectId, template.Id, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to delete: {ex.Message}", null); }
         Templates.RemoveAll(t => t.Id == template.Id);
-        Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
+        await LoadProjectsAsync();
         return (true, null, $"Template \"{template.Name}\" removed.");
     }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> MoveTemplateToProjectAsync(
         TemplateId templateId, string sourceProjectId, string targetProjectId)
     {
+        if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         try
         {
             var sourceProject = Projects.FirstOrDefault(p => p.Id == sourceProjectId);
@@ -306,7 +323,7 @@ public class AgentCodingPageService
             if (sourceProject == null || targetProject == null) return (true, null, null);
             // The template's own project is the only membership record, so a move is one call.
             await _configClient.MoveTemplateAsync(sourceProjectId, targetProjectId, templateId.Value, CancellationToken.None);
-            Projects = await _configClient.GetProjectsAsync(CancellationToken.None);
+            await LoadProjectsAsync();
             return (true, null, $"Moved \"{Templates.FirstOrDefault(t => t.Id == templateId.Value)?.Name ?? templateId.Value}\" to {targetProject.Name}.");
         }
         catch (Exception ex) { return (false, $"Failed to move template: {ex.Message}", null); }
@@ -316,6 +333,7 @@ public class AgentCodingPageService
 
     public async Task<(bool Success, string? Error)> StartLoopAsync()
     {
+        if (await DeniedAsync(AccessRole.Operator) is { } denied) return (false, denied);
         try
         {
             var result = await _schedulerClient.StartLoopAsync(CancellationToken.None);
@@ -330,6 +348,7 @@ public class AgentCodingPageService
 
     public async Task<(bool Success, string? Error)> StopLoopAsync()
     {
+        if (await DeniedAsync(AccessRole.Operator) is { } denied) return (false, denied);
         try
         {
             await _schedulerClient.StopLoopAsync(CancellationToken.None);
@@ -343,6 +362,7 @@ public class AgentCodingPageService
 
     public async Task<(bool Success, string? Error)> ResumeLoopAsync()
     {
+        if (await DeniedAsync(AccessRole.Operator) is { } denied) return (false, denied);
         try
         {
             await _schedulerClient.ResumeLoopAsync(CancellationToken.None);
@@ -432,6 +452,7 @@ public class AgentCodingPageService
 
     public async Task<string?> OpenIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabIssue);
         return await _issueDrawerService.OpenIssueDrawerAsync(templateId, Templates, notifyStateChanged);
@@ -439,18 +460,20 @@ public class AgentCodingPageService
 
     public void CloseIssueDrawer() => _issueDrawerService.CloseIssueDrawer();
 
-    public Task<string?> SwitchToIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
+    public async Task<string?> SwitchToIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabIssue);
-        return _issueDrawerService.SwitchToIssueDrawerAsync(templateId, Templates, notifyStateChanged);
+        return await _issueDrawerService.SwitchToIssueDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
-    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
     {
         var templateId = _issueDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
-        return _issueDrawerService.DispatchFromIssueDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
+        if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
+        return await _issueDrawerService.DispatchFromIssueDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
     }
 
     // ── PR drawer orchestration ──
@@ -460,6 +483,7 @@ public class AgentCodingPageService
     // ArgumentException.ThrowIfNullOrEmpty. Non-UI callers must use `TemplateId?` and null-check first.
     public async Task<string?> OpenPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
         // Refresh the active-work-item set before opening, exactly as OpenIssueDrawerAsync does.
@@ -475,17 +499,19 @@ public class AgentCodingPageService
 
     public async Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabPr);
         await RefreshActiveIssuesAsync();
         return await _prReviewDrawerService.SwitchToPrDrawerAsync(templateId, Templates, notifyStateChanged);
     }
 
-    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
     {
         var templateId = _prReviewDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
-        return _prReviewDrawerService.DispatchFromPrDrawerAsync(pr, IssueProviders, RepoProviders, parentProject);
+        if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
+        return await _prReviewDrawerService.DispatchFromPrDrawerAsync(pr, IssueProviders, RepoProviders, parentProject);
     }
 
     // ── Epic drawer orchestration ──
@@ -493,6 +519,7 @@ public class AgentCodingPageService
     // TODO: Same contract note as OpenPrDrawerAsync — passing an empty string will throw.
     public async Task<string?> OpenEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabEpic);
         return await _epicDrawerService.OpenEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
@@ -500,22 +527,52 @@ public class AgentCodingPageService
 
     public void CloseEpicDrawer() => _epicDrawerService.CloseEpicDrawer();
 
-    public Task<string?> SwitchToEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
+    public async Task<string?> SwitchToEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
+        if (await DeniedForTemplateAsync(AccessRole.ReadOnly, templateId) is { } denied) return denied;
         PropagateProviderContext();
         HideOtherDrawers(DrawerTabEpic);
-        return _epicDrawerService.SwitchToEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
+        return await _epicDrawerService.SwitchToEpicDrawerAsync(templateId, Templates, Projects, notifyStateChanged);
     }
 
-    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
     {
         var templateId = _epicDrawerService.DrawerState.Template?.Id;
         var parentProject = string.IsNullOrEmpty(templateId) ? null : GetParentProject(templateId);
-        return _epicDrawerService.DispatchFromEpicDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
+        if (await DeniedAsync(AccessRole.Operator, parentProject?.Id) is { } denied) return (false, denied, null);
+        return await _epicDrawerService.DispatchFromEpicDrawerAsync(issue, IssueProviders, RepoProviders, parentProject);
     }
 
     // ── Helpers ──
 
+    /// <summary>Only readable projects are kept, so a template of any other project has no parent here.</summary>
     public PipelineProject? GetParentProject(TemplateId templateId) =>
         Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId.Value));
+
+    /// <summary>Whether the signed-in user may dispatch work of this template (operator on its project).</summary>
+    public bool CanDispatch(TemplateId templateId) => _access.CanOperate(GetParentProject(templateId)?.Id);
+
+    private async Task LoadProjectsAsync() =>
+        Projects = (await _configClient.GetProjectsAsync(CancellationToken.None)).Where(p => _access.CanRead(p.Id)).ToList();
+
+    /// <summary>Spec 049 Req 7.3: the denial message, or null when the user holds <paramref name="role"/>.</summary>
+    private async Task<string?> DeniedAsync(AccessRole role, string? projectId = null, [CallerMemberName] string action = "")
+    {
+        try
+        {
+            await _guard.DemandAsync(role, projectId, action);
+            return null;
+        }
+        catch (AccessDeniedException)
+        {
+            return AccessDeniedException.UserMessage;
+        }
+    }
+
+    /// <summary>
+    /// The template ID comes from the browser (Req 7.4). A template of an unreadable project has no
+    /// parent in <see cref="Projects"/>, so the check falls back to the global role and fails for scoped users.
+    /// </summary>
+    private Task<string?> DeniedForTemplateAsync(AccessRole role, TemplateId templateId, [CallerMemberName] string action = "") =>
+        DeniedAsync(role, GetParentProject(templateId)?.Id, action);
 }

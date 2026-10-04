@@ -1,0 +1,207 @@
+# helm unittest suite for user authentication (Spec 049).
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Covers:
+#   1. auth.json ConfigMap: non-secret values only, bindings passed through
+#   2. Web deployment: admin password and OIDC client secret as secretKeyRef env vars
+#   3. Web deployment: auth.json mounted, checksum/auth annotation on the pod template
+#   4. Secret-init hook: admin password generated in <fullname>-admin
+
+suite: authentication values
+
+templates:
+  - templates/web-auth-configmap.yaml
+  - templates/web-deployment.yaml
+  - templates/secret-init-job.yaml
+  - templates/secret-init-rbac.yaml
+
+# Required values to avoid render failures in dependent templates
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  signalr.redis.connectionString: "redis:6379"
+  scheduler.dispatch.enabled: true
+
+tests:
+
+  # ── ConfigMap ─────────────────────────────────────────────────────────────
+  - it: renders the default auth.json without secrets
+    template: templates/web-auth-configmap.yaml
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - matchRegex:
+          path: data["auth.json"]
+          pattern: '"sessionDuration": "12h"'
+      - matchRegex:
+          path: data["auth.json"]
+          pattern: '"enabled": true'
+      - notMatchRegex:
+          path: data["auth.json"]
+          pattern: 'existingSecret|clientSecret|password'
+
+  - it: passes role bindings through to auth.json
+    template: templates/web-auth-configmap.yaml
+    set:
+      auth.rbac.defaultRole: readonly
+      auth.rbac.bindings:
+        - group: team-a
+          role: operator
+          project: payments
+    asserts:
+      - matchRegex:
+          path: data["auth.json"]
+          pattern: '"defaultRole": "readonly"'
+      - matchRegex:
+          path: data["auth.json"]
+          pattern: '"group": "team-a"'
+      - matchRegex:
+          path: data["auth.json"]
+          pattern: '"project": "payments"'
+
+  - it: keeps the OIDC client secret out of auth.json
+    template: templates/web-auth-configmap.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://kc.example.com/realms/acme
+      auth.oidc.clientId: coding-agent
+      auth.oidc.clientSecret.existingSecret: oidc-secret
+    asserts:
+      - matchRegex:
+          path: data["auth.json"]
+          pattern: '"issuer": "https://kc.example.com/realms/acme"'
+      - notMatchRegex:
+          path: data["auth.json"]
+          pattern: 'oidc-secret'
+
+  # ── Web deployment ────────────────────────────────────────────────────────
+  - it: injects the generated admin password as a secretKeyRef
+    template: templates/web-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Auth__Admin__Password
+            valueFrom:
+              secretKeyRef:
+                name: RELEASE-NAME-coding-agent-automation-admin
+                key: password
+
+  - it: uses an existing admin Secret and key
+    template: templates/web-deployment.yaml
+    set:
+      auth.admin.existingSecret: my-admin
+      auth.admin.existingSecretKey: pw
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Auth__Admin__Password
+            valueFrom:
+              secretKeyRef:
+                name: my-admin
+                key: pw
+
+  - it: injects the OIDC client secret and no admin password when only OIDC is enabled
+    template: templates/web-deployment.yaml
+    set:
+      auth.admin.enabled: false
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://kc.example.com/realms/acme
+      auth.oidc.clientId: coding-agent
+      auth.oidc.clientSecret.existingSecret: oidc-secret
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Auth__Oidc__ClientSecret
+            valueFrom:
+              secretKeyRef:
+                name: oidc-secret
+                key: client-secret
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: Auth__Admin__Password
+          any: true
+
+  - it: mounts auth.json and annotates the pod with its checksum
+    template: templates/web-deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: auth-config
+            mountPath: /app/config/auth.json
+            subPath: auth.json
+            readOnly: true
+      - exists:
+          path: spec.template.metadata.annotations["checksum/auth"]
+
+  # ── Secret-init hook: admin password ──────────────────────────────────────
+  - it: generates the admin password even when the agent key is explicit
+    template: templates/secret-init-job.yaml
+    set:
+      secrets.agentApiKey: explicit
+    asserts:
+      - hasDocuments:
+          count: 1
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "create secret generic RELEASE-NAME-coding-agent-automation-admin"
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--from-literal=password="
+      - notMatchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "agent-api-key"
+
+  - it: generates both secrets on a fresh install
+    template: templates/secret-init-job.yaml
+    set:
+      secrets.agentApiKey: ""
+      existingSecret: ""
+    asserts:
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "--from-literal=agent-api-key="
+      - matchRegex:
+          path: spec.template.spec.containers[0].command[2]
+          pattern: "RELEASE-NAME-coding-agent-automation-admin"
+
+  - it: skips the hook when both secrets are supplied
+    template: templates/secret-init-job.yaml
+    set:
+      secrets.agentApiKey: explicit
+      auth.admin.existingSecret: my-admin
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: skips the admin password when the local admin is disabled
+    template: templates/secret-init-job.yaml
+    set:
+      secrets.agentApiKey: explicit
+      auth.admin.enabled: false
+      # OIDC as the remaining login method; the chart refuses to render without one.
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://kc.example.com/realms/acme
+      auth.oidc.clientId: coding-agent
+      auth.oidc.clientSecret.existingSecret: oidc-secret
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: lets the hook read the admin Secret it manages
+    template: templates/secret-init-rbac.yaml
+    set:
+      secrets.agentApiKey: explicit
+    asserts:
+      - contains:
+          path: rules[0].resourceNames
+          content: RELEASE-NAME-coding-agent-automation-admin
+        documentIndex: 1
+      - notContains:
+          path: rules[0].resourceNames
+          content: RELEASE-NAME-coding-agent-automation
+        documentIndex: 1

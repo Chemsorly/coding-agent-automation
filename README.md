@@ -27,6 +27,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder:
 8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
 9. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
 10. [Deployment](docs/deployment.md) — Helm chart, Kubernetes setup, scaling agents, local development
+    - [Authentication](docs/authentication.md) — Sign-in (OIDC, local admin) and role bindings
 11. [Bootstrap](docs/bootstrap.md) — Migrating config from an existing instance, fresh-install setup
 12. [HTTP API Reference](docs/api-reference.md) — REST endpoints, authentication, request/response examples
 
@@ -169,7 +170,7 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set jobController.enabled=true
 ```
 
-Open the orchestrator URL in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service).
+Open the web UI in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service) and sign in as `admin` with the password from the `<release>-coding-agent-automation-admin` Secret. See [Authentication](docs/authentication.md) to connect Keycloak or Entra ID and bind roles.
 
 ### First-Time Setup
 

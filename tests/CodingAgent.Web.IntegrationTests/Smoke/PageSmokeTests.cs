@@ -1,10 +1,11 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using CodingAgent.Web.IntegrationTests.Helpers;
 
 namespace CodingAgent.Web.IntegrationTests.Smoke;
 
 [Collection("SmokeTests")]
-public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
+public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>, IAsyncLifetime
 {
     // The rendered <base href> value.
     [GeneratedRegex("<base href=\"([^\"]*)\"")]
@@ -14,17 +15,26 @@ public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
     [GeneratedRegex("<(?:link rel=\"stylesheet\" href|script src)=\"([^\"]+)\"")]
     private static partial Regex AssetReferencePattern();
 
-    private readonly HttpClient _client;
-    private readonly HttpClient _clientNoRedirect;
+    private readonly CustomWebApplicationFactory _factory;
+    private HttpClient _client = default!;
+    private HttpClient _clientNoRedirect = default!;
 
     public PageSmokeTests(CustomWebApplicationFactory factory)
     {
-        _client = factory.CreateClient();
-        _clientNoRedirect = factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
+        _factory = factory;
+    }
+
+    public async Task InitializeAsync()
+    {
+        // Spec 049: pages require a signed-in user.
+        _client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
+        _clientNoRedirect = _factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
     }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Theory]
     [InlineData("/agent-coding")]

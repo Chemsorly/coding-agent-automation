@@ -1,4 +1,5 @@
 @page "/consolidation"
+@attribute [Authorize(Policy = AccessPolicies.GlobalRead)]
 @layout CockpitLayout
 @implements IDisposable
 @using CodingAgent.Api.Client
@@ -14,6 +15,8 @@
 @inject IPipelineApiWorkItemClient WorkItems
 @inject IPipelineApiRunHistoryClient RunHistoryClient
 @inject IAgentHubConnection HubConnection
+@inject CurrentAccess Access
+@inject IAccessGuard Guard
 
 <PageTitle>Consolidation - Coding Agent</PageTitle>
 
@@ -106,7 +109,8 @@
                         </div>
 
                         <div class="consolidation-card-actions">
-                            @if (supportsBrain)
+                            @* Spec 049: consolidation runs need global operator. *@
+                            @if (supportsBrain && Access.HasGlobalOperate)
                             {
                                 <button class="btn-trigger" disabled="@(brainReadOnly || IsRunning(ConsolidationRunType.BrainConsolidation, template.Id))"
                                         title="@(brainReadOnly ? BrainReadOnlyHint : null)"
@@ -114,7 +118,7 @@
                                     <Icon Name="brain" Size="14" /> Brain Consolidation
                                 </button>
                             }
-                            @if (supportsRefactoring)
+                            @if (supportsRefactoring && Access.HasGlobalOperate)
                             {
                                 <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.RefactoringDetection, template.Id)"
                                         @onclick="() => OpenRefactoringModal(template.Id, template.Name)">
@@ -164,12 +168,15 @@
                 </div>
             }
         }
-        <div class="consolidation-card-actions" style="margin-top: 12px;">
-            <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
-                    @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
-                <Icon Name="sparkles" Size="14" /> Generate Suggestions
-            </button>
-        </div>
+        @if (Access.HasGlobalOperate)
+        {
+            <div class="consolidation-card-actions" style="margin-top: 12px;">
+                <button class="btn-trigger" disabled="@(_isLoading || IsRunning(ConsolidationRunType.HarnessSuggestions, null))"
+                        @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
+                    <Icon Name="sparkles" Size="14" /> Generate Suggestions
+                </button>
+            </div>
+        }
     </section>
 
     <!-- Run History -->
@@ -415,7 +422,7 @@
                 page: 1, pageSize: 200, feedbackOnly: false, includeActive: true,
                 runType: PipelineRunType.Consolidation, ct: CancellationToken.None);
             _runHistory = result.Items;
-            _anyRunCancellable = _runHistory.Any(r => r.WorkItemId.HasValue && r.CompletedAtOffset == null);
+            _anyRunCancellable = Access.HasGlobalOperate && _runHistory.Any(r => r.WorkItemId.HasValue && r.CompletedAtOffset == null);
         }
         catch (Exception ex)
         {
@@ -568,6 +575,7 @@
 
         try
         {
+            await Guard.DemandAsync(AccessRole.Operator, null, "TriggerConsolidation");
             TemplateId? typedTemplateId = !string.IsNullOrEmpty(templateId)
                 ? (TemplateId)templateId
                 : (TemplateId?)null;
@@ -591,6 +599,11 @@
                 _statusMessage = $"{FormatRunType(type)} queued — waiting for an idle agent.";
                 await LoadDataAsync();
             }
+        }
+        catch (AccessDeniedException)
+        {
+            _statusMessage = AccessDeniedException.UserMessage;
+            _statusIsError = true;
         }
         catch (Exception ex)
         {
@@ -621,9 +634,15 @@
 
         try
         {
+            await Guard.DemandAsync(AccessRole.Operator, null, "CancelConsolidationRun");
             await WorkItems.PostStatusAsync(run.WorkItemId.Value, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, CancellationToken.None);
             _statusMessage = "Queued run cancelled.";
             _statusIsError = false;
+        }
+        catch (AccessDeniedException)
+        {
+            _statusMessage = AccessDeniedException.UserMessage;
+            _statusIsError = true;
         }
         catch (Exception ex)
         {

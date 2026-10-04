@@ -154,6 +154,59 @@ secrets:
 # (e.g. synced by external-secrets next to opencode-config-content).
 existingSecret: ""
 
+# ── Authentication and roles (Spec 049) ──────────────────────────────────────
+# The web UI requires a signed-in user. Sign-in is through one OIDC identity provider
+# (Keycloak, Entra ID, ...) and/or the local "admin" account. Roles are bound to OIDC groups or
+# users below, ArgoCD style. See docs/authentication.md.
+# OIDC needs the UI at the root of its own host (web.ingress); the Rancher proxy / web.env.basePath
+# is not supported once authentication is on.
+auth:
+  # Fixed session lifetime without sliding renewal: "<n>h", "<n>m" or a TimeSpan ("1.00:00:00").
+  sessionDuration: 12h
+  # Local admin login attempts allowed per client IP per minute.
+  loginRateLimitPerMinute: 5
+
+  admin:
+    # Break-glass account "admin"; always a global admin. Disable it once OIDC works.
+    enabled: true
+    # Empty: the secret-init hook creates <fullname>-admin with a random 64-character password
+    # (key "password") once and keeps it across upgrades. Read it with:
+    #   kubectl get secret <release>-coding-agent-automation-admin -n <ns> -o jsonpath='{.data.password}' | base64 -d
+    existingSecret: ""
+    existingSecretKey: password
+
+  oidc:
+    enabled: false
+    # Label of the login button: "Sign in with <name>".
+    name: SSO
+    # Keycloak: https://<host>/realms/<realm>    Entra ID: https://login.microsoftonline.com/<tenant-id>/v2.0
+    issuer: ""
+    clientId: ""
+    # The client secret is read from an existing Secret (required when enabled).
+    clientSecret:
+      existingSecret: ""
+      key: client-secret
+    scopes: [openid, profile, email]
+    # Keycloak: preferred_username. Entra ID: preferred_username (UPN) or email.
+    usernameClaim: preferred_username
+    # Keycloak: "groups" (Group Membership mapper, "Add to ID token" on).
+    # Entra ID: "groups" (group object IDs) or "roles" (app roles).
+    groupsClaim: groups
+
+  rbac:
+    # Role of every signed-in user without a matching binding: "" (no access), readonly or operator.
+    defaultRole: ""
+    # Roles: readonly < operator < admin. A binding names a group or a user; with "project" (the
+    # project name) it applies to that project only. admin can only be bound globally.
+    bindings: []
+    # - group: platform-team
+    #   role: admin
+    # - group: 6f1c2a9e-0000-0000-0000-000000000000   # Entra ID group object ID
+    #   role: operator
+    #   project: payments-api
+    # - user: alice@example.com
+    #   role: readonly
+
 # ── Secret Initialization Hook ───────────────────────────────────────────────
 # Controls the pre-install/pre-upgrade hook Job that auto-generates the agent-api-key
 # Secret on first install when secrets.agentApiKey is not set explicitly.

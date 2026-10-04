@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Bunit;
+using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Orchestration.Registry;
@@ -69,6 +70,9 @@ public class CockpitLayoutComponentTests : BunitContext
 
         // JS runtime — shared mock; configure per-test for specific return values.
         Services.AddSingleton<IJSRuntime>(_mockJs.Object);
+
+        // Spec 049: the layout renders by access; global admin keeps every link and control.
+        Services.AddTestAccess();
     }
 
     [Fact]

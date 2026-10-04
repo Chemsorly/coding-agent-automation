@@ -1,3 +1,4 @@
+using CodingAgent.Web.Auth;
 using CodingAgent.Web.Components;
 using CodingAgent.AgentGateway;
 using CodingAgent.Pipeline;
@@ -17,6 +18,9 @@ internal static class EndpointRegistration
     /// </summary>
     public static WebApplication MapApplicationEndpoints(this WebApplication app)
     {
+        // First, so the OIDC redirect URI and the Secure cookie flag see the client's https.
+        app.UseForwardedHeaders();
+
         // Kubernetes-style health probes — anonymous, no auth required
         app.MapHealthEndpoints();
 
@@ -69,10 +73,15 @@ internal static class EndpointRegistration
         }).RequireAuthorization("AgentApiKey");
 
         app.UseStaticFiles();
-        app.MapStaticAssets();
+        app.MapStaticAssets().AllowAnonymous();
 
+        // Spec 049: every other endpoint requires a signed-in user (fallback policy). Order:
+        // rate limiter (login), authentication, authorization, then antiforgery for form posts.
+        app.UseRateLimiter();
         app.UseAuthentication();
         app.UseAuthorization();
+        app.UseAntiforgery();
+        app.MapAuthEndpoints();
 
         // Hub reference RETAINED: AgentChat.razor injects IHubContext<AgentHub, IAgentHubClient>
         // and RegisterJobDispatching wires SignalRAgentCommunication. Both require the Hub library
@@ -84,8 +93,7 @@ internal static class EndpointRegistration
         // Config import/export endpoints now served by CodingAgent.Api.
 
         app.MapRazorComponents<App>()
-            .AddInteractiveServerRenderMode()
-            .DisableAntiforgery();
+            .AddInteractiveServerRenderMode();
 
         return app;
     }

@@ -543,6 +543,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", "false");
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+        CodingAgent.Web.IntegrationTests.Helpers.AuthTestEnvironment.Apply();
         // Spec 045: PipelineApi:BaseUrl is required after Task 2 fast-fail was added.
         Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", "http://localhost:9999");
     }
@@ -558,6 +559,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         Environment.SetEnvironmentVariable("Database__MigrateOnStartup", null);
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", null);
         Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
+        CodingAgent.Web.IntegrationTests.Helpers.AuthTestEnvironment.Clear();
         Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", null);
     }
 
