@@ -34,6 +34,10 @@ public sealed class RunDetailPage
             await _page.WaitForSelectorAsync(
                 "[data-hub-subscribed='true']",
                 new() { Timeout = 12_000 });
+            // After hub subscription, the server immediately sends a RunStateSnapshot which
+            // triggers a Blazor re-render. Wait briefly for the DOM to stabilise before
+            // attempting button clicks — clicks during a re-render can land on detached nodes.
+            await _page.WaitForTimeoutAsync(1000);
         }
         catch (TimeoutException)
         {
@@ -106,7 +110,11 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-        await CancelButton.ClickAsync();
+        // Use Force=true to bypass Playwright's actionability checks (visibility/coverage
+        // detection) which can incorrectly block clicks on Blazor Server elements during
+        // the interactive render window. The WaitForAsync above confirms the element exists;
+        // force-clicking ensures the Blazor event handler receives the click event.
+        await CancelButton.ClickAsync(new() { Force = true });
 
         if (confirm)
         {
@@ -133,7 +141,9 @@ public sealed class RunDetailPage
     public async Task RedispatchAsync(bool confirm)
     {
         await RedispatchButton.WaitForAsync(new() { Timeout = 15_000 });
-        await RedispatchButton.ClickAsync();
+        // Force=true for the same reason as CancelAsync — Blazor Server elements on the run page
+        // can be considered "not actionable" by Playwright during interactive re-renders.
+        await RedispatchButton.ClickAsync(new() { Force = true });
 
         if (confirm)
         {

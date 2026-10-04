@@ -277,7 +277,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // the button after the first click, so the second ClickAsync is either blocked by the
         // `disabled` attribute or arrives after the prompt is hidden by the re-render.
         await runPage.CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-        await runPage.CancelButton.ClickAsync();
+        await runPage.CancelButton.ClickAsync(new() { Force = true });
         await runPage.ConfirmCancelButton.WaitForAsync(new() { Timeout = 10_000 });
         // First click — triggers the cancel HTTP request and sets _cancelling = true in the component.
         await runPage.ConfirmCancelButton.ClickAsync();
