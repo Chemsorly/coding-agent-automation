@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.Agent.Executors;
+using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Moq;
@@ -150,9 +151,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
 
@@ -443,7 +442,9 @@ public class RefactoringExecutorTests : IDisposable
         body.Should().NotContain("**Risk:**");
         body.Should().NotContain("**Technique:**");
         body.Should().NotContain("## Prerequisites");
-        body.Should().Contain("## Summary");
+        body.Should().NotContain("## Scope");
+        body.Should().NotContain("## Evidence");
+        body.Should().Contain("## Problem");
         body.Should().Contain("## Affected Components");
     }
 
@@ -666,9 +667,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
 
@@ -714,9 +713,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
 
@@ -874,9 +871,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
 
@@ -959,9 +954,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
 
@@ -1018,9 +1011,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
-                var agentDir = Path.Combine(path, ".agent");
-                Directory.CreateDirectory(agentDir);
-                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
             })
             .Returns(Task.CompletedTask);
 
@@ -1332,5 +1323,316 @@ public class RefactoringExecutorTests : IDisposable
         result.ErrorMessage.Should().Contain("InvalidOperationException");
         result.Summary.Should().Contain("InvalidOperationException");
         (result.CreatedIssues is null || result.CreatedIssues.Count == 0).Should().BeTrue();
+    }
+
+    // ── Proposal validation before issue creation ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalFailsValidation_IsNotFiledAndSummaryCountsIt()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Correct the stale note in the conventions file",
+                    "affectedFiles": [".agent/refactoring-conventions.json"],
+                    "description": "Update the note.",
+                    "rationale": "It is stale."
+                },
+                {
+                    "title": "Remove dead helper",
+                    "category": "dead-code",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Delete it.",
+                    "rationale": "No callers."
+                }
+            ]
+            """);
+
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "7", Url = "https://github.com/test/repo/issues/7" });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Summary.Should().Be("Created 1 refactoring issue(s): #7 (1 proposal(s) dropped by validation)");
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(It.Is<string>(t => t.Contains("conventions file")), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ProposalDuplicatesOpenIssueTitle_IsNotFiled()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        var openIssues = new PagedResult<IssueSummary>
+        {
+            Items = [new IssueSummary { Identifier = "300", Title = "Remove dead helper", Labels = [], CreatedAt = DateTime.UtcNow.AddDays(-90) }],
+            Page = 1,
+            PageSize = 50,
+            HasMore = false
+        };
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(openIssues);
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Remove dead helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Delete it.",
+                    "rationale": "No callers."
+                }
+            ]
+            """);
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // An open issue older than the 30-day prompt window still blocks a duplicate
+        result.Success.Should().BeTrue();
+        result.Summary.Should().Contain("No refactoring opportunities identified");
+        result.Summary.Should().Contain("1 proposal(s) dropped by validation");
+        _mockIssueProvider.Verify(
+            x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WritesIssueContextFileForTheReviewStep()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        var openIssues = new PagedResult<IssueSummary>
+        {
+            Items = [new IssueSummary { Identifier = "100", Title = "Extract retry logic", Labels = ["agent:generated"], CreatedAt = DateTime.UtcNow }],
+            Page = 1,
+            PageSize = 30,
+            HasMore = false
+        };
+        _mockIssueProvider
+            .Setup(x => x.ListOpenIssuesAsync(1, 30, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(openIssues);
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        string? contextAtAggregation = null;
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                var path = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringIssueContextFilePath);
+                if (File.Exists(path))
+                    contextAtAggregation = File.ReadAllText(path);
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        contextAtAggregation.Should().NotBeNull();
+        contextAtAggregation.Should().Contain("#100 \"Extract retry logic\"");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_EvidenceAndScopeQueryWrittenAsArrays_AreJoinedInsteadOfFailingTheParse()
+    {
+        var executor = CreateExecutor();
+        var job = CreateJob();
+        SetupEmptyClosedIssues();
+        SetupProposalsFile("""
+            [
+                {
+                    "title": "Stop swallowing cancellation",
+                    "category": "bug",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Add the filter.",
+                    "rationale": "Cancellation is logged as a failure.",
+                    "evidence": ["src/A.cs:L10", "catch (Exception ex)"],
+                    "scopeQuery": ["git grep -n 'catch (Exception ex)' -- src/A.cs"]
+                }
+            ]
+            """);
+
+        string? capturedBody = null;
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "8", Url = "https://github.com/test/repo/issues/8" });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        capturedBody!.ReplaceLineEndings("\n").Should().Contain("```\nsrc/A.cs:L10\ncatch (Exception ex)\n```");
+        capturedBody.Should().Contain("git grep -n 'catch (Exception ex)' -- src/A.cs");
+    }
+
+    // ── Issue body format ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void FormatIssueBody_PutsProblemFromRationaleBeforeApproachFromDescription()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "THE-CHANGE",
+            Rationale = "THE-PROBLEM"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        var problem = body.IndexOf("## Problem", StringComparison.Ordinal);
+        var approach = body.IndexOf("## Suggested Approach", StringComparison.Ordinal);
+        problem.Should().BeGreaterThanOrEqualTo(0);
+        approach.Should().BeGreaterThan(problem);
+        body.IndexOf("THE-PROBLEM", StringComparison.Ordinal).Should().BeInRange(problem, approach);
+        body.IndexOf("THE-CHANGE", StringComparison.Ordinal).Should().BeGreaterThan(approach);
+    }
+
+    [Fact]
+    public void FormatIssueBody_RendersCategoryInMetadataLine()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Remove dead code",
+            AffectedFiles = ["src/A.cs"],
+            Description = "d",
+            Rationale = "r",
+            Category = "dead-code",
+            EstimatedEffort = "small"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("**Category:** dead-code | **Effort:** small");
+    }
+
+    [Fact]
+    public void FormatIssueBody_RendersEvidenceVerbatimInAFenceItCannotClose()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix",
+            AffectedFiles = ["src/A.cs"],
+            Description = "d",
+            Rationale = "r",
+            Evidence = "src/A.cs:L10\nif (x < 0) { /* ``` */ }",
+            EvidenceSources = ["usage-search:Foo<T>:0-callers"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal).ReplaceLineEndings("\n");
+
+        body.Should().Contain("## Evidence");
+        body.Should().Contain("````\nsrc/A.cs:L10\nif (x < 0) { /* ``` */ }\n````");
+        // Code spans render literally, so no HTML escaping that would show up as "&lt;"
+        body.Should().Contain("- `usage-search:Foo<T>:0-callers`");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithScopeQuery_RendersScopeSection()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix",
+            AffectedFiles = ["src/A.cs"],
+            Description = "d",
+            Rationale = "r",
+            ScopeQuery = "git grep -n 'catch (Exception ex)' -- src"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal).ReplaceLineEndings("\n");
+
+        body.Should().Contain("## Scope");
+        body.Should().Contain("```sh\ngit grep -n 'catch (Exception ex)' -- src\n```");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithCommitSha_NamesTheAnalyzedCommit()
+    {
+        var proposal = new RefactoringProposal { Title = "Fix", AffectedFiles = ["src/A.cs"], Description = "d", Rationale = "r" };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "0123456789abcdef0123");
+
+        body.Should().EndWith(
+            "*This issue was automatically generated by the refactoring detection consolidation loop at commit `0123456789ab`. Line numbers refer to that commit.*");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithoutCommitSha_KeepsThePlainFooter()
+    {
+        var proposal = new RefactoringProposal { Title = "Fix", AffectedFiles = ["src/A.cs"], Description = "d", Rationale = "r" };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().EndWith("*This issue was automatically generated by the refactoring detection consolidation loop.*");
+    }
+
+    [Fact]
+    public void FormatIssueBody_BugWithoutCriteria_DefaultsToAReproductionTestNotUnchangedBehavior()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix null dereference",
+            AffectedFiles = ["src/A.cs"],
+            Description = "d",
+            Rationale = "r",
+            Category = "bug"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] A test reproduces the failure described under Problem and passes after the fix");
+        body.Should().NotContain("without changing observable behavior");
+    }
+
+    // ── Hotspot input ─────────────────────────────────────────────────────────────────────────
+
+    [Theory]
+    [InlineData(".agent/hotspot-analysis.txt")]
+    [InlineData(".brain/projects/x/SKILL.md")]
+    [InlineData("docs/configuration.md")]
+    [InlineData("src/web/package-lock.json")]
+    [InlineData("src/App/packages.lock.json")]
+    [InlineData("poetry.lock")]
+    public void ParseHotspotOutput_LeavesOutFilesWhoseChurnSaysNothingAboutCode(string excluded)
+    {
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput = $"COMMIT_DATE:2026-07-19 12:00:00 +0000\n{excluded}\n{excluded}\nsrc/Kept.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+
+        result.Should().Contain("src/Kept.cs");
+        result.Should().NotContain(excluded);
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_WithExistenceCheck_LeavesOutDeletedFiles()
+    {
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput = "COMMIT_DATE:2026-07-19 12:00:00 +0000\nsrc/Deleted.cs\nsrc/Deleted.cs\nsrc/Kept.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(
+            gitOutput, TimeSpan.FromDays(90), referenceTime, fileExists: f => f != "src/Deleted.cs");
+
+        result.Should().Contain("src/Kept.cs");
+        result.Should().NotContain("src/Deleted.cs");
+    }
+
+    [Fact]
+    public void FormatRefactoringSummary_WithDroppedProposals_AppendsTheCount()
+    {
+        var summary = RefactoringExecutor.FormatRefactoringSummary([], proposalCount: 0, droppedCount: 2);
+
+        summary.Should().Be("No refactoring opportunities identified (2 proposal(s) dropped by validation)");
     }
 }

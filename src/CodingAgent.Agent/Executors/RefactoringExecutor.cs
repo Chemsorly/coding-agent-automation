@@ -39,7 +39,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// 5. Phase 2: Aggregation + prioritization → produces proposals JSON
     /// 6. If no proposals: return success
     /// 7. Adversarial review (if enabled)
-    /// 8. Create GitHub issues (capped at MaxRefactoringProposals)
+    /// 8. Validate proposals (<see cref="RefactoringProposalValidator"/>), create GitHub issues (capped at MaxRefactoringProposals)
     /// 9. Return summary
     /// </summary>
     public async Task<ConsolidationJobResult> ExecuteAsync(
@@ -81,16 +81,22 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             });
 
             // 2b. Query open issues for deduplication context
-            var issueContext = await TryBuildIssueContextAsync(issueProvider, job.JobId, ct);
+            var (issueContext, openIssueTitles) = await TryBuildIssueContextAsync(issueProvider, job.JobId, ct);
 
             // 2c. Query past proposal outcomes for feedback context
-            var outcomeContext = await TryBuildOutcomeContextAsync(issueProvider, job.PipelineConfiguration, job.JobId, ct);
+            var (outcomeContext, closedIssueTitles) = await TryBuildOutcomeContextAsync(issueProvider, job.PipelineConfiguration, job.JobId, ct);
+
+            // 2d. Write both for the review step, which checks overlap too
+            await TryWriteIssueContextFileAsync(workspacePath, issueContext, outcomeContext, job.JobId, ct);
+
+            var commitSha = await TryGetHeadCommitAsync(workspacePath, ct);
 
             // ── Phased Refactoring Detection ──
             var phasedResult = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, ct);
             if (!phasedResult.Success) return phasedResult;
 
-            return await FinalizeProposalsAsync(job, agentProvider, issueProvider, workspacePath, onOutputLine, ct);
+            return await FinalizeProposalsAsync(
+                job, agentProvider, issueProvider, workspacePath, [.. openIssueTitles, .. closedIssueTitles], commitSha, onOutputLine, ct);
         }, ct);
     }
 
@@ -108,7 +114,12 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         }
     }
 
-    private async Task<string?> TryBuildIssueContextAsync(IIssueProvider issueProvider, string jobId, CancellationToken ct)
+    /// <summary>
+    /// Builds the open-issue section of the aggregation prompt. Also returns the titles of every open issue
+    /// it read, recent or not, so issue creation can reject a proposal that duplicates one of them.
+    /// </summary>
+    private async Task<(string? Context, IReadOnlyList<string> Titles)> TryBuildIssueContextAsync(
+        IIssueProvider issueProvider, string jobId, CancellationToken ct)
     {
         try
         {
@@ -125,16 +136,21 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             if (!string.IsNullOrEmpty(context))
                 Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
                     openRefactoringIssues.Count + recentOpenIssues.Count, jobId);
-            return context;
+            var titles = openRefactoringIssues.Concat(allOpenResult.Items).Select(i => i.Title).ToList();
+            return (context, titles);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", jobId);
-            return null;
+            return (null, []);
         }
     }
 
-    private async Task<string> TryBuildOutcomeContextAsync(
+    /// <summary>
+    /// Builds the past-outcome section of the aggregation prompt. Also returns the titles of the closed
+    /// issues it read, so issue creation can reject a proposal that re-files one of them.
+    /// </summary>
+    private async Task<(string Context, IReadOnlyList<string> Titles)> TryBuildOutcomeContextAsync(
         IIssueProvider issueProvider, PipelineConfiguration config, string jobId, CancellationToken ct)
     {
         try
@@ -142,12 +158,54 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             var since = DateTime.UtcNow - config.RefactoringOutcomeLookback;
             var closedResult = await issueProvider.ListClosedIssuesAsync(
                 page: 1, pageSize: 20, labels: new[] { AgentLabels.Generated }, since: since, ct);
-            return ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedResult.Items);
+            var titles = closedResult.Items.Select(i => i.Title).ToList();
+            return (ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedResult.Items), titles);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", jobId);
-            return string.Empty;
+            return (string.Empty, []);
+        }
+    }
+
+    /// <summary>
+    /// Writes the open-issue and past-outcome context to the workspace so the review step, which runs in
+    /// its own session without the aggregation prompt, can check proposals for overlap.
+    /// </summary>
+    private async Task TryWriteIssueContextFileAsync(
+        string workspacePath, string? issueContext, string outcomeContext, string jobId, CancellationToken ct)
+    {
+        var content = (issueContext ?? string.Empty) + outcomeContext;
+        if (string.IsNullOrWhiteSpace(content))
+            return;
+
+        try
+        {
+            var path = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringIssueContextFilePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            await File.WriteAllTextAsync(path, content, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to write the issue context file in run {RunId}, the review cannot check overlap", jobId);
+        }
+    }
+
+    /// <summary>
+    /// Returns the commit the analysis runs against, so issues can say which commit their line numbers
+    /// refer to. Returns <c>null</c> when it cannot be read.
+    /// </summary>
+    private async Task<string?> TryGetHeadCommitAsync(string workspacePath, CancellationToken ct)
+    {
+        try
+        {
+            var sha = (await RunGitCommandAsync(workspacePath, "rev-parse HEAD", ct)).Trim();
+            return sha.Length > 0 ? sha : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Could not read the analyzed commit, issues will not name it");
+            return null;
         }
     }
 
@@ -283,6 +341,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         IAgentProvider agentProvider,
         IIssueProvider issueProvider,
         string workspacePath,
+        IReadOnlyList<string> existingIssueTitles,
+        string? commitSha,
         Action<string>? onOutputLine,
         CancellationToken ct)
     {
@@ -340,17 +400,28 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             }
         }
 
+        // Deterministic checks the prompts cannot guarantee (paths, scope, category, duplicates)
+        var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(proposals, workspacePath, existingIssueTitles);
+        foreach (var rejection in rejectedProposals)
+        {
+            Logger.Warning("Dropped refactoring proposal '{Title}' in run {RunId}: {Reason}",
+                rejection.Proposal.Title, job.JobId, rejection.Reason);
+        }
+
         // Create GitHub issues (capped at MaxRefactoringProposals)
         var (createdIssues, firstFailureHint) = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
         {
             activity?.SetTag("pipeline.proposal_count", proposals.Count);
-            return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, ct);
+            activity?.SetTag("pipeline.rejected_proposal_count", rejectedProposals.Count);
+            return await CreateIssuesAsync(
+                validProposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, commitSha, ct);
         });
 
-        var summary = FormatRefactoringSummary(createdIssues, proposals.Count, firstFailureHint);
+        var attemptedCount = Math.Min(validProposals.Count, job.PipelineConfiguration.MaxRefactoringProposals);
+        var summary = FormatRefactoringSummary(createdIssues, attemptedCount, firstFailureHint, rejectedProposals.Count);
         Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
 
-        var allFailed = createdIssues.Count == 0 && proposals.Count > 0;
+        var allFailed = createdIssues.Count == 0 && attemptedCount > 0;
         return new ConsolidationJobResult
         {
             JobId = job.JobId,
@@ -379,7 +450,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             var sinceDate = DateTime.UtcNow.Subtract(lookback).ToString("yyyy-MM-dd");
             var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"COMMIT_DATE:%ai\"", ct);
 
-            var hotspots = ParseHotspotOutput(output, lookback);
+            // Files deleted since are not refactoring targets any more
+            var hotspots = ParseHotspotOutput(output, lookback, fileExists: f => File.Exists(Path.Combine(workspacePath, f)));
             if (hotspots is null)
             {
                 Logger.Information("No git history found within lookback window for hotspot analysis");
@@ -399,11 +471,30 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
+    /// Files whose churn says nothing about code health: pipeline scratch space, documentation and
+    /// lock files. They are left out of the hotspot list.
+    /// </summary>
+    private static readonly string[] HotspotExcludedPrefixes =
+        [AgentWorkspacePaths.MetadataDirectory + "/", AgentWorkspacePaths.BrainDirectory + "/"];
+
+    private static readonly string[] HotspotExcludedFileNames =
+        ["package-lock.json", "packages.lock.json", "yarn.lock", "pnpm-lock.yaml"];
+
+    internal static bool IsHotspotCandidate(string file) =>
+        !HotspotExcludedPrefixes.Any(p => file.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+        && !file.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+        && !file.EndsWith(".lock", StringComparison.OrdinalIgnoreCase)
+        && !HotspotExcludedFileNames.Contains(Path.GetFileName(file), StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Parses git log output with COMMIT_DATE: markers into a time-decay-weighted hotspot summary.
     /// Each change is weighted by recency: factor = 1/(1 + days_since/30).
+    /// Leaves out files that fail <see cref="IsHotspotCandidate"/> and, when <paramref name="fileExists"/>
+    /// is given, files that no longer exist.
     /// Returns null if no files found. Exposed as internal static for testability.
     /// </summary>
-    internal static string? ParseHotspotOutput(string gitLogOutput, TimeSpan lookback, DateTime? referenceTime = null)
+    internal static string? ParseHotspotOutput(
+        string gitLogOutput, TimeSpan lookback, DateTime? referenceTime = null, Func<string, bool>? fileExists = null)
     {
         var now = referenceTime ?? DateTime.UtcNow;
         var entries = new List<(string File, double RecencyFactor, double DaysSince)>();
@@ -455,7 +546,9 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             return null;
 
         var hotspots = entries
+            .Where(e => IsHotspotCandidate(e.File))
             .GroupBy(e => e.File)
+            .Where(g => fileExists is null || fileExists(g.Key))
             .Select(g => (
                 File: g.Key,
                 Score: g.Sum(e => e.RecencyFactor),
@@ -553,6 +646,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         IIssueProvider issueProvider,
         int maxProposals,
         bool autoDispatch,
+        string? commitSha,
         CancellationToken ct)
     {
         var createdIssues = new List<CreatedIssueInfo>();
@@ -571,7 +665,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 // Build the full body first, then resolve and prepend any dependency lines.
                 // Register() uses proposal.Title (raw, not sanitized) so that DependsOn references
                 // from other proposals — which also use the raw agent-generated title — can resolve.
-                var body = FormatIssueBody(proposal);
+                var body = FormatIssueBody(proposal, commitSha);
                 var dependencyLines = resolver.Resolve(proposal.DependsOn ?? [], SingleTrackerProviderId, Logger);
                 if (dependencyLines.Count > 0)
                 {
@@ -624,21 +718,25 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
-    /// Formats the issue body from a refactoring proposal using the project's issue template.
+    /// Formats the issue body from a refactoring proposal: the problem (<see cref="RefactoringProposal.Rationale"/>),
+    /// the change (<see cref="RefactoringProposal.Description"/>), the files and scope, the evidence, and the
+    /// acceptance criteria. <paramref name="commitSha"/> names the commit the analysis ran against, which the
+    /// evidence line numbers refer to.
     /// </summary>
-    internal static string FormatIssueBody(RefactoringProposal proposal)
+    internal static string FormatIssueBody(RefactoringProposal proposal, string? commitSha = null)
     {
-        var sanitizedDescription = SanitizeMarkdown(proposal.Description);
-        var sanitizedRationale = SanitizeMarkdown(proposal.Rationale);
-        var affectedFiles = string.Join("\n", proposal.AffectedFiles.Select(f => $"- `{f}`"));
-
         var sb = new StringBuilder();
-        sb.AppendLine("## Summary");
+        sb.AppendLine("## Problem");
         sb.AppendLine();
-        sb.AppendLine(sanitizedDescription);
+        sb.AppendLine(SanitizeMarkdown(proposal.Rationale));
         sb.AppendLine();
 
         AppendMetadataLine(sb, proposal);
+
+        sb.AppendLine("## Suggested Approach");
+        sb.AppendLine();
+        sb.AppendLine(SanitizeMarkdown(proposal.Description));
+        sb.AppendLine();
 
         if (proposal.Prerequisites is { Count: > 0 })
         {
@@ -654,67 +752,121 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
         sb.AppendLine("## Affected Components");
         sb.AppendLine();
-        sb.AppendLine(affectedFiles);
+        foreach (var file in proposal.AffectedFiles.Where(f => f is not null))
+            sb.AppendLine($"- {CodeSpan(file)}");
         sb.AppendLine();
 
-        AppendListSection(sb, "## Evidence", proposal.EvidenceSources, s => $"- `{SanitizeMarkdown(s)}`");
+        if (!string.IsNullOrWhiteSpace(proposal.ScopeQuery))
+        {
+            sb.AppendLine("## Scope");
+            sb.AppendLine();
+            sb.AppendLine("Every match of this search is in scope, unless the suggested approach excludes it:");
+            sb.AppendLine();
+            AppendCodeBlock(sb, proposal.ScopeQuery, "sh");
+            sb.AppendLine();
+        }
 
-        sb.AppendLine("## Suggested Approach");
-        sb.AppendLine();
-        sb.AppendLine(sanitizedRationale);
-        sb.AppendLine();
+        AppendEvidenceSection(sb, proposal);
+
         sb.AppendLine("## Acceptance Criteria");
         sb.AppendLine();
 
-        AppendAcceptanceCriteria(sb, proposal.AcceptanceCriteria);
+        AppendAcceptanceCriteria(sb, proposal);
 
         sb.AppendLine();
         sb.AppendLine("---");
-        sb.Append("*This issue was automatically generated by the refactoring detection consolidation loop.*");
+        sb.Append("*This issue was automatically generated by the refactoring detection consolidation loop");
+        sb.Append(commitSha is null
+            ? ".*"
+            : $" at commit `{commitSha[..Math.Min(12, commitSha.Length)]}`. Line numbers refer to that commit.*");
 
         return sb.ToString();
     }
 
     private static void AppendMetadataLine(StringBuilder sb, RefactoringProposal proposal)
     {
-        if (proposal.EstimatedEffort is null && proposal.RiskLevel is null && proposal.Technique is null)
-            return;
-
+        var parts = new List<string>();
+        if (proposal.Category is not null)
+            parts.Add($"**Category:** {SanitizeMarkdown(proposal.Category)}");
         if (proposal.EstimatedEffort is not null)
-            sb.Append($"**Effort:** {SanitizeMarkdown(proposal.EstimatedEffort)}");
+            parts.Add($"**Effort:** {SanitizeMarkdown(proposal.EstimatedEffort)}");
         if (proposal.RiskLevel is not null)
-            sb.Append($"{(proposal.EstimatedEffort is not null ? " | " : "")}**Risk:** {SanitizeMarkdown(proposal.RiskLevel)}");
+            parts.Add($"**Risk:** {SanitizeMarkdown(proposal.RiskLevel)}");
         if (proposal.Technique is not null)
-            sb.Append($"{(proposal.EstimatedEffort is not null || proposal.RiskLevel is not null ? " | " : "")}**Technique:** {SanitizeMarkdown(proposal.Technique)}");
-        sb.AppendLine();
-        sb.AppendLine();
-    }
+            parts.Add($"**Technique:** {SanitizeMarkdown(proposal.Technique)}");
 
-    private static void AppendListSection(
-        StringBuilder sb, string header, IReadOnlyList<string>? items, Func<string, string> formatLine)
-    {
-        if (items is not { Count: > 0 })
+        if (parts.Count == 0)
             return;
 
-        sb.AppendLine(header);
-        sb.AppendLine();
-        foreach (var item in items.Where(s => s is not null))
-            sb.AppendLine(formatLine(item));
+        sb.AppendLine(string.Join(" | ", parts));
         sb.AppendLine();
     }
 
-    private static void AppendAcceptanceCriteria(StringBuilder sb, IReadOnlyList<string>? criteria)
+    private static void AppendEvidenceSection(StringBuilder sb, RefactoringProposal proposal)
     {
+        var hasEvidence = !string.IsNullOrWhiteSpace(proposal.Evidence);
+        var sources = proposal.EvidenceSources?.Where(s => s is not null).ToList() ?? [];
+        if (!hasEvidence && sources.Count == 0)
+            return;
+
+        sb.AppendLine("## Evidence");
+        sb.AppendLine();
+        if (hasEvidence)
+        {
+            AppendCodeBlock(sb, proposal.Evidence!, language: null);
+            sb.AppendLine();
+        }
+
+        foreach (var source in sources)
+            sb.AppendLine($"- {CodeSpan(source)}");
+        if (sources.Count > 0)
+            sb.AppendLine();
+    }
+
+    private static void AppendAcceptanceCriteria(StringBuilder sb, RefactoringProposal proposal)
+    {
+        var criteria = proposal.AcceptanceCriteria;
         if (criteria is { Count: > 0 })
         {
             foreach (var criterion in criteria.Where(c => c is not null))
                 sb.AppendLine($"- [ ] {SanitizeMarkdown(criterion)}");
+        }
+        else if (string.Equals(proposal.Category?.Trim(), RefactoringCategories.Bug, StringComparison.OrdinalIgnoreCase))
+        {
+            sb.AppendLine("- [ ] A test reproduces the failure described under Problem and passes after the fix");
+            sb.AppendLine("- [ ] Behavior outside the described failure is unchanged");
         }
         else
         {
             sb.AppendLine("- [ ] Refactoring applied without changing observable behavior");
             sb.AppendLine("- [ ] All existing tests continue to pass");
         }
+    }
+
+    /// <summary>
+    /// Renders <paramref name="text"/> as an inline code span. Markdown and HTML are not interpreted inside
+    /// a code span, so only backticks, which would end it early, need replacing.
+    /// </summary>
+    private static string CodeSpan(string text) => $"`{text.Replace('`', '\'')}`";
+
+    /// <summary>
+    /// Renders <paramref name="text"/> verbatim in a fenced code block. The fence is longer than any backtick
+    /// run in the text, so the text cannot close it; markdown, HTML and mentions are not interpreted inside.
+    /// </summary>
+    private static void AppendCodeBlock(StringBuilder sb, string text, string? language)
+    {
+        var longestBacktickRun = 0;
+        var currentRun = 0;
+        foreach (var c in text)
+        {
+            currentRun = c == '`' ? currentRun + 1 : 0;
+            longestBacktickRun = Math.Max(longestBacktickRun, currentRun);
+        }
+
+        var fence = new string('`', Math.Max(3, longestBacktickRun + 1));
+        sb.AppendLine(fence + language);
+        sb.AppendLine(text.TrimEnd());
+        sb.AppendLine(fence);
     }
 
     /// <summary>
@@ -733,9 +885,19 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// Formats the refactoring run summary with issue count and identifiers.
     /// Distinguishes between "no proposals found" and "proposals found but issue creation failed".
     /// When <paramref name="firstFailureHint"/> is provided, it is included in the summary for
-    /// both the all-failed (0/N) and partial-failure (k/N) cases.
+    /// both the all-failed (0/N) and partial-failure (k/N) cases. <paramref name="droppedCount"/> counts the
+    /// proposals that failed validation; they are not part of <paramref name="proposalCount"/>.
     /// </summary>
-    internal static string FormatRefactoringSummary(IReadOnlyList<CreatedIssueInfo> createdIssues, int proposalCount = 0, string? firstFailureHint = null)
+    internal static string FormatRefactoringSummary(
+        IReadOnlyList<CreatedIssueInfo> createdIssues, int proposalCount = 0, string? firstFailureHint = null, int droppedCount = 0)
+    {
+        var summary = FormatIssueCreationSummary(createdIssues, proposalCount, firstFailureHint);
+        return droppedCount > 0
+            ? $"{summary} ({droppedCount} proposal(s) dropped by validation)"
+            : summary;
+    }
+
+    private static string FormatIssueCreationSummary(IReadOnlyList<CreatedIssueInfo> createdIssues, int proposalCount, string? firstFailureHint)
     {
         if (createdIssues.Count == 0 && proposalCount == 0)
             return "No refactoring opportunities identified";

@@ -194,8 +194,10 @@ public class ConsolidationPromptBuilderTests
 
         var result = ConsolidationPromptBuilder.BuildProposalOutcomeContext(issues);
 
-        result.Should().Contain("Implemented (team valued these)");
+        result.Should().Contain("Implemented (completed by an agent");
         result.Should().Contain("#315 \"Extract shared retry logic\"");
+        result.Should().Contain("Do NOT re-propose implemented items");
+        result.Should().NotContain("encouraged");
         result.Should().NotContain("Rejected");
     }
 

@@ -58,27 +58,34 @@ Configuration: `BrainConsolidationReviewEnabled` (default: `true`) controls whet
 
 Dispatches agents to analyze the codebase holistically for architectural drift using a multi-phase, multi-agent pipeline. Produces up to `MaxRefactoringProposals` (default: 3) GitHub issues with bounded refactoring proposals. Each issue includes:
 
-- Summary of the problem
-- Affected files with evidence
-- Suggested approach with named refactoring technique
-- Estimated effort and risk level
+- **Problem** — what goes wrong or what it costs (for a bug: the failure scenario)
+- Category, estimated effort, risk level and named refactoring technique
+- **Suggested Approach** — one concrete change
 - Prerequisites (e.g., "add characterization tests before refactoring")
+- Affected files
+- **Scope** — the search that lists every instance the change must cover, when the problem is a repeated pattern
+- **Evidence** — the decisive code or tool output, quoted verbatim, and how it was found
+- Acceptance criteria (a bug without criteria defaults to a reproduction test)
+- The commit the analysis ran against, which the line numbers refer to
 - Labels: `agent:generated`
+
+The finding categories are one list from detection to issue (`RefactoringCategories`): `duplication`, `structural-drift`, `complexity`, `over-engineering`, `todo`, `dead-code`, `bug`, `stale-documentation`, `naming-inconsistency`, `primitive-obsession`.
 
 **Execution flow (phased):**
 
 1. Clone code repo (+ brain repo for architectural context if configured)
-2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days)
+2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days). Pipeline scratch space (`.agent/`, `.brain/`), Markdown files, lock files and deleted files are left out.
 3. Query open `agent:generated` issues and recent open issues for deduplication context
-4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`) so the agent learns from history
-5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells.
-6. **Phase 1: Parallel Focused Detection** — Three sub-agents run concurrently:
+4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`). `agent:done` only means an agent completed the issue, so implemented items are not re-proposed rather than encouraged. Both contexts are also written to `.agent/refactoring-issue-context.md` for the review step.
+5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells. Inline TODO comments are not known debt: Agent B checks each of them.
+6. **Phase 1: Parallel Focused Detection** — Three sub-agents run concurrently. Each writes its `findings` and the areas it did not check (`notChecked`):
    - **Agent A (Structural Debt)** — Duplicated logic, structural drift, complexity, over-engineering
    - **Agent B (Correctness & Hygiene)** — TODOs/FIXMEs, dead code, obvious bugs, stale documentation
    - **Agent C (Design Consistency)** — Naming inconsistencies, primitive obsession
-7. **Phase 2: Aggregation** — Synthesizes findings from all three agents: deduplicates, filters against project conventions, ranks by hotspot frequency × evidence strength × scope feasibility, and produces final ranked proposals (capped at `MaxRefactoringProposals`)
-8. **Adversarial review** (if `RefactoringReviewEnabled`) — Evaluates proposals for non-existent file paths, unsupported claims, scope exceeding single-agent capacity (>30 files), and bundled concerns. If CRITICAL/WARNING found, refinement re-generates proposals.
-9. Create GitHub issues (capped at `MaxRefactoringProposals`)
+7. **Phase 2: Aggregation** — Synthesizes findings from all three agents: deduplicates, filters against project conventions, applies a per-category evidence gate (a hotspot rank is never evidence), ranks bugs first and the rest by hotspot frequency × evidence strength × scope feasibility, keeps at most one proposal per primary file, and produces final ranked proposals (capped at `MaxRefactoringProposals`). The analysis log goes to `.agent/refactoring-analysis.md`.
+8. **Adversarial review** (if `RefactoringReviewEnabled`) — Evaluates proposals for non-existent file paths, unsupported or unquoted evidence, incomplete scope (instances of the pattern the proposal misses), bugs without a reproduction, overlap with existing issues, scope exceeding single-agent capacity (>30 files), and bundled concerns. If CRITICAL/WARNING found, refinement re-generates proposals.
+9. **Validation** — Deterministic checks drop a proposal that names a file in `.agent/`, `.brain/` or `.git/`, names no file that exists, names more than 30 files, has an unknown category or an empty title, or has the title of an open issue, a recently closed one, or an earlier proposal of the batch. Dropped proposals are logged and counted in the run summary.
+10. Create GitHub issues (capped at `MaxRefactoringProposals`)
 
 **Partial failure handling:** If some Phase 1 agents fail but at least one succeeds, the pipeline continues with partial results. If ALL Phase 1 agents fail, the run fails.
 

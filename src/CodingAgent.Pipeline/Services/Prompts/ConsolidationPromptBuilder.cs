@@ -297,33 +297,32 @@ public static partial class ConsolidationPromptBuilder
     /// </summary>
     public static string BuildRefactoringReviewPrompt()
     {
-        // TODO: Replace ".agent/refactoring-analysis.md" literal in the prompt string below with
-        // a constant once AgentWorkspacePaths gains a RefactoringAnalysisFilePath entry.
-        // The path is agent-facing instruction text so it cannot use string interpolation with a const
-        // inside the verbatim string without first defining the constant.
         return BuildAdversarialReviewPrompt(
             "Refactoring Proposals Review",
             "refactoring proposals",
             "the proposals file, the analysis report, the sub-agent findings files, and the actual codebase",
             $"""
-            Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `.agent/refactoring-analysis.md`.
+            Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}`.
             Also read the sub-agent findings for cross-reference:
             - `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` (Agent A)
             - `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` (Agent B)
             - `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` (Agent C)
             - `{AgentWorkspacePaths.RefactoringConventionsFilePath}` (project conventions)
+            If `{AgentWorkspacePaths.RefactoringIssueContextFilePath}` exists, read it: it lists the open issues and past proposals the new proposals must not duplicate.
             """,
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
-                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. Multi-source evidence (tool + hotspot + code reading) is expected for high-quality proposals. Single-source proposals should be flagged [WARNING]",
+                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. `hotspot:` is a priority signal and does not corroborate anything. Sources tagged `tool:` that name no compiler, linter or analyzer rule are mislabeled searches or reads. Single-source proposals should be flagged [WARNING]",
+                "**Evidence not shown** — `evidence` is missing, paraphrased, or does not match the code at the cited lines. Flag [WARNING]",
+                "**Incomplete scope** — the proposal fixes some instances of a repeated pattern but not all. Run its `scopeQuery` (or your own search when it has none): every match must be in `affectedFiles` or excluded by name in `description`. Flag [WARNING] and list the missing instances",
                 "**Actual blast radius understated** — count the REAL affected files: not just `affectedFiles` but also their test files, their consumers (files importing them), and shared configuration. If the true blast radius exceeds 30 files, flag [CRITICAL]",
                 "**Failure mode not committed** — rationales that say \"could lead to issues\" or \"might cause confusion\" without stating WHAT specifically goes wrong. A valid rationale commits: \"X causes Y because Z.\" Hedged language indicates low confidence — flag [WARNING]",
+                "**Bug without a reproduction** — a `bug` proposal whose rationale has no concrete failure scenario, or whose acceptance criteria have no test that reproduces it. Flag [WARNING]",
                 "**Convention contradiction** — proposals that flag patterns listed in `intentionalPatterns` or `knownDebt` from conventions.json. The aggregation step should have caught these, but verify. Flag [CRITICAL] if found",
                 "Bundled concerns that should be separate proposals",
                 "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects. Flag [CRITICAL] with a suggestion to split",
-                "**Shallow exploration** — if `.agent/refactoring-analysis.md` is missing or shows fewer than 15 total findings were received from sub-agents, flag [CRITICAL] because the analysis pipeline produced insufficient coverage",
-                "**Overlap with existing issues** — check if any proposal substantially duplicates an issue listed in the \"Existing Open Issues\" section of the analysis. Flag [WARNING] if overlap detected",
+                "**Overlap with existing issues** — check if any proposal substantially duplicates an open issue or re-proposes a past proposal listed in the issue context file. Flag [WARNING] if overlap detected",
                 "**Unverifiable acceptance criteria** — criteria requiring runtime execution, benchmarks, manual testing, or subjective judgment. The review agent can only verify from diff + test results. Flag [WARNING]",
                 "**Implementation-prescriptive acceptance criteria** — criteria that dictate specific file names, class names, or implementation patterns rather than observable post-conditions. These block valid alternative approaches. Flag [WARNING]",
             ],
@@ -399,6 +398,8 @@ public static partial class ConsolidationPromptBuilder
                 "You may remove proposals that the reviewer correctly identified as invalid",
                 "You may reduce the proposal count if warranted",
                 "Do not add new proposals — only refine or remove existing ones",
+                "When the reviewer lists missing instances of a pattern, add them to `affectedFiles` and fix `scopeQuery` — or remove the proposal if the full scope exceeds ~30 files",
+                "Keep each `category` value exactly as the schema lists it",
             ]);
     }
 
@@ -580,7 +581,7 @@ public static partial class ConsolidationPromptBuilder
 
         if (implemented.Count > 0)
         {
-            sb.AppendLine("### Implemented (team valued these)");
+            sb.AppendLine("### Implemented (completed by an agent — this alone does not show the team valued them)");
             foreach (var issue in implemented)
                 sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
             sb.AppendLine();
@@ -595,7 +596,7 @@ public static partial class ConsolidationPromptBuilder
         }
 
         sb.AppendLine("Do NOT propose refactorings similar to rejected items above.");
-        sb.AppendLine("Proposals similar to implemented items are encouraged — the team values this type of improvement.");
+        sb.AppendLine("Do NOT re-propose implemented items: check the current code first — the change may already be in place.");
 
         return sb.ToString();
     }
