@@ -782,6 +782,38 @@ public sealed class AgentJobLifecycleServiceTests
         _changeNotifier.Verify(n => n.NotifyChange(), Times.Never);
     }
 
+    /// <summary>
+    /// Issue #3109: housekeeping skips the PR branches of active runs by reading
+    /// WorkItems.BranchName, which was written only at completion. A step transition that
+    /// carries the branch must store it, also on a replica that holds no in-memory run.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void HandleStepTransition_WithBranchMetadata_RecordsBranchName(bool runInMemory)
+    {
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(runInMemory ? MakeRun("job-1") : null);
+
+        _sut.HandleStepTransition(jobId, PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["BranchName"] = "feature/auto-3109-keyboard-75e8ebe9" });
+
+        _facade.Verify(f => f.RecordBranchNameAsync(
+            jobId, "feature/auto-3109-keyboard-75e8ebe9", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void HandleStepTransition_WithoutBranchMetadata_DoesNotRecordBranchName()
+    {
+        var jobId = new JobId("job-1");
+        _facade.Setup(f => f.GetRun(jobId)).Returns(MakeRun("job-1"));
+
+        _sut.HandleStepTransition(jobId, PipelineStep.CreatingBranch, DateTimeOffset.UtcNow, null);
+
+        _facade.Verify(f => f.RecordBranchNameAsync(
+            It.IsAny<JobId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public void HandleStepTransition_ClampsFutureTimestamp()
     {

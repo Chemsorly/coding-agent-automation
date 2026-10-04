@@ -145,4 +145,17 @@ public sealed class PostgresWorkItemTransitionStore : IWorkItemTransitionStore
         item.LastProgressAt = timestamp;
         await db.SaveChangesAsync(ct);
     }
+
+    /// <inheritdoc />
+    public async Task RecordBranchNameAsync(Guid workItemId, string branchName, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems.FindAsync([workItemId], ct);
+
+        if (item is null || item.BranchName == branchName)
+            return;
+
+        item.BranchName = branchName;
+        await db.SaveChangesAsync(ct);
+    }
 }

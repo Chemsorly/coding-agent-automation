@@ -18,12 +18,11 @@ namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 /// </summary>
 public class VerifyBaselineStepSpanTests : IDisposable
 {
-    // Unique per test-class instance so parallel test runs don't cross-contaminate
-    // the shared ActivitySource listener (process-global static state).
-    private readonly string _runId = Guid.NewGuid().ToString();
-
     private readonly ActivityListener _listener;
     private readonly ConcurrentBag<Activity> _activities = [];
+
+    // Unique per test instance so parallel runs don't pick up each other's spans.
+    private readonly string _runId = $"test-run-{Guid.NewGuid():N}";
 
     private readonly Mock<IQualityGateValidator> _validator = new();
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
@@ -57,7 +56,7 @@ public class VerifyBaselineStepSpanTests : IDisposable
 
         await new VerifyBaselineStep().ExecuteAsync(context, CancellationToken.None);
 
-        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId),
+        _activities.Should().Contain(a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
             "VerifyBaselineStep must emit a VerifyBaseline span");
     }
 
@@ -141,18 +140,17 @@ public class VerifyBaselineStepSpanTests : IDisposable
     // ── Helpers ───────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Returns the VerifyBaseline activity emitted by this test's run, identified by the
-    /// unique <see cref="_runId"/>. Filters out activities leaked from parallel test classes
-    /// that also invoke VerifyBaselineStep (e.g. VerifyBaselineStepTests).
-    /// Produces a clear assertion failure message when the span is missing, rather than the
-    /// uninformative "Sequence contains no matching element" exception thrown by First().
+    /// Returns the single VerifyBaseline span produced by this test instance.
+    /// Filtering by <see cref="_runId"/> prevents picking up spans from other tests
+    /// running in parallel that also start a "VerifyBaseline" activity.
+    /// Uses ContainSingle so that a missing span produces a clear assertion-failure message
+    /// instead of an uninformative InvalidOperationException.
     /// </summary>
     private Activity GetMySpan() =>
-        _activities
-            .Should()
+        _activities.Should()
             .ContainSingle(
-                a => a.DisplayName == "VerifyBaseline" && Equals(a.GetTagItem("pipeline.run_id"), _runId),
-                "VerifyBaselineStep must emit exactly one VerifyBaseline span with the current run_id")
+                a => a.DisplayName == "VerifyBaseline" && _runId.Equals(a.GetTagItem("pipeline.run_id")),
+                $"VerifyBaselineStep must emit a VerifyBaseline span with pipeline.run_id={_runId}")
             .Which;
 
     private PipelineStepContext BuildContext(

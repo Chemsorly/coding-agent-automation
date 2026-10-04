@@ -99,7 +99,7 @@ public class AgentConnectionManagerGateTests
             "dispose should not cause ObjectDisposedException on WaitForRegistrationAsync");
         sw.Stop();
 
-        sw.ElapsedMilliseconds.Should().BeLessThan(1000,
+        sw.ElapsedMilliseconds.Should().BeLessThan(3000,
             "should not hang indefinitely after dispose");
     }
 

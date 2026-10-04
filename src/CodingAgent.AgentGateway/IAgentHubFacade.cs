@@ -185,6 +185,14 @@ public interface IAgentHubFacade
     Task TouchLastProgressAsync(JobId jobId, DateTimeOffset timestamp, CancellationToken ct);
 
     /// <summary>
+    /// Stores the branch of a running job in WorkItemEntity.BranchName, so housekeeping's
+    /// active-branch guard skips that branch while the run is active. Called from
+    /// ReportStepTransition when the step metadata carries the branch. Failures are logged,
+    /// not thrown.
+    /// </summary>
+    Task RecordBranchNameAsync(JobId jobId, string branchName, CancellationToken ct);
+
+    /// <summary>
     /// Reads IssueIdentifier and IssueProviderConfigId from a WorkItem in the database.
     /// Used for best-effort label recovery when no in-memory PipelineRun is available.
     /// Returns null if the work item doesn't exist or DB is not configured.
