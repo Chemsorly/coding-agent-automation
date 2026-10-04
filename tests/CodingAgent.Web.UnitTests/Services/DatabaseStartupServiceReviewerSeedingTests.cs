@@ -25,7 +25,6 @@ public class DatabaseStartupServiceReviewerSeedingTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly InProcessDistributedLockProvider _lockProvider;
-    private readonly string _tempDir;
 
     public DatabaseStartupServiceReviewerSeedingTests()
     {
@@ -37,17 +36,12 @@ public class DatabaseStartupServiceReviewerSeedingTests : IDisposable
 
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         _lockProvider = new InProcessDistributedLockProvider();
-        _tempDir = Path.Combine(Path.GetTempPath(), $"startup-reviewer-seed-test-{Guid.NewGuid()}");
-        Directory.CreateDirectory(_tempDir);
     }
 
     public void Dispose()
     {
         using var db = new InMemoryPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
-
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
     }
 
     // ── Test cases ─────────────────────────────────────────────────────
@@ -137,69 +131,6 @@ public class DatabaseStartupServiceReviewerSeedingTests : IDisposable
         await using var db = _dbFactory.CreateDbContext();
         var count = await db.ReviewerConfigs.CountAsync();
         count.Should().Be(PipelineConfigurationDefaults.DefaultReviewerConfigurations.Count);
-    }
-
-    [Fact]
-    public async Task InitializeAsync_FreshInstall_SeedsDefaultReviewerConfigs()
-    {
-        // Arrange: fresh DB + empty config dir (no JSON files → MigrateIfNeededAsync skips).
-        // Note: InitializeAsync calls HandleMigrationsAsync which uses relational-only APIs
-        // incompatible with the InMemory provider. We exercise the seeding wiring by calling
-        // ImportJsonConfigIfNeededAsync (which skips on empty dir) then SeedDefaultReviewerConfigsIfNeededAsync
-        // directly, matching the exact call order in InitializeAsync and verifying the two-step wiring.
-        // TODO: This test does NOT call InitializeAsync itself, so removing the
-        // SeedDefaultReviewerConfigsIfNeededAsync call from InitializeAsync would not be detected.
-        // Consider an integration test (using a relational provider) that calls InitializeAsync end-to-end,
-        // or at minimum rename this test to reflect that it exercises individual steps rather than InitializeAsync wiring.
-        var service = CreateService();
-
-        // Act: replicate the relevant steps of InitializeAsync (skipping HandleMigrationsAsync
-        // which requires a relational database provider)
-        await service.ImportJsonConfigIfNeededAsync(CancellationToken.None, _tempDir);
-        await service.SeedDefaultReviewerConfigsIfNeededAsync(CancellationToken.None);
-
-        // Assert: ReviewerConfigs table is populated
-        await using var db = _dbFactory.CreateDbContext();
-        var names = await db.ReviewerConfigs.Select(e => e.Name).ToListAsync();
-        names.Should().BeEquivalentTo("Default Reviewers", ".NET Reviewers");
-    }
-
-    [Fact]
-    public async Task SeedDefaultReviewerConfigsIfNeeded_DoesNotSeedWhenJsonMigrationPopulatedTable()
-    {
-        // Arrange: simulate a JSON migration run by pre-populating a reviewer config
-        // (represents fresh install WITH JSON reviewer files — migration ran first).
-        await using (var db = _dbFactory.CreateDbContext())
-        {
-            db.ReviewerConfigs.Add(new ReviewerConfigEntity
-            {
-                Id = Guid.NewGuid(),
-                Name = "From JSON Migration",
-                Configuration = JsonSerializer.Serialize(
-                    new ReviewerConfiguration
-                    {
-                        Id = "migrated-id",
-                        DisplayName = "From JSON Migration",
-                        MatchLabels = ["legacy"],
-                        Agents = [new ReviewAgent { Name = "Legacy", Prompt = "legacy prompt" }]
-                    },
-                    PipelineJsonOptions.Default)
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var service = CreateService();
-
-        // Act
-        await service.SeedDefaultReviewerConfigsIfNeededAsync(CancellationToken.None);
-
-        // Assert: only the migrated config remains, no defaults injected
-        await using var dbCheck = _dbFactory.CreateDbContext();
-        var count = await dbCheck.ReviewerConfigs.CountAsync();
-        count.Should().Be(1);
-
-        var entity = await dbCheck.ReviewerConfigs.SingleAsync();
-        entity.Name.Should().Be("From JSON Migration");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

@@ -3,12 +3,10 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
-/// Manages pipeline run history: persistence, retrieval, and workspace cleanup.
+/// Manages pipeline run history: persistence and retrieval.
 /// </summary>
 public interface IPipelineRunHistoryService
 {
-    void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory);
-
     /// <summary>Persists a completed run to history.</summary>
     Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default);
 

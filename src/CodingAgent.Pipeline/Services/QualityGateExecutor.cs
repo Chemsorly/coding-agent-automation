@@ -13,7 +13,6 @@ namespace CodingAgent.Pipeline.Services;
 public partial class QualityGateExecutor : IQualityGateExecutor
 {
     private readonly IQualityGateValidator _qualityGateValidator;
-    private readonly CiLogWriter _ciLogWriter;
     private readonly PullRequestOrchestrator _prOrchestrator;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
@@ -37,7 +36,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     // Server-side reporting is now wired for all phases via BuildStallMetricsWithServerSideReporting.
     private readonly Counter<long> _stallKills;
     private readonly Counter<long> _stallProcessDeaths;
-    private readonly StallMonitorMetrics _stallMetrics;
 
     public QualityGateExecutor(
         IQualityGateValidator qualityGateValidator,
@@ -55,7 +53,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         ArgumentNullException.ThrowIfNull(logger);
 
         _qualityGateValidator = qualityGateValidator;
-        _ciLogWriter = ciLogWriter;
         _prOrchestrator = prOrchestrator;
         _historyService = historyService;
         _feedbackService = feedbackService;
@@ -81,7 +78,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
             _stallProcessDeaths = PipelineTelemetry.StallProcessDeaths;
         }
 
-        _stallMetrics = new StallMonitorMetrics(_stallWarnings, _stallKills, _stallProcessDeaths);
 
         _ciPollingCoordinator = new CiPollingCoordinator(
             logger,

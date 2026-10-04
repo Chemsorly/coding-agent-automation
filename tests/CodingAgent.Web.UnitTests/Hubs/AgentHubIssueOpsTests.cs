@@ -21,7 +21,6 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 public sealed class AgentHubIssueOpsTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
-    private readonly Mock<IGateCommentFormatter> _mockGateFormatter = new();
     private readonly Mock<IHubIssueOperations> _mockIssueOps = new();
     private readonly Mock<IAgentTokenRefreshService> _mockTokenRefresh = new();
     private readonly Mock<ILogger> _mockLogger = new();
@@ -36,7 +35,6 @@ public sealed class AgentHubIssueOpsTests
             _mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             _mockTokenRefresh.Object,
-            _mockGateFormatter.Object,
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));
@@ -130,8 +128,6 @@ public sealed class AgentHubIssueOpsTests
 
         _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(
             It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockGateFormatter.Verify(f => f.FormatGateComment(
-            It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
     }
 
     // ── RequestLabelChange — null label throws ───────────────────────────
