@@ -25,6 +25,13 @@ public sealed class DatabaseStartupService
     private readonly TimeProvider _timeProvider;
 
     private const string MigrationLockKey = "caa_schema_migration";
+
+    /// <summary>
+    /// ID of the baseline migration that replaced the original migrations in October 2026. It reuses the ID of
+    /// the newest original migration, so a database that applied every original migration has nothing pending.
+    /// </summary>
+    internal const string BaselineMigrationId = "20260930213632_DropConsolidationRuns";
+
     internal const int MaxRetryAttempts = 10;
     internal static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan MaxDelay = TimeSpan.FromSeconds(30);
@@ -122,6 +129,8 @@ public sealed class DatabaseStartupService
                 return;
             }
 
+            await EnsureNotBehindBaselineAsync(db, pending, ct);
+
             _logger.Information("Applying {Count} pending migration(s): {Migrations}",
                 pending.Count, string.Join(", ", pending));
 
@@ -137,6 +146,8 @@ public sealed class DatabaseStartupService
 
             if (pending.Count > 0)
             {
+                await EnsureNotBehindBaselineAsync(db, pending, ct);
+
                 var message = $"Database has {pending.Count} pending migration(s): {string.Join(", ", pending)}. " +
                               "Apply migrations via Helm pre-upgrade hook or set Database:MigrateOnStartup=true.";
                 _logger.Error(message);
@@ -145,6 +156,26 @@ public sealed class DatabaseStartupService
 
             _logger.Information("Database schema verification passed — no pending migrations");
         }
+    }
+
+    /// <summary>
+    /// The baseline creates the whole schema, so it can only run on an empty database. A database that applied
+    /// some but not all of the original migrations needs a build from before the squash to finish them first.
+    /// </summary>
+    private async Task EnsureNotBehindBaselineAsync(PipelineDbContext db, List<string> pending, CancellationToken ct)
+    {
+        if (!pending.Contains(BaselineMigrationId))
+            return;
+
+        var applied = (await db.Database.GetAppliedMigrationsAsync(ct)).ToList();
+        if (applied.Count == 0)
+            return;
+
+        var message = $"The database stopped at migration {applied[^1]}, before {BaselineMigrationId}. " +
+                      "The original migrations were squashed into one baseline, which only applies to an empty database. " +
+                      "Deploy a build from before the squash first so it applies the remaining migrations, then upgrade.";
+        _logger.Error(message);
+        throw new InvalidOperationException(message);
     }
 
     /// <summary>

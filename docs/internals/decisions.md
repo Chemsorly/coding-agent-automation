@@ -70,6 +70,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** a Kubernetes operator with CRDs; one monolith.
 **Revisit when:** a layer needs scaling it can't get, or the JobController and Scheduler should merge back for simplicity.
 
+### EF migrations start from a baseline that reuses the newest original ID
+<!-- 2026-10-04 -->
+**Rule:** The first migration is the baseline (class `Baseline`, ID `20260930213632_DropConsolidationRuns`). Keep that ID and add new migrations on top. A database that stopped before it must first upgrade through v0.4.9 or v0.4.10; the API refuses it at startup.
+**Why:** The 23 original migrations (~11,800 lines) were squashed. With the reused ID, a database that applied every original migration and a build from before the squash both see the history they expect, so nothing rewrites `__EFMigrationsHistory` and rolling back stays safe.
+**Not:** a new baseline ID plus a startup step that rewrites the migration history (an older build would then re-run its first migration).
+**Revisit when:** squashing again: reuse the newest migration's ID the same way.
+
 ### Dispatch loop belongs in a leader-elected controller, not the stateless API
 <!-- 2026-09-12; includes the 2026-08-14 leader-gating decisions -->
 **Rule:** Every background loop runs on exactly one elected leader: dispatch in the Scheduler, reconciliation in the JobController, maintenance sweeps triggered by the Scheduler, and the web app's pipeline loop only on its leader. The API holds no loops and no leases. Kubernetes Job creation stays in the API because that is where the RBAC lives.
