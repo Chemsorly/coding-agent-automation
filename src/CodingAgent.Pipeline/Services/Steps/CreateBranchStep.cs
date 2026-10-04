@@ -107,9 +107,10 @@ public sealed class CreateBranchStep : IPipelineStep
             context.Run.MergeForceResolved = mergeResult.ForceResolved;
             if (mergeResult.HasConflicts && mergeResult.ForceResolved)
             {
-                context.Callbacks.EmitOutputLine($"⚠️ Rebase onto {context.RepoProvider.BaseBranch} had {mergeResult.ConflictFiles.Count} conflict(s) — force-resolved using incoming (main wins)");
-                context.Logger.Information("Pipeline {RunId} rebase force-resolved {ConflictCount} conflict(s) using incoming",
+                context.Callbacks.EmitOutputLine($"⚠️ Rebase onto {context.RepoProvider.BaseBranch} had {mergeResult.ConflictFiles.Count} conflict(s) — force-resolved keeping main's version (main wins)");
+                context.Logger.Information("Pipeline {RunId} rebase force-resolved {ConflictCount} conflict(s) keeping main's version",
                     context.Run.RunId, mergeResult.ConflictFiles.Count);
+                await ReworkContextWriter.WriteAsync(context, mergeResult, ct);
             }
             else if (mergeResult.HasConflicts)
             {

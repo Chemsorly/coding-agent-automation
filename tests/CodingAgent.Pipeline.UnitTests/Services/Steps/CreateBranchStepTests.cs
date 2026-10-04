@@ -203,7 +203,69 @@ public class CreateBranchStepTests
             "must checkout the branch when PR is open");
     }
 
+    // ── Rework context ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Issue #3093: when the rebase onto main drops the branch's changes to conflicting files, the
+    /// step writes what was dropped to <c>.agent/rework-context.md</c> for the rework agent.
+    /// </summary>
+    [Fact]
+    public async Task WhenRebaseForceResolves_WritesReworkContextFile()
+    {
+        const int prNum = 12;
+        var (context, run) = BuildContextWithLinkedPr(prNum, PipelineRunType.Implementation);
+        SetupOpenPrCheckout(prNum, new MergeResult
+        {
+            Success = true,
+            HasConflicts = true,
+            ForceResolved = true,
+            ConflictFiles = ["src/A.cs"],
+            ForceResolvedContext =
+            [
+                new ForceResolvedFileContext { Path = "src/A.cs", BranchChange = "+branch\n", BaseChange = "+main\n" }
+            ]
+        });
+
+        try
+        {
+            await new CreateBranchStep().ExecuteAsync(context, CancellationToken.None);
+
+            var filePath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReworkContextFilePath);
+            File.Exists(filePath).Should().BeTrue();
+            (await File.ReadAllTextAsync(filePath)).Should().Contain("`src/A.cs`").And.Contain("+branch");
+            run.MergeForceResolved.Should().BeTrue();
+        }
+        finally
+        {
+            if (Directory.Exists(run.WorkspacePath!))
+                Directory.Delete(run.WorkspacePath!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task WhenRebaseHasNoConflicts_WritesNoReworkContextFile()
+    {
+        const int prNum = 13;
+        var (context, run) = BuildContextWithLinkedPr(prNum, PipelineRunType.Implementation);
+        SetupOpenPrCheckout(prNum, new MergeResult { Success = true, HasConflicts = false, ConflictFiles = [] });
+
+        await new CreateBranchStep().ExecuteAsync(context, CancellationToken.None);
+
+        File.Exists(Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReworkContextFilePath)).Should().BeFalse();
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private void SetupOpenPrCheckout(int prNumber, MergeResult mergeResult)
+    {
+        _repoProvider.Setup(r => r.GetPullRequestStateAsync(prNumber, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Open);
+        _repoProvider.Setup(r => r.CheckoutRemoteBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _repoProvider.Setup(r => r.MergeFromBaseAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mergeResult);
+    }
 
     private (PipelineStepContext context, PipelineRun run) BuildContextWithLinkedPr(
         int prNumber, PipelineRunType runType)

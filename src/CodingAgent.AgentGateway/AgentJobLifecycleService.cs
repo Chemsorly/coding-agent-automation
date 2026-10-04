@@ -472,6 +472,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     /// <inheritdoc />
     public void HandleStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata)
     {
+        // Store the branch in the DB as soon as the agent reports it, so housekeeping's
+        // active-branch guard skips it while the run is active (issue #3109). Done before the
+        // in-memory lookup: the replica holding the agent's connection may not hold the run.
+        if (metadata is not null && metadata.TryGetValue("BranchName", out var branchName)
+            && !string.IsNullOrEmpty(branchName))
+            _ = _facade.RecordBranchNameAsync(jobId, branchName, CancellationToken.None);
+
         var run = _facade.GetRun(jobId);
         if (run is not null)
         {

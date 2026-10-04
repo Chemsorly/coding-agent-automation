@@ -1,3 +1,4 @@
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
@@ -266,6 +267,22 @@ public sealed class AgentHubFacade : IAgentHubFacade
         {
             WorkDistributionTelemetry.ProgressWriteFailures.Add(1);
             _logger.LogWarning(ex, "Failed to update LastProgressAt for WorkItem {WorkItemId}", workItemId);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task RecordBranchNameAsync(JobId jobId, string branchName, CancellationToken ct)
+    {
+        if (_transitionStore is null || !Guid.TryParse(jobId.Value, out var workItemId))
+            return;
+
+        try
+        {
+            await _transitionStore.RecordBranchNameAsync(workItemId, branchName, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to record branch {BranchName} for WorkItem {WorkItemId}", LogSanitizer.SanitizeForLog(branchName), workItemId);
         }
     }
 
