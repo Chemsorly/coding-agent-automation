@@ -288,7 +288,6 @@ public static class WorkItemDispatchEndpoints
         Guid id,
         IDbContextFactory<PipelineDbContext> dbFactory,
         DispatchLifecycleService lifecycle,
-        JobTemplateStore templateStore,
         DispatchTemplateResolver templateResolver,
         IDistributedLockProvider lockProvider,
         DispatchWorkItemService dispatchService,
@@ -298,16 +297,6 @@ public static class WorkItemDispatchEndpoints
         // (fast-path check, advisory lock, concurrency gate, PVC gate, K8s Job creation,
         // result interpretation, and telemetry). The static endpoint exists as the ASP.NET
         // Core minimal-API handler that the DI container resolves parameters for.
-        //
-        // NOTE (issue #3243): templateStore is received here from DI but is not passed separately
-        // to the service — the service holds its own _templateStore instance injected at
-        // construction time, which is the same singleton registered in the DI container.
-        // NOTE (issue #3243): This unused DI-injected parameter creates a hidden runtime risk:
-        // if JobTemplateStore is ever unregistered or its DI registration changes (e.g., singleton
-        // to scoped), the endpoint will throw InvalidOperationException at invocation time with no
-        // indication the parameter is unused. Consider removing this parameter since the service
-        // already captures its own instance, or add an explicit comment justifying why the injection
-        // is required. (DotNetSpecialist WARNING)
         return await dispatchService.DispatchPendingWorkItemAsync(id, dbFactory, lifecycle, templateResolver, lockProvider, ct);
     }
 

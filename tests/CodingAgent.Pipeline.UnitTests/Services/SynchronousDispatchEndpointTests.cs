@@ -2406,7 +2406,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
 
         // Act — call through the static endpoint handler (not the service method directly)
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, templateResolver, lockProvider, dispatchService, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateResolver, lockProvider, dispatchService, CancellationToken.None);
 
         // Assert: 200 with dispatched:true
         var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -2432,7 +2432,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var missingId = Guid.NewGuid();
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            missingId, dbFactory, lifecycle, templateStore, templateResolver, lockProvider, dispatchService, CancellationToken.None);
+            missingId, dbFactory, lifecycle, templateResolver, lockProvider, dispatchService, CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NotFound>(
             "endpoint wrapper must return 404 for a missing work item ID");
@@ -2460,7 +2460,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             await db.SaveChangesAsync();
         }
 
-        // TODO (issue #3243): readDb is kept open across the DispatchPendingWorkItem call below.
+        // NOTE (issue #3243): readDb is kept open across the DispatchPendingWorkItem call below.
         // This is benign with an in-memory/SQLite test provider but could cause connection pool
         // pressure if the test factory is ever backed by a real pooled provider. Consider reading
         // entity.Id before the await using scope and disposing readDb before the endpoint call,
@@ -2476,7 +2476,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateResolver = CreateTemplateResolver(templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, templateResolver, lockProvider, dispatchService, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateResolver, lockProvider, dispatchService, CancellationToken.None);
 
         // Fast-path check: item is not Pending → return 200/deferred(not_pending) without acquiring lock
         var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
@@ -2498,7 +2498,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateResolver = CreateTemplateResolver(templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, templateResolver, lockProvider, dispatchService, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateResolver, lockProvider, dispatchService, CancellationToken.None);
 
         var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         deferred.Should().NotBeNull("no-template path must return 200/deferred");
@@ -2523,7 +2523,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateResolver = CreateTemplateResolver(templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, templateResolver, lockProvider, dispatchService, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateResolver, lockProvider, dispatchService, CancellationToken.None);
 
         var deferred = result as Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>;
         deferred.Should().NotBeNull("concurrency limit must return 200/deferred via endpoint wrapper");
@@ -2545,7 +2545,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
         var templateResolver = CreateTemplateResolver(templateStore);
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, templateResolver, lockProvider, dispatchService, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateResolver, lockProvider, dispatchService, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull("PVC exhaustion must return 503 via endpoint wrapper");
@@ -2570,7 +2570,7 @@ public sealed class DispatchPendingWorkItemEndpointTests
             .ThrowsAsync(new TimeoutException("Lock acquisition timed out"));
 
         var result = await WorkItemDispatchEndpoints.DispatchPendingWorkItem(
-            entity.Id, dbFactory, lifecycle, templateStore, templateResolver, timeoutLock.Object, dispatchService, CancellationToken.None);
+            entity.Id, dbFactory, lifecycle, templateResolver, timeoutLock.Object, dispatchService, CancellationToken.None);
 
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
         statusResult.Should().NotBeNull("lock timeout must return 503 via endpoint wrapper");
