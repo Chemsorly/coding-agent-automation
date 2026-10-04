@@ -106,12 +106,14 @@ web:
     # Get this from Grafana Cloud → Frontend Observability → your app → Web SDK Config.
     # Leave empty to disable Faro (no CDN load, no data sent).
     faroCollectorUrl: ""
-    # Base path for the Blazor web UI. Set this when the app is served under a non-root path by a
-    # reverse proxy (e.g. Rancher: "/k8s/clusters/c-xxxxx/proxy/").
-    # Must end with "/" (a trailing slash is appended automatically if missing).
-    # Defaults to "./" which works for standard root-path deployments.
-    # This value is injected as the <base href> in the HTML shell so the browser resolves all
-    # relative asset and navigation URLs correctly under the proxy prefix.
+    # Base path for the Blazor web UI, injected as the <base href> in the HTML shell so the browser
+    # resolves relative asset and navigation URLs against the app root.
+    # The default "./" means "the app root": the web host renders a relative base that climbs from
+    # the requested route back to the root ("./" on /overview, "../" on /runs/{id}). This works at a
+    # root-path deployment and behind a reverse proxy that strips its prefix (e.g. Rancher's
+    # service proxy) without further configuration.
+    # Set an absolute path only to pin the base explicitly (e.g. Rancher: "/k8s/clusters/c-xxxxx/proxy/");
+    # a rooted value is used as is, with a trailing "/" appended if missing.
     basePath: "./"
 
 # ── Secrets ──────────────────────────────────────────────────────────────────
