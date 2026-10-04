@@ -604,18 +604,18 @@ public sealed class ReconciliationLoop
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
-            {
-                var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
-                // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
-                // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
-                // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
-                using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
-                jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
-                jobFailedActivity?.SetTag("failure_reason", failureReason);
-                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
-                    _reconciledTerminalIds.Add(workItemId.Value);
-                break;
-            }
+                {
+                    var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
+                    // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
+                    // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
+                    // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
+                    using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
+                    jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
+                    jobFailedActivity?.SetTag("failure_reason", failureReason);
+                    if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
+                        _reconciledTerminalIds.Add(workItemId.Value);
+                    break;
+                }
                 // Active/Unknown/Pending — no action needed
         }
     }
