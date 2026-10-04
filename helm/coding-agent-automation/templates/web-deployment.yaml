@@ -28,8 +28,8 @@ spec:
   template:
     metadata:
       annotations:
-        # Spec 049: role bindings are read at startup; a changed auth config restarts the pods.
-        checksum/auth: {{ include (print $.Template.BasePath "/web-auth-configmap.yaml") . | sha256sum }}
+        # Spec 049: role bindings are read at startup; changed auth values restart the pods.
+        checksum/auth: {{ (.Values.auth | default dict) | toJson | sha256sum }}
       labels:
         {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: web

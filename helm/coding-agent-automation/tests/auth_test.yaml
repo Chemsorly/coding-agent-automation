@@ -183,6 +183,11 @@ tests:
     set:
       secrets.agentApiKey: explicit
       auth.admin.enabled: false
+      # OIDC as the remaining login method; the chart refuses to render without one.
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://kc.example.com/realms/acme
+      auth.oidc.clientId: coding-agent
+      auth.oidc.clientSecret.existingSecret: oidc-secret
     asserts:
       - hasDocuments:
           count: 0
