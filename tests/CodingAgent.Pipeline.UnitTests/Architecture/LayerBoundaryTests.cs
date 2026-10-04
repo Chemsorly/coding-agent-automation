@@ -16,7 +16,7 @@ public partial class LayerBoundaryTests
 {
     // Assembly anchors for each layer
     private static readonly System.Reflection.Assembly PipelineAssembly =
-        typeof(Pipeline.Services.PipelineOrchestrationService).Assembly;
+        typeof(Pipeline.Services.PipelineRunLifecycleService).Assembly;
 
     // Spec 048 Phase 1: Contracts is the extracted shared surface. Its types keep the
     // CodingAgent.Pipeline.* namespaces (namespace-preserving move), so the boundary
@@ -46,6 +46,9 @@ public partial class LayerBoundaryTests
 
     private static readonly System.Reflection.Assembly AgentOpenCodeAssembly =
         typeof(CodingAgent.Agent.OpenCode.OpenCodeAgentProvider).Assembly;
+
+    private static readonly System.Reflection.Assembly AgentClaudeCodeAssembly =
+        typeof(CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider).Assembly;
 
     private static readonly System.Reflection.Assembly ApiAssembly =
         typeof(CodingAgent.Api.ApiHostMarker).Assembly;
@@ -314,6 +317,18 @@ public partial class LayerBoundaryTests
 
         Assert.True(result.IsSuccessful,
             $"Agent.OpenCode must not reference Orchestration. Violating types: {FormatViolations(result)}");
+    }
+
+    [Fact]
+    public void AgentClaudeCode_ShouldNot_DependOnOrchestration()
+    {
+        var result = Types.InAssembly(AgentClaudeCodeAssembly)
+            .ShouldNot()
+            .HaveDependencyOn("CodingAgent.Orchestration")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful,
+            $"Agent.ClaudeCode must not reference Orchestration. Violating types: {FormatViolations(result)}");
     }
 
     [Fact]
@@ -794,10 +809,10 @@ public partial class LayerBoundaryTests
             // "WorkItemDispatchService", // DELETED — do not add back
 
             // WorkItemDispatchLoop is conditionally registered in SchedulerServiceCollectionExtensions
-            // under the Scheduler:Dispatch:Enabled flag (default false). Registration uses the lambda
+            // unless Scheduler:Dispatch:Enabled=false (test hosts only). Registration uses the lambda
             // pattern: services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchLoop>()).
             // The T4 scanner only detects AddHostedService<T>() (generic form), not the lambda pattern.
-            // The service IS actively registered when Scheduler:Dispatch:Enabled=true.
+            // The service IS actively registered in production.
             "WorkItemDispatchLoop",
         };
 

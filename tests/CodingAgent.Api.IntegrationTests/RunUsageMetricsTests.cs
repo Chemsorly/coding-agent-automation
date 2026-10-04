@@ -348,22 +348,159 @@ public sealed class RunUsageMetricsTests
 
         Program.EmitPreInitCounters();
 
-        // 5 run_types × 9 phases × 3 providers = 135 series
-        tokenSeries.Should().HaveCount(135,
-            "5 run_types × 9 phases × 3 providers = 135 pre-init series for pipeline.run.tokens");
+        // 5 run_types × 9 phases × 4 providers = 180 series
+        tokenSeries.Should().HaveCount(180,
+            "5 run_types × 9 phases × 4 providers = 180 pre-init series for pipeline.run.tokens");
 
-        sessionSeries.Should().HaveCount(135,
-            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 135 series");
+        sessionSeries.Should().HaveCount(180,
+            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 180 series");
 
         // Verify all 9 phases are present
         var phases = tokenSeries.Select(m => m.Tags.GetValueOrDefault("phase")?.ToString())
             .Where(p => p is not null).Distinct().Order().ToList();
         phases.Should().BeEquivalentTo(PipelineTelemetry.RunPhases.All);
 
-        // Verify all 3 providers are present
+        // Verify all 4 providers are present
         var providers = tokenSeries.Select(m => m.Tags.GetValueOrDefault("provider")?.ToString())
             .Where(p => p is not null).Distinct().Order().ToList();
         providers.Should().BeEquivalentTo(PipelineTelemetry.RunProviders.All);
+    }
+
+    [Fact]
+    public void PreInitCounters_IncludeUsageDetailCounters()
+    {
+        var counts = new ConcurrentDictionary<string, int>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name is "pipeline.run.token_usage" or "pipeline.run.agent_turns"
+                    or "pipeline.run.web_search_requests" or "pipeline.run.billing_cost_usd"
+                    or "pipeline.run.rate_limit_events")
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) => counts.AddOrUpdate(instrument.Name, 1, (_, c) => c + 1));
+        listener.SetMeasurementEventCallback<double>((instrument, _, _, _) => counts.AddOrUpdate(instrument.Name, 1, (_, c) => c + 1));
+        listener.Start();
+
+        Program.EmitPreInitCounters();
+
+        counts["pipeline.run.token_usage"].Should().Be(100, "5 run_types × 4 providers × 5 token types");
+        counts["pipeline.run.billing_cost_usd"].Should().Be(60, "5 run_types × 4 providers × 3 billing modes");
+        counts["pipeline.run.agent_turns"].Should().Be(20, "5 run_types × 4 providers");
+        counts["pipeline.run.web_search_requests"].Should().Be(20, "5 run_types × 4 providers");
+        counts["pipeline.run.rate_limit_events"].Should().Be(15, "claude × 5 windows × 3 statuses");
+    }
+
+    [Fact]
+    public async Task PhaseBreakdown_UsageDetails_EmitsDetailCounters()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedRunningItemAsync(opts);
+        var svc = CreateService(opts);
+
+        var (tokenListener, tokenBag) = SetupLongListener("pipeline.run.token_usage");
+        var (turnsListener, turnsBag) = SetupLongListener("pipeline.run.agent_turns");
+        var (searchListener, searchBag) = SetupLongListener("pipeline.run.web_search_requests");
+        var (billingListener, billingBag) = SetupDoubleListener("pipeline.run.billing_cost_usd");
+        using var _ = tokenListener;
+        using var __ = turnsListener;
+        using var ___ = searchListener;
+        using var ____ = billingListener;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["codegen"] = new()
+                {
+                    Tokens = 23315, Cost = 0.7371m, Provider = "claude", BillingMode = AgentBillingModes.Subscription,
+                    InputTokens = 7771, OutputTokens = 7772, ReasoningTokens = 7773, CacheReadTokens = 7774,
+                    CacheWriteTokens = 7775, Turns = 7731, WebSearchRequests = 7732
+                }
+            }
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        var tokensByType = tokenBag
+            .Where(m => m.Value is >= 7771 and <= 7775 && Equals(m.Tags["provider"], "claude"))
+            .ToDictionary(m => m.Tags["token_type"]!.ToString()!, m => m.Value);
+        tokensByType.Should().BeEquivalentTo(new Dictionary<string, long>
+        {
+            ["input"] = 7771, ["output"] = 7772, ["reasoning"] = 7773, ["cache_read"] = 7774, ["cache_write"] = 7775
+        });
+        turnsBag.Should().ContainSingle(m => m.Value == 7731).Which.Tags["provider"].Should().Be("claude");
+        searchBag.Should().ContainSingle(m => m.Value == 7732);
+        billingBag.Should().ContainSingle(m => Math.Abs(m.Value - 0.7371) < 1e-9)
+            .Which.Tags["billing"].Should().Be("subscription");
+    }
+
+    [Fact]
+    public async Task PhaseBreakdown_UnknownProvider_IsRecordedAsUnknown()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedRunningItemAsync(opts);
+        var svc = CreateService(opts);
+
+        var (tokensListener, tokensBag) = SetupLongListener("pipeline.run.tokens");
+        using var _ = tokensListener;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PhaseBreakdown = new Dictionary<string, PhaseUsagePayload>
+            {
+                ["analysis"] = new() { Tokens = 6191, Provider = "made-up-provider" }
+            }
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        tokensBag.Should().ContainSingle(m => m.Value == 6191).Which.Tags["provider"].Should().Be("unknown");
+    }
+
+    [Fact]
+    public async Task RateLimits_EmitEventCounterAndUtilizationHistogram()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedRunningItemAsync(opts);
+        var svc = CreateService(opts);
+
+        var (eventsListener, eventsBag) = SetupLongListener("pipeline.run.rate_limit_events");
+        var (utilizationListener, utilizationBag) = SetupDoubleListener("pipeline.run.rate_limit_utilization");
+        using var _ = eventsListener;
+        using var __ = utilizationListener;
+
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            RateLimits =
+            [
+                new AgentRateLimitObservation { Provider = "claude", Window = "seven_day_opus", Status = "allowed_warning", Utilization = 0.8317 },
+                new AgentRateLimitObservation { Provider = "claude", Window = "brand_new_window", Status = "weird" }
+            ]
+        };
+
+        await svc.TransitionAsync(item.Id,
+            new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded, Result = SerializePayload(payload) },
+            CancellationToken.None, awaitTelemetry: true);
+
+        eventsBag.Should().Contain(m => Equals(m.Tags["window"], "seven_day_opus") && Equals(m.Tags["status"], "allowed_warning"));
+        eventsBag.Should().Contain(m => Equals(m.Tags["window"], "other") && Equals(m.Tags["status"], "other"),
+            "unknown windows and statuses are folded into 'other' to bound label cardinality");
+        utilizationBag.Should().ContainSingle(m => Math.Abs(m.Value - 0.8317) < 1e-9)
+            .Which.Tags["window"].Should().Be("seven_day_opus");
+        utilizationBag.Should().NotContain(m => Equals(m.Tags["window"], "other"),
+            "a reading without utilization records no histogram sample");
     }
 
     // ── Test infrastructure ───────────────────────────────────────────────────

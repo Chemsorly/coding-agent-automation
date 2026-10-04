@@ -52,6 +52,9 @@ public static class ProviderSettingKeys
     /// <summary>Workspace-relative path for MCP server configuration.</summary>
     public const string McpConfigPath = "mcpConfigPath";
 
+    /// <summary>Claude Code credential to use; see <see cref="Models.ClaudeCodeAuthModes"/>.</summary>
+    public const string AuthMode = "authMode";
+
     // ── Default values ───────────────────────────────────────────────────
 
     /// <summary>Default GitHub API URL.</summary>

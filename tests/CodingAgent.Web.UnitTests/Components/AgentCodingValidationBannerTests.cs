@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
@@ -46,15 +47,11 @@ public class AgentCodingValidationBannerTests : BunitContext
 
     public AgentCodingValidationBannerTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<ILogger>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
 
         TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
@@ -86,7 +83,6 @@ public class AgentCodingValidationBannerTests : BunitContext
         mockSchedulerClient.Setup(c => c.ResumeLoopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
         Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);

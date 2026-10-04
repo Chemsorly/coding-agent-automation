@@ -1,3 +1,6 @@
+using CodingAgent.Web.Auth;
+using AwesomeAssertions;
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Models;
@@ -11,6 +14,9 @@ namespace CodingAgent.Web.UnitTests.Components;
 
 public class AboutPageComponentTests : BunitContext
 {
+    // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
+    public AboutPageComponentTests() => Services.AddTestAccess();
+
     private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
     {
         var mockHistory = new Mock<IPipelineRunHistoryService>();
@@ -158,5 +164,19 @@ public class AboutPageComponentTests : BunitContext
         Assert.Equal("Blazor Server", badges[1].TextContent);
         Assert.Equal("Kiro CLI", badges[2].TextContent);
         Assert.Equal("Docker", badges[3].TextContent);
+    }
+
+    // ── Spec 049: statistics span every project ───────────────────────────────
+
+    [Fact]
+    public void Access_ScopedUser_SeesNoStatistics()
+    {
+        Services.AddTestAccess(TestAccess.Scoped(("6f1c2a9e-0000-0000-0000-00000000000a", AccessRole.ReadOnly)));
+        RegisterDefaults();
+
+        var cut = Render<About>();
+
+        cut.FindAll("[data-testid=about-stats]").Should().BeEmpty();
+        cut.Markup.Should().Contain("Coding Agent");
     }
 }

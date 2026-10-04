@@ -28,6 +28,9 @@ set:
   api.enabled: true
   jobController.enabled: true
   scheduler.enabled: true
+  # Required by the chart's render-time check (api.replicas > 1 needs Redis).
+  signalr.redis.connectionString: "redis:6379"
+  scheduler.image.tag: "test"
 
 tests:
 

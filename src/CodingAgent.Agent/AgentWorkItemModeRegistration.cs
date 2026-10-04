@@ -24,14 +24,9 @@ internal static class AgentWorkItemModeRegistration
         services.AddHttpClient<WorkItemHttpClient>(client =>
         {
             client.BaseAddress = new Uri(config.OrchestratorUrl.TrimEnd('/'));
-            // When the key is pre-derived (AGENT_API_KEY from a per-job K8s Secret), use it
-            // directly — it is already HMAC-SHA256(masterKey, agentId) and needs no further derivation.
-            // When the key is the raw master key (AGENT_API_KEY_FILE, non-work-item pods), derive in-process.
-            var bearerToken = config.KeyIsPreDerived
-                ? config.AgentApiKey
-                : CodingAgent.Agent.HubConnectionManager.DeriveKey(config.AgentApiKey, config.AgentId.Value);
+            // AGENT_API_KEY is the Job's own HMAC-SHA256(masterKey, agentId) key; use it as-is.
             client.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearerToken);
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", config.AgentApiKey);
             // DO NOT set client.Timeout — resilience handler manages timeouts
         })
         .AddStandardResilienceHandler(options =>

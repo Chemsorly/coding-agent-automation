@@ -1,4 +1,5 @@
 @page "/runs/{RunId}"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
 @layout CockpitLayout
 @implements IAsyncDisposable
 @using CodingAgent.Api.Client
@@ -14,6 +15,8 @@
 @inject IConfigurationStore ConfigStore
 @inject IAgentHubConnection HubConnection
 @inject NavigationManager Nav
+@inject CurrentAccess Access
+@inject IAccessGuard Guard
 
 @*
     Run Page — the deep-linkable run detail (see docs/frontend-redesign-handoff.md).
@@ -187,7 +190,7 @@
                     <h2>Pipeline progress</h2>
                 </div>
                 <div class="cockpit-card-pad">
-                    <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" />
+                    <PipelineSidebar Run="_model" IsRunning="_isLive" MaxRetries="_maxRetries" OnCancel="CancelRunAsync" CanCancel="Access.CanOperate(_run?.ProjectId)" />
                 </div>
                 @if (_cancelling)
                 {
@@ -241,7 +244,7 @@
         }
 
         @* Re-dispatch — available for terminal Implementation runs when provider IDs are present. *@
-        @if (CanRedispatch(run))
+        @if (CanRedispatch(run) && Access.CanOperate(run.ProjectId))
         {
             <div class="cockpit-card" data-testid="redispatch-card">
                 <div class="cockpit-card-pad">
@@ -366,6 +369,9 @@
         try
         {
             _run = await RunHistory.GetRunAsync(id, _cts.Token);
+            // Spec 049 Req 8.5: a run of a project the user cannot read looks exactly like a missing one.
+            if (_run is not null && !Access.CanRead(_run.ProjectId))
+                _run = null;
             if (_run?.AgentProviderConfigId is not null)
             {
                 var cfg = await ConfigStore.GetProviderConfigByIdAsync(
@@ -579,9 +585,14 @@
         StateHasChanged();
         try
         {
+            await Guard.DemandAsync(AccessRole.Operator, _run?.ProjectId, "CancelRun");
             await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
         }
         catch (OperationCanceledException) { }
+        catch (AccessDeniedException)
+        {
+            _cancelError = AccessDeniedException.UserMessage;
+        }
         catch (Exception ex)
         {
             _cancelError = ex.Message;
@@ -629,6 +640,7 @@
         StateHasChanged();
         try
         {
+            await Guard.DemandAsync(AccessRole.Operator, _run.ProjectId, "RedispatchRun");
             // TODO: [WARNING] _run is captured by field reference below. In Blazor's single-threaded
             // renderer this is safe in practice, but a concurrent hub update that sets _run = null
             // between the CanRedispatch guard above and the property accesses here would produce a
@@ -653,6 +665,10 @@
             _showRedispatchConfirm = false;
         }
         catch (OperationCanceledException) { }
+        catch (AccessDeniedException)
+        {
+            _redispatchError = AccessDeniedException.UserMessage;
+        }
         catch (Exception ex)
         {
             _redispatchError = ex.Message;

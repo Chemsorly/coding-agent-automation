@@ -124,6 +124,58 @@ public static class PipelineTelemetry
     public static readonly Counter<double> RunAgentTime = Meter.CreateCounter<double>(
         "pipeline.run.agent_time", "s", "Agent execution time in seconds per pipeline run phase");
 
+    // ── Detailed LLM usage (API-side, recorded at terminal time from the per-phase breakdown) ────
+    // These carry no phase tag, to keep series counts bounded; per-phase totals stay on the
+    // counters above.
+
+    /// <summary>
+    /// Counter: tokens consumed per run, split by token type.
+    /// Tags: run_type, provider, token_type (<see cref="TokenTypes"/>).
+    /// Pre-initialized at process start for run_type × provider × token_type.
+    /// </summary>
+    public static readonly Counter<long> RunTokenUsage = Meter.CreateCounter<long>(
+        "pipeline.run.token_usage", "{token}", "LLM tokens consumed per pipeline run, by token type");
+
+    /// <summary>
+    /// Counter: agent turns (model round trips) per run, from providers that report them.
+    /// Tags: run_type, provider. Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<long> RunAgentTurns = Meter.CreateCounter<long>(
+        "pipeline.run.agent_turns", "{turn}", "Agent turns (model round trips) per pipeline run");
+
+    /// <summary>
+    /// Counter: web search requests the model made per run, from providers that report them.
+    /// Tags: run_type, provider. Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<long> RunWebSearchRequests = Meter.CreateCounter<long>(
+        "pipeline.run.web_search_requests", "{request}", "Web search requests made by the model per pipeline run");
+
+    /// <summary>
+    /// Counter: provider-reported LLM cost in USD per run, split by how the calls were paid for.
+    /// billing=api is billed per token; billing=subscription is an estimate under a flat plan.
+    /// Tags: run_type, provider, billing (<see cref="AgentBillingModes"/>). Pre-initialized at process start.
+    /// </summary>
+    public static readonly Counter<double> RunBillingCostUsd = Meter.CreateCounter<double>(
+        "pipeline.run.billing_cost_usd", "{usd}", "LLM cost in USD per pipeline run, by billing mode");
+
+    /// <summary>
+    /// Counter: subscription rate-limit readings reported at run end (latest per window).
+    /// Tags: provider, window, status. Pre-initialized for the claude provider.
+    /// </summary>
+    public static readonly Counter<long> RunRateLimitEvents = Meter.CreateCounter<long>(
+        "pipeline.run.rate_limit_events", UnitEvent, "Subscription rate-limit readings per pipeline run, by window and status");
+
+    /// <summary>
+    /// Histogram: fraction (0–1) of a subscription rate-limit window used, as last seen in a run.
+    /// Tags: provider, window, status.
+    /// </summary>
+    public static readonly Histogram<double> RunRateLimitUtilization = Meter.CreateHistogram<double>(
+        "pipeline.run.rate_limit_utilization", "1", "Fraction of the subscription rate-limit window used, as last seen in a run",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0]
+        });
+
     /// <summary>
     /// Normalizes a raw phase name (from <see cref="RunMetrics.PhaseBreakdown"/> or phase description)
     /// to a closed set of phase tag values for metrics. Per-reviewer names (e.g. "review_correctness")
@@ -136,7 +188,7 @@ public static class PipelineTelemetry
     public static string NormalizeRunPhase(string? phase)
     {
         if (string.IsNullOrEmpty(phase))
-            return "other";
+            return RunPhases.Other;
 
         // TODO: Several real phase keys produced in the codebase fall through to "other" and lose
         // per-phase attribution. Known gaps: "decomposition_analysis" and "decomposition_refinement"
@@ -159,7 +211,7 @@ public static class PipelineTelemetry
             "decomposition" or "decomposition_review" or "decompositionreview" => "decomposition",
             _ when phase.StartsWith("review_", StringComparison.OrdinalIgnoreCase) => "review",
             _ when phase.StartsWith("review ", StringComparison.OrdinalIgnoreCase) => "review",
-            _ => "other"
+            _ => RunPhases.Other
         };
     }
 
@@ -189,10 +241,54 @@ public static class PipelineTelemetry
     {
         public const string Kiro = "kiro";
         public const string OpenCode = "opencode";
+        public const string Claude = "claude";
         public const string Unknown = "unknown";
 
         /// <summary>All closed-set provider values for pre-initialization.</summary>
-        public static readonly string[] All = [Kiro, OpenCode, Unknown];
+        public static readonly string[] All = [Kiro, OpenCode, Claude, Unknown];
+    }
+
+    /// <summary>
+    /// Maps an agent-reported provider name to the <see cref="RunProviders"/> closed set, so a
+    /// misbehaving agent cannot inflate label cardinality. Unknown or missing values become "unknown".
+    /// </summary>
+    public static string NormalizeRunProvider(string? provider) =>
+        RunProviders.All.FirstOrDefault(p => p.Equals(provider, StringComparison.OrdinalIgnoreCase))
+        ?? RunProviders.Unknown;
+
+    /// <summary>Maps a reported billing mode to the <see cref="AgentBillingModes"/> closed set.</summary>
+    public static string NormalizeBillingMode(string? billingMode) =>
+        AgentBillingModes.All.FirstOrDefault(b => b.Equals(billingMode, StringComparison.OrdinalIgnoreCase))
+        ?? AgentBillingModes.Unknown;
+
+    /// <summary>Token type tag values for <see cref="RunTokenUsage"/>.</summary>
+    public static class TokenTypes
+    {
+        public const string Input = "input";
+        public const string Output = "output";
+        public const string Reasoning = "reasoning";
+        public const string CacheRead = "cache_read";
+        public const string CacheWrite = "cache_write";
+
+        public static readonly string[] All = [Input, Output, Reasoning, CacheRead, CacheWrite];
+    }
+
+    /// <summary>
+    /// Window and status tag values for the rate-limit metrics. Values outside these sets are
+    /// recorded as "other" so a new CLI version cannot inflate label cardinality.
+    /// </summary>
+    public static class RateLimitTags
+    {
+        public const string Other = "other";
+
+        public static readonly string[] Windows = ["five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "overage"];
+        public static readonly string[] Statuses = ["allowed", "allowed_warning", "rejected"];
+
+        public static string NormalizeWindow(string? window) =>
+            Windows.FirstOrDefault(w => w.Equals(window, StringComparison.OrdinalIgnoreCase)) ?? Other;
+
+        public static string NormalizeStatus(string? status) =>
+            Statuses.FirstOrDefault(s => s.Equals(status, StringComparison.OrdinalIgnoreCase)) ?? Other;
     }
 
     public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(

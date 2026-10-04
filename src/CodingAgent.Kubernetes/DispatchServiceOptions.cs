@@ -44,6 +44,12 @@ public sealed class DispatchServiceOptions
     public string OpencodeConfigSecretName { get; set; } = "";
 
     /// <summary>
+    /// Secret holding the Claude Code credentials (keys <c>claude-api-key</c>, <c>claude-oauth-token</c>,
+    /// both optional) for claude providerType jobs. Empty means none are injected.
+    /// </summary>
+    public string ClaudeAuthSecretName { get; set; } = "";
+
+    /// <summary>
     /// Maximum chat session pod lifetime in seconds. Sets <c>activeDeadlineSeconds</c> on chat
     /// session K8s Job pods. Does NOT apply to work-item agent jobs (those use
     /// <c>PipelineConfiguration.AgentTimeout</c> per-project). Default: 7200.

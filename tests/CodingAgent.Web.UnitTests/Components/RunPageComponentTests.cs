@@ -1,3 +1,6 @@
+using AwesomeAssertions;
+using CodingAgent.Web.Auth;
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
@@ -18,6 +21,9 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class RunPageComponentTests : BunitContext
 {
+    // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
+    public RunPageComponentTests() => Services.AddTestAccess();
+
     // ── Shared scaffolding ────────────────────────────────────────────────
 
     /// <summary>
@@ -849,4 +855,63 @@ public class RunPageComponentTests : BunitContext
         Assert.Contains("btn-save", cut.Find("[data-testid='redispatch-confirm-btn']").ClassList);
     }
 
+
+    // ── Spec 049: run visibility and actions follow the run's project ─────────
+
+    private const string AccessProjectP = "6f1c2a9e-0000-0000-0000-00000000000a";
+    private const string AccessProjectQ = "6f1c2a9e-0000-0000-0000-00000000000b";
+
+    private static PipelineRunSummary FailedImplementationRun(string? projectId) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = "3001",
+        IssueTitle = "Access test",
+        FinalStep = PipelineStep.Failed,
+        RunType = PipelineRunType.Implementation,
+        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+        CompletedAtOffset = DateTimeOffset.UtcNow,
+        IssueProviderConfigId = "ip-1",
+        RepoProviderConfigId = "rp-1",
+        ProjectId = projectId,
+    };
+
+    [Theory]
+    [InlineData(AccessProjectQ)]
+    [InlineData(null)]
+    public void Access_RunOfUnreadableProject_LooksLikeAMissingRun(string? runProjectId)
+    {
+        Services.AddTestAccess(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
+        var summary = FailedImplementationRun(runProjectId);
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Markup.Should().Contain("Run not found.");
+        cut.Markup.Should().NotContain("Access test");
+    }
+
+    [Fact]
+    public void Access_ReadOnlyOnTheRunsProject_SeesTheRunWithoutRedispatch()
+    {
+        Services.AddTestAccess(TestAccess.Scoped((AccessProjectP, AccessRole.ReadOnly)));
+        var summary = FailedImplementationRun(AccessProjectP);
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.Markup.Should().Contain("Access test");
+        cut.FindAll("[data-testid='redispatch-btn']").Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Access_OperatorOnTheRunsProject_CanRedispatch()
+    {
+        Services.AddTestAccess(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
+        var summary = FailedImplementationRun(AccessProjectP);
+        RegisterServices(summary);
+
+        var cut = Render<RunPage>(ps => ps.Add(p => p.RunId, summary.RunId));
+
+        cut.FindAll("[data-testid='redispatch-btn']").Should().ContainSingle();
+    }
 }

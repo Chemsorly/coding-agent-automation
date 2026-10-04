@@ -33,7 +33,7 @@ namespace CodingAgent.Scheduler.Services;
 /// </list>
 /// </para>
 /// <para>
-/// Enabled/disabled via <c>Scheduler:Dispatch:Enabled</c> (default <c>false</c>).
+/// Registered by default; <c>Scheduler:Dispatch:Enabled=false</c> turns it off for test hosts.
 /// Registered in <see cref="CodingAgent.Scheduler.SchedulerServiceCollectionExtensions"/> when the flag is true.
 /// </para>
 /// </summary>

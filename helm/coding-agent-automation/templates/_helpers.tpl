@@ -188,6 +188,8 @@ Usage (inside an env: list, indented to 12):
       fieldPath: metadata.namespace
 - name: WorkDistribution__OpencodeConfigSecretName
   value: {{ include "coding-agent-automation.secretName" . | quote }}
+- name: WorkDistribution__ClaudeAuthSecretName
+  value: {{ include "coding-agent-automation.secretName" . | quote }}
 - name: WorkDistribution__JobTemplatesPath
   value: "/app/config/job-templates.yaml"
 {{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* env vars
@@ -232,6 +234,7 @@ WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.sec
 WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
 WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
 WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
+WorkDistribution__ClaudeAuthSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
 WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"
 {{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* keys
      below are written into the API ConfigMap but the WorkItemDispatchService that consumed them was
@@ -279,4 +282,73 @@ Usage:
 {{- else -}}
 {{- printf "caa-%s-%s" .root.Release.Name .suffix | quote -}}
 {{- end -}}
+{{- end }}
+
+{{/*
+Spec 049 — authentication helpers.
+
+generateAgentKey: the secret-init hook must create the agent API key Secret (no existingSecret,
+no explicit secrets.agentApiKey). Returns "true" or "".
+*/}}
+{{- define "coding-agent-automation.generateAgentKey" -}}
+{{- if and (not .Values.existingSecret) (not .Values.secrets.agentApiKey) }}true{{- end }}
+{{- end }}
+
+{{/*
+The `auth.admin` values with defaults applied: enabled unless explicitly false.
+*/}}
+{{- define "coding-agent-automation.adminEnabled" -}}
+{{- $admin := (.Values.auth | default dict).admin | default dict -}}
+{{- if or (not (hasKey $admin "enabled")) $admin.enabled }}true{{- end }}
+{{- end }}
+
+{{/*
+generateAdminPassword: the local admin is enabled and no existing Secret holds its password, so
+the secret-init hook creates <fullname>-admin. Returns "true" or "".
+*/}}
+{{- define "coding-agent-automation.generateAdminPassword" -}}
+{{- $admin := (.Values.auth | default dict).admin | default dict -}}
+{{- if and (include "coding-agent-automation.adminEnabled" .) (not $admin.existingSecret) }}true{{- end }}
+{{- end }}
+
+{{/*
+Name of the Secret that holds the local admin password.
+*/}}
+{{- define "coding-agent-automation.adminSecretName" -}}
+{{- $admin := (.Values.auth | default dict).admin | default dict -}}
+{{- $admin.existingSecret | default (printf "%s-admin" (include "coding-agent-automation.fullname" .)) -}}
+{{- end }}
+
+{{/*
+Key of the admin password inside adminSecretName ("password" for the generated Secret).
+*/}}
+{{- define "coding-agent-automation.adminSecretKey" -}}
+{{- $admin := (.Values.auth | default dict).admin | default dict -}}
+{{- if $admin.existingSecret }}{{ $admin.existingSecretKey | default "password" }}{{ else }}password{{ end -}}
+{{- end }}
+
+{{/*
+Spec 049: render-time validation of the auth values (the web host validates them again at startup).
+*/}}
+{{- define "coding-agent-automation.validateAuth" -}}
+{{- $auth := .Values.auth | default dict -}}
+{{- $oidc := $auth.oidc | default dict -}}
+{{- $rbac := $auth.rbac | default dict -}}
+{{- if and (not (include "coding-agent-automation.adminEnabled" .)) (not $oidc.enabled) }}
+  {{- fail "auth: enable auth.admin or auth.oidc. The web UI requires a signed-in user and authentication cannot be turned off." }}
+{{- end }}
+{{- if $oidc.enabled }}
+  {{- if not $oidc.issuer }}{{ fail "auth.oidc.enabled is true but auth.oidc.issuer is empty." }}{{ end }}
+  {{- if not $oidc.clientId }}{{ fail "auth.oidc.enabled is true but auth.oidc.clientId is empty." }}{{ end }}
+  {{- if not (($oidc.clientSecret | default dict).existingSecret) }}{{ fail "auth.oidc.enabled is true but auth.oidc.clientSecret.existingSecret is empty. Create a Secret with the client secret and reference it." }}{{ end }}
+{{- end }}
+{{- range $i, $b := ($rbac.bindings | default list) }}
+  {{- if and (eq (lower (toString $b.role)) "admin") $b.project }}
+    {{- fail (printf "auth.rbac.bindings[%d] binds role admin to project %q. The admin role can only be bound globally." $i $b.project) }}
+  {{- end }}
+{{- end }}
+{{- $web := .Values.web | default dict -}}
+{{- if and (gt (int ($web.replicas | default 1)) 1) (empty ((.Values.signalr | default dict).redis | default dict).connectionString) }}
+  {{- fail "web.replicas is greater than 1 but signalr.redis.connectionString is empty. Login sessions are encrypted with a key ring shared through Redis; without it a session created on one web pod is rejected by the others. Set signalr.redis.connectionString or web.replicas: 1." }}
+{{- end }}
 {{- end }}

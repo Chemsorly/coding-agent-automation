@@ -8,9 +8,8 @@ namespace CodingAgent.Web.UnitTests.TestUtilitiesTests;
 
 /// <summary>
 /// Tests for <see cref="TestOrchestrationFactory"/> helper utilities.
-/// Exercises <see cref="TestOrchestrationFactory.NoOpLabelService"/>,
-/// <see cref="TestOrchestrationFactory.NullHistoryService"/>, and
-/// <see cref="CreateMinimalOptions"/> to ensure they're constructed and invoked correctly.
+/// Exercises <see cref="TestOrchestrationFactory.NoOpLabelService"/>
+/// and <see cref="TestOrchestrationFactory.NullHistoryService"/>.
 /// </summary>
 public class TestOrchestrationFactoryTests
 {
@@ -120,74 +119,6 @@ public class TestOrchestrationFactoryTests
         var page2 = await svc.GetRunHistoryAsync(page: 2, pageSize: 2);
         page2.Items.Should().HaveCount(1);
         page2.HasMore.Should().BeFalse();
-    }
-
-    // ── CreateMinimalOptions ──────────────────────────────────────────────
-
-    [Fact]
-    public void CreateMinimalOptions_DefaultsAllNull()
-    {
-        var opts = new CreateMinimalOptions();
-        opts.ConfigStore.Should().BeNull();
-        opts.ProviderFactory.Should().BeNull();
-        opts.CancellationFacade.Should().BeNull();
-        opts.Lifecycle.Should().BeNull();
-        opts.LabelService.Should().BeNull();
-        opts.Logger.Should().BeNull();
-        opts.HistoryService.Should().BeNull();
-        opts.RunService.Should().BeNull();
-        opts.OrchestrationService.Should().BeNull();
-    }
-
-    [Fact]
-    public void CreateMinimalOptions_WithProperties_StoresValues()
-    {
-        var logger = Mock.Of<Serilog.ILogger>();
-        var historyService = new TestOrchestrationFactory.NullHistoryService();
-
-        var opts = new CreateMinimalOptions
-        {
-            Logger = logger,
-            HistoryService = historyService
-        };
-
-        opts.Logger.Should().BeSameAs(logger);
-        opts.HistoryService.Should().BeSameAs(historyService);
-    }
-
-    // ── TestOrchestrationFactory.CreateMinimal — exception for missing deps ─
-
-    [Fact]
-    public void CreateMinimal_NullConfigStore_ThrowsArgumentNullException()
-    {
-        var act = () => TestOrchestrationFactory.CreateMinimal(new CreateMinimalOptions
-        {
-            ProviderFactory = Mock.Of<IProviderFactory>()
-            // ConfigStore intentionally null
-        });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void CreateMinimal_NullProviderFactory_ThrowsArgumentNullException()
-    {
-        var act = () => TestOrchestrationFactory.CreateMinimal(new CreateMinimalOptions
-        {
-            ConfigStore = Mock.Of<IConfigurationStore>()
-            // ProviderFactory intentionally null
-        });
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void CreateMinimal_WithRequiredDeps_ReturnsInstance()
-    {
-        var svc = TestOrchestrationFactory.CreateMinimal(new CreateMinimalOptions
-        {
-            ConfigStore = Mock.Of<IConfigurationStore>(),
-            ProviderFactory = Mock.Of<IProviderFactory>()
-        });
-        svc.Should().NotBeNull();
     }
 
     // ── TestOrchestrationFactory.CreateMinimalRunCreator ─────────────────

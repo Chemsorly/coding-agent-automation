@@ -140,10 +140,13 @@
                             Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                         </p>
                     }
+                    @if (CanDispatch)
+                    {
                     <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
                             data-testid="dispatch-epic-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Decomposition on #{SelectedItem.Identifier}")
                     </button>
+                    }
                 </div>
             }
         }
