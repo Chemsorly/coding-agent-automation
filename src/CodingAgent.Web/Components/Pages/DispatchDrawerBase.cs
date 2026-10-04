@@ -34,11 +34,10 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
-        // The parent re-renders for reasons that have nothing to do with this list — the
-        // loop-status poll fires OnChange every few seconds, readiness checks and dispatch
-        // state also re-render it — and each re-render sets the parameters again. Keep the
-        // keyboard highlight on the same item across those, or it vanishes on the next poll and
-        // a following Enter silently does nothing. Only a filter change resets it (ApplyFilter).
+        // The parent re-renders for reasons that have nothing to do with this list — loop-status
+        // changes, readiness checks, dispatch state — and each re-render sets the parameters
+        // again. Keep the keyboard highlight on the same item across those, or it vanishes and a
+        // following Enter silently does nothing. Only a filter change resets it (ApplyFilter).
         var highlightedId = _highlightedIndex >= 0 && _highlightedIndex < FilteredItems.Count
             ? GetIdentifier(FilteredItems[_highlightedIndex])
             : null;

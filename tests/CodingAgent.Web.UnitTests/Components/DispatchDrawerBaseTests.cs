@@ -256,8 +256,9 @@ public class DispatchDrawerBaseTests : BunitContext
     }
 
     // ── Highlight across parent re-renders ──────────────────────────────────
-    // The page re-renders the drawer on every loop-status poll, so OnParametersSet runs while the
-    // user is navigating with the keyboard. It must not drop the highlight.
+    // The page re-renders the drawer whenever something else on it changes (loop status, readiness
+    // checks, dispatch state), so OnParametersSet runs while the user is navigating with the
+    // keyboard. It must not drop the highlight.
 
     [Fact]
     public async Task OnParametersSet_SameItems_KeepsHighlight()
@@ -334,7 +335,8 @@ public class DispatchDrawerBaseTests : BunitContext
         cut.Find(".agent-history-list").KeyDown(new KeyboardEventArgs { Key = "ArrowDown" });
         Assert.Contains("drawer-item-highlighted", cut.Find("[data-testid='pr-row-2']").ClassName);
 
-        // What AgentCoding does on every loop-status poll: render the drawer again with the same data.
+        // What AgentCoding does when something else on the page changes: render the drawer again
+        // with the same data.
         cut.Render(Parameters);
 
         Assert.Contains("drawer-item-highlighted", cut.Find("[data-testid='pr-row-2']").ClassName);

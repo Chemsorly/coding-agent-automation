@@ -1,8 +1,15 @@
 @implements IAsyncDisposable
 @inject Microsoft.JSInterop.IJSRuntime JS
+@inject CodingAgent.Orchestration.Registry.IAgentRegistryService Registry
 
 @if (_initialized && !_dismissed && !AllComplete)
 {
+    @* The agent registry raises no change events and the page re-renders only when the loop
+       status changes, so redraw while the agent step is still waiting. *@
+    @if (!HasAgent)
+    {
+        <AutoRefresh IntervalSeconds="3" OnTick="RedrawAgentStep" />
+    }
     var completedCount = new[] { HasIssueProvider, HasRepoProvider, HasProject, HasTemplate, HasAgent, IsLoopActive }.Count(x => x);
     var foundCurrent = false;
 
@@ -59,11 +66,15 @@
     [Parameter, EditorRequired] public bool HasRepoProvider { get; set; }
     [Parameter, EditorRequired] public bool HasProject { get; set; }
     [Parameter, EditorRequired] public bool HasTemplate { get; set; }
-    [Parameter, EditorRequired] public bool HasAgent { get; set; }
     [Parameter, EditorRequired] public bool IsLoopActive { get; set; }
     [Parameter] public EventCallback OnAddTemplate { get; set; }
 
+    private bool HasAgent => Registry.GetAllAgents().Count > 0;
+
     private bool AllComplete => HasIssueProvider && HasRepoProvider && HasProject && HasTemplate && HasAgent && IsLoopActive;
+
+    // Nothing to do: AutoRefresh re-renders this component after each tick.
+    private static void RedrawAgentStep() { }
 
     private static string StepClass(bool isComplete, ref bool foundCurrent)
     {

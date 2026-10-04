@@ -197,4 +197,87 @@ public sealed class LoopStatusPollingServiceTests
         // The throwing subscriber must not prevent the second subscriber from firing
         secondFired.Should().BeTrue("subscriber exception must be caught per-subscriber, not abort the loop");
     }
+
+    // ── OnChange fires only on real changes ─────────────────────────────────
+    // Subscribers re-render whole pages, so a poll that returns the same status must stay silent.
+    // Each poll deserializes new collections, so the scripts below build a fresh DTO per call.
+
+    private static LoopStatusDto FreshStatus(int processed = 5, string error = "Error A", DateTimeOffset? lastPoll = null) => new(
+        true, "Running", "issue-1", processed, 2, 3, false, null, 1, 2,
+        new List<string> { error },
+        new Dictionary<string, ConfigStatusSnapshot>
+        {
+            ["t1"] = new() { LastPollTime = lastPoll ?? new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), LastPollIssueCount = 4 }
+        });
+
+    private static LoopStatusDto Unreachable() => throw new HttpRequestException("connection refused");
+
+    /// <summary>
+    /// Runs the poller over <paramref name="polls"/> (the last one repeats once the script is
+    /// exhausted) and returns how many times OnChange fired.
+    /// </summary>
+    private async Task<int> CountOnChangeAsync(params Func<LoopStatusDto>[] polls)
+    {
+        var calls = 0;
+        var scriptProcessed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockClient.Setup(c => c.GetLoopStatusAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                var i = Interlocked.Increment(ref calls) - 1;
+                if (i < polls.Length) return polls[i]();
+                // OnChange is raised synchronously before the next tick, so once a poll past the
+                // script starts, every scripted poll and its OnChange have been handled. The
+                // repeated last poll changes nothing, so the count cannot move after this.
+                scriptProcessed.TrySetResult();
+                return polls[^1]();
+            });
+
+        var svc = CreateService();
+        var changes = 0;
+        svc.OnChange += () => Interlocked.Increment(ref changes);
+
+        await svc.StartAsync(CancellationToken.None);
+        await scriptProcessed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        try { await svc.StopAsync(stopCts.Token); } catch { }
+        svc.Dispose();
+
+        return Volatile.Read(ref changes);
+    }
+
+    [Fact]
+    public async Task WhenStatusUnchanged_OnChangeFiresOnlyForFirstPoll()
+    {
+        var changes = await CountOnChangeAsync(() => FreshStatus(), () => FreshStatus(), () => FreshStatus());
+
+        changes.Should().Be(1, "only the first poll differs from the initial state");
+    }
+
+    [Theory]
+    [InlineData("scalar")]
+    [InlineData("validation-errors")]
+    [InlineData("template-status")]
+    public async Task WhenStatusChanges_OnChangeFires(string change)
+    {
+        Func<LoopStatusDto> changed = change switch
+        {
+            "scalar" => () => FreshStatus(processed: 6),
+            "validation-errors" => () => FreshStatus(error: "Error B"),
+            "template-status" => () => FreshStatus(lastPoll: new DateTimeOffset(2026, 1, 1, 0, 1, 0, TimeSpan.Zero)),
+            _ => throw new ArgumentOutOfRangeException(nameof(change))
+        };
+
+        var changes = await CountOnChangeAsync(() => FreshStatus(), () => FreshStatus(), changed);
+
+        changes.Should().Be(2, $"the first poll and the {change} change each raise OnChange");
+    }
+
+    [Fact]
+    public async Task WhenSchedulerReachabilityFlips_OnChangeFiresOncePerFlip()
+    {
+        var changes = await CountOnChangeAsync(
+            () => FreshStatus(), Unreachable, Unreachable, () => FreshStatus());
+
+        changes.Should().Be(3, "first poll, becoming unreachable, and recovering; a repeated failure is not a change");
+    }
 }

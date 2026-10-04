@@ -18,9 +18,9 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///    "?" typed in the filter input does not open the overlay.
 /// 6. Enter-dispatch on the PR drawer and the Epic drawer (both share DispatchDrawerBase).
 ///
-/// The page re-renders the open drawer on every loop-status poll (every second in this harness),
-/// so a key press can always meet a parent re-render; DispatchDrawerBase.OnParametersSet keeps the
-/// highlight across those.
+/// The page re-renders the open drawer whenever something else on it changes (loop status,
+/// readiness checks, dispatch state), so a key press can meet a parent re-render;
+/// DispatchDrawerBase.OnParametersSet keeps the highlight across those.
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]

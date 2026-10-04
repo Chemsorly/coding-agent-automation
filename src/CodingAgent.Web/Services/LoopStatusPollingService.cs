@@ -11,8 +11,12 @@ namespace CodingAgent.Web.Services;
 /// SchedulerApi:StatusPollIntervalSeconds). Uses <see cref="PeriodicTimer"/> instead of
 /// Timer+async void to prevent subscriber exceptions from crashing the process.
 ///
-/// On poll failure: sets <see cref="IsSchedulerUnreachable"/> = true, preserves prior state,
-/// fires <see cref="OnChange"/>. On recovery: clears the flag.
+/// On poll failure: sets <see cref="IsSchedulerUnreachable"/> = true and preserves prior state.
+/// On recovery: clears the flag.
+///
+/// <see cref="OnChange"/> fires only when the polled status or <see cref="IsSchedulerUnreachable"/>
+/// actually changes. Subscribers re-render whole pages, so a tick that changed nothing must not
+/// reach them.
 /// </summary>
 public sealed class LoopStatusPollingService : BackgroundService, ILoopStatusService
 {
@@ -74,9 +78,11 @@ public sealed class LoopStatusPollingService : BackgroundService, ILoopStatusSer
                 break;
             }
 
+            bool changed;
             try
             {
                 var dto = await _schedulerClient.GetLoopStatusAsync(stoppingToken);
+                changed = _isSchedulerUnreachable || !SameStatus(_status, dto);
                 _status = dto;
                 _isSchedulerUnreachable = false;
             }
@@ -87,9 +93,13 @@ public sealed class LoopStatusPollingService : BackgroundService, ILoopStatusSer
             catch (Exception ex)
             {
                 _logger.Warning(ex, "LoopStatusPollingService: Scheduler unreachable — prior state preserved");
+                changed = !_isSchedulerUnreachable;
                 _isSchedulerUnreachable = true;
                 // Preserve _status — do not reset to defaults on transient failure
             }
+
+            if (!changed)
+                continue;
 
             // Fire OnChange to each subscriber independently so that a throw from one
             // subscriber does not skip the remaining ones.
@@ -107,5 +117,32 @@ public sealed class LoopStatusPollingService : BackgroundService, ILoopStatusSer
                 }
             }
         }
+    }
+
+    private static readonly IReadOnlyList<string> NoErrors = [];
+    private static readonly IReadOnlyDictionary<string, ConfigStatusSnapshot> NoTemplateStatuses =
+        new Dictionary<string, ConfigStatusSnapshot>();
+
+    /// <summary>
+    /// Compares two status snapshots by value. <see cref="LoopStatusDto"/> is a record, but its
+    /// generated equality compares the list and dictionary members by reference, and every poll
+    /// deserializes new ones. So the scalar members are compared through the record's own equality
+    /// (with the two collections swapped for shared empties, so a scalar added to the DTO later is
+    /// covered without touching this method) and the collections by content.
+    /// </summary>
+    private static bool SameStatus(LoopStatusDto a, LoopStatusDto b)
+    {
+        if (a with { ValidationErrors = NoErrors, TemplateStatuses = NoTemplateStatuses }
+            != b with { ValidationErrors = NoErrors, TemplateStatuses = NoTemplateStatuses })
+            return false;
+
+        if (!(a.ValidationErrors ?? NoErrors).SequenceEqual(b.ValidationErrors ?? NoErrors))
+            return false;
+
+        // ConfigStatusSnapshot is a record of scalars, so Equals compares it by value.
+        var aStatuses = a.TemplateStatuses ?? NoTemplateStatuses;
+        var bStatuses = b.TemplateStatuses ?? NoTemplateStatuses;
+        return aStatuses.Count == bStatuses.Count
+            && aStatuses.All(kv => bStatuses.TryGetValue(kv.Key, out var other) && Equals(kv.Value, other));
     }
 }
