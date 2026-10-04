@@ -13,6 +13,7 @@ public class ClaudeCodeMcpConfigTests : IDisposable
     {
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
+        GC.SuppressFinalize(this);
     }
 
     [Fact]

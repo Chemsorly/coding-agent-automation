@@ -11,6 +11,19 @@ using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Agent.ClaudeCode;
 
+/// <summary>How the Claude Code CLI is invoked: the agent provider config's settings.</summary>
+/// <param name="Model">Model ID or alias; null or "auto" leaves the choice to the CLI.</param>
+/// <param name="ExecutablePath">Path to the <c>claude</c> binary.</param>
+/// <param name="Effort">Passed as <c>--effort</c> unless <see cref="AgentEffortLevel.Auto"/>.</param>
+/// <param name="AuthMode">One of <see cref="ClaudeCodeAuthModes"/>; anything else means auto.</param>
+/// <param name="McpConfigPath">MCP config file passed with <c>--mcp-config</c>; null means <c>~/.claude/pipeline-mcp.json</c>.</param>
+internal sealed record ClaudeCodeSettings(
+    string? Model,
+    string ExecutablePath,
+    AgentEffortLevel Effort,
+    string? AuthMode,
+    string? McpConfigPath);
+
 /// <summary>
 /// Agent provider that runs the Claude Code CLI headless (<c>claude -p --output-format stream-json</c>),
 /// one process per call. The provider does not build prompts; it receives them from the pipeline.
@@ -53,29 +66,26 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         AgentEffortLevel effort = AgentEffortLevel.Auto,
         string? authMode = null,
         string? mcpConfigPath = null)
-        : this(logger, model, executablePath, effort, authMode, mcpConfigPath, null, null)
+        : this(logger, new ClaudeCodeSettings(model, executablePath, effort, authMode, mcpConfigPath), null, null)
     {
     }
 
     internal ClaudeCodeAgentProvider(
         ILogger? logger,
-        string? model,
-        string executablePath,
-        AgentEffortLevel effort,
-        string? authMode,
-        string? mcpConfigPath,
+        ClaudeCodeSettings settings,
         IClaudeProcessLauncher? launcher,
         Func<string, string?>? getEnvironmentVariable)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(executablePath);
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentException.ThrowIfNullOrWhiteSpace(settings.ExecutablePath);
         _logger = logger ?? Log.Logger;
-        _model = model;
-        _effort = effort;
-        _executablePath = executablePath;
-        _authMode = ClaudeCodeAuthModes.Normalize(authMode);
-        _mcpConfigPath = string.IsNullOrWhiteSpace(mcpConfigPath)
+        _model = settings.Model;
+        _effort = settings.Effort;
+        _executablePath = settings.ExecutablePath;
+        _authMode = ClaudeCodeAuthModes.Normalize(settings.AuthMode);
+        _mcpConfigPath = string.IsNullOrWhiteSpace(settings.McpConfigPath)
             ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "pipeline-mcp.json")
-            : mcpConfigPath;
+            : settings.McpConfigPath;
         _launcher = launcher ?? SystemClaudeProcessLauncher.Instance;
         _getEnvironmentVariable = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
     }

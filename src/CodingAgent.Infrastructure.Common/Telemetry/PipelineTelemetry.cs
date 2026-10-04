@@ -188,7 +188,7 @@ public static class PipelineTelemetry
     public static string NormalizeRunPhase(string? phase)
     {
         if (string.IsNullOrEmpty(phase))
-            return "other";
+            return RunPhases.Other;
 
         // TODO: Several real phase keys produced in the codebase fall through to "other" and lose
         // per-phase attribution. Known gaps: "decomposition_analysis" and "decomposition_refinement"
@@ -211,7 +211,7 @@ public static class PipelineTelemetry
             "decomposition" or "decomposition_review" or "decompositionreview" => "decomposition",
             _ when phase.StartsWith("review_", StringComparison.OrdinalIgnoreCase) => "review",
             _ when phase.StartsWith("review ", StringComparison.OrdinalIgnoreCase) => "review",
-            _ => "other"
+            _ => RunPhases.Other
         };
     }
 

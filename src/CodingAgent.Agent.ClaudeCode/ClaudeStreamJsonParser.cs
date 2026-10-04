@@ -79,9 +79,12 @@ internal sealed record ClaudeUsageTotals
 
     private static long Delta(long current, long previous) => current >= previous ? current - previous : current;
 
-    private static decimal? Delta(decimal? current, decimal? previous) =>
-        current is null || previous is null ? current
-        : current >= previous ? current - previous : current;
+    private static decimal? Delta(decimal? current, decimal? previous)
+    {
+        if (current is null || previous is null || current < previous)
+            return current;
+        return current - previous;
+    }
 }
 
 /// <summary>
@@ -198,7 +201,7 @@ internal static class ClaudeStreamJsonParser
         }
     }
 
-    private static IReadOnlyList<string> ProcessAssistant(JsonElement root, ClaudeStreamState state)
+    private static List<string> ProcessAssistant(JsonElement root, ClaudeStreamState state)
     {
         state.SessionId ??= GetString(root, "session_id");
         if (GetString(root, "error") is { } error)
@@ -252,7 +255,7 @@ internal static class ClaudeStreamJsonParser
         return [$"✖ Claude Code failed ({state.ResultSubtype ?? "error"}): {message}"];
     }
 
-    private static IReadOnlyList<string> ProcessRateLimit(JsonElement root, ClaudeStreamState state)
+    private static List<string> ProcessRateLimit(JsonElement root, ClaudeStreamState state)
     {
         if (!root.TryGetProperty("rate_limit_info", out var info) || info.ValueKind != JsonValueKind.Object)
             return [];

@@ -28,7 +28,8 @@ COPY src/CodingAgent.Agent.ClaudeCode/CodingAgent.Agent.ClaudeCode.csproj src/Co
 RUN dotnet restore src/CodingAgent.Agent/CodingAgent.Agent.csproj -a $TARGETARCH
 
 COPY . .
-RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj \
+    -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (JDK 21 + Maven for Java quality gates)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS runtime

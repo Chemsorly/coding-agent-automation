@@ -69,24 +69,6 @@ public static class PipelineRunExtensions
     }
 
     /// <summary>
-    /// Returns <paramref name="phase"/> with one invocation's tokens, cost and usage details added.
-    /// </summary>
-    private static PhaseUsage AddUsage(PhaseUsage phase, TokenUsage usage, decimal? cost, AgentUsageDetails? details) =>
-        phase with
-        {
-            Tokens = phase.Tokens + usage.TotalTokens,
-            Cost = phase.Cost is null && cost is null ? null : (phase.Cost ?? 0m) + (cost ?? 0m),
-            InputTokens = phase.InputTokens + usage.InputTokens,
-            OutputTokens = phase.OutputTokens + usage.OutputTokens,
-            ReasoningTokens = phase.ReasoningTokens + usage.ReasoningTokens,
-            CacheReadTokens = phase.CacheReadTokens + usage.CacheReadTokens,
-            CacheWriteTokens = phase.CacheWriteTokens + usage.CacheWriteTokens,
-            Turns = phase.Turns + (details?.Turns ?? 0),
-            WebSearchRequests = phase.WebSearchRequests + (details?.WebSearchRequests ?? 0),
-            BillingMode = phase.BillingMode ?? details?.BillingMode
-        };
-
-    /// <summary>
     /// Accumulates token usage from a <see cref="TokenUsage"/> object directly into the pipeline run totals.
     /// Use this overload when only a <see cref="TokenUsage"/> is available (e.g. from
     /// <see cref="CodingAgent.Pipeline.Services.AdversarialReviewResult.ReviewTokenUsage"/>),
@@ -107,6 +89,24 @@ public static class PipelineRunExtensions
                 (_, existing) => AddUsage(existing, usage, cost: null, details: null));
         }
     }
+
+    /// <summary>
+    /// Returns <paramref name="phase"/> with one invocation's tokens, cost and usage details added.
+    /// </summary>
+    private static PhaseUsage AddUsage(PhaseUsage phase, TokenUsage usage, decimal? cost, AgentUsageDetails? details) =>
+        phase with
+        {
+            Tokens = phase.Tokens + usage.TotalTokens,
+            Cost = phase.Cost is null && cost is null ? null : (phase.Cost ?? 0m) + (cost ?? 0m),
+            InputTokens = phase.InputTokens + usage.InputTokens,
+            OutputTokens = phase.OutputTokens + usage.OutputTokens,
+            ReasoningTokens = phase.ReasoningTokens + usage.ReasoningTokens,
+            CacheReadTokens = phase.CacheReadTokens + usage.CacheReadTokens,
+            CacheWriteTokens = phase.CacheWriteTokens + usage.CacheWriteTokens,
+            Turns = phase.Turns + (details?.Turns ?? 0),
+            WebSearchRequests = phase.WebSearchRequests + (details?.WebSearchRequests ?? 0),
+            BillingMode = phase.BillingMode ?? details?.BillingMode
+        };
 
     /// <summary>
     /// Records an agent session (invocation) into the per-phase breakdown.

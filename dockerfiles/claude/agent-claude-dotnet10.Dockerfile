@@ -30,7 +30,8 @@ RUN dotnet restore src/CodingAgent.Agent/CodingAgent.Agent.csproj -a $TARGETARCH
 
 # Copy everything else and publish the Agent project
 COPY . .
-RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
+RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj \
+    -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (full SDK — agent runs dotnet build/test for quality gates)
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS runtime

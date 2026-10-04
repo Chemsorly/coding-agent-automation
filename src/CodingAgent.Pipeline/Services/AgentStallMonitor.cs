@@ -111,35 +111,8 @@ internal static class AgentStallMonitor
             try { await monitorTask; } catch (OperationCanceledException) { }
         }
 
-        // Set exit code and token usage on span
-        sessionSpan?.SetTag("agent.exit_code", result.ExitCode);
-        if (result.Usage is not null)
-        {
-            sessionSpan?.SetTag("gen_ai.usage.input_tokens", result.Usage.InputTokens);
-            sessionSpan?.SetTag("gen_ai.usage.output_tokens", result.Usage.OutputTokens);
-            if (result.Usage.TotalTokens > 0)
-                sessionSpan?.SetTag("gen_ai.usage.total_tokens", result.Usage.TotalTokens);
-            if (result.Usage.ReasoningTokens > 0)
-                sessionSpan?.SetTag("gen_ai.usage.reasoning_tokens", result.Usage.ReasoningTokens);
-            if (result.Usage.CacheReadTokens > 0)
-                sessionSpan?.SetTag("gen_ai.usage.cache_read_input_tokens", result.Usage.CacheReadTokens);
-            if (result.Usage.CacheWriteTokens > 0)
-                sessionSpan?.SetTag("gen_ai.usage.cache_creation_input_tokens", result.Usage.CacheWriteTokens);
-        }
-
-        if (result.Cost is { } cost)
-            sessionSpan?.SetTag("agent.cost_usd", (double)cost);
-
-        if (result.UsageDetails is { } details)
-        {
-            sessionSpan?.SetTag("agent.billing", details.BillingMode);
-            sessionSpan?.SetTag("agent.turns", details.Turns);
-            sessionSpan?.SetTag("agent.api_duration_s", details.ApiDurationSeconds);
-            if (details.WebSearchRequests > 0)
-                sessionSpan?.SetTag("agent.web_search_requests", details.WebSearchRequests);
-            if (result.ErrorCategory != AgentErrorCategory.None)
-                sessionSpan?.SetTag("agent.error_category", result.ErrorCategory.ToString());
-        }
+        if (sessionSpan is not null)
+            TagSessionResult(sessionSpan, result);
 
         // Accumulate session timing and count into the run's phase breakdown when a phase is known
         if (phase is not null)
@@ -149,6 +122,43 @@ internal static class AgentStallMonitor
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Sets the exit code, token usage, cost and provider-reported usage details on the session span.
+    /// </summary>
+    private static void TagSessionResult(Activity sessionSpan, AgentResult result)
+    {
+        sessionSpan.SetTag("agent.exit_code", result.ExitCode);
+        if (result.Usage is { } usage)
+        {
+            sessionSpan.SetTag("gen_ai.usage.input_tokens", usage.InputTokens);
+            sessionSpan.SetTag("gen_ai.usage.output_tokens", usage.OutputTokens);
+            SetTagIfPositive(sessionSpan, "gen_ai.usage.total_tokens", usage.TotalTokens);
+            SetTagIfPositive(sessionSpan, "gen_ai.usage.reasoning_tokens", usage.ReasoningTokens);
+            SetTagIfPositive(sessionSpan, "gen_ai.usage.cache_read_input_tokens", usage.CacheReadTokens);
+            SetTagIfPositive(sessionSpan, "gen_ai.usage.cache_creation_input_tokens", usage.CacheWriteTokens);
+        }
+
+        if (result.Cost is { } cost)
+            sessionSpan.SetTag("agent.cost_usd", (double)cost);
+
+        if (result.UsageDetails is not { } details)
+            return;
+
+        sessionSpan.SetTag("agent.billing", details.BillingMode);
+        sessionSpan.SetTag("agent.turns", details.Turns);
+        sessionSpan.SetTag("agent.api_duration_s", details.ApiDurationSeconds);
+        if (details.WebSearchRequests > 0)
+            sessionSpan.SetTag("agent.web_search_requests", details.WebSearchRequests);
+        if (result.ErrorCategory != AgentErrorCategory.None)
+            sessionSpan.SetTag("agent.error_category", result.ErrorCategory.ToString());
+    }
+
+    private static void SetTagIfPositive(Activity span, string key, long value)
+    {
+        if (value > 0)
+            span.SetTag(key, value);
     }
 
     /// <summary>

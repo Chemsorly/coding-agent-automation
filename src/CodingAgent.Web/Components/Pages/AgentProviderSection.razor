@@ -346,42 +346,13 @@
             return;
         }
 
-        // NOTE: The legacy "timeout" key (ProviderSettingKeys.Timeout) in an agent provider's Settings
-        // dictionary is intentionally dropped when the operator opens and saves this form. The Timeout
-        // field was removed from the agent provider form in #3149 because no code reads it at dispatch
-        // time (per-call timeouts come from PipelineConfiguration.AgentTimeout). Existing DB rows that
-        // still have Settings["timeout"] are self-healing: the key is dropped on next save.
-        var settings = new Dictionary<string, string>
-        {
-            [ProviderSettingKeys.Model] = model
-        };
-
-        if (_form.ProviderType == "KiroCli")
-        {
-            settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
-            settings[ProviderSettingKeys.AgentName] = _form.AgentName;
-            var effort = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
-            settings[ProviderSettingKeys.Effort] = effort;
-        }
-        else if (IsClaudeCode)
-        {
-            settings[ProviderSettingKeys.ExecutablePath] = string.IsNullOrWhiteSpace(_form.ExecutablePath)
-                ? AgentDefaults.ClaudeCliPath : _form.ExecutablePath.Trim();
-            settings[ProviderSettingKeys.Effort] = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
-            settings[ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Normalize(_form.AuthMode);
-        }
-        else
-        {
-            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
-        }
-
         var config = new ProviderConfig
         {
             Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
             Kind = ProviderKind.Agent,
             ProviderType = _form.ProviderType,
             DisplayName = _form.DisplayName,
-            Settings = settings
+            Settings = BuildSettings(model)
         };
 
         try
@@ -404,6 +375,41 @@
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
+    }
+
+    /// <summary>Builds the provider config's settings for the selected provider type.</summary>
+    private Dictionary<string, string> BuildSettings(string model)
+    {
+        // NOTE: The legacy "timeout" key (ProviderSettingKeys.Timeout) in an agent provider's Settings
+        // dictionary is intentionally dropped when the operator opens and saves this form. The Timeout
+        // field was removed from the agent provider form in #3149 because no code reads it at dispatch
+        // time (per-call timeouts come from PipelineConfiguration.AgentTimeout). Existing DB rows that
+        // still have Settings["timeout"] are self-healing: the key is dropped on next save.
+        var settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.Model] = model
+        };
+        var effort = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
+
+        if (_form.ProviderType == "KiroCli")
+        {
+            settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
+            settings[ProviderSettingKeys.AgentName] = _form.AgentName;
+            settings[ProviderSettingKeys.Effort] = effort;
+        }
+        else if (IsClaudeCode)
+        {
+            settings[ProviderSettingKeys.ExecutablePath] = string.IsNullOrWhiteSpace(_form.ExecutablePath)
+                ? AgentDefaults.ClaudeCliPath : _form.ExecutablePath.Trim();
+            settings[ProviderSettingKeys.Effort] = effort;
+            settings[ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Normalize(_form.AuthMode);
+        }
+        else
+        {
+            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
+        }
+
+        return settings;
     }
 
     private async Task FetchModels()

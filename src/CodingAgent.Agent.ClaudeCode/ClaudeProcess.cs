@@ -125,9 +125,8 @@ internal sealed class SystemClaudeProcess : IClaudeProcess
 
     public async Task<int> WaitForExitAsync(CancellationToken ct)
     {
+        // Also waits until the redirected stdout/stderr reached EOF, so every line was delivered.
         await _process.WaitForExitAsync(ct);
-        // The parameterless overload also waits for the asynchronous output handlers to drain.
-        _process.WaitForExit();
         return _process.ExitCode;
     }
 

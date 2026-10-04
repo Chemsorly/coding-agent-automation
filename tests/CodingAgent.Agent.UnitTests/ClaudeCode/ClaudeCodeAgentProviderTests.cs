@@ -29,13 +29,15 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     {
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
+        GC.SuppressFinalize(this);
     }
 
     private ClaudeCodeAgentProvider CreateProvider(
         string? authMode = ClaudeCodeAuthModes.Auto,
         string? model = "claude-opus-5-5",
         AgentEffortLevel effort = AgentEffortLevel.High) =>
-        new(new Mock<Serilog.ILogger>().Object, model, "/opt/claude", effort, authMode, _mcpConfigPath,
+        new(new Mock<Serilog.ILogger>().Object,
+            new ClaudeCodeSettings(model, "/opt/claude", effort, authMode, _mcpConfigPath),
             _launcher, name => _env.GetValueOrDefault(name));
 
     private AgentRequest Request(string prompt = "do it", bool useResume = false, string? resumeSessionId = null) => new()
