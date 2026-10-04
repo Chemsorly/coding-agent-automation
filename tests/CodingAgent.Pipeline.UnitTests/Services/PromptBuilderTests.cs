@@ -10,6 +10,8 @@ namespace CodingAgent.Pipeline.UnitTests;
 /// </summary>
 public class PromptBuilderTests
 {
+    private static readonly string[] ForceResolvedFooFile = ["src/Foo.cs"];
+
     private static IssueDetail CreateIssue(string id = "42", string title = "Add feature X",
         string description = "Implement feature X as described.") => new()
     {
@@ -181,7 +183,7 @@ public class PromptBuilderTests
     public void BuildAnalysisPrompt_WithForceResolvedFiles_PointsToReworkContextAndScope()
     {
         var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
-            reworkContext: CreateReworkContext(forceResolvedFiles: new[] { "src/Foo.cs" }));
+            reworkContext: CreateReworkContext(forceResolvedFiles: ForceResolvedFooFile));
 
         result.Should().Contain("Main is authoritative");
         result.Should().Contain(AgentWorkspacePaths.ReworkContextFilePath);
@@ -538,7 +540,7 @@ public class PromptBuilderTests
     public void BuildReworkPrompt_ForceResolved_KeepsMainAndPointsToReworkContext()
     {
         var result = PromptBuilder.BuildReworkPrompt(
-            new[] { "src/Foo.cs" },
+            ForceResolvedFooFile,
             Array.Empty<PullRequestReviewComment>(),
             forceResolved: true);
 

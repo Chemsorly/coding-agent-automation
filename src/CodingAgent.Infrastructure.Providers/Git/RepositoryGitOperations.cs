@@ -693,8 +693,8 @@ internal static class RepositoryGitOperations
     /// (kept) and main's commits that touched the file. A file whose context cannot be read is
     /// skipped; the rework prompt still lists it.
     /// </summary>
-    private static IReadOnlyList<ForceResolvedFileContext> BuildForceResolvedContext(
-        Repository repo, Commit mergeBase, Commit previousHead, Commit baseHead, IReadOnlyList<string> files)
+    private static List<ForceResolvedFileContext> BuildForceResolvedContext(
+        Repository repo, Commit mergeBase, Commit previousHead, Commit baseHead, List<string> files)
     {
         var contexts = new List<ForceResolvedFileContext>(files.Count);
         foreach (var path in files)
