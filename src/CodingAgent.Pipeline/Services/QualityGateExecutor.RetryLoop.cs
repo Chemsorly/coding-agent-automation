@@ -249,6 +249,11 @@ public partial class QualityGateExecutor
         // accurate to say the field is set after the mark-ready call completes successfully,
         // regardless of what follows within the same FinalizePullRequest invocation.
         var notBefore = run.PrMarkedReadyAt ?? prReadyFallback;
+        // FinalizePullRequest has just set the run's terminal step (Completed for a ready PR).
+        // The retry loop moves the run through GeneratingCode and RunningQualityGates, so a
+        // passing retry must restore that step. Otherwise the run ends on a non-terminal step
+        // and is recorded as Failed/AgentError although its PR is ready and green (issue #3111).
+        var finalizedStep = run.CurrentStep;
         report = await WaitForPostPrCiAsync(context, report, notBefore, linkedCt);
         if (run.CurrentStep.IsQualityGateExitState()) return;
 
@@ -257,7 +262,9 @@ public partial class QualityGateExecutor
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
-            if (!report.AllPassed)
+            if (report.AllPassed)
+                run.CurrentStep = finalizedStep;
+            else
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
         }
     }
@@ -395,14 +402,6 @@ public partial class QualityGateExecutor
             // Short-circuit: CI-never-started exhaustion is an infrastructure failure, not a code problem.
             // The LLM cannot fix a missing CI trigger — break immediately so FinalizeDraftPrAsync is called
             // instead of wasting a retry budget slot on a pointless agent invocation.
-            // TODO [WARNING] (Correctness): This PrMerged/PrClosed guard is defensive-redundant dead code.
-            // AppendExternalCiIfNeededAsync already sets run.CurrentStep to PrMerged/PrClosed and every
-            // call site immediately checks run.CurrentStep and returns before entering RunRetryLoopAsync.
-            // The guard therefore never fires in practice — RunRetryLoopAsync is never entered with
-            // CurrentStep already set to PrMerged or PrClosed. The active guard is the IsInfrastructureFailure
-            // check below. Consider removing this guard or adding a comment that explains the defensive intent.
-            if (run.CurrentStep is PipelineStep.PrMerged or PipelineStep.PrClosed)
-                break;
             if (report.ExternalCi is { Passed: false, IsInfrastructureFailure: true })
             {
                 _logger.Warning("Pipeline {RunId} CI-never-started infrastructure failure — not invoking LLM fix", run.RunId);

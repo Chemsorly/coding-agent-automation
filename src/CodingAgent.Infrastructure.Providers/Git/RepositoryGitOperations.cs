@@ -521,6 +521,7 @@ internal static class RepositoryGitOperations
         }
 
         var identity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
+        var previousHead = repo.Head.Tip;
 
         // Perform interactive-less rebase: replay branch commits on top of origin/main.
         var rebaseOptions = new RebaseOptions();
@@ -536,13 +537,13 @@ internal static class RepositoryGitOperations
                 .ToList();
 
             Log.Warning(
-                "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}. Force-resolving using incoming (main wins). Conflicts: {@ConflictFiles}",
+                "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}. Force-resolving keeping main's version (main wins). Conflicts: {@ConflictFiles}",
                 headBranchName, baseBranchName, conflictFiles.Count,
                 rebaseResult.CompletedStepCount + 1, rebaseResult.TotalStepCount,
                 conflictFiles);
 
-            // Force-resolve all conflicts by accepting "theirs" (incoming/base branch version).
-            ForceResolveConflictsUsingTheirs(repo, workspacePath);
+            // Force-resolve all conflicts by keeping the base (main) side.
+            ForceResolveConflictsKeepingBase(repo, workspacePath);
 
             // Continue the rebase after resolving conflicts
             var continueIdentity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
@@ -564,12 +565,12 @@ internal static class RepositoryGitOperations
                     "Rebase: additional conflict(s) at step {CurrentStep}/{TotalSteps}, force-resolving. New conflicts: {@AdditionalConflicts}",
                     continueResult.CompletedStepCount + 1, continueResult.TotalStepCount, additionalConflicts);
 
-                ForceResolveConflictsUsingTheirs(repo, workspacePath);
+                ForceResolveConflictsKeepingBase(repo, workspacePath);
                 continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
             }
 
             Log.Information(
-                "Rebase: force-resolved {ConflictCount} file(s) using incoming (main wins), rebase completed. New HEAD={NewHeadSha}",
+                "Rebase: force-resolved {ConflictCount} file(s) keeping main's version (main wins), rebase completed. New HEAD={NewHeadSha}",
                 conflictFiles.Count, repo.Head.Tip.Sha[..8]);
 
             return new MergeResult
@@ -577,7 +578,13 @@ internal static class RepositoryGitOperations
                 Success = true,
                 HasConflicts = true,
                 ForceResolved = true,
-                ConflictFiles = conflictFiles!
+                ConflictFiles = conflictFiles!,
+                MergeBaseSha = mergeBase?.Sha,
+                PreviousHeadSha = previousHead.Sha,
+                BaseHeadSha = baseBranch.Tip.Sha,
+                ForceResolvedContext = mergeBase is null
+                    ? Array.Empty<ForceResolvedFileContext>()
+                    : BuildForceResolvedContext(repo, mergeBase, previousHead, baseBranch.Tip, conflictFiles!)
             };
         }
 
@@ -593,7 +600,14 @@ internal static class RepositoryGitOperations
         };
     }
 
-    public static void ForceResolveConflictsUsingTheirs(Repository repo, WorkspacePath workspacePath)
+    /// <summary>
+    /// Resolves every conflict of the current rebase step by keeping the base (main) side.
+    /// In a rebase, "ours" is the branch being rebased onto (main plus the commits already
+    /// replayed) and "theirs" is the branch commit being replayed. Keeping "ours" makes main
+    /// authoritative: the replayed commit's change to a conflicting file is dropped, for the
+    /// rework agent to re-apply on top of main (issue #3093).
+    /// </summary>
+    public static void ForceResolveConflictsKeepingBase(Repository repo, WorkspacePath workspacePath)
     {
         var conflicts = repo.Index.Conflicts.ToList();
         var resolvedCount = 0;
@@ -605,14 +619,14 @@ internal static class RepositoryGitOperations
 
             try
             {
-                if (conflict.Theirs != null)
+                if (conflict.Ours != null)
                 {
-                    if (ApplyTheirsVersion(repo, workspacePath, conflict.Theirs))
+                    if (ApplyBaseVersion(repo, workspacePath, conflict.Ours))
                         resolvedCount++;
                 }
                 else
                 {
-                    if (AcceptDeletion(repo, workspacePath, conflict.Ours, conflict.Ancestor))
+                    if (AcceptBaseDeletion(repo, workspacePath, conflict.Theirs, conflict.Ancestor))
                         resolvedCount++;
                 }
             }
@@ -623,22 +637,22 @@ internal static class RepositoryGitOperations
         }
 
         repo.Index.Write();
-        Log.Information("Force-resolved {Count}/{Total} conflict(s) using incoming (main wins)",
+        Log.Information("Force-resolved {Count}/{Total} conflict(s) keeping main's version (main wins)",
             resolvedCount, conflicts.Count);
     }
 
     /// <summary>
-    /// Returns true if the file was written and staged; false when the blob lookup returns null
-    /// (e.g. corrupted pack or shallow clone), in which case the conflict is NOT resolved.
+    /// Writes and stages the base (main) version of a conflicting file. Returns true if the file
+    /// was written and staged; false when the blob lookup returns null (e.g. corrupted pack or
+    /// shallow clone), in which case the conflict is NOT resolved.
     /// </summary>
-    private static bool ApplyTheirsVersion(Repository repo, WorkspacePath workspacePath, IndexEntry theirs)
+    private static bool ApplyBaseVersion(Repository repo, WorkspacePath workspacePath, IndexEntry baseEntry)
     {
-        // Accept the incoming (base/main) version of the file
-        var blob = repo.Lookup<Blob>(theirs.Id);
+        var blob = repo.Lookup<Blob>(baseEntry.Id);
         if (blob is null)
             return false;
 
-        var filePath = Path.Combine(workspacePath, theirs.Path.Replace('/', Path.DirectorySeparatorChar));
+        var filePath = Path.Combine(workspacePath, baseEntry.Path.Replace('/', Path.DirectorySeparatorChar));
         var dir = Path.GetDirectoryName(filePath);
         if (dir != null && !Directory.Exists(dir))
             Directory.CreateDirectory(dir);
@@ -649,18 +663,18 @@ internal static class RepositoryGitOperations
             contentStream.CopyTo(fileStream);
         }
 
-        Commands.Stage(repo, theirs.Path);
+        Commands.Stage(repo, baseEntry.Path);
         return true;
     }
 
     /// <summary>
-    /// Returns true if the deletion was accepted (file removed and index updated);
-    /// false when both Ours and Ancestor paths are null, meaning nothing was done.
+    /// The base (main) side deleted the file while the replayed commit changed it: keeps the
+    /// deletion. Returns true if the deletion was accepted (file removed and index updated);
+    /// false when both Theirs and Ancestor paths are null, meaning nothing was done.
     /// </summary>
-    private static bool AcceptDeletion(Repository repo, WorkspacePath workspacePath, IndexEntry? ours, IndexEntry? ancestor)
+    private static bool AcceptBaseDeletion(Repository repo, WorkspacePath workspacePath, IndexEntry? theirs, IndexEntry? ancestor)
     {
-        // File was deleted on base (theirs is null) — accept the deletion
-        var pathToRemove = ours?.Path ?? ancestor?.Path;
+        var pathToRemove = theirs?.Path ?? ancestor?.Path;
         if (pathToRemove is null)
             return false;
 
@@ -669,6 +683,43 @@ internal static class RepositoryGitOperations
             File.Delete(filePath);
         repo.Index.Remove(pathToRemove);
         return true;
+    }
+
+    private const int MaxContextCommitsPerFile = 20;
+
+    /// <summary>
+    /// For each force-resolved file, collects what the rework agent needs to re-apply its work:
+    /// the branch's change since the merge base (dropped), main's change since the merge base
+    /// (kept) and main's commits that touched the file. A file whose context cannot be read is
+    /// skipped; the rework prompt still lists it.
+    /// </summary>
+    private static List<ForceResolvedFileContext> BuildForceResolvedContext(
+        Repository repo, Commit mergeBase, Commit previousHead, Commit baseHead, List<string> files)
+    {
+        var contexts = new List<ForceResolvedFileContext>(files.Count);
+        foreach (var path in files)
+        {
+            try
+            {
+                contexts.Add(new ForceResolvedFileContext
+                {
+                    Path = path,
+                    BranchChange = repo.Diff.Compare<Patch>(mergeBase.Tree, previousHead.Tree, [path]).Content,
+                    BaseChange = repo.Diff.Compare<Patch>(mergeBase.Tree, baseHead.Tree, [path]).Content,
+                    BaseCommits = repo.Commits
+                        .QueryBy(path, new CommitFilter { IncludeReachableFrom = baseHead, ExcludeReachableFrom = mergeBase })
+                        .Take(MaxContextCommitsPerFile)
+                        .Select(entry => $"{entry.Commit.Sha[..8]} {entry.Commit.MessageShort}")
+                        .ToList()
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Rebase: could not collect rework context for {Path}", path);
+            }
+        }
+
+        return contexts;
     }
 
     public static string MapChangeKind(ChangeKind kind) => kind switch

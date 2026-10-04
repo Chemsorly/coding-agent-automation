@@ -497,8 +497,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         PipelineRunType runType,
         ILogger logger)
     {
-        var agentSelector = string.Join(",",
-            (result.ResolvedProfile.MatchLabels ?? []).OrderBy(l => l, StringComparer.Ordinal));
+        var agentSelector = AgentSelectorKey.From(result.ResolvedProfile.MatchLabels);
 
         return new JobDistributionRequest
         {

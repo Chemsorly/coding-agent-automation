@@ -156,6 +156,48 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         item.LastProgressAt!.Value.Should().BeCloseTo(now, TimeSpan.FromSeconds(2));
     }
 
+    // ── RecordBranchNameAsync ─────────────────────────────────────────
+
+    /// <summary>
+    /// Issue #3109: housekeeping skips the PR branches of active runs by reading
+    /// WorkItems.BranchName. The branch must be stored while the run is still active, not only
+    /// at completion, or housekeeping merges main into the branch under a running pipeline.
+    /// </summary>
+    [Fact]
+    public async Task RecordBranchNameAsync_RunningItemWithoutBranch_StoresBranch()
+    {
+        var workItemId = Guid.NewGuid();
+        await InsertWorkItem(workItemId);
+
+        await _facade.RecordBranchNameAsync(
+            new JobId(workItemId.ToString()), "feature/auto-3109-keyboard-75e8ebe9", CancellationToken.None);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.BranchName.Should().Be("feature/auto-3109-keyboard-75e8ebe9");
+    }
+
+    [Fact]
+    public async Task RecordBranchNameAsync_InvalidJobId_NoOp()
+    {
+        var exception = await Record.ExceptionAsync(async () =>
+            await _facade.RecordBranchNameAsync(new JobId("not-a-guid"), "feature/x", CancellationToken.None));
+
+        exception.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RecordBranchNameAsync_NonexistentWorkItem_NoOp()
+    {
+        var exception = await Record.ExceptionAsync(async () =>
+            await _facade.RecordBranchNameAsync(new JobId(Guid.NewGuid().ToString()), "feature/x", CancellationToken.None));
+
+        exception.Should().BeNull();
+
+        await using var db = _dbFactory.CreateDbContext();
+        (await db.WorkItems.CountAsync()).Should().Be(0);
+    }
+
     // ── GetWorkItemIssueMetadataAsync ─────────────────────────────────
 
     [Fact]
