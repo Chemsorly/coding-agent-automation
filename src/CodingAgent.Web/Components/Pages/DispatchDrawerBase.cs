@@ -34,23 +34,34 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
-        ApplyFilter();
+        // The parent re-renders for reasons that have nothing to do with this list — the
+        // loop-status poll fires OnChange every few seconds, readiness checks and dispatch
+        // state also re-render it — and each re-render sets the parameters again. Keep the
+        // keyboard highlight on the same item across those, or it vanishes on the next poll and
+        // a following Enter silently does nothing. Only a filter change resets it (ApplyFilter).
+        var highlightedId = _highlightedIndex >= 0 && _highlightedIndex < FilteredItems.Count
+            ? GetIdentifier(FilteredItems[_highlightedIndex])
+            : null;
+        FilteredItems = FilterItems();
+        _highlightedIndex = highlightedId is null
+            ? -1
+            : FilteredItems.FindIndex(i => GetIdentifier(i) == highlightedId);
         if (!IsOpen) { SelectedItem = default; _filter = ""; _highlightedIndex = -1; }
     }
 
     protected void ApplyFilter()
     {
-        if (string.IsNullOrWhiteSpace(_filter))
-        {
-            FilteredItems = Items.ToList();
-        }
-        else
-        {
-            var f = _filter.Trim();
-            FilteredItems = Items.Where(i => MatchesFilter(i, f)).ToList();
-        }
+        FilteredItems = FilterItems();
         // Reset highlight when filter changes
         _highlightedIndex = -1;
+    }
+
+    private List<TItem> FilterItems()
+    {
+        if (string.IsNullOrWhiteSpace(_filter))
+            return Items.ToList();
+        var f = _filter.Trim();
+        return Items.Where(i => MatchesFilter(i, f)).ToList();
     }
 
     protected abstract bool MatchesFilter(TItem item, string filter);

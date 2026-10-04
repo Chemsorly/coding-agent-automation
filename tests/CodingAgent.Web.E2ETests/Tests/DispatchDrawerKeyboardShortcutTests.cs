@@ -17,6 +17,10 @@ namespace CodingAgent.Web.E2ETests.Tests;
 /// 5. "?" opens the shortcut help overlay; Esc and a second "?" close it;
 ///    "?" typed in the filter input does not open the overlay.
 /// 6. Enter-dispatch on the PR drawer and the Epic drawer (both share DispatchDrawerBase).
+///
+/// The page re-renders the open drawer on every loop-status poll (every second in this harness),
+/// so a key press can always meet a parent re-render; DispatchDrawerBase.OnParametersSet keeps the
+/// highlight across those.
 /// </summary>
 [Trait("Category", "E2E")]
 [Collection(E2ECollection.Name)]
@@ -49,22 +53,23 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
     }
 
     /// <summary>
-    /// Focuses the issue list inside the open drawer so subsequent keyboard events land on it.
+    /// Focuses the item list inside the open drawer so subsequent keyboard events land on it.
     /// The list is the element with [tabindex="0"] that has the @onkeydown handler.
     /// </summary>
-    private async Task FocusIssueListAsync()
+    private async Task FocusDrawerListAsync()
     {
-        // We need browser focus on the .agent-history-list div (tabindex="0"), which owns
-        // @onkeydown. ClickAsync at the default center coordinates lands on a child issue-row,
-        // not the container. Clicking at position (1,1) targets the container's top-left corner
-        // before any child rows, reliably placing focus on the list div itself.
-        // We then wait until document.activeElement confirms the container has focus before
-        // sending keyboard events — a deterministic check that avoids fixed-sleep races.
-        await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 10_000 });
-        await Page.ClickAsync(".agent-history-list", new() { Position = new Microsoft.Playwright.Position { X = 1, Y = 1 } });
+        // Scoped to the open drawer: all three drawers stay in the DOM, and a hidden one keeps its
+        // list while it has a template. Focus the element directly instead of clicking it — a click
+        // lands on whatever is under the pointer, and a click on a row selects it (the issue drawer
+        // toggles selection, so a later Enter on that row would deselect it instead of dispatching).
+        // Then wait until document.activeElement confirms the list has focus before sending keys.
+        const string listSelector = ".dispatch-drawer.open .agent-history-list";
+        var list = Page.Locator(listSelector);
+        await list.WaitForAsync(new() { Timeout = 10_000 });
+        await list.FocusAsync();
         await Page.WaitForFunctionAsync(
-            "() => document.activeElement?.classList.contains('agent-history-list')",
-            null,
+            "(selector) => document.activeElement?.matches(selector)",
+            listSelector,
             new PageWaitForFunctionOptions { Timeout = 5_000 });
     }
 
@@ -99,7 +104,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // order (10, 11, 12). If the provider sorts issues by identifier or title the row-index mapping
         // will be wrong and all three position assertions below will be fragile.
         // Verify that FakeIssueProvider preserves insertion order, or make the assertions order-independent.
-        await FocusIssueListAsync();
+        await FocusDrawerListAsync();
 
         // Press ArrowDown once → row 0 (issue-row-10) gets the highlight class
         await Page.Keyboard.PressAsync("ArrowDown");
@@ -173,7 +178,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         await codingPage.ClickBrowseIssuesAsync();
 
         await Page.WaitForSelectorAsync("[data-testid='issue-row-21']", new() { Timeout = 10_000 });
-        await FocusIssueListAsync();
+        await FocusDrawerListAsync();
 
         // Move to row 1 (issue #21: index=1, two ArrowDowns from -1)
         await Page.Keyboard.PressAsync("ArrowDown"); // index 0 → issue-row-20
@@ -260,7 +265,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         var issueRow30 = Page.Locator("[data-testid='issue-row-30']");
         await issueRow30.Locator(".drawer-badge-blocked").WaitForAsync(new() { Timeout = 10_000 });
 
-        await FocusIssueListAsync();
+        await FocusDrawerListAsync();
 
         // Move highlight to row #30 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
@@ -273,16 +278,11 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // DispatchIssueAsync server-side re-checks the dependency and returns an error for blocked issues.
         await Page.Keyboard.PressAsync("Enter");
 
-        // TODO [WARNING]: Task.Delay(500) is a fixed sleep. If the server-side block check takes
-        // longer than 500 ms (e.g. under CI load) the work-item count query may run before the
-        // response settles, causing a false-negative pass. Replace with a deterministic signal:
-        // wait for an error toast or confirm no success toast appears before querying work items.
-        // TODO [WARNING]: The test asserts no work item was created but does not assert that blocked
-        // feedback was surfaced to the user. If the implementation silently swallows Enter on a
-        // blocked issue the test still passes. Add an assertion that no success toast appeared to
-        // more precisely pin the intended no-side-effects behaviour.
-        // Wait briefly to confirm no dispatch occurred
-        await Task.Delay(500);
+        // The rejection toast is the signal that the dispatch attempt has finished, so the
+        // work-item query below cannot run ahead of it. It also pins that the user is told why.
+        await Page.Locator(".settings-status.status-error", new() { HasText = "blocked by open dependencies" })
+            .WaitForAsync(new() { Timeout = 10_000 });
+        Assert.Equal(0, await Page.Locator(".settings-status.status-success").CountAsync());
 
         var active = await Fixture.WorkItems.GetActiveAsync(olderThanSeconds: -3600, ct: CancellationToken.None);
         var pending = await Fixture.WorkItems.GetPendingAsync(maxResults: 50, ct: CancellationToken.None);
@@ -343,7 +343,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // from the global CockpitLayout handler and was not previously covered.
         await codingPage.ClickBrowseIssuesAsync();
         await Page.WaitForSelectorAsync(".dispatch-drawer.open", new() { Timeout = 10_000 });
-        await FocusIssueListAsync();
+        await FocusDrawerListAsync();
 
         // Press Escape from within the focused list → DispatchDrawerBase.HandleKeyDown fires
         await Page.Keyboard.PressAsync("Escape");
@@ -513,13 +513,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // Wait for the PR row to appear
         await Page.WaitForSelectorAsync("[data-testid='pr-row-200']", new() { Timeout = 10_000 });
 
-        // Focus the list
-        await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
-        await Page.ClickAsync(".agent-history-list", new() { Position = new Microsoft.Playwright.Position { X = 1, Y = 1 } });
-        await Page.WaitForFunctionAsync(
-            "() => document.activeElement?.classList.contains('agent-history-list')",
-            null,
-            new PageWaitForFunctionOptions { Timeout = 5_000 });
+        await FocusDrawerListAsync();
 
         // ArrowDown to highlight PR #200 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
@@ -596,13 +590,7 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
         // Wait for the epic row to appear
         await Page.WaitForSelectorAsync("[data-testid='epic-row-300']", new() { Timeout = 10_000 });
 
-        // Focus the list
-        await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
-        await Page.ClickAsync(".agent-history-list", new() { Position = new Microsoft.Playwright.Position { X = 1, Y = 1 } });
-        await Page.WaitForFunctionAsync(
-            "() => document.activeElement?.classList.contains('agent-history-list')",
-            null,
-            new PageWaitForFunctionOptions { Timeout = 5_000 });
+        await FocusDrawerListAsync();
 
         // ArrowDown to highlight epic #300 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
