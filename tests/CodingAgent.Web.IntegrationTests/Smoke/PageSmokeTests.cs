@@ -93,6 +93,22 @@ public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
         }
     }
 
+    /// <summary>
+    /// The favicon is needed before sign-in (the login page) and by dashboards that load it without
+    /// a session, so it must be linked from the shell and served anonymously.
+    /// </summary>
+    [Fact]
+    public async Task Favicon_Is_Linked_And_Served_Without_Sign_In()
+    {
+        var html = await _clientNoRedirect.GetStringAsync("/login");
+        Assert.Contains("<link rel=\"icon\" type=\"image/svg+xml\" href=\"favicon.svg\"", html);
+
+        var response = await _clientNoRedirect.GetAsync("/favicon.svg");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/svg+xml", response.Content.Headers.ContentType?.MediaType);
+    }
+
     [Fact]
     public async Task Get_Root_Redirects_To_Overview()
     {
