@@ -26,28 +26,17 @@ public class DatabaseMaintenanceService
 
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    // TODO(#9): _consolidationService is unused after CleanupStaleConsolidationRunsAsync was removed.
-    // Remove this field and constructor parameter when IConsolidationService is fully dropped (sub-issue #9).
-    // [WARNING] Until removed, verify IConsolidationService is registered as a singleton. DatabaseMaintenanceService
-    // is a singleton (Spec 047); holding a scoped/transient IConsolidationService here would be a captured-dependency
-    // bug where the scoped service (and any scoped DbContext it holds) lives for the singleton's lifetime.
-    private readonly IConsolidationService _consolidationService;
-    private readonly IPipelineRunHistoryService _pipelineRunHistoryService;
     private readonly DatabaseMaintenanceOptions _options;
     // Protected so test subclasses can inject SQLite-compatible SQL overrides
     protected readonly IPipelineConfigStore _configStore;
 
     public DatabaseMaintenanceService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        IConsolidationService consolidationService,
         IConfiguration configuration,
-        IPipelineConfigStore configStore,
-        IPipelineRunHistoryService? pipelineRunHistoryService = null)
+        IPipelineConfigStore configStore)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         _dbFactory = dbFactory;
-        _consolidationService = consolidationService;
-        _pipelineRunHistoryService = pipelineRunHistoryService ?? NullPipelineRunHistoryService.Instance;
         _options = new DatabaseMaintenanceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
         _configStore = configStore;
@@ -375,22 +364,5 @@ public class DatabaseMaintenanceService
             Log.Warning(ex, "DatabaseMaintenanceService: ReconcileOrphanedPipelineRuns failed (non-fatal)");
             return 0;
         }
-    }
-
-    /// <summary>
-    /// No-op implementation of <see cref="IPipelineRunHistoryService"/> used when no real service
-    /// is injected (e.g. existing tests that construct <see cref="DatabaseMaintenanceService"/>
-    /// without the new parameter).
-    /// </summary>
-    private sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
-    {
-        public static readonly NullPipelineRunHistoryService Instance = new();
-
-        public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default) => Task.CompletedTask;
-        public Task AddRunSummaryAsync(PipelineRunSummary summary, CancellationToken ct = default) => Task.CompletedTask;
-        public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default) => Task.FromResult<IReadOnlyList<PipelineRunSummary>>([]);
-        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default) => Task.FromResult(new PagedResult<PipelineRunSummary> { Items = [], Page = page, PageSize = pageSize, HasMore = false });
-        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default) => Task.FromResult(new PagedResult<PipelineRunSummary> { Items = [], Page = page, PageSize = pageSize, HasMore = false });
-        public Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default) => Task.FromResult<PipelineRunSummary?>(null);
     }
 }

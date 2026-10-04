@@ -233,11 +233,6 @@ public sealed class PullRequestFinalizationService
         else
         {
             // The brain post-run sync was skipped — log the reason.
-            // Priority: isDraft wins → no_provider → no_sync_service → read_only.
-            var skipReason = isDraft ? "is_draft"
-                : brainProvider is null ? "no_provider"
-                : brainSync is null ? "no_sync_service"
-                : "read_only";
             _logger.Information(
                 "Pipeline {RunId} skipping brain post-run sync: isDraft={IsDraft}, brainProvider={HasProvider}, brainSync={HasSync}, brainReadOnly={ReadOnly}",
                 run.RunId, isDraft, brainProvider is not null, brainSync is not null, config.BrainReadOnly);
