@@ -54,9 +54,7 @@ internal sealed class DispatchTemplateResolver
             return (null, null);
         }
 
-        // Use profile's MatchLabels as the template key (same as DispatchOrchestrationService.MapToRequest)
-        var profileSelector = string.Join(",",
-            profile.MatchLabels.OrderBy(l => l, StringComparer.Ordinal));
+        var profileSelector = AgentSelectorKey.From(profile.MatchLabels);
 
         var template = _templateProvider.Resolve(profileSelector);
         if (template is not null)

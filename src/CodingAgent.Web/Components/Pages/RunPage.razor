@@ -208,7 +208,7 @@
 
         @if (_isLive)
         {
-            <div class="cockpit-card">
+            <div class="cockpit-card" data-hub-subscribed="@_hubSubscribed.ToString().ToLowerInvariant()">
                 <div class="cockpit-card-header">
                     <h2>Live output</h2>
                 </div>
@@ -315,6 +315,7 @@
     // Live trace (active runs only) — reuses the agent hub the monitoring modal streams from.
     private bool _isLive;
     private bool _subscribed;
+    private bool _hubSubscribed;  // set to true once SubscribeToRun round-trip completes; surfaced as data-hub-subscribed for E2E tests
     private PipelineStep? _liveStep;
     private readonly List<string> _liveOutput = new();
     private IDisposable? _outputSub, _stepSub, _completedSub, _snapshotSub, _chatEntrySub;
@@ -429,6 +430,12 @@
             if (HubConnection.State == HubConnectionState.Disconnected)
                 await HubConnection.StartAsync(_cts.Token);
             await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, _cts.Token);
+
+            // Signal that the hub subscription is established — the data-hub-subscribed attribute
+            // on the live output card flips to "true", which E2E tests use as a deterministic
+            // "subscription ready" marker before sending output lines to the agent hub.
+            _hubSubscribed = true;
+            await InvokeAsync(StateHasChanged);
 
             // 1-second timer to re-render the Elapsed display while the run is live.
             // WaitForNextTickAsync returns false when the timer is disposed, and throws

@@ -486,6 +486,20 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Reports one or more output lines for the active job.
+    /// Invokes <c>ReportOutputLines</c> on the hub — the same method called by the real agent.
+    /// Lines appear in the live output panel on the Run page and are persisted into the run's
+    /// output buffer so late-joining subscribers receive them via the backlog push in
+    /// <c>SubscribeToRun</c>.
+    /// </summary>
+    public async Task ReportOutputAsync(string jobId, params string[] lines)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        if (lines.Length == 0) return;
+        await _connection.InvokeAsync("ReportOutputLines", jobId, (IReadOnlyList<string>)lines);
+    }
+
+    /// <summary>
     /// Sends a heartbeat to keep the agent alive.
     /// </summary>
     public async Task SendHeartbeatAsync()
