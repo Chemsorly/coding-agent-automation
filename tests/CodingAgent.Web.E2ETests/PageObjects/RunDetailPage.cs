@@ -94,7 +94,25 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-        await CancelButton.ClickAsync();
+
+        // The cancel button is present in the static prerender but the Blazor @onclick handler
+        // only fires once the interactive circuit is established. Retry the click until the
+        // confirm prompt appears — this covers the window where the button is visible but the
+        // circuit is not yet active. Each attempt: click, wait up to 2 s for the prompt.
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            await CancelButton.ClickAsync();
+            try
+            {
+                await ConfirmCancelButton.WaitForAsync(new() { Timeout = 2_000 });
+                break; // confirm section appeared — click landed on the live circuit
+            }
+            catch (TimeoutException)
+            {
+                // Circuit wasn't ready yet; loop and try again
+            }
+        }
 
         if (confirm)
         {
@@ -121,7 +139,23 @@ public sealed class RunDetailPage
     public async Task RedispatchAsync(bool confirm)
     {
         await RedispatchButton.WaitForAsync(new() { Timeout = 15_000 });
-        await RedispatchButton.ClickAsync();
+
+        // Same retry pattern as CancelAsync: the redispatch button is in static prerender but
+        // @onclick only fires once the Blazor circuit is active. Retry until confirm prompt appears.
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        while (DateTime.UtcNow < deadline)
+        {
+            await RedispatchButton.ClickAsync();
+            try
+            {
+                await ConfirmRedispatchButton.WaitForAsync(new() { Timeout = 2_000 });
+                break; // confirm section appeared
+            }
+            catch (TimeoutException)
+            {
+                // Circuit wasn't ready yet; loop and try again
+            }
+        }
 
         if (confirm)
         {
