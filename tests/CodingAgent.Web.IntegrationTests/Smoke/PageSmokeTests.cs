@@ -4,8 +4,16 @@ using System.Text.RegularExpressions;
 namespace CodingAgent.Web.IntegrationTests.Smoke;
 
 [Collection("SmokeTests")]
-public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
+public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
 {
+    // The rendered <base href> value.
+    [GeneratedRegex("<base href=\"([^\"]*)\"")]
+    private static partial Regex BaseHrefPattern();
+
+    // The src/href of every <script src> and <link rel="stylesheet" href> in the page.
+    [GeneratedRegex("<(?:link rel=\"stylesheet\" href|script src)=\"([^\"]+)\"")]
+    private static partial Regex AssetReferencePattern();
+
     private readonly HttpClient _client;
     private readonly HttpClient _clientNoRedirect;
 
@@ -54,12 +62,12 @@ public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
         var documentUri = new Uri(_client.BaseAddress!, path);
         var html = await _client.GetStringAsync(documentUri);
 
-        var baseHref = Regex.Match(html, "<base href=\"([^\"]*)\"").Groups[1].Value;
+        var baseHref = BaseHrefPattern().Match(html).Groups[1].Value;
         Assert.False(string.IsNullOrEmpty(baseHref), "The page must render a <base href>.");
         var baseUri = new Uri(documentUri, baseHref);
         Assert.Equal(new Uri(_client.BaseAddress!, "/"), baseUri);
 
-        var assets = Regex.Matches(html, "<(?:link rel=\"stylesheet\" href|script src)=\"([^\"]+)\"")
+        var assets = AssetReferencePattern().Matches(html)
             .Select(m => m.Groups[1].Value)
             .Where(href => !Uri.TryCreate(href, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https"))
             .ToList();
