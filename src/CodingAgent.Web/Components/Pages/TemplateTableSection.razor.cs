@@ -60,6 +60,8 @@ public partial class TemplateTableSection
     private string? _expandedPreviewTemplateId;
     private string? _expandedFeaturesTemplateId;
 
+    private bool HasLiveValues => IsLoopActive || _expandedPreviewTemplateId != null || ShowAddForm;
+
     // Number of columns — 9 when Actions is visible (loop inactive), 8 when hidden (loop active).
     // TODO: [WARNING] _columnCount is an expression-bodied property that reads the [Parameter] IsLoopActive on
     // every access. It is currently read twice per render (feature-config colspan and label-preview colspan).

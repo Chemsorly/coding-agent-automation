@@ -95,7 +95,6 @@
                     HasRepoProvider="@(_repoProviders.Count > 0)"
                     HasProject="@(_projects.Count > 0)"
                     HasTemplate="@(_templates.Count > 0)"
-                    HasAgent="@(Registry.GetAllAgents().Count > 0)"
                     IsLoopActive="LoopService.IsLoopActive"
                     OnAddTemplate="ShowAddForm" />
             }

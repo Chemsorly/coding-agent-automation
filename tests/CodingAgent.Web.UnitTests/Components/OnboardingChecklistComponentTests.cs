@@ -1,4 +1,6 @@
 using Bunit;
+using CodingAgent.Orchestration.Registry;
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,11 +12,17 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class OnboardingChecklistComponentTests : BunitContext
 {
     private readonly Mock<IJSRuntime> _mockJs = new();
+    private readonly AgentRegistryService _registry = new(new Mock<Serilog.ILogger>().Object);
 
     public OnboardingChecklistComponentTests()
     {
         Services.AddSingleton<IJSRuntime>(_mockJs.Object);
+        Services.AddSingleton<IAgentRegistryService>(_registry);
     }
+
+    // The "Register an Agent" step reads the registry rather than a parameter.
+    private void RegisterAgent() =>
+        _registry.Register(new AgentRegistrationMessage { AgentId = "agent-1", Hostname = "host-1", Labels = [] }, "conn-1");
 
     [Fact]
     public void Checklist_RendersWhenIncomplete()
@@ -24,7 +32,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -40,12 +47,12 @@ public class OnboardingChecklistComponentTests : BunitContext
     [Fact]
     public void Checklist_HidesWhenAllComplete()
     {
+        RegisterAgent();
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, true)
             .Add(s => s.HasRepoProvider, true)
             .Add(s => s.HasProject, true)
             .Add(s => s.HasTemplate, true)
-            .Add(s => s.HasAgent, true)
             .Add(s => s.IsLoopActive, true)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -60,7 +67,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, true)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -83,7 +89,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -106,7 +111,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -128,7 +132,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -143,12 +146,12 @@ public class OnboardingChecklistComponentTests : BunitContext
     [InlineData(5, true, true, true, true, true, false)]
     public void Checklist_ShowsProgressCount(int expectedCount, bool hasIssue, bool hasRepo, bool hasProject, bool hasTemplate, bool hasAgent, bool isLoop)
     {
+        if (hasAgent) RegisterAgent();
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, hasIssue)
             .Add(s => s.HasRepoProvider, hasRepo)
             .Add(s => s.HasProject, hasProject)
             .Add(s => s.HasTemplate, hasTemplate)
-            .Add(s => s.HasAgent, hasAgent)
             .Add(s => s.IsLoopActive, isLoop)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -165,13 +168,13 @@ public class OnboardingChecklistComponentTests : BunitContext
         // When all complete, the component hides — skip that case
         if (hasIssue && hasRepo && hasProject && hasTemplate && hasAgent && isLoop)
             return;
+        if (hasAgent) RegisterAgent();
 
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, hasIssue)
             .Add(s => s.HasRepoProvider, hasRepo)
             .Add(s => s.HasProject, hasProject)
             .Add(s => s.HasTemplate, hasTemplate)
-            .Add(s => s.HasAgent, hasAgent)
             .Add(s => s.IsLoopActive, isLoop)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -191,7 +194,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, true)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -216,7 +218,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -235,7 +236,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
@@ -247,6 +247,28 @@ public class OnboardingChecklistComponentTests : BunitContext
     }
 
     [Fact]
+    public void Checklist_AgentStep_CompletesWhenAgentRegisters_WithoutParentRender()
+    {
+        var cut = Render<OnboardingChecklist>(p => p
+            .Add(s => s.HasIssueProvider, false)
+            .Add(s => s.HasRepoProvider, false)
+            .Add(s => s.HasProject, false)
+            .Add(s => s.HasTemplate, false)
+            .Add(s => s.IsLoopActive, false)
+            .Add(s => s.OnAddTemplate, EventCallback.Empty));
+        Assert.DoesNotContain("step-complete", cut.FindAll(".onboarding-steps li")[4].ClassName ?? "");
+
+        RegisterAgent();
+
+        // The registry raises no event and the test never re-renders the checklist: only its own
+        // timer can pick the agent up. Once it has, the timer stops.
+        cut.WaitForAssertion(
+            () => Assert.Contains("step-complete", cut.FindAll(".onboarding-steps li")[4].ClassName),
+            TimeSpan.FromSeconds(10));
+        Assert.Empty(cut.FindComponents<CodingAgent.Web.Components.Shared.AutoRefresh>());
+    }
+
+    [Fact]
     public void Checklist_FirstIncompleteStep_IsCurrentWhenNoneComplete()
     {
         var cut = Render<OnboardingChecklist>(p => p
@@ -254,7 +276,6 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasRepoProvider, false)
             .Add(s => s.HasProject, false)
             .Add(s => s.HasTemplate, false)
-            .Add(s => s.HasAgent, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 

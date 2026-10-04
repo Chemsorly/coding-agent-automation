@@ -3,6 +3,13 @@
 @using CodingAgent.Pipeline.Services
 @using CodingAgent.Web.Services
 <section class="settings-section">
+    @* The page re-renders only when the loop status changes, so values that move on their own are
+       redrawn here: "polled Xs ago" while the loop runs, and the agents matched in an open label
+       preview (the agent registry raises no change events). *@
+    @if (HasLiveValues)
+    {
+        <AutoRefresh IntervalSeconds="3" OnTick="StateHasChanged" />
+    }
     <div class="cockpit-card-header"><h2>Pipeline Job Templates</h2></div>
     @if (Templates.Count == 0)
     {
