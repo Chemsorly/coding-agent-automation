@@ -17,7 +17,7 @@ namespace CodingAgent.Infrastructure.GitHub;
 /// </summary>
 public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryProvider
 {
-    private readonly string _baseBranch;
+    private readonly BranchName _baseBranch;
     private readonly ResiliencePipeline _gitPipeline;
 
     public RepositoryProviderType ProviderType => RepositoryProviderType.GitHub;
@@ -37,10 +37,13 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
-    public GitHubRepositoryProvider(GitHubConnectionInfo connection, string token, string baseBranch)
+    public GitHubRepositoryProvider(GitHubConnectionInfo connection, string token, BranchName baseBranch)
         : base(connection, token)
     {
-        ArgumentNullException.ThrowIfNull(baseBranch);
+        // TODO: ThrowIfNullOrEmpty guards default(BranchName) and new BranchName("") correctly, but
+        // new BranchName(null) bypasses this guard if BranchName's primary constructor does not validate.
+        // This mirrors the pre-existing TODO in BranchName.cs — fix there to close the gap at construction.
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch.Value);
         _baseBranch = baseBranch;
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
@@ -48,10 +51,13 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     /// <summary>
     /// Creates a provider with a token provider delegate (for GitHub App auth).
     /// </summary>
-    public GitHubRepositoryProvider(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider, string baseBranch)
+    public GitHubRepositoryProvider(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider, BranchName baseBranch)
         : base(connection, tokenProvider)
     {
-        ArgumentNullException.ThrowIfNull(baseBranch);
+        // TODO: ThrowIfNullOrEmpty guards default(BranchName) and new BranchName("") correctly, but
+        // new BranchName(null) bypasses this guard if BranchName's primary constructor does not validate.
+        // This mirrors the pre-existing TODO in BranchName.cs — fix there to close the gap at construction.
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch.Value);
         _baseBranch = baseBranch;
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
@@ -59,10 +65,13 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
     /// <summary>
     /// Internal constructor for testing with a mock IGitHubClient.
     /// </summary>
-    internal GitHubRepositoryProvider(GitHubConnectionInfo connection, IGitHubClient gitHubClient, string token, string baseBranch)
+    internal GitHubRepositoryProvider(GitHubConnectionInfo connection, IGitHubClient gitHubClient, string token, BranchName baseBranch)
         : base(connection, gitHubClient, token)
     {
-        ArgumentNullException.ThrowIfNull(baseBranch);
+        // TODO: ThrowIfNullOrEmpty guards default(BranchName) and new BranchName("") correctly, but
+        // new BranchName(null) bypasses this guard if BranchName's primary constructor does not validate.
+        // This mirrors the pre-existing TODO in BranchName.cs — fix there to close the gap at construction.
+        ArgumentException.ThrowIfNullOrEmpty(baseBranch.Value);
         _baseBranch = baseBranch;
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
