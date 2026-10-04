@@ -19,15 +19,23 @@ public static partial class ConsolidationPromptBuilder
     //  Exploits primacy bias (arXiv:2307.03172 "lost in the middle").
     // ─────────────────────────────────────────────────────────────────────
 
+    // TODO: Rule 3 of this constant contains the bare string ".agent/refactoring-tool-output/" which duplicates
+    // AgentWorkspacePaths.RefactoringToolOutputDirectory. Because this is a non-interpolated raw string literal,
+    // the placeholder {AgentWorkspacePaths.RefactoringToolOutputDirectory} is resolved via .Replace() at call
+    // sites, but the rule 3 literal bypasses that mechanism entirely. If RefactoringToolOutputDirectory changes,
+    // rule 3 will silently diverge. Fix by converting this constant to use a composite/split approach so the
+    // constant can be referenced here too.
     private const string RefactoringSubAgentPreamble =
 """
 ## CRITICAL RULES — Read First
 
 1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Tool augmentation encouraged.** If the ecosystem has static analysis tools (linters, compilers with warning output, dead-code detectors), install and run them. Their output is higher-confidence evidence than your own code reading. You are allowed to install tools.
-3. **Declare what you did NOT check.** At the end of your output, list files/areas you skipped due to context limits.
-4. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
-5. **Do NOT modify source code.** Only produce the findings output file.
+2. **Use the available tools.** Check your available MCP tools for additional data sources. Read pre-built analyzer output from `{AgentWorkspacePaths.RefactoringToolOutputDirectory}` when present. Query the listed MCP tools before deciding a tool category is unavailable.
+3. **Do NOT run builds.** The three detection agents share one workspace: parallel builds would collide. Use a read-only analyzer that does not build if a static analysis tool is needed. Use pre-built output from `.agent/refactoring-tool-output/` when available.
+4. **Declare what you did NOT check.** At the end of your output, list files/areas you skipped due to context limits.
+5. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
+6. **Out of scope:** `.agent/`, `.brain/` — these are pipeline scratch space and knowledge base, not product code.
+7. **Nothing else is `tool:`.** Only mark evidence `tool:` when it comes from a compiler, linter, static analyzer, or MCP tool. Code reading is `code-reading:`, not `tool:`.
 
 """;
 
@@ -59,9 +67,15 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("4. **Key configuration files** — `.editorconfig`, `Directory.Build.props`, linter configs");
         sb.AppendLine("5. **A sample of 5-10 representative source files** — identify the project's actual style");
         sb.AppendLine("6. **Test project structure** — understand the testing philosophy");
+        sb.AppendLine("7. **MCP tools and pre-built analyzer output** — Check your available MCP tools for additional data sources.");
+        sb.AppendLine($"   Run any available read-only analyzer and save the output to `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt` for sub-agents to read.");
+        sb.AppendLine("   Include the list of available tools in the conventions output.");
         sb.AppendLine();
         sb.AppendLine("## What to Extract");
         sb.AppendLine();
+        // TODO: The bare string ".agent/refactoring-conventions.json" below duplicates AgentWorkspacePaths.RefactoringConventionsFilePath.
+        // Use $"Produce a JSON file at `{AgentWorkspacePaths.RefactoringConventionsFilePath}` with this structure:"
+        // to keep it consistent with the surrounding interpolated AppendLine calls that already reference that constant.
         sb.AppendLine("Produce a JSON file at `.agent/refactoring-conventions.json` with this structure:");
         sb.AppendLine();
         sb.AppendLine("```json");
@@ -81,11 +95,14 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("  \"abstractionPhilosophy\": \"e.g., 'minimal interfaces, prefer concrete unless tested in isolation'\",");
         sb.AppendLine("  \"testingPhilosophy\": \"e.g., 'unit tests for logic, E2E for integration, no mocks for simple classes'\",");
         sb.AppendLine("  \"knownDebt\": [");
-        sb.AppendLine("    \"Acknowledged technical debt the team is aware of — do NOT re-flag\"");
+        sb.AppendLine("    \"Acknowledged technical debt the team has documented — do NOT re-flag. Do NOT copy inline TODO/FIXME/HACK comments into knownDebt; only debt explicitly noted in docs or architecture decisions belongs here.\"");
         sb.AppendLine("  ],");
         sb.AppendLine("  \"layerRules\": [");
         sb.AppendLine("    \"e.g., 'Infrastructure must not reference Presentation'\",");
         sb.AppendLine("    \"e.g., 'Agent projects communicate only through interfaces in Pipeline'\"");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"availableTools\": [");
+        sb.AppendLine("    \"List MCP tools found and any static analyzers discovered and run\"");
         sb.AppendLine("  ]");
         sb.AppendLine("}");
         sb.AppendLine(JsonCodeFence);
@@ -95,7 +112,8 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("- **Observe, don't judge.** This phase extracts what IS, not what should be.");
         sb.AppendLine("- **intentionalPatterns is critical.** If a pattern looks unusual but is clearly deliberate");
         sb.AppendLine("  (used consistently, matches docs/comments, has tests), list it here.");
-        sb.AppendLine("- **knownDebt** should include anything acknowledged in TODOs, READMEs, or issue trackers.");
+        sb.AppendLine("- **knownDebt** should include debt explicitly acknowledged in docs or architecture decisions.");
+        sb.AppendLine("  Do NOT copy inline TODO/FIXME/HACK comments into knownDebt — those are handled by Agent B.");
         sb.AppendLine("- If `.brain/` exists, consult project SKILL.md files — they contain curated context.");
         sb.AppendLine("- Keep the output concise. Each field should be 1-3 sentences, not paragraphs.");
 
@@ -114,7 +132,8 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble);
+        sb.Append(RefactoringSubAgentPreamble
+            .Replace("{AgentWorkspacePaths.RefactoringToolOutputDirectory}", AgentWorkspacePaths.RefactoringToolOutputDirectory));
 
         sb.AppendLine("# Agent A: Structural Debt Detection");
         sb.AppendLine();
@@ -138,36 +157,42 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("   is low priority.");
         sb.AppendLine();
         sb.AppendLine("4. **Over-engineering & unnecessary abstraction** — Interfaces with only one implementation that add");
-        sb.AppendLine("   indirection without value; wrapper classes that pass-through without logic; factory/builder");
+        sb.AppendLine("   indirection without value. Note: an interface with one implementation is NOT a finding when it is registered for dependency injection");
+        sb.AppendLine("   and used for testability. Only flag abstractions that genuinely add no value even in a test context.");
+        sb.AppendLine("   Wrapper classes that pass-through without logic; factory/builder");
         sb.AppendLine("   patterns where a constructor would suffice; configuration options nobody uses.");
         sb.AppendLine("   **Check `.agent/refactoring-conventions.json` → `intentionalPatterns` before flagging.**");
         sb.AppendLine("   If the project's philosophy is \"minimal interfaces\", a missing interface is NOT a finding.");
         sb.AppendLine();
         sb.AppendLine("## Exploration Strategy");
         sb.AppendLine();
-        sb.AppendLine("1. Read `.agent/hotspot-analysis.txt` — start with the top 15 most-changed files");
-        sb.AppendLine("2. Read `.agent/refactoring-conventions.json` — understand what's intentional vs accidental");
-        sb.AppendLine("3. For each hotspot file: read it, assess structural health against the 4 categories above");
-        sb.AppendLine("4. Then read 5 files NOT in the hotspot list (stable but potentially problematic)");
-        sb.AppendLine("5. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
+        sb.AppendLine($"1. Read `{AgentWorkspacePaths.RefactoringToolOutputDirectory}/` — use pre-built analyzer output when available");
+        sb.AppendLine("2. Read `.agent/hotspot-analysis.txt` — start with the top 15 most-changed files");
+        sb.AppendLine("3. Read `.agent/refactoring-conventions.json` — understand what's intentional vs accidental");
+        sb.AppendLine("4. For each hotspot file: read it, assess structural health against the 4 categories above");
+        sb.AppendLine("5. Then read 5 files NOT in the hotspot list (stable but potentially problematic)");
+        sb.AppendLine("6. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
         sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` as a JSON array:");
+        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` as a JSON object:");
         sb.AppendLine();
         sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("[");
-        sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"Short descriptive title\",");
-        sb.AppendLine("    \"category\": \"duplication|structural-drift|complexity|over-engineering\",");
-        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine("    \"evidence\": \"Concrete code snippet or line reference proving the issue\",");
-        sb.AppendLine("    \"evidenceSources\": [\"code-reading:File.cs:L42\", \"hotspot:18-changes\", \"tool:eslint-unused-vars\"],");
-        sb.AppendLine("    \"crossReference\": \"Second file/location that corroborates (duplication partner, drift boundary, etc.)\",");
-        sb.AppendLine("    \"impact\": \"What goes wrong because of this — be specific\",");
-        sb.AppendLine("    \"suggestedFix\": \"Brief approach, not full implementation\"");
-        sb.AppendLine("  }");
-        sb.AppendLine("]");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"findings\": [");
+        sb.AppendLine("    {");
+        sb.AppendLine("      \"title\": \"Short descriptive title\",");
+        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.Structural)}\",");
+        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine("      \"evidence\": \"Concrete code snippet or line reference proving the issue\",");
+        sb.AppendLine("      \"evidenceSources\": [\"code-reading:File.cs:L42\", \"hotspot:18-changes\", \"tool:eslint-unused-vars\"],");
+        sb.AppendLine("      \"crossReference\": \"Second file/location that corroborates (duplication partner, drift boundary, etc.)\",");
+        sb.AppendLine("      \"impact\": \"What goes wrong because of this — be specific\",");
+        sb.AppendLine("      \"suggestedFix\": \"Brief approach, not full implementation\"");
+        sb.AppendLine("    }");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
+        sb.AppendLine("}");
         sb.AppendLine("```");
         sb.AppendLine();
         sb.AppendLine("## Quality Bar");
@@ -194,7 +219,8 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble);
+        sb.Append(RefactoringSubAgentPreamble
+            .Replace("{AgentWorkspacePaths.RefactoringToolOutputDirectory}", AgentWorkspacePaths.RefactoringToolOutputDirectory));
 
         sb.AppendLine("# Agent B: Correctness & Hygiene Detection");
         sb.AppendLine();
@@ -231,12 +257,14 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("3. Discard TODOs that are aspirational (\"TODO: nice to have\") — keep ones indicating broken/incomplete behavior");
         sb.AppendLine();
         sb.AppendLine("**For dead code:**");
-        sb.AppendLine("1. If static analysis tools are available for this ecosystem, install and run them to detect unused code.");
-        sb.AppendLine("   This is the highest-confidence approach. Common tools: `dotnet build` warnings (CS0219, IDE0051),");
+        sb.AppendLine("1. Check `.agent/refactoring-tool-output/` for pre-built analyzer output. Use a read-only analyzer that does not build");
+        sb.AppendLine("   if no output is available. Common tools: `dotnet build` warnings (CS0219, IDE0051),");
         sb.AppendLine("   `eslint --rule no-unused-vars`, `pylint`, `deadcode`, etc.");
-        sb.AppendLine("2. If no tools available: enumerate public types/methods in key files, then search for their usages.");
+        sb.AppendLine("2. install and run them to detect unused code when a tool is available.");
+        sb.AppendLine("   This is the highest-confidence approach.");
+        sb.AppendLine("3. If no tools available: enumerate public types/methods in key files, then search for their usages.");
         sb.AppendLine("   A public method with zero callers outside its own class is a dead code candidate.");
-        sb.AppendLine("3. Check git history for recently-deleted features — their support code may linger.");
+        sb.AppendLine("4. Check git history for recently-deleted features — their support code may linger.");
         sb.AppendLine();
         sb.AppendLine("**For bugs:**");
         sb.AppendLine("1. Focus on hotspot files (high churn = more likely to contain recent regressions)");
@@ -250,21 +278,24 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` as a JSON array:");
+        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` as a JSON object:");
         sb.AppendLine();
         sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("[");
-        sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"Short descriptive title\",");
-        sb.AppendLine("    \"category\": \"todo|dead-code|bug|stale-documentation\",");
-        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine("    \"evidence\": \"The exact code snippet or comment text proving the issue\",");
-        sb.AppendLine("    \"evidenceSources\": [\"grep:TODO:File.cs:L15\", \"tool:IDE0051\", \"usage-search:zero-callers\"],");
-        sb.AppendLine("    \"crossReference\": \"For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.\",");
-        sb.AppendLine("    \"impact\": \"What goes wrong or what cognitive cost this imposes\",");
-        sb.AppendLine("    \"suggestedFix\": \"Brief approach\"");
-        sb.AppendLine("  }");
-        sb.AppendLine("]");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"findings\": [");
+        sb.AppendLine("    {");
+        sb.AppendLine("      \"title\": \"Short descriptive title\",");
+        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.Correctness)}\",");
+        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine("      \"evidence\": \"The exact code snippet or comment text proving the issue\",");
+        sb.AppendLine("      \"evidenceSources\": [\"grep:TODO:File.cs:L15\", \"tool:IDE0051\", \"usage-search:zero-callers\"],");
+        sb.AppendLine("      \"crossReference\": \"For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.\",");
+        sb.AppendLine("      \"impact\": \"What goes wrong or what cognitive cost this imposes\",");
+        sb.AppendLine("      \"suggestedFix\": \"Brief approach\"");
+        sb.AppendLine("    }");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
+        sb.AppendLine("}");
         sb.AppendLine("```");
         sb.AppendLine();
         sb.AppendLine("## Quality Bar");
@@ -293,7 +324,8 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble);
+        sb.Append(RefactoringSubAgentPreamble
+            .Replace("{AgentWorkspacePaths.RefactoringToolOutputDirectory}", AgentWorkspacePaths.RefactoringToolOutputDirectory));
 
         sb.AppendLine("# Agent C: Design Consistency Detection");
         sb.AppendLine();
@@ -341,21 +373,24 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` as a JSON array:");
+        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` as a JSON object:");
         sb.AppendLine();
         sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("[");
-        sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"Short descriptive title\",");
-        sb.AppendLine("    \"category\": \"naming-inconsistency|primitive-obsession\",");
-        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine("    \"evidence\": \"The specific naming deviation or primitive usage with concrete examples\",");
-        sb.AppendLine("    \"evidenceSources\": [\"convention-rule:services-suffix\", \"grep:repositoryUrl:5-occurrences\"],");
-        sb.AppendLine("    \"crossReference\": \"For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.\",");
-        sb.AppendLine("    \"impact\": \"Cognitive cost, confusion risk, or bug risk from the inconsistency\",");
-        sb.AppendLine("    \"suggestedFix\": \"Brief approach — rename to X, introduce value type Y, extract constant Z\"");
-        sb.AppendLine("  }");
-        sb.AppendLine("]");
+        sb.AppendLine("{");
+        sb.AppendLine("  \"findings\": [");
+        sb.AppendLine("    {");
+        sb.AppendLine("      \"title\": \"Short descriptive title\",");
+        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.Design)}\",");
+        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine("      \"evidence\": \"The specific naming deviation or primitive usage with concrete examples\",");
+        sb.AppendLine("      \"evidenceSources\": [\"convention-rule:services-suffix\", \"grep:repositoryUrl:5-occurrences\"],");
+        sb.AppendLine("      \"crossReference\": \"For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.\",");
+        sb.AppendLine("      \"impact\": \"Cognitive cost, confusion risk, or bug risk from the inconsistency\",");
+        sb.AppendLine("      \"suggestedFix\": \"Brief approach — rename to X, introduce value type Y, extract constant Z\"");
+        sb.AppendLine("    }");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
+        sb.AppendLine("}");
         sb.AppendLine("```");
         sb.AppendLine();
         sb.AppendLine("## Quality Bar");
@@ -402,6 +437,9 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine($"4. `{AgentWorkspacePaths.RefactoringConventionsFilePath}` — Phase 0: project conventions");
         sb.AppendLine($"5. `{AgentWorkspacePaths.HotspotAnalysisFilePath}` — Git hotspot data");
         sb.AppendLine();
+        sb.AppendLine("If a findings file is missing or is not valid JSON, that agent failed: treat its findings as empty");
+        sb.AppendLine("and note this in the analysis log. Do not abort.");
+        sb.AppendLine();
 
         sb.AppendLine("## Aggregation Steps");
         sb.AppendLine();
@@ -416,11 +454,40 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("For each remaining finding, check against `refactoring-conventions.json`:");
         sb.AppendLine("- Does it flag something listed in `intentionalPatterns`? → **DROP IT**");
-        sb.AppendLine("- Does it flag something listed in `knownDebt`? → **DROP IT** (team already knows)");
+        sb.AppendLine("- Does it flag something listed in `knownDebt`? → **DROP IT** (team already knows).");
+        sb.AppendLine("  This does not apply to `todo` findings — an inline TODO comment is not the same as");
+        sb.AppendLine("  acknowledged debt, and is still worth surfacing.");
         sb.AppendLine("- Does it contradict `abstractionPhilosophy`? (e.g., flagging missing interface when philosophy says \"minimal interfaces\") → **DROP IT**");
         sb.AppendLine("- Does it contradict `testingPhilosophy`? → **DROP IT**");
         sb.AppendLine();
-        sb.AppendLine("### Step 3: Rank by Impact");
+        sb.AppendLine("### Step 3: Evidence Quality Gate");
+        sb.AppendLine();
+        sb.AppendLine("Reject proposals that fail evidence quality. Apply this gate before ranking:");
+        sb.AppendLine();
+        sb.AppendLine("- `hotspot:` is a priority signal, not evidence. A finding backed only by hotspot frequency is not ready.");
+        sb.AppendLine("- A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool.");
+        sb.AppendLine("  Grep, usage-search, and code-reading are not `tool:` sources.");
+        sb.AppendLine();
+
+        // Enumerate every category in the gate
+        foreach (var cat in RefactoringCategories.All)
+        {
+            sb.AppendLine(cat switch
+            {
+                RefactoringCategories.Bug or RefactoringCategories.DeadCode =>
+                    $"- `{cat}`: MUST have at least one `tool:`, `grep:`, or `usage-search:` evidence source. `code-reading:` alone → DROP the proposal.",
+                RefactoringCategories.Todo or RefactoringCategories.StaleDocumentation =>
+                    $"- `{cat}`: may use `code-reading:` alone but receives a capped evidence score of 1.",
+                _ =>
+                    $"- `{cat}`: MUST have at least one evidence source that is NOT `code-reading:` only. `code-reading:` alone → DROP the proposal.",
+            });
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("Categories `todo` and `stale-documentation` may use \"code-reading:\" alone but");
+        sb.AppendLine("receive a capped evidence score of 1 regardless of other evidence quality.");
+        sb.AppendLine();
+        sb.AppendLine("### Step 4: Rank by Impact");
         sb.AppendLine();
         sb.AppendLine("Score each surviving finding on three axes (each 1-3):");
         sb.AppendLine();
@@ -430,20 +497,15 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("| **Evidence strength** | Tool-confirmed or multi-source | Code reading with crossReference | Single observation |");
         sb.AppendLine("| **Scope feasibility** | <10 files affected | 10-20 files | 20-30 files |");
         sb.AppendLine();
-        sb.AppendLine("Final score = hotspot × evidence × scope. Rank descending. Take top N.");
+        sb.AppendLine("Final score = hotspot × evidence × scope. Rank descending.");
         sb.AppendLine();
-        sb.AppendLine("### Step 3.5: Evidence Quality Gate");
+        sb.AppendLine("**Bugs first.** Before applying the score, promote all `bug` findings to the top of the ranking");
+        sb.AppendLine("regardless of their numeric score — correctness issues are always higher priority than hygiene.");
         sb.AppendLine();
-        sb.AppendLine("Before ranking, reject proposals that fail evidence quality:");
-        sb.AppendLine("- Categories `refactoring`, `bug`, `dead-code`: MUST have at least one evidence source");
-        sb.AppendLine("  that is NOT \"code-reading:\" only. If all sources are \"code-reading:\", DROP the proposal.");
-        sb.AppendLine("- Categories `simplification`, `documentation`: may use \"code-reading:\" alone but");
-        sb.AppendLine("  receive a capped evidence score of 1 regardless of other evidence quality.");
-        sb.AppendLine("- Valid non-code-reading sources: \"hotspot:\", \"grep:\", \"usage-search:\", \"tool:\"");
+        sb.AppendLine("**Spread work across files.** After ranking, enforce at most one proposal per primary file.");
+        sb.AppendLine("If two proposals share the same primary file, keep the higher-ranked one.");
         sb.AppendLine();
-        sb.AppendLine("### Step 4: Format as Proposals");
-        sb.AppendLine();
-        sb.AppendLine($"Select the top **{maxProposals}** findings by score and convert them into the final proposal format.");
+        sb.AppendLine($"Select the top **{maxProposals}** findings by final rank.");
         sb.AppendLine();
 
         // Insert issue context (open issues to avoid duplicating)
@@ -460,6 +522,15 @@ public static partial class ConsolidationPromptBuilder
             sb.AppendLine();
         }
 
+        sb.AppendLine("### Step 5: Format as Proposals");
+        sb.AppendLine();
+        sb.AppendLine("Convert the top-ranked findings into the final proposal format below.");
+        sb.AppendLine();
+        sb.AppendLine("**Important framing rules:**");
+        sb.AppendLine("- Do NOT mention the analysis agents (A, B, C), phases, scores, rankings, or this scan");
+        sb.AppendLine("  in any proposal text. Proposals are read by humans as standalone issue descriptions.");
+        sb.AppendLine("- Propose ONE approach per proposal. Do not list alternatives or hedge with \"could also\".");
+        sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
         sb.AppendLine($"Produce the final proposals at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` as a JSON array:");
@@ -468,10 +539,12 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
-        sb.AppendLine("    \"category\": \"refactoring|simplification|bug|documentation|dead-code\",");
+        sb.AppendLine($"    \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.All)}\",");
         sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
+        sb.AppendLine("    \"scopeQuery\": \"grep pattern or file glob that identifies ALL affected locations (used to verify completeness)\",");
         sb.AppendLine("    \"description\": \"Detailed description of what should be changed and how\",");
         sb.AppendLine("    \"rationale\": \"Why — referencing concrete evidence from the sub-agent findings\",");
+        sb.AppendLine("    \"evidence\": \"The strongest evidence snippet from the findings\",");
         sb.AppendLine("    \"evidenceSources\": [\"tool:IDE0051\", \"hotspot:18-changes\", \"code-reading:File.cs:L42\"],");
         sb.AppendLine("    \"prerequisites\": [\"Add characterization tests for X before refactoring\"],");
         sb.AppendLine("    \"dependsOn\": [\"Exact title of another proposal this depends on\"],");
@@ -488,9 +561,12 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("### Field Definitions");
         sb.AppendLine();
+        sb.AppendLine("- **scopeQuery** (required) — a grep pattern or file glob that finds ALL instances of the problem.");
+        sb.AppendLine("  This is used to verify the fix is complete. Example: `grep -rn \\.agent/refactoring-analysis\\.md src/`.");
         sb.AppendLine("- **evidenceSources** (required) — list of evidence that supports this proposal. Prefix with type:");
-        sb.AppendLine("  `tool:` (linter/compiler output), `hotspot:` (git frequency), `code-reading:` (manual inspection),");
+        sb.AppendLine("  `tool:` (linter/compiler/MCP tool output), `hotspot:` (git frequency), `code-reading:` (manual inspection),");
         sb.AppendLine("  `grep:` (pattern search), `usage-search:` (reference count). Multi-source proposals are higher quality.");
+        sb.AppendLine("- **evidence** (required) — the single strongest evidence snippet: a code fragment, tool warning, or grep result.");
         sb.AppendLine("- **prerequisites** — prep work needed. If affected files lack test coverage, MUST include");
         sb.AppendLine("  \"Add characterization tests for X before refactoring\". Do NOT reference other proposals by number");
         sb.AppendLine("  (e.g., \"proposal #1\") — GitHub will autolink #N to wrong issues.");
@@ -511,6 +587,9 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("  - Each criterion must test a DISTINCT concern. No rephrased duplicates.");
         sb.AppendLine("  - Prefer negative assertions (\"no references remain\", \"no callers exist\") — they catch incomplete implementations.");
         sb.AppendLine("  - Do NOT use #N notation — GitHub autolinks to wrong issues.");
+        sb.AppendLine("  - For **dead-code** and **rename** proposals: one criterion MUST state that no match of the pattern remains");
+        sb.AppendLine("    (e.g., `scopeQuery` returns zero results after the fix).");
+        sb.AppendLine("  - For **bug** proposals: one criterion MUST require a test that reproduces the failure scenario.");
         sb.AppendLine();
         sb.AppendLine("  Examples by category:");
         sb.AppendLine("  - dead-code: \"No remaining callers or references to deleted methods in .cs files\"");
@@ -539,9 +618,10 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine($"Write a brief analysis log at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}` containing:");
         sb.AppendLine("- Total findings received from agents A, B, C");
-        sb.AppendLine("- How many were dropped (duplicates, convention-filtered, scope-exceeded)");
+        sb.AppendLine("- How many were dropped (duplicates, convention-filtered, evidence-gate failed, scope-exceeded)");
         sb.AppendLine("- The ranking scores for the top candidates");
         sb.AppendLine("- Which findings were dropped and why (one line each)");
+        sb.AppendLine("- The `notChecked` areas the agents reported");
 
         return sb.ToString();
     }
