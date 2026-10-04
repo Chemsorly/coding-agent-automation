@@ -39,17 +39,11 @@ public class TodoWarningBaselineTests
     // NOTE (issue #3243): The pre-change baseline figure was inconsistent between sources: the issue
     // description stated 309, but the arithmetic (288 + 13 WorkItemDispatchEndpoints conversions
     // + 9 QualityGateExecutor.RetryLoop conversions = 310) was consistent with 310.
-    // TODO (issue #3243): The sentence "The value 290 is independently verifiable (grep src/**/*.cs)
-    // and is correct" (formerly in this comment block) was inaccurate — the verified count is 289,
-    // not 290. The reference to 290 was an intermediate draft value and has been removed.
-    // The previous pinned value of 288 was computed against a different main HEAD (one that did not
-    // yet include the WorkItemDispatchEndpoints and QualityGateExecutor.RetryLoop conversions from
-    // this PR); the new baseline of 289 was pinned after those conversions landed.
-    // Pinned at: 289 (count in src/ after this PR's conversions in QualityGateExecutor.RetryLoop.cs,
-    // WorkItemDispatchEndpoints.cs, CreateBranchStep.cs, and ReconciliationLoop.cs — issue #3243).
-    // Verified: grep -rE "TODO \[WARNING\]|TODO: \[WARNING\]" src --include="*.cs" | wc -l = 289
-    // See review finding: TestQualityReviewer @ line 55, Correctness review warning re: comment accuracy.
-    private const int BaselineCount = 289;
+    // NOTE (issue #3243): Pinned at 288. This is the authoritative post-conversion count,
+    // independently verified: grep -rE "TODO \[WARNING\]|TODO: \[WARNING\]" src --include="*.cs" | wc -l = 288
+    // Any reference to "289" or "290" in earlier drafts of this comment was a stale intermediate value
+    // that was not cleaned up; 288 is correct (DotNetSpecialist WARNING / Correctness WARNING, issue #3243).
+    private const int BaselineCount = 288;
 
     // ── Repo-root resolution (identical to SonarGateBugConditionTests) ────────
     // NOTE (issue #3243): GetRepoRoot() is called during static property initialization.

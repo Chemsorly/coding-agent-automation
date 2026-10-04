@@ -2460,6 +2460,12 @@ public sealed class DispatchPendingWorkItemEndpointTests
             await db.SaveChangesAsync();
         }
 
+        // TODO (issue #3243): readDb is kept open across the DispatchPendingWorkItem call below.
+        // This is benign with an in-memory/SQLite test provider but could cause connection pool
+        // pressure if the test factory is ever backed by a real pooled provider. Consider reading
+        // entity.Id before the await using scope and disposing readDb before the endpoint call,
+        // matching the pattern used in DispatchPendingWorkItemEndpoint_PendingItem_Returns200Dispatched.
+        // (DotNetSpecialist WARNING)
         await using var readDb = await dbFactory.CreateDbContextAsync();
         var entity = await readDb.WorkItems.AsNoTracking().FirstAsync(w => w.IssueIdentifier == "already-dispatched");
 

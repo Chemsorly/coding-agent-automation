@@ -830,6 +830,12 @@ public sealed class ReconciliationLoopTests : IDisposable
         // Deletion must be skipped — no job found via label query
         _k8sClient.Verify(c => c.DeleteJobAsync(
             jobName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // TODO (issue #3243): Add a positive anti-vacuity assertion here to confirm that PostStatusAsync
+        // was actually called (timeout enforcement actually fired), e.g.:
+        //   _workItemClient.Verify(c => c.PostStatusAsync(ItemId, It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"), ...), Times.Once);
+        // Without it, if GetActiveAsync's matcher (It.Is<int>(n => n == 60)) silently misses (e.g. threshold
+        // constant changes), Times.Never on DeleteJobAsync always passes vacuously — no item returned,
+        // no deletion, but enforcement never ran either. (TestQualityReviewer WARNING)
     }
 
     /// <summary>
