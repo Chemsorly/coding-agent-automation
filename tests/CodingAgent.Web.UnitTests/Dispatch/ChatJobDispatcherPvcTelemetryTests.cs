@@ -247,11 +247,16 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
         // Act — CleanupSession uses CAS on entry.Cleaned (0→1); freshly constructed entries start at 0.
         dispatcher.CleanupSession(agentKey, entry, "dotnet_opencode", "completed");
 
-        // Assert: pool tag must be "opencode", not "kiro"
-        measurements.Should().Contain(m => m.Value == -1L && m.Pool == "opencode",
+        // Assert: pool tag must be "opencode", not "kiro".
+        // Filter to measurements with Value == -1 to guard against concurrent test leakage:
+        // this test is in [Collection("Metrics")] which serializes against other Metrics tests,
+        // but the global meter can receive +1 increments from unrelated test setup in parallel
+        // test classes. CleanupSession always emits exactly one measurement with Value == -1.
+        var decrements = measurements.Where(m => m.Value == -1L).ToList();
+        decrements.Should().Contain(m => m.Pool == "opencode",
             "CleanupSession must emit PvcUtilization -1 with pool='opencode' for a non-Kiro entry — " +
             "pool tag must be derived from entry.PoolName, not a hardcoded 'kiro' literal");
-        measurements.Should().NotContain(m => m.Pool == "kiro",
+        decrements.Should().NotContain(m => m.Pool == "kiro",
             "a non-Kiro entry with PoolName='opencode' must never emit pool='kiro'");
     }
 
