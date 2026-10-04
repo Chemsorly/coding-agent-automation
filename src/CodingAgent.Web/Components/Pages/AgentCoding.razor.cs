@@ -684,8 +684,6 @@ public partial class AgentCoding : IDisposable
 
     // ── Helpers ──
 
-    private PipelineProject? GetParentProject(TemplateId templateId) => PageService.GetParentProject(templateId);
-
     /// <summary>
     /// Synchronous check against the preloaded active issues map.
     /// Used by drawer component <c>GetProcessingStatus</c> parameter (Func&lt;string, WorkItemStatus?&gt;).

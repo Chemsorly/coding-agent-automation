@@ -49,7 +49,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     private readonly ChatJobExecutor _chatJobHandler;
 #pragma warning restore S1450
     private readonly Serilog.ILogger _logger;
-    private readonly ResiliencePipeline _signalRPipeline;
 
     public AgentWorkerService(AgentWorkerServiceDependencies deps)
     {
@@ -63,7 +62,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _slotManager = deps.SlotManager;
         _chatJobHandler = deps.ChatHandler;
         _logger = deps.Logger;
-        _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(deps.Logger);
 
         var isChatMode = string.Equals(
             Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);

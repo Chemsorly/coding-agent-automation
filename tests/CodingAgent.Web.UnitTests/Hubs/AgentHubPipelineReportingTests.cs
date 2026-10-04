@@ -34,7 +34,6 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -359,7 +358,6 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -391,7 +389,6 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -420,7 +417,6 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -482,7 +478,6 @@ public sealed class AgentHubPipelineReportingTests
             Mock.Of<IHubIssueOperations>(),
             mockLifecycle.Object,
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -532,7 +527,6 @@ public sealed class AgentHubPipelineReportingTests
             mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -562,7 +556,6 @@ public sealed class AgentHubPipelineReportingTests
             mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -598,7 +591,6 @@ public sealed class AgentHubPipelineReportingTests
             mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -660,7 +652,6 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             Mock.Of<Serilog.ILogger>(),
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));
@@ -798,7 +789,6 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             Mock.Of<Serilog.ILogger>(),
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));
@@ -964,7 +954,6 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             Mock.Of<Serilog.ILogger>(),
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));

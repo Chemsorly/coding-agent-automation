@@ -24,14 +24,4 @@ public static class CostFormatter
         if (tokens >= 1_000) return string.Create(CultureInfo.InvariantCulture, $"{tokens / 1_000.0:F1}K");
         return tokens.ToString(CultureInfo.InvariantCulture);
     }
-
-    /// <summary>
-    /// Returns a compact badge string: cost if available, otherwise tokens, otherwise "—".
-    /// </summary>
-    public static string FormatBadge(long totalTokens, decimal? totalCost)
-    {
-        if (totalCost is not null and > 0m) return FormatCost(totalCost);
-        if (totalTokens > 0) return $"{FormatTokens(totalTokens)} tok";
-        return "—";
-    }
 }

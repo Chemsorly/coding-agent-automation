@@ -43,7 +43,6 @@ public sealed class AgentHubConsolidationTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));

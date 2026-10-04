@@ -316,7 +316,7 @@ The `CodingAgent.WorkDistribution` meter is defined in `WorkDistributionTelemetr
 
 ### Span Noise Filters
 
-Three high-volume span categories are filtered out before export to avoid overwhelming the OTLP backend with low-signal data (~70% of raw daily span volume). The filters are wired in the **Scheduler** and **Job Controller** processes via `OtelNoiseFilter` (`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`):
+Three high-volume span categories are filtered out before export to avoid overwhelming the OTLP backend with low-signal data (~70% of raw daily span volume). The filters are wired into all four long-lived hosts (**API**, **Web**, **Scheduler** and **Job Controller**) via `OtelNoiseFilter` (`src/CodingAgent.Infrastructure.Common/Telemetry/OtelNoiseFilter.cs`):
 
 | Filter | Mechanism | What is dropped |
 |--------|-----------|-----------------|
@@ -501,14 +501,14 @@ Agent pods emit telemetry with `service.name` derived from the agent image and l
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
 | `coding-agent-web` | Web service (Blazor UI) | — | Hardcoded at compile time in `OpenTelemetryRegistration.cs`; not overridable via `OTEL_SERVICE_NAME` |
-| `coding-agent-web` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-web`). Override to `coding-agent-api` to separate API spans from Blazor spans in Tempo — then also update Grafana panel queries. |
+| `coding-agent-api` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-api`). Override if you need a different name. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder` via `OTEL_SERVICE_NAME` on each Job pod. Per-run identity exposed via `service.instance.id` = K8s Job name (e.g., `caa-agent-7f3a9b2e1c4`), set in `OTEL_RESOURCE_ATTRIBUTES` |
 
-> **Why API defaults to `coding-agent-web`:** The Grafana "Recent Pipeline Traces" panel queries `rootServiceName="coding-agent-web"`. With the API emitting under the same service name, `ExecutePipeline` spans (started by the API when a WorkItem is created) appear in that panel automatically. Override `otel.apiServiceName` to `coding-agent-api` if you want to distinguish API-origin spans from Blazor UI spans; then update the panel query to `rootServiceName=~"coding-agent-web|coding-agent-api"`. See issue #2255.
+> **Run identity in `service.instance.id`:** Agent pods all share the stable `service.name=coding-agent-worker`. The individual run is identified by `service.instance.id` (set to the Kubernetes Job name, e.g. `caa-abcdef12`) in `OTEL_RESOURCE_ATTRIBUTES`. This keeps service cardinality stable — queries no longer need regex to match per-run service names.
 
-> **⚠️ Breaking change notice (API service name):** The API's default `service.name` reverted from `coding-agent-api` back to `coding-agent-web`. If you previously updated Grafana dashboards or alerts to filter on `service.name="coding-agent-api"` based on an earlier migration notice, update those filters back to `coding-agent-web` (or use a regex: `service.name=~"coding-agent-web|coding-agent-api"`). Dashboards that never changed the filter are unaffected.
+> **⚠️ Breaking change (upgrade from pre-2969):** The API's `service.name` changed from `coding-agent-web` to `coding-agent-api`. Update any Grafana dashboards or alerts that filter on `service.name="coding-agent-web"` for API traffic. The "Recent Pipeline Traces" panel is not affected (updated in #2966).
 
 ### Example: Grafana Cloud
 

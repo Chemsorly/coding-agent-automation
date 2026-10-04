@@ -553,4 +553,32 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("Unverifiable acceptance criteria");
         result.Should().Contain("Implementation-prescriptive acceptance criteria");
     }
+
+    // TODO: These tests verify the correct content is present in the prompt output but cannot
+    // distinguish between the constant being interpolated versus a duplicate bare string literal
+    // with the same value. If AgentWorkspacePaths.RefactoringAnalysisFilePath were removed and
+    // ".agent/refactoring-analysis.md" re-introduced as a literal, these tests would still pass.
+    // To close this gap, consider adding a source-scan test that asserts no .cs file outside
+    // AgentWorkspacePaths.cs contains a raw ".agent/refactoring-analysis.md" string literal.
+    // TODO: This test is a duplicate of BuildRefactoringReviewPrompt_ReadsAnalysisLogAndIssueContextFiles (line ~512),
+    // which already asserts result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath) on the same method.
+    // This test adds no new assertion and would pass or fail under exactly the same conditions. Consider removing it.
+    [Fact]
+    public void BuildRefactoringReviewPrompt_ReferencesAnalysisFilePath()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
+    }
+
+    // TODO: This test is a duplicate of BuildRefactoringAggregationPrompt_WritesAnalysisLogToConstantPath (line ~399),
+    // which already asserts result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath) on the same method.
+    // This test adds no new assertion and would pass or fail under exactly the same conditions. Consider removing it.
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ReferencesAnalysisFilePath()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
+    }
 }

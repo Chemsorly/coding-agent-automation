@@ -46,8 +46,6 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
     private readonly DispatchServiceOptions _options;
     private readonly ILogger _logger;
 
-    private const string TagAgentSelector = "agent_selector";
-
     public ChatSessionWatcher(
         IKubernetesJobClient jobClient,
         IChatHeartbeatTracker? heartbeatTracker,

@@ -30,11 +30,6 @@ public sealed partial class IssueImageExtractor
         ".mp4", ".mov", ".webm", ".avi"
     };
 
-    private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".png", ".jpg", ".jpeg", ".webp", ".gif"
-    };
-
     // Pass 1: Reference-style link definitions: [ref]: url
     [GeneratedRegex(@"^\s*\[([^\]]+)\]:\s*(\S+)", RegexOptions.Multiline)]
     private static partial Regex ReferenceLinkDefinitionPattern();

@@ -48,31 +48,6 @@ public class WorkDistributionModeResolutionTests
         descriptor.Should().BeNull("WorkItemTransitionService is now registered in the API host only");
     }
 
-    [Fact]
-    public void KubernetesMode_IPendingWorkQuery_WasRemoved()
-    {
-        // Spec 045 Req 1.2 (M1 gauge audit): IPendingWorkQuery (DbPendingWorkQuery) was
-        // removed from AddWorkDistribution because dispatch.queue.depth gauge was backed by
-        // IDbContextFactory. No PrometheusRule alerts reference this metric, so removal is safe.
-        // ObservableGaugeRegistrationExtensions no longer registers dispatch.queue.depth.
-        var configData = new Dictionary<string, string?>
-        {
-            ["Database:Host"] = "localhost",
-            ["Database:Name"] = "testdb",
-            ["WorkDistribution:Namespace"] = "default",
-            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
-            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
-        };
-        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
-        var services = new ServiceCollection();
-        services.AddLogging();
-
-        services.AddWorkDistribution(config);
-
-        var descriptor = services.FirstOrDefault(d => d.ServiceType == typeof(IPendingWorkQuery));
-        descriptor.Should().BeNull("IPendingWorkQuery was removed in Spec 045 Req 1.2 (M1 gauge audit)");
-    }
-
     // ── Order-independence (IPipelineRunHistoryService) ─────────────────
 
     [Fact]

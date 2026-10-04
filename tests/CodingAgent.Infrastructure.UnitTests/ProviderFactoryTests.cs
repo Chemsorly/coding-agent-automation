@@ -161,4 +161,22 @@ public class ProviderFactoryTests
         interval2.Should().Be(TimeSpan.FromSeconds(90));
         mockConfigStore.Verify(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
+
+    [Fact]
+    public void CreateAgentProvider_AlwaysThrows_AgentProvidersAreBuiltInsideAgentPods()
+    {
+        var factory = new ProviderFactory(new Mock<IPipelineConfigStore>().Object);
+        var config = new ProviderConfig
+        {
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "Kiro",
+            Settings = new Dictionary<string, string>()
+        };
+
+        var act = () => factory.CreateAgentProvider(config);
+
+        act.Should().Throw<NotSupportedException>()
+            .WithMessage("*Agent providers are created inside agent pods*");
+    }
 }

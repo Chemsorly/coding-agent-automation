@@ -151,13 +151,6 @@
                         {
                             var resultLabel = RunOutcomeDisplay.Label(run.FinalStep);
                             var resultClass = RunOutcomeDisplay.BadgeClass(run.FinalStep);
-                            var runTypeLabel = run.RunType switch
-                            {
-                                PipelineRunType.Review => "Review",
-                                PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => "Decomposition",
-                                PipelineRunType.Consolidation => "Consolidation",
-                                _ => "Implementation"
-                            };
                             <tr class="@(run.RunType == PipelineRunType.Consolidation ? "" : "monitoring-row-clickable")"
                                 title="@(run.RunType == PipelineRunType.Consolidation ? "View consolidation history on the Consolidation page" : "")"
                                 @onclick="() => TryOpenRun(run)">

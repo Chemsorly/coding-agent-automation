@@ -24,7 +24,6 @@ public sealed class AgentHubLifecycleBranchTests
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IAgentJobLifecycleService> _lifecycleService = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
-    private readonly Mock<IGateCommentFormatter> _gateCommentFormatter = new();
     private readonly Mock<IAgentOrphanRecoveryService> _orphanRecoveryService = new();
 
     private AgentHub CreateHub(string connectionId = "conn-1")
@@ -40,7 +39,6 @@ public sealed class AgentHubLifecycleBranchTests
             IssueOps: _issueOps.Object,
             LifecycleService: _lifecycleService.Object,
             TokenRefreshService: _tokenRefreshService.Object,
-            GateCommentFormatter: _gateCommentFormatter.Object,
             Logger: Log.Logger,
             OrphanRecoveryService: _orphanRecoveryService.Object,
             UiContext: HubTestHelpers.CreateNoOpHubContext()));

@@ -20,11 +20,10 @@ internal static class ApiStartupExtensions
     /// <summary>
     /// Runs database migration verification and startup seeding before app.Run().
     /// Calls <see cref="DatabaseStartupService.HandleMigrationsAsync"/> and
-    /// <see cref="DatabaseStartupService.RunStartupSeedingAsync"/> —
-    /// NEVER <c>ImportJsonConfigIfNeededAsync</c> (legacy JSON migration).
+    /// <see cref="DatabaseStartupService.RunStartupSeedingAsync"/>.
     /// Honours <c>Database:SkipStartupInit</c> (Req 4.3) for integration tests.
-    /// The API runs with <c>MigrateOnStartup=false</c> so this method VERIFIES and
-    /// THROWS on pending migrations rather than applying them (Req 9.5a/9.5b).
+    /// With <c>Database:MigrateOnStartup=false</c> this method verifies and throws on pending
+    /// migrations instead of applying them (Req 9.5a/9.5b).
     /// </summary>
     public static async Task RunApiMigrationsAsync(
         this WebApplication app,
@@ -49,8 +48,6 @@ internal static class ApiStartupExtensions
         var startupService = startupServiceOverride
             ?? new DatabaseStartupService(dbFactory, lockProvider, configuration, Log.Logger, probe);
 
-        // WaitForDatabaseConnectionAsync + HandleMigrationsAsync + RunStartupSeedingAsync.
-        // Do NOT call InitializeAsync — that also calls ImportJsonConfigIfNeededAsync (legacy JSON import).
         // NOTE: All three calls use CancellationToken.None instead of app.Lifetime.ApplicationStopping.
         // If the host begins shutting down while RunStartupSeedingAsync is waiting on the distributed lock
         // (e.g. another replica holds it and is slow), the shutdown cannot interrupt the wait and the process

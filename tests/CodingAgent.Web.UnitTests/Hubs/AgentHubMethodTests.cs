@@ -25,7 +25,6 @@ public sealed class AgentHubMethodTests
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IAgentJobLifecycleService> _lifecycleService = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
-    private readonly Mock<IGateCommentFormatter> _gateCommentFormatter = new();
     private readonly Mock<IAgentOrphanRecoveryService> _orphanRecoveryService = new();
     private readonly Mock<IHubContext<AgentHub>> _uiContext = new();
     private readonly Mock<IClientProxy> _uiClientProxy = new();
@@ -53,7 +52,6 @@ public sealed class AgentHubMethodTests
             IssueOps: _issueOps.Object,
             LifecycleService: _lifecycleService.Object,
             TokenRefreshService: _tokenRefreshService.Object,
-            GateCommentFormatter: _gateCommentFormatter.Object,
             Logger: Log.Logger,
             OrphanRecoveryService: _orphanRecoveryService.Object,
             UiContext: _uiContext.Object);
