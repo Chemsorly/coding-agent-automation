@@ -744,6 +744,157 @@ public sealed class ReconciliationLoopTests : IDisposable
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// When <c>PostStatusAsync</c> throws (transient error) while failing an orphaned Dispatched
+    /// item (no live K8s Job), the exception must be swallowed and reconciliation must continue.
+    /// This covers the catch block at lines 363-366 of <c>EnforceDispatchedTimeoutAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task WhenDispatchedItemExceedsConnectTimeout_AndPostStatusThrows_ExceptionIsSwallowed()
+    {
+        var dispatchedItem = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Dispatched,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(_options.ChatPodConnectTimeoutSeconds + 1)),
+            AgentSelector = "dotnet10,opencode",
+            IssueIdentifier = "owner/repo#99"
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == _options.ChatPodConnectTimeoutSeconds), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([dispatchedItem]);
+
+        // No K8s Job for this item
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        // PostStatusAsync throws — the catch block must absorb it
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("transient network error"));
+
+        var loop = CreateLoop();
+
+        // Act — must not throw; the catch block swallows the exception
+        var act = async () => await loop.EnforceDispatchedTimeoutAsync(CancellationToken.None);
+        await act.Should().NotThrowAsync(
+            "PostStatusAsync exception in the orphaned-Dispatched catch block must be swallowed");
+
+        // PostStatusAsync was attempted exactly once (anti-vacuity)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// When <c>ListJobsAsync</c> returns an empty list while resolving a K8s Job name via
+    /// label selector (legacy WorkItem with null <c>K8sJobName</c>), <c>ResolveJobNameAsync</c>
+    /// returns null and deletion is skipped. This exercises the label-based resolution path
+    /// and covers lines 570-574 of <c>ResolveJobNameAsync</c>.
+    /// </summary>
+    [Fact]
+    public async Task WhenTimeoutItem_AndK8sJobNameIsNull_AndLabelQueryReturnsEmpty_SkipsDeletion()
+    {
+        const int itemTimeoutSeconds = 1800;
+        var jobName = JobNameFor(ItemId);
+        // Simulate a legacy work item: K8sJobName is null — requires label-based resolution.
+        var timeoutItem = new ActiveWorkItemDto
+        {
+            Id = ItemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 1)),
+            AgentSelector = "kiro,dotnet",
+            IssueIdentifier = "owner/repo#5",
+            K8sJobName = null, // triggers label-based resolution in ResolveJobNameAsync
+            TimeoutSeconds = itemTimeoutSeconds
+        };
+
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.Is<int>(n => n == 60), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([timeoutItem]);
+
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Label query returns empty (no job found) — covers the null-K8sJobName path
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                _options.Namespace,
+                $"caa/work-item-id={ItemId}",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [] });
+
+        var loop = CreateLoop();
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Deletion must be skipped — no job found via label query
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            jobName, It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // TODO (issue #3243): Add a positive anti-vacuity assertion here to confirm that PostStatusAsync
+        // was actually called (timeout enforcement actually fired), e.g.:
+        //   _workItemClient.Verify(c => c.PostStatusAsync(ItemId, It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"), ...), Times.Once);
+        // Without it, if GetActiveAsync's matcher (It.Is<int>(n => n == 60)) silently misses (e.g. threshold
+        // constant changes), Times.Never on DeleteJobAsync always passes vacuously — no item returned,
+        // no deletion, but enforcement never ran either. (TestQualityReviewer WARNING)
+    }
+
+    /// <summary>
+    /// When a failed K8s Job has no terminated failed pods (all pods completed cleanly or no
+    /// pods at all), <c>EnrichErrorMessageWithPodInfoAsync</c> must return the original condition
+    /// message unchanged. This covers line 725 where <c>lastFailedPod.Terminated is null</c>.
+    /// </summary>
+    [Fact]
+    public async Task WhenJobFails_AndNoPodHasNonZeroExitCode_ErrorMessageIsConditionMessage()
+    {
+        var jobName = JobNameFor(ItemId);
+        var job = MakeJob(jobName, ItemId, failed: true);
+        job.Status!.Conditions![0].Message = "Job has reached the specified backoff limit";
+
+        _k8sClient.Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1JobList { Items = [job] });
+
+        // Return a pod list where ALL pods exited with code 0 (no failed pod) —
+        // EnrichErrorMessageWithPodInfoAsync finds no non-zero exit code → returns conditionMessage unchanged
+        _k8sClient.Setup(c => c.ListPodsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1PodList
+            {
+                Items =
+                [
+                    new V1Pod
+                    {
+                        Metadata = new V1ObjectMeta { Name = "pod-clean" },
+                        Status = new V1PodStatus
+                        {
+                            ContainerStatuses =
+                            [
+                                new V1ContainerStatus
+                                {
+                                    Name = CodingAgent.Kubernetes.JobSpecBuilder.AgentContainerName,
+                                    State = new V1ContainerState
+                                    {
+                                        Terminated = new V1ContainerStateTerminated { ExitCode = 0 }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            });
+
+        _workItemClient.Setup(c => c.PostStatusAsync(It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        _workItemClient.Setup(c => c.GetStatusAsync(ItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(WorkItemStatus.Running);
+
+        await CreateLoop().ReconcileOnceAsync(CancellationToken.None);
+
+        // Error message must be the condition message (no failed pod suffix appended)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            ItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.ErrorMessage == "Job has reached the specified backoff limit"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ─── Orphan cleanup ───────────────────────────────────────────────────────
 
     [Fact]
@@ -3828,6 +3979,65 @@ public sealed class ReconciliationLoopErrorTests
 
         var act = async () => await loop.ReconcileOnceAsync(CancellationToken.None);
         await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    // ── ResolveJobNameAsync: label-query throws → exception caught, deletion skipped ─
+
+    /// <summary>
+    /// When <c>ListJobsAsync</c> throws while resolving a K8s Job name via label selector
+    /// (legacy WorkItem with null <c>K8sJobName</c>), the exception must be caught (lines 570-574)
+    /// and the job name resolved as null — deletion is skipped.
+    /// </summary>
+    [Fact]
+    public async Task EnforceTimeouts_WhenLegacyItemK8sLabelQueryThrows_ExceptionIsSwallowed_DeletionSkipped()
+    {
+        const int itemTimeoutSeconds = 1800;
+        var itemId = Guid.NewGuid();
+
+        var timeoutItem = new ActiveWorkItemDto
+        {
+            Id = itemId,
+            Status = WorkItemStatus.Running,
+            DispatchedAt = DateTimeOffset.UtcNow.AddSeconds(-(itemTimeoutSeconds + 5)),
+            AgentSelector = "kiro,dotnet",
+            IssueIdentifier = "owner/repo#77",
+            K8sJobName = null,       // triggers label-based resolution path
+            TimeoutSeconds = itemTimeoutSeconds
+        };
+
+        // Return the timed-out item from GetActiveAsync
+        _workItemClient.Setup(c => c.GetActiveAsync(
+                It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([timeoutItem]);
+
+        // PostStatusAsync succeeds — timeout enforcement can proceed
+        _workItemClient.Setup(c => c.PostStatusAsync(
+                It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // The label query throws — this exercises the catch block at lines 570-574
+        _k8sClient.Setup(c => c.ListJobsAsync(
+                _options.Namespace,
+                $"caa/work-item-id={itemId}",
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("K8s label query failed"));
+
+        var loop = CreateLoop();
+
+        // Act — must NOT throw; ResolveJobNameAsync's catch block swallows the exception
+        await loop.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // PostStatusAsync was called (timeout enforcement proceeded to completion)
+        _workItemClient.Verify(c => c.PostStatusAsync(
+            itemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Failed"),
+            It.IsAny<CancellationToken>()), Times.Once,
+            "Timeout enforcement must succeed: PostStatusAsync called even when label-query ListJobsAsync throws");
+
+        // Deletion must NOT have been called (job name was null after the catch)
+        _k8sClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "No K8s Job deletion when ResolveJobNameAsync catches a label-query exception and returns null");
     }
 
 }
