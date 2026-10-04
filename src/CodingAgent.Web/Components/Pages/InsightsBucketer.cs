@@ -149,10 +149,7 @@ internal static class InsightsBucketer
         // when windowHours == 0 (requires passing the computed windowStart back to the caller or
         // exposing it from this method).
 
-        // TODO: [WARNING] items.Min() will throw InvalidOperationException on an empty sequence.
-        // The public BuildBuckets entry point guards against empty input (returns [] at line ~38),
-        // so no current caller hits this path with an empty list. If BuildAllWindowBuckets is ever
-        // called directly in a future refactor, add a guard: if (items.Count == 0) return [];
+        if (items.Count == 0) return [];
 
         // Earliest UTC date across all runs, clamped to now to handle future timestamps (clock drift).
         var earliestRun = items.Min(r => r.StartedAtOffset.UtcDateTime.Date);
