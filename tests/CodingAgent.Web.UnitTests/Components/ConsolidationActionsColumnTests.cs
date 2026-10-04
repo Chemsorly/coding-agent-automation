@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -27,6 +28,7 @@ public class ConsolidationActionsColumnTests : BunitContext
 
     public ConsolidationActionsColumnTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))

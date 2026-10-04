@@ -118,6 +118,53 @@ jobs:
         run: cat CoverageReport/AssembliesSummary.md >> $GITHUB_STEP_SUMMARY
         if: ${{ always() && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
 
+  # IAM — OIDC login against a real Keycloak (Spec 049). The tests start Keycloak with
+  # Testcontainers, so like migration-integrity this job runs directly on the runner (no
+  # container: wrapper) where Docker is available. build-and-test excludes Category=Integration.
+  iam-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore tests/CodingAgent.Web.IntegrationTests/CodingAgent.Web.IntegrationTests.csproj --verbosity quiet
+
+      - name: Build
+        run: dotnet build tests/CodingAgent.Web.IntegrationTests/ --no-restore --configuration Release --verbosity quiet
+
+      - name: Run IAM tests
+        run: dotnet test tests/CodingAgent.Web.IntegrationTests/ --no-build --configuration Release --verbosity quiet --logger trx --logger "console;verbosity=minimal" --results-directory TestResults --filter "Category=Integration&Feature=IAM" --collect:"XPlat Code Coverage"
+
+      - name: Generate coverage report
+        uses: danielpalme/ReportGenerator-GitHub-Action@d3ebf1f760f7d8ab92cc44d9bcfee7ad73722a31 # v5.5.11
+        with:
+          reports: TestResults/**/coverage.cobertura.xml
+          targetdir: CoverageReport
+          reporttypes: MarkdownAssembliesSummary
+        if: ${{ always() && hashFiles('TestResults/**/coverage.cobertura.xml') != '' }}
+
+      - name: Post coverage to PR
+        uses: marocchino/sticky-pull-request-comment@5770ad5eb8f42dd2c4f34da00c94c5381e49af88 # v3.0.5
+        with:
+          header: coverage-iam
+          path: CoverageReport/AssembliesSummary.md
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
+
+      - name: Write coverage to job summary
+        run: cat CoverageReport/AssembliesSummary.md >> $GITHUB_STEP_SUMMARY
+        if: ${{ always() && hashFiles('CoverageReport/AssembliesSummary.md') != '' }}
+
   # Secret scanning — detect leaked credentials in code
   gitleaks:
     runs-on: ubuntu-latest
@@ -155,6 +202,14 @@ jobs:
       - name: Helm template
         run: helm template test-release helm/coding-agent-automation/ -f helm/coding-agent-automation/ci-values.yaml > /dev/null
 
+      # Behavioural chart tests (helm/coding-agent-automation/tests). Helm 4 cannot verify a plugin
+      # installed from git, hence --verify=false; the version is pinned.
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest.git --version v1.2.1 --verify=false
+
+      - name: Helm unittest
+        run: helm unittest helm/coding-agent-automation
+
   # Build every product image on every event, gated on a green build-and-test. A prior
   # Spec 048 Phase 3 path-filter (build only the images whose source changed) was removed
   # in favour of always building all — the build is fast enough that the selective machinery
@@ -187,6 +242,9 @@ jobs:
           - { dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile, tag: coding-agent-opencode-dotnet10 }
           - { dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile, tag: coding-agent-opencode-java21 }
           - { dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile, tag: coding-agent-opencode-python312 }
+          - { dockerfile: dockerfiles/claude/agent-claude-dotnet10.Dockerfile, tag: coding-agent-claude-dotnet10 }
+          - { dockerfile: dockerfiles/claude/agent-claude-python312.Dockerfile, tag: coding-agent-claude-python312 }
+          - { dockerfile: dockerfiles/claude/agent-claude-java21.Dockerfile, tag: coding-agent-claude-java21 }
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -311,6 +369,9 @@ jobs:
           - { tag: coding-agent-opencode-dotnet10 }
           - { tag: coding-agent-opencode-java21 }
           - { tag: coding-agent-opencode-python312 }
+          - { tag: coding-agent-claude-dotnet10 }
+          - { tag: coding-agent-claude-python312 }
+          - { tag: coding-agent-claude-java21 }
 
     steps:
       - name: Install cosign
@@ -448,6 +509,9 @@ jobs:
           sed -i "s/tag: coding-agent-opencode-dotnet10$/tag: coding-agent-opencode-dotnet10-${VERSION}/" "${CHART_DIR}/values.yaml"
           sed -i "s/tag: coding-agent-opencode-java21$/tag: coding-agent-opencode-java21-${VERSION}/" "${CHART_DIR}/values.yaml"
           sed -i "s/tag: coding-agent-opencode-python312$/tag: coding-agent-opencode-python312-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-claude-dotnet10$/tag: coding-agent-claude-dotnet10-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-claude-python312$/tag: coding-agent-claude-python312-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-claude-java21$/tag: coding-agent-claude-java21-${VERSION}/" "${CHART_DIR}/values.yaml"
 
           # Add auto-generated header
           sed -i '1i # Auto-generated by release workflow — do not edit manually' "${CHART_DIR}/values.yaml"

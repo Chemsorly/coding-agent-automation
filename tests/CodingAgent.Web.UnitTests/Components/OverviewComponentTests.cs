@@ -1,3 +1,5 @@
+using CodingAgent.Web.Auth;
+using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -14,6 +16,9 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class OverviewComponentTests : BunitContext
 {
+    // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
+    public OverviewComponentTests() => Services.AddTestAccess();
+
     private static PagedResult<PipelineRunSummary> EmptyHistory() => new()
     {
         Items = new List<PipelineRunSummary>(),
@@ -410,5 +415,21 @@ public class OverviewComponentTests : BunitContext
         if (labelIndex <= 0) return null;
 
         return children[labelIndex - 1].TextContent.Trim();
+    }
+
+    // ── Spec 049: fleet and loop widgets are global ───────────────────────────
+
+    [Fact]
+    public void Access_ScopedUser_SeesNoLoopCardAndNoAgents()
+    {
+        Services.AddTestAccess(TestAccess.Scoped(("6f1c2a9e-0000-0000-0000-00000000000a", AccessRole.ReadOnly)));
+        var mockAgents = new Mock<IPipelineApiAgentClient>();
+        RegisterOverviewServices(mockAgents);
+
+        var cut = Render<Overview>();
+
+        cut.FindAll("[data-testid=overview-loop-card]").Should().BeEmpty();
+        cut.FindAll("[data-testid=overview-agents-stat]").Should().BeEmpty();
+        mockAgents.Verify(c => c.GetAgentsAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

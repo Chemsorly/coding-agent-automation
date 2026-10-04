@@ -75,4 +75,10 @@ public sealed record ActiveWorkItemDto
     /// the reconciliation loop treats null as "just created" and skips enforcement.
     /// </summary>
     public DateTimeOffset? CreatedAt { get; init; }
+
+    /// <summary>
+    /// The work item's project (<c>WorkItemEntity.ProjectId</c>); null for work without a project.
+    /// The web UI checks cancel actions on active items against it (Spec 049 Req 8.10).
+    /// </summary>
+    public Guid? ProjectId { get; init; }
 }

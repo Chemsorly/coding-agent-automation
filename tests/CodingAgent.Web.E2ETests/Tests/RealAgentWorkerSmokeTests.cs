@@ -66,9 +66,9 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
         entity.DispatchedAt = DateTimeOffset.UtcNow;
         entity.TaskType = taskType;
 
-        // Build a minimal valid payload so the GetAssignment endpoint can deserialize it.
-        // ProviderConfigs is intentionally empty — LocalPipelineExecutor's ProviderFactoryOverride
-        // bypasses the provider config lookup when fakeProviders is injected.
+        // Build the identity-only payload the dispatcher writes (PayloadSchemaVersion 1); GetAssignment
+        // enriches it with configs. LocalPipelineExecutor's ProviderFactoryOverride still bypasses the
+        // provider config lookup because fakeProviders is injected.
         var runType = taskType == WorkItemTaskType.Decomposition
             ? PipelineRunType.DecompositionAnalysis
             : PipelineRunType.Implementation;
@@ -77,7 +77,6 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             IssueIdentifier = issueId,
             IssueProviderConfigId = "issue-e2e",
             RepoProviderConfigId = "repo-e2e",
-            AgentProviderConfigId = "agent-e2e",
             InitiatedBy = "e2e-smoke-test",
             TaskType = taskType,
             AgentSelector = "e2e",
@@ -85,12 +84,18 @@ public sealed class RealAgentWorkerSmokeTests : HeadlessE2ETestBase
             RunType = runType,
             IssueDetail = Fixture.IssueProvider.Issues.FirstOrDefault(i => i.Identifier == issueId)
                 ?? new IssueDetail { Identifier = issueId, Title = "", Description = "", Labels = [] },
-            ProviderConfigs = [],
-            QualityGateConfigs = [],
-            ReviewerConfigs = [],
-            IssueComments = [],
-            PipelineConfiguration = new PipelineConfiguration()
+            PayloadSchemaVersion = 1
         };
+
+        // Enrichment resolves the agent profile from the "e2e" selector.
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e-real-agent",
+            DisplayName = "Real agent smoke profile",
+            MatchLabels = ["e2e"],
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, ct);
         entity.Payload = System.Text.Json.JsonSerializer.Serialize(
             minimalPayload, CodingAgent.Pipeline.PipelineJsonOptions.Default);
 

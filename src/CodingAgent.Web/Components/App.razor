@@ -7,6 +7,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Coding Agent</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
     @{
         // Base path for the <base href> tag. Unset or relative WebUI__BasePath values (the Helm
         // default is "./") produce a relative base that points from the current route back to the
@@ -33,10 +34,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="css/cockpit.css" />
     <link rel="stylesheet" href="CodingAgent.Web.styles.css" />
-    <HeadOutlet @rendermode="InteractiveServer" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 <body>
-    <Routes @rendermode="InteractiveServer" />
+    <Routes @rendermode="PageRenderMode" />
 
     <script src="_framework/blazor.web.js"></script>
     <script>
@@ -117,4 +118,9 @@
     // App renders statically (only HeadOutlet and Routes are interactive), so the request's
     // HttpContext is available here; the request path decides the relative base href.
     [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    // Spec 049: the login page ([ExcludeFromInteractiveRouting]) renders statically so its form can
+    // post to /auth/login and receive the session cookie; every other page stays interactive.
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext is null || HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
 }

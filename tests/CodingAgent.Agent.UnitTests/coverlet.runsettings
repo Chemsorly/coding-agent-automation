@@ -4,7 +4,7 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Include>[CodingAgent.Agent]*,[CodingAgent.Agent.KiroCli]*,[CodingAgent.Agent.OpenCode]*,[CodingAgent.Pipeline]*,[CodingAgent.Infrastructure.Providers]*,[KiroCliLib]*,[CodingAgent.Contracts]*,[CodingAgent.Infrastructure.Common]*</Include>
+          <Include>[CodingAgent.Agent]*,[CodingAgent.Agent.KiroCli]*,[CodingAgent.Agent.OpenCode]*,[CodingAgent.Agent.ClaudeCode]*,[CodingAgent.Pipeline]*,[CodingAgent.Infrastructure.Providers]*,[KiroCliLib]*,[CodingAgent.Contracts]*,[CodingAgent.Infrastructure.Common]*</Include>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>
         </Configuration>

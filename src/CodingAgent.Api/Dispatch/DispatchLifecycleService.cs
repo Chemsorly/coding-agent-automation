@@ -375,6 +375,7 @@ internal sealed class DispatchLifecycleService : IDisposable
                 AgentServiceAccountName = _options.AgentServiceAccountName,
                 Namespace = _options.Namespace,
                 OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                ClaudeAuthSecretName = _options.ClaudeAuthSecretName,
                 ProjectSecrets = ctx.ProjectSecrets,
                 TraceParent = ctx.WorkItem.TraceParent
             };

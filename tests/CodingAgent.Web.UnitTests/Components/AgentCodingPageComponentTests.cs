@@ -1,3 +1,6 @@
+using CodingAgent.Web.Auth;
+using AwesomeAssertions;
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using Moq;
 using CodingAgent.Api.Client;
@@ -27,10 +30,10 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<CodingAgent.Api.Client.IPipelineApiConfigClient> _mockConfigClient;
-    private readonly PipelineOrchestrationService _pipelineService;
 
     public AgentCodingPageComponentTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         _mockStore = new Mock<IConfigurationStore>();
         _mockFactory = new Mock<IProviderFactory>();
         _mockIssueProvider = new Mock<IIssueProvider>();
@@ -43,11 +46,6 @@ public class AgentCodingPageComponentTests : BunitContext
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        _pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
-
         SetupDefaults();
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
@@ -55,7 +53,6 @@ public class AgentCodingPageComponentTests : BunitContext
             providerFactory: _mockFactory.Object,
             historyService: mockHistoryService.Object);
 
-        Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
 
@@ -1497,5 +1494,41 @@ public class AgentCodingPageComponentTests : BunitContext
         // StateHasChanged back via InvokeAsync, so a second no-op InvokeAsync flushes it.
         await component.InvokeAsync(() => { });
         Assert.NotNull(component.Markup);
+    }
+
+    // ── Spec 049: the loop is global, templates are admin configuration ──────
+
+    [Fact]
+    public void Access_GlobalReadOnly_SeesLoopStateButNoLoopOrTemplateControls()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.ReadOnly));
+
+        var component = Render<AgentCoding>();
+
+        component.FindAll("[data-testid=loop-controls]").Should().ContainSingle();
+        component.Markup.Should().NotContain("Start Loop");
+        component.Markup.Should().NotContain("+ Add Template");
+    }
+
+    [Fact]
+    public void Access_GlobalOperator_ControlsTheLoopButNotTemplates()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Operator));
+
+        var component = Render<AgentCoding>();
+
+        component.Markup.Should().Contain("Start Loop");
+        component.Markup.Should().NotContain("+ Add Template");
+    }
+
+    [Fact]
+    public void Access_ScopedUser_SeesNoLoopSection()
+    {
+        Services.AddTestAccess(TestAccess.Scoped(("6f1c2a9e-0000-0000-0000-00000000000a", AccessRole.Operator)));
+
+        var component = Render<AgentCoding>();
+
+        component.FindAll("[data-testid=loop-controls]").Should().BeEmpty();
+        component.Markup.Should().NotContain("Start Loop");
     }
 }

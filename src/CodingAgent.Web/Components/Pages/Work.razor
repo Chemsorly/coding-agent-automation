@@ -1,4 +1,5 @@
 @page "/work"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
 @layout CockpitLayout
 @implements IAsyncDisposable
 @using CodingAgent.Api.Client
@@ -9,6 +10,8 @@
 @inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
+@inject CurrentAccess Access
+@inject IAccessGuard Guard
 
 @*
     Work — the app-side work queue (see docs/frontend-redesign-handoff.md).
@@ -147,26 +150,30 @@
                                     </td>
                                     <td>@(a.DispatchedAt is null ? "—" : Ago(a.DispatchedAt.Value))</td>
                                     <td style="text-align: right;" @onclick:stopPropagation="true">
-                                        @if (_cancelling.Contains(a.Id))
+                                        @if (Access.CanOperate(a.ProjectId))
                                         {
-                                            <span class="monitoring-muted" style="font-size: 12px;">Cancelling…</span>
-                                        }
-                                        else if (_confirmCancelId == a.Id)
-                                        {
-                                            <span style="font-size: 12px; color: var(--text-muted); margin-right: 4px;">Cancel run #@a.IssueIdentifier?</span>
-                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                                    data-testid="confirm-cancel-btn-@a.Id"
-                                                    @onclick="() => CancelWorkItemAsync(a.Id)">Yes</button>
-                                            <button class="btn-cancel-small" style="margin-left: 4px;"
-                                                    data-testid="dismiss-cancel-btn-@a.Id"
-                                                    @onclick="() => _confirmCancelId = null">No</button>
-                                        }
-                                        else
-                                        {
-                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                                    title="Cancel this in-flight run"
-                                                    data-testid="cancel-btn-@a.Id"
-                                                    @onclick="() => _confirmCancelId = a.Id">Cancel</button>
+                                            @* Spec 049: cancelling needs operator on the item's project. *@
+                                            if (_cancelling.Contains(a.Id))
+                                            {
+                                                <span class="monitoring-muted" style="font-size: 12px;">Cancelling…</span>
+                                            }
+                                            else if (_confirmCancelId == a.Id)
+                                            {
+                                                <span style="font-size: 12px; color: var(--text-muted); margin-right: 4px;">Cancel run #@a.IssueIdentifier?</span>
+                                                <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                        data-testid="confirm-cancel-btn-@a.Id"
+                                                        @onclick="() => CancelWorkItemAsync(a.Id)">Yes</button>
+                                                <button class="btn-cancel-small" style="margin-left: 4px;"
+                                                        data-testid="dismiss-cancel-btn-@a.Id"
+                                                        @onclick="() => _confirmCancelId = null">No</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                        title="Cancel this in-flight run"
+                                                        data-testid="cancel-btn-@a.Id"
+                                                        @onclick="() => _confirmCancelId = a.Id">Cancel</button>
+                                            }
                                         }
                                     </td>
                                 </tr>
@@ -215,27 +222,36 @@
                                     </td>
                                     <td>@(p.RetryCount > 0 ? p.RetryCount.ToString() : "—")</td>
                                     <td title="@p.CreatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")">@Ago(p.CreatedAt)</td>
-                                    <td>
-                                        <input type="number"
-                                               class="priority-input"
-                                               min="0"
-                                               max="1000"
-                                               value="@p.PriorityWeight"
-                                               title="Edit priority (0–1000)"
-                                               aria-label="@($"Priority weight for {p.Id}")"
-                                               @onchange="async e => {
-                                                   if (int.TryParse(e.Value?.ToString(), out var w) && w >= 0 && w <= 1000)
-                                                       await SetPriorityAsync(p.Id, w);
-                                               }" />
-                                    </td>
-                                    <td style="text-align: right;">
-                                        <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
-                                                disabled="@_cancelling.Contains(p.Id)"
-                                                title="Remove this item from the queue"
-                                                @onclick="() => CancelWorkItemAsync(p.Id)">
-                                            @(_cancelling.Contains(p.Id) ? "Removing…" : "Remove")
-                                        </button>
-                                    </td>
+                                    @if (Access.CanOperate(p.ProjectId))
+                                    {
+                                        <td>
+                                            <input type="number"
+                                                   class="priority-input"
+                                                   min="0"
+                                                   max="1000"
+                                                   value="@p.PriorityWeight"
+                                                   title="Edit priority (0–1000)"
+                                                   aria-label="@($"Priority weight for {p.Id}")"
+                                                   @onchange="async e => {
+                                                       if (int.TryParse(e.Value?.ToString(), out var w) && w >= 0 && w <= 1000)
+                                                           await SetPriorityAsync(p.Id, w);
+                                                   }" />
+                                        </td>
+                                        <td style="text-align: right;">
+                                            <button class="btn-cancel-small" style="color: var(--error); border-color: var(--error);"
+                                                    disabled="@_cancelling.Contains(p.Id)"
+                                                    title="Remove this item from the queue"
+                                                    @onclick="() => CancelWorkItemAsync(p.Id)">
+                                                @(_cancelling.Contains(p.Id) ? "Removing…" : "Remove")
+                                            </button>
+                                        </td>
+                                    }
+                                    else
+                                    {
+                                        @* Spec 049: priority and removal need operator on the item's project. *@
+                                        <td data-testid="priority-readonly-@p.Id">@p.PriorityWeight</td>
+                                        <td></td>
+                                    }
                                 </tr>
                             }
                         </tbody>
@@ -440,10 +456,15 @@
         _confirmCancelId = null;
         try
         {
+            await Guard.DemandAsync(AccessRole.Operator, ProjectOf(id), "CancelWorkItem");
             await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
             await RefreshQuietAsync();
         }
         catch (OperationCanceledException) { }
+        catch (AccessDeniedException)
+        {
+            _error = AccessDeniedException.UserMessage;
+        }
         catch (Exception ex)
         {
             _error = $"Cancel failed: {ex.Message}";
@@ -463,17 +484,30 @@
     {
         try
         {
+            await Guard.DemandAsync(AccessRole.Operator, ProjectOf(id), "SetPriority");
             await WorkItems.SetPriorityAsync(id, weight, _cts.Token);
             _priorityError = null;
             await RefreshQuietAsync();
         }
         catch (OperationCanceledException) { }
+        catch (AccessDeniedException)
+        {
+            _priorityError = AccessDeniedException.UserMessage;
+        }
         catch (Exception ex)
         {
             _priorityError = $"Priority update failed: {ex.Message}";
             await RefreshQuietAsync();
         }
     }
+
+    /// <summary>
+    /// The project of a listed work item, for the server-side check (Spec 049 Req 7.3). An ID
+    /// that is not in the current lists resolves to no project, which needs a global role.
+    /// </summary>
+    private string? ProjectOf(Guid id) =>
+        ProjectIds.Normalize(_active.FirstOrDefault(a => a.Id == id)?.ProjectId
+                             ?? _pending.FirstOrDefault(p => p.Id == id)?.ProjectId);
 
     // Quiet tick refresh — no spinner, keep stale data on a transient error.
     private async Task RefreshQuietAsync()

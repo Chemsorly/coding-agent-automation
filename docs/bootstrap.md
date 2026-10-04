@@ -21,12 +21,7 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
    >   -o jsonpath='{.data.agent-api-key}' | base64 -d
    > ```
 
-2. **Enable the dispatch loop.** `scheduler.dispatch.enabled` defaults to `false`. With the API-side dispatch loop removed, a deployment without this flag will have no active dispatcher — `Pending` WorkItems accumulate and are never promoted to `Dispatched`. Set it on install:
-   ```bash
-   --set scheduler.dispatch.enabled=true
-   ```
-
-3. Open the web UI. A first-run banner will appear linking to the Pipelines page where you configure job templates.
+2. Open the web UI. A first-run banner will appear linking to the Pipelines page where you configure job templates.
 
    > **First-startup seeding:** On first boot against an empty database, the API automatically creates the Default project and seeds the default reviewer configurations. No manual action is required.
 

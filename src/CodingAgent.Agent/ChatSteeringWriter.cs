@@ -1,11 +1,13 @@
 using System.Text.RegularExpressions;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Interfaces;
 
 namespace CodingAgent.Agent;
 
 /// <summary>
 /// Writes project-level steering content to a chat workspace before the first prompt.
-/// Branches on agent provider type: Kiro CLI gets a .kiro/steering/ file, OpenCode gets AGENTS.md.
+/// Branches on agent provider type: Kiro CLI gets a .kiro/steering/ file, OpenCode gets AGENTS.md,
+/// Claude Code gets a user-level rule in ~/.claude/rules/.
 ///
 /// The chat path only carries <c>ProjectSteeringContent</c> (no repo steering), so this helper
 /// builds a single-source block — unlike <see cref="WriteSteeringStep"/> which handles both
@@ -32,12 +34,32 @@ internal static class ChatSteeringWriter
     /// For Kiro CLI agents: writes <c>.kiro/steering/pipeline-project.md</c>.
     /// For OpenCode agents: prepends a pipeline marker block to <c>AGENTS.md</c>.
     /// </summary>
-    public static void Write(string projectSteeringContent, string chatWorkspace, bool isOpenCodeProvider)
+    public static void Write(string projectSteeringContent, string chatWorkspace, bool isOpenCodeProvider) =>
+        Write(projectSteeringContent, chatWorkspace,
+            isOpenCodeProvider ? AgentProviderType.OpenCode : AgentProviderType.KiroCli);
+
+    /// <summary>
+    /// Writes <paramref name="projectSteeringContent"/> where <paramref name="providerType"/> reads it.
+    /// Claude Code gets a user-level rule in <paramref name="claudeRulesDirectory"/>
+    /// (default <c>~/.claude/rules</c>), see <see cref="ClaudeSteeringFiles"/>.
+    /// </summary>
+    public static void Write(
+        string projectSteeringContent, string chatWorkspace, AgentProviderType providerType,
+        string? claudeRulesDirectory = null)
     {
-        if (isOpenCodeProvider)
-            WriteOpenCode(projectSteeringContent, chatWorkspace);
-        else
-            WriteKiro(projectSteeringContent, chatWorkspace);
+        switch (providerType)
+        {
+            case AgentProviderType.OpenCode:
+                WriteOpenCode(projectSteeringContent, chatWorkspace);
+                break;
+            case AgentProviderType.ClaudeCode:
+                ClaudeSteeringFiles.Write(
+                    claudeRulesDirectory ?? ClaudeSteeringFiles.DefaultRulesDirectory, projectSteeringContent, repoContent: null);
+                break;
+            default:
+                WriteKiro(projectSteeringContent, chatWorkspace);
+                break;
+        }
     }
 
     private static void WriteKiro(string content, string chatWorkspace)

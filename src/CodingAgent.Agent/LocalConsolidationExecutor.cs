@@ -149,14 +149,16 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
     /// Writes the job's MCP servers to the agent's MCP config, as <see cref="WriteMcpConfigStep"/> does for
     /// pipeline runs, so the consolidation agents can use the project's MCP tools.
     /// </summary>
-    internal static void WriteMcpConfig(ConsolidationJobMessage job, string mcpConfigPath, Serilog.ILogger logger)
+    internal static void WriteMcpConfig(
+        ConsolidationJobMessage job, string mcpConfigPath, Serilog.ILogger logger,
+        AgentProviderType providerType = AgentProviderType.KiroCli)
     {
         if (job.McpServers is not { Count: > 0 })
             return;
 
         try
         {
-            McpConfigWriter.WriteConfig(mcpConfigPath, job.McpServers);
+            McpConfigWriter.WriteConfig(mcpConfigPath, job.McpServers, providerType);
             logger.Information("Wrote MCP config with {Count} server(s) for consolidation job {JobId}",
                 job.McpServers.Count, job.JobId);
         }
@@ -174,7 +176,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
             return resolution.Failure!;
 
         await using var providers = resolution.Providers!;
-        WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger);
+        WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger, providers.AgentProvider.ProviderType);
 
         var executor = new BrainConsolidationExecutor(_logger, _brainUpdateService);
         return await executor.ExecuteAsync(job, providers.BrainProvider, providers.AgentProvider, ct,
@@ -189,7 +191,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
             return resolution.Failure!;
 
         await using var providers = resolution.Providers!;
-        WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger);
+        WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger, providers.AgentProvider.ProviderType);
 
         var executor = new RefactoringExecutor(_logger);
         return await executor.ExecuteAsync(job, providers.RepoProvider, providers.BrainProvider,
@@ -205,7 +207,7 @@ public sealed class LocalConsolidationExecutor : IConsolidationExecutor
             return resolution.Failure!;
 
         await using var providers = resolution.Providers!;
-        WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger);
+        WriteMcpConfig(job, providers.AgentProvider.McpConfigPath, _logger, providers.AgentProvider.ProviderType);
 
         var executor = new HarnessSuggestionExecutor(_logger);
         return await executor.ExecuteAsync(job, providers.AgentProvider, ct,

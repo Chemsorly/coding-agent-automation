@@ -374,6 +374,52 @@ public sealed class JobSpecBuilderAdditionalTests
             "only opencode agents get OPENCODE_CONFIG_CONTENT");
     }
 
+    // ── Claude credentials ───────────────────────────────────────────────────
+
+    private static JobTemplate ClaudeTemplate() => new()
+    {
+        Labels = "claude,dotnet",
+        Image = "claude-agent:latest",
+        ProviderType = "claude",
+        MaxConcurrent = 2
+    };
+
+    [Fact]
+    public void Claude_WithAuthSecretName_InjectsBothOptionalCredentials_UnderPipelineNames()
+    {
+        var ctx = BaseCtx() with { ClaudeAuthSecretName = "agent-secret" };
+
+        var job = JobSpecBuilder.Build(ClaudeTemplate(), ctx);
+
+        var env = job.Spec.Template.Spec.Containers[0].Env;
+        var apiKey = env.Single(e => e.Name == "AGENT_CLAUDE_API_KEY").ValueFrom!.SecretKeyRef!;
+        apiKey.Name.Should().Be("agent-secret");
+        apiKey.Key.Should().Be(JobSpecBuilder.ClaudeApiKeySecretKey);
+        apiKey.Optional.Should().BeTrue();
+        var oauthToken = env.Single(e => e.Name == "AGENT_CLAUDE_OAUTH_TOKEN").ValueFrom!.SecretKeyRef!;
+        oauthToken.Key.Should().Be(JobSpecBuilder.ClaudeOAuthTokenSecretKey);
+        oauthToken.Optional.Should().BeTrue();
+        env.Should().NotContain(e => e.Name == "ANTHROPIC_API_KEY" || e.Name == "CLAUDE_CODE_OAUTH_TOKEN",
+            "only the claude process may see the CLI's own credential variables");
+        job.Spec.Template.Spec.Volumes.Should().BeNullOrEmpty("claude agents need no credential PVC");
+    }
+
+    [Fact]
+    public void Claude_WithoutAuthSecretName_InjectsNoCredentials()
+    {
+        var job = JobSpecBuilder.Build(ClaudeTemplate(), BaseCtx());
+
+        job.Spec.Template.Spec.Containers[0].Env.Should().NotContain(e => e.Name.StartsWith("AGENT_CLAUDE_"));
+    }
+
+    [Fact]
+    public void NonClaude_WithAuthSecretName_InjectsNoCredentials()
+    {
+        var job = JobSpecBuilder.Build(KiroTemplate(), BaseCtx() with { ClaudeAuthSecretName = "agent-secret" });
+
+        job.Spec.Template.Spec.Containers[0].Env.Should().NotContain(e => e.Name.StartsWith("AGENT_CLAUDE_"));
+    }
+
     // ── AgentSelector comma-to-dot conversion ────────────────────────────────
 
     [Fact]

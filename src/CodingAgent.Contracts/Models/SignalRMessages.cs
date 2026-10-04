@@ -397,6 +397,13 @@ public sealed record JobCompletionPayload
     /// </summary>
     [Key(27)]
     public IReadOnlyDictionary<string, PhaseUsagePayload>? PhaseBreakdown { get; init; }
+
+    /// <summary>
+    /// Latest subscription rate-limit state per window seen during the run (Claude Code only).
+    /// Null when the provider reported none. Wire-compat: additive field — old agents omit it.
+    /// </summary>
+    [Key(28)]
+    public IReadOnlyList<AgentRateLimitObservation>? RateLimits { get; init; }
 }
 
 /// <summary>
@@ -463,7 +470,7 @@ public sealed record ChatPromptMessage
     /// Absolute path where MCP config should be written.
     /// Resolved from the agent provider config's "mcpConfigPath" setting.
     /// Examples: "/home/ubuntu/.kiro/settings/mcp.json" (Kiro CLI global),
-    /// "/home/ubuntu/.claude.json" (Claude CLI).
+    /// "/home/ubuntu/.claude/pipeline-mcp.json" (Claude Code CLI, passed via --mcp-config).
     /// </summary>
     [Key(4)]
     public string McpConfigPath { get; init; } = "/home/ubuntu/.kiro/settings/mcp.json";
@@ -503,6 +510,13 @@ public sealed record ChatPromptMessage
     /// </summary>
     [Key(9)]
     public string? ProjectName { get; init; }
+
+    /// <summary>
+    /// Credential the Claude Code CLI uses (<see cref="ClaudeCodeAuthModes"/>), resolved from the
+    /// agent provider config's "authMode" setting. Null = auto. Ignored by other providers.
+    /// </summary>
+    [Key(10)]
+    public string? AgentAuthMode { get; init; }
 }
 
 /// <summary>
@@ -606,6 +620,38 @@ public sealed record PhaseUsagePayload
     /// <summary>Model name (e.g. "claude-sonnet-4-5"), or null if unknown.</summary>
     [Key(5)]
     public string? Model { get; init; }
+
+    /// <summary>Input tokens (excluding cache reads and writes). Wire-compat: additive, 0 from old agents.</summary>
+    [Key(6)]
+    public long InputTokens { get; init; }
+
+    /// <summary>Output tokens, excluding reasoning tokens.</summary>
+    [Key(7)]
+    public long OutputTokens { get; init; }
+
+    /// <summary>Reasoning (thinking) tokens.</summary>
+    [Key(8)]
+    public long ReasoningTokens { get; init; }
+
+    /// <summary>Tokens read from the prompt cache.</summary>
+    [Key(9)]
+    public long CacheReadTokens { get; init; }
+
+    /// <summary>Tokens written to the prompt cache.</summary>
+    [Key(10)]
+    public long CacheWriteTokens { get; init; }
+
+    /// <summary>Agent turns (model round trips), when the provider reports them.</summary>
+    [Key(11)]
+    public int Turns { get; init; }
+
+    /// <summary>Web search requests the model made, when the provider reports them.</summary>
+    [Key(12)]
+    public int WebSearchRequests { get; init; }
+
+    /// <summary>How the LLM calls were paid for (<see cref="AgentBillingModes"/>), or null if unknown.</summary>
+    [Key(13)]
+    public string? BillingMode { get; init; }
 }
 
 /// <summary>

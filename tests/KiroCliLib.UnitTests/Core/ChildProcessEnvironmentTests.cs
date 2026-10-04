@@ -30,6 +30,21 @@ public class ChildProcessEnvironmentTests
     }
 
     [Fact]
+    public void StripTelemetry_RemovesPipelineClaudeCredentials_KeepsOtherVariables()
+    {
+        var psi = new ProcessStartInfo { UseShellExecute = false };
+        psi.Environment["AGENT_CLAUDE_API_KEY"] = "sk-secret";
+        psi.Environment["agent_claude_oauth_token"] = "oauth-secret";
+        psi.Environment["MY_APP_SETTING"] = "keep";
+
+        ChildProcessEnvironment.StripTelemetry(psi);
+
+        psi.Environment.ContainsKey("AGENT_CLAUDE_API_KEY").Should().BeFalse();
+        psi.Environment.ContainsKey("agent_claude_oauth_token").Should().BeFalse();
+        psi.Environment["MY_APP_SETTING"].Should().Be("keep");
+    }
+
+    [Fact]
     public void StripTelemetry_RemovesTraceparentAndTracestate()
     {
         var psi = new ProcessStartInfo { UseShellExecute = false };

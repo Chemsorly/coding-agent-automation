@@ -9,7 +9,7 @@ namespace CodingAgent.Agent;
 /// Replaces scattered <c>Environment.GetEnvironmentVariable</c> calls for:
 /// <c>AGENT_CHAT_MODE</c>, <c>AGENT_CHAT_SESSION_ID</c>, <c>AGENT_LABELS</c>,
 /// <c>AGENT_CHAT_MODEL</c>, <c>AGENT_CHAT_EFFORT</c>, <c>AGENT_PROVIDER_TYPE</c>,
-/// <c>OPENCODE_BASE_URL</c>, <c>OPENCODE_SERVER_PASSWORD</c>, <c>KIRO_CLI_PATH</c>.
+/// <c>OPENCODE_BASE_URL</c>, <c>OPENCODE_SERVER_PASSWORD</c>, <c>KIRO_CLI_PATH</c>, <c>CLAUDE_CLI_PATH</c>.
 ///
 /// T11 (arch-audit 2026-08-22): previously these values were read by multiple call sites
 /// independently (<c>AGENT_CHAT_MODE</c> ×3, <c>AGENT_LABELS</c> ×2, etc.).
@@ -32,15 +32,18 @@ public sealed class AgentRuntimeOptions
     /// <summary>Unique chat session ID injected per-dispatch. Env: <c>AGENT_CHAT_SESSION_ID</c>.</summary>
     public string ChatSessionId { get; set; } = "";
 
-    /// <summary>Model name override for Kiro CLI chat sessions. Env: <c>AGENT_CHAT_MODEL</c>.</summary>
+    /// <summary>Model name override for Kiro CLI and Claude Code chat sessions. Env: <c>AGENT_CHAT_MODEL</c>.</summary>
     public string? ChatModel { get; set; }
 
-    /// <summary>Effort level override for Kiro CLI chat sessions. Env: <c>AGENT_CHAT_EFFORT</c>.</summary>
+    /// <summary>Effort level override for Kiro CLI and Claude Code chat sessions. Env: <c>AGENT_CHAT_EFFORT</c>.</summary>
     public string? ChatEffort { get; set; }
 
     // ── Provider selection ──────────────────────────────────────────────
 
-    /// <summary>Agent backend type ("KiroCli" or "OpenCode"). Env: <c>AGENT_PROVIDER_TYPE</c>.</summary>
+    /// <summary>
+    /// Agent backend of a chat pod: the job template's providerType ("kiro", "opencode", "claude").
+    /// Env: <c>AGENT_PROVIDER_TYPE</c>.
+    /// </summary>
     public string AgentProviderType { get; set; } = "";
 
     /// <summary>Override base URL for the OpenCode API. Env: <c>OPENCODE_BASE_URL</c>.</summary>
@@ -51,4 +54,7 @@ public sealed class AgentRuntimeOptions
 
     /// <summary>Override path for the Kiro CLI executable. Env: <c>KIRO_CLI_PATH</c>.</summary>
     public string? KiroCliPath { get; set; }
+
+    /// <summary>Override path for the Claude Code CLI executable. Env: <c>CLAUDE_CLI_PATH</c>.</summary>
+    public string? ClaudeCliPath { get; set; }
 }

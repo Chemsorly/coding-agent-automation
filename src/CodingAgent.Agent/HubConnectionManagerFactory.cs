@@ -13,10 +13,8 @@ public sealed class HubConnectionManagerFactory : IHubConnectionManagerFactory
     private readonly AgentId _agentId;
     private readonly string _apiKey;
     private readonly Serilog.ILogger _logger;
-    private readonly bool _keyIsPreDerived;
 
-    public HubConnectionManagerFactory(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger,
-        bool keyIsPreDerived = false)
+    public HubConnectionManagerFactory(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
@@ -27,11 +25,10 @@ public sealed class HubConnectionManagerFactory : IHubConnectionManagerFactory
         _agentId = agentId;
         _apiKey = apiKey;
         _logger = logger;
-        _keyIsPreDerived = keyIsPreDerived;
     }
 
     /// <summary>
     /// Creates a new <see cref="HubConnectionManager"/> instance with the same configuration.
     /// </summary>
-    public IHubConnectionManager Create() => new HubConnectionManager(_orchestratorUrl, _agentId, _apiKey, _logger, keyIsPreDerived: _keyIsPreDerived);
+    public IHubConnectionManager Create() => new HubConnectionManager(_orchestratorUrl, _agentId, _apiKey, _logger);
 }

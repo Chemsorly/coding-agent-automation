@@ -65,10 +65,9 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
         IDbContextFactory<PipelineDbContext> dbContextFactory,
         CancellationToken ct = default)
     {
-        // The agent reads AGENT_API_KEY_FILE (pre-derived key path) or AGENT_API_KEY directly.
-        // For the harness we set AGENT_API_KEY to the pre-derived key (derived from master key +
-        // agentId, exactly as the real dispatch does), so KeyIsPreDerived = true.
-        var derivedKey = HubConnectionManager.DeriveKey(apiKey, agentId);
+        // The agent uses AGENT_API_KEY as-is. Derive it from the master key and agentId, exactly
+        // as the real dispatch does for the per-Job Secret.
+        var derivedKey = AgentKeyDerivation.DeriveAgentKey(apiKey, agentId);
 
         var config = new AgentStartupConfig
         {
@@ -76,8 +75,7 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
             OrchestratorUrl = agentHubUrl,
             AgentId = new AgentId(agentId),
             WorkItemId = workItemId,
-            IsWorkItemMode = true,
-            KeyIsPreDerived = true
+            IsWorkItemMode = true
         };
 
         var builder = WebApplication.CreateBuilder();
@@ -137,8 +135,7 @@ public sealed class RealAgentWorkerHarness : IAsyncDisposable
                 config.OrchestratorUrl,
                 config.AgentId,
                 config.AgentApiKey,
-                Serilog.Log.Logger,
-                keyIsPreDerived: config.KeyIsPreDerived));
+                Serilog.Log.Logger));
         builder.Services.AddSingleton<IHubConnectionManager>(sp =>
             sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
 

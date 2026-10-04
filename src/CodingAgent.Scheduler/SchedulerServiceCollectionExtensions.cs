@@ -374,11 +374,9 @@ public static class SchedulerServiceCollectionExtensions
                 Log.Logger));
         services.AddHostedService(sp => sp.GetRequiredService<WorkItemCountsService>());
 
-        // ── WorkItemDispatchLoop (flag-off by default) ────────────────────────────────────
-        // Gates on Scheduler:Dispatch:Enabled (default false). Flip to true to enable
-        // the Scheduler-side dispatch loop. The API-side dispatch loop was removed in issue #2547.
-        // Both flags default to preserving current behavior — merging this changes nothing.
-        if (config.GetValue("Scheduler:Dispatch:Enabled", defaultValue: false))
+        // ── WorkItemDispatchLoop — the sole dispatcher for Pending WorkItems ────────────────
+        // Scheduler:Dispatch:Enabled=false exists only so test hosts can run without it.
+        if (config.GetValue("Scheduler:Dispatch:Enabled", defaultValue: true))
         {
             var rateLimitPerSecond = config.GetValue("Scheduler:Dispatch:RateLimitPerSecond", defaultValue: 10);
             services.AddSingleton<WorkItemDispatchLoop>(sp =>

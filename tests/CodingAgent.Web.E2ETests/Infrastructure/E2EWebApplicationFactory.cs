@@ -40,6 +40,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
 {
     public const string TestApiKey = "e2e-test-key";
 
+    /// <summary>Local admin password of the E2E web host (Spec 049).</summary>
+    public const string TestAdminPassword = "e2e-admin-password";
+
     private readonly string _dbName = $"E2E-{Guid.NewGuid()}";
 
     /// <summary>EF InMemory database name, shared with the API host so both see one WorkItem set.</summary>
@@ -77,7 +80,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     public FakeKubernetesJobClient FakeK8sClient { get; } = new();
 
     // Resettable services — created during ConfigureServices, used in ResetAll
-    private ResettablePipelineOrchestrationService? _orchestration;
     private AgentRegistryService? _registry;
     private OrchestratorRunService? _runService;
 
@@ -126,6 +128,8 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
             // Clean up process-global env vars so subsequent test factories
             // (which run serially due to DisableTestParallelization) start clean.
             E2ETestDefaults.ClearDatabaseEnvironment();
+            Environment.SetEnvironmentVariable("Auth__Admin__Password", null);
+            E2ETestSignIn.ClearBindings();
         }
 
         base.Dispose(disposing);
@@ -135,6 +139,10 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     {
         // Set the API key via environment variable before host builds
         Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
+
+        // Spec 049: the local admin login (E2EFixture.SignInAsync uses this password).
+        Environment.SetEnvironmentVariable("Auth__Admin__Password", TestAdminPassword);
+        E2ETestSignIn.ApplyBindings();
 
         E2ETestDefaults.ApplyDatabaseEnvironment();
 
@@ -171,6 +179,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         {
             // Seed default test data
             ConfigStore.SeedDefaults();
+
+            // Spec 049: test-only sign-in for principals other than the local admin.
+            services.AddSingleton<Microsoft.AspNetCore.Hosting.IStartupFilter, E2ETestSignIn.StartupFilter>();
 
             // Replace the Npgsql context with EF InMemory. The stores below are all faked, but
             // the monolith still resolves IDbContextFactory<PipelineDbContext> at startup for
@@ -260,19 +271,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         RemoveService<IOrchestratorRunService>(services);
         services.AddSingleton(_runService);
         services.AddSingleton<IOrchestratorRunService>(_runService);
-
-        // PipelineOrchestrationService → ResettablePipelineOrchestrationService
-        var lifecycle = new PipelineRunLifecycleService(HistoryService, _runService, Serilog.Log.Logger);
-        _orchestration = new ResettablePipelineOrchestrationService(
-            ConfigStore,
-            FakeProviders,
-            new PipelineCancellationFacade(null),
-            lifecycle,
-            TestOrchestrationFactory.NoOpLabelService.Instance,
-            Serilog.Log.Logger);
-        RemoveService<PipelineOrchestrationService>(services);
-        services.AddSingleton(_orchestration);
-        services.AddSingleton<PipelineOrchestrationService>(_orchestration);
     }
 
     /// <summary>
@@ -308,7 +306,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
         }
 
         // Reset resettable service subclasses
-        _orchestration?.Reset();
         _registry?.Reset();
         _runService?.Reset();
 

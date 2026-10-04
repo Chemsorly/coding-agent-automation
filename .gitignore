@@ -75,9 +75,11 @@ config/opencode/
 # GitHub App credentials (private key)
 config/github-app-credentials.json
 
-# Core dumps
+# Core dumps. Files only: "!**/core/" keeps directories such as src/KiroCliLib/Core, which git on
+# Windows (case-insensitive) would otherwise ignore together with every new file in them.
 core
 **/core
+!**/core/
 
 # Local Postgres data (docker-compose bind mount)
 config/postgres/

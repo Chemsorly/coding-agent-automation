@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -18,6 +19,9 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class TokenCostConditionalDisplayTests : BunitContext
 {
+    // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
+    public TokenCostConditionalDisplayTests() => Services.AddTestAccess();
+
     // ═══ Helpers ═══
 
     private static PagedResult<PipelineRunSummary> PagedHistory(params PipelineRunSummary[] items) => new()

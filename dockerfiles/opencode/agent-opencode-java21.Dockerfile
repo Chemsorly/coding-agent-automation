@@ -26,6 +26,7 @@ COPY src/CodingAgent.Web/CodingAgent.Web.csproj src/CodingAgent.Web/
 COPY src/CodingAgent.Agent/CodingAgent.Agent.csproj src/CodingAgent.Agent/
 COPY src/CodingAgent.Agent.KiroCli/CodingAgent.Agent.KiroCli.csproj src/CodingAgent.Agent.KiroCli/
 COPY src/CodingAgent.Agent.OpenCode/CodingAgent.Agent.OpenCode.csproj src/CodingAgent.Agent.OpenCode/
+COPY src/CodingAgent.Agent.ClaudeCode/CodingAgent.Agent.ClaudeCode.csproj src/CodingAgent.Agent.ClaudeCode/
 RUN dotnet restore src/CodingAgent.Agent/CodingAgent.Agent.csproj -a $TARGETARCH
 
 # Copy everything else and publish the Agent project

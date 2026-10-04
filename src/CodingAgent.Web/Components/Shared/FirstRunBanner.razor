@@ -1,6 +1,7 @@
 @using CodingAgent.Api.Client
 @inject IPipelineApiConfigClient ConfigClient
 @inject NavigationManager Navigation
+@inject IAccessGuard Guard
 
 @if (_show)
 {
@@ -44,6 +45,9 @@
 
     private async Task DismissAsync()
     {
+        // Spec 049: the dismissal is shared configuration; CockpitLayout renders the banner for admins only.
+        try { await Guard.DemandAsync(AccessRole.Admin, null, "DismissFirstRunBanner"); }
+        catch (AccessDeniedException) { return; }
         await ConfigClient.SetKeyValueAsync("first_run_banner_dismissed", "true", CancellationToken.None);
         _dismissed = true;
         await EvaluateAsync();

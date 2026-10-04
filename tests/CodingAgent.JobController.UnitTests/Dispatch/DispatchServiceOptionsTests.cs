@@ -139,7 +139,8 @@ public sealed class DispatchServiceOptionsFactoryTests
             ["WorkDistribution:AgentApiKeySecretName"] = "my-secret",
             ["WorkDistribution:AgentServiceAccountName"] = "my-sa",
             ["WorkDistribution:Namespace"] = "production",
-            ["WorkDistribution:OpencodeConfigSecretName"] = "oc-secret"
+            ["WorkDistribution:OpencodeConfigSecretName"] = "oc-secret",
+            ["WorkDistribution:ClaudeAuthSecretName"] = "claude-secret"
         });
 
         var opts = DispatchServiceOptionsFactory.Create(config);
@@ -151,6 +152,7 @@ public sealed class DispatchServiceOptionsFactoryTests
         opts.AgentServiceAccountName.Should().Be("my-sa");
         opts.Namespace.Should().Be("production");
         opts.OpencodeConfigSecretName.Should().Be("oc-secret");
+        opts.ClaudeAuthSecretName.Should().Be("claude-secret");
     }
 
     [Fact]

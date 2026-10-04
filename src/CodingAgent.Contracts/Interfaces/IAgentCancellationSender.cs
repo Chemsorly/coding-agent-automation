@@ -4,8 +4,8 @@ namespace CodingAgent.Pipeline.Interfaces;
 
 /// <summary>
 /// Sends cancellation messages to connected agents. Separated into its own interface
-/// so that <see cref="Services.PipelineOrchestrationService"/> can signal agents during
-/// graceful shutdown without depending on the Orchestration project directly.
+/// so that <see cref="Services.PipelineRunLifecycleService"/> can signal agents
+/// without depending on the Orchestration project directly.
 /// </summary>
 public interface IAgentCancellationSender
 {

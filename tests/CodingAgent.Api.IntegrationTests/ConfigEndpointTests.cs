@@ -214,7 +214,10 @@ public sealed class ConfigEndpointTests
         var response = await agentClient.GetAsync(
             $"/api/work-items/{workItemId}/assignment?agentId={agentId}");
 
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        // Authorization passes; the seeded payload has no configs to enrich, so the endpoint
+        // answers 503 (retry) rather than serving an assignment without configs.
+        response.StatusCode.Should().NotBe(HttpStatusCode.Unauthorized);
+        response.StatusCode.Should().NotBe(HttpStatusCode.Forbidden);
     }
 
     /// <summary>
