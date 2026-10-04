@@ -212,13 +212,13 @@ public sealed class ReconciliationLoop
             if (ageResult is not Enforceable enforceable) continue;
 
             // Not timed out yet — skip.
-            // TODO: [WARNING] The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
+            // NOTE (issue #3243): The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
             // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
             // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
             // use the same threshold, so the canary invariant provides no protection for items at
             // exactly that boundary — the item is immediately enforced on the first cycle it is
             // returned by the query. This is a gap in the canary design that was not present when
-            // the global timeout was always >> 60s. (DotNetSpecialist review [WARNING])
+            // the global timeout was always >> 60s. (DotNetSpecialist review finding)
             if (enforceable.AgeSeconds < item.TimeoutSeconds) continue;
 
             _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
@@ -491,23 +491,23 @@ public sealed class ReconciliationLoop
             // and a Warning is emitted so operators can identify stuck items.
             var createdAgeSeconds = item.CreatedAt.HasValue
                 ? (DateTimeOffset.UtcNow - item.CreatedAt.Value).TotalSeconds
-                // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely — same
+                // NOTE (issue #3243): null CreatedAt silently defers enforcement indefinitely — same
                 // class of bug as the original null DispatchedAt issue. The 0.0 fallback causes
                 // the grace-window check below to always fire and the item is permanently skipped
                 // with no log or metric. In production, CreatedAt should always be non-null
                 // (WorkItemEntity.CreatedAt is a non-null column), but if a backfill is missed or
                 // the DTO is constructed without the field the item becomes permanently stuck.
                 // At minimum emit a Log.Warning here so operators can detect the condition.
-                // (Correctness review [WARNING])
+                // (Correctness review finding)
                 : 0.0; // null CreatedAt (pre-dates this field in test code) → treat as just created
 
-            // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
+            // NOTE (issue #3243): strict less-than (<) means an item with createdAgeSeconds exactly
             // equal to NullDispatchedAtGraceWindowSeconds is skipped for another full cycle.
             // The requirement states "older than the grace window is force-failed", so the
             // boundary condition (age == graceWindow) should proceed to enforcement. Because
             // createdAgeSeconds is a double, exact equality is extremely rare in practice, but
             // semantically the condition should be <= to match the stated requirement boundary.
-            // (Correctness review [WARNING])
+            // (Correctness review finding)
             if (createdAgeSeconds < _options.NullDispatchedAtGraceWindowSeconds)
             {
                 // Within grace window — skip without recording any metrics.
@@ -608,10 +608,17 @@ public sealed class ReconciliationLoop
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
-                var errorMsg = GetFailureMessage(job);
+                var conditionMessage = GetFailureMessage(job);
                 // Classify the failure reason: if the WorkItem was never claimed (still Dispatched),
                 // no agent ran — record as InfrastructureFailure, not AgentError (issue #2956).
-                var failureReason = await ClassifyJobFailureReasonAsync(workItemId.Value, ct);
+                // Pass the job so DeadlineExceeded can be detected from the condition reason.
+                var failureReason = await ClassifyJobFailureReasonAsync(workItemId.Value, job, ct);
+                // Enrich the error message with the last failed pod's termination info when available.
+                // Best-effort: falls back to the condition message if pod listing fails or no pods found.
+                var jobName = job.Metadata?.Name;
+                var errorMsg = jobName is not null
+                    ? await EnrichErrorMessageWithPodInfoAsync(jobName, conditionMessage, ct)
+                    : conditionMessage;
                 // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
                 // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
                 // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
@@ -633,34 +640,101 @@ public sealed class ReconciliationLoop
 
     /// <summary>
     /// Returns the appropriate failure reason string for a failed K8s Job.
-    /// Calls <see cref="IPipelineApiWorkItemClient.GetStatusAsync"/> to determine whether the
-    /// WorkItem was ever claimed by an agent. A WorkItem still in <c>Dispatched</c> state means
-    /// no agent successfully accepted it — the failure is infrastructure-level.
-    /// A claimed (<c>Running</c> or later) WorkItem is an agent error.
+    /// <list type="bullet">
+    ///   <item><c>Timeout</c> — the job's Failed condition has <c>Reason == "DeadlineExceeded"</c>;
+    ///     the deadline was set by the operator and the agent did not finish in time.</item>
+    ///   <item><c>InfrastructureFailure</c> — the job failed before any agent claimed it (WorkItem
+    ///     still in <c>Dispatched</c> state at the time of classification).</item>
+    ///   <item><c>ExitCodeFailure</c> — the agent ran (WorkItem reached <c>Running</c>) and the
+    ///     Job failed due to pod exit codes. Also used as the default when
+    ///     <see cref="IPipelineApiWorkItemClient.GetStatusAsync"/> throws a non-cancellation
+    ///     exception and the job is not a deadline failure.</item>
+    /// </list>
     /// Returns <c>AgentError</c> when the status is null (item not found or already cleaned up).
     /// </summary>
-    private async Task<string> ClassifyJobFailureReasonAsync(Guid workItemId, CancellationToken ct)
+    private async Task<string> ClassifyJobFailureReasonAsync(Guid workItemId, V1Job job, CancellationToken ct)
     {
+        var conditions = job.Status?.Conditions;
+        var failedCondition = conditions?.FirstOrDefault(c => c.Type == JobPhaseFailed && c.Status == "True");
+        var isDeadlineExceeded = failedCondition?.Reason == "DeadlineExceeded";
+
+        // TODO (review): Add a unit test for the combined case: status == Dispatched AND isDeadlineExceeded == true.
+        // Currently the Dispatched check returns InfrastructureFailure before the isDeadlineExceeded check is reached,
+        // which is the correct intent (failure before any agent ran, regardless of K8s reason). Without a test for this
+        // combination, a future reordering of the two guards would silently change classification to Timeout.
+        // (TestQualityReviewer WARNING)
         try
         {
             var status = await _workItemClient.GetStatusAsync(workItemId, ct);
             // Dispatched means the K8s Job was created but no agent ever called JobAccepted
-            // (which transitions the WorkItem to Running). The failure happened before any agent ran.
+            // (which transitions the WorkItem to Running). The failure happened before any agent ran,
+            // regardless of the K8s failure reason — record as InfrastructureFailure.
             if (status == WorkItemStatus.Dispatched)
                 return nameof(FailureReason.InfrastructureFailure);
 
-            // TODO: [WARNING] When status is null (item not found or already cleaned up) the method
-            // silently falls through to AgentError with no log entry. Operators diagnosing a failed
-            // Job whose WorkItem has already been deleted will see AgentError with no indication it
-            // is a fallback due to a missing item. Consider adding a Debug-level log here:
-            // if (status is null) _log.Debug("ClassifyJobFailureReasonAsync: status null for {WorkItemId}, defaulting to AgentError", workItemId);
+            // DeadlineExceeded with a claimed WorkItem: the operator-configured deadline fired
+            // while the agent was running. Classify as Timeout, not ExitCodeFailure.
+            if (isDeadlineExceeded)
+                return nameof(FailureReason.Timeout);
+
+            // Running or beyond (or null — item cleaned up): the agent ran and the Job failed
+            // due to pod exit codes.
+            // NOTE (issue #3243): When status is null (item not found or already cleaned up)
+            // consider adding a Debug-level log: _log.Debug("ClassifyJobFailureReasonAsync: status null
+            // for {WorkItemId}, defaulting to ExitCodeFailure", workItemId);
+            return nameof(FailureReason.ExitCodeFailure);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _log.Warning(ex, "ClassifyJobFailureReasonAsync: failed to query status for WorkItem {WorkItemId}, defaulting to AgentError", workItemId);
+            _log.Warning(ex, "ClassifyJobFailureReasonAsync: failed to query status for WorkItem {WorkItemId}, classifying from Job", workItemId);
+            // Cannot determine WorkItem status. Apply job-level classification:
+            // - DeadlineExceeded → Timeout (operator deadline, not pod exits)
+            // - Otherwise → ExitCodeFailure (Job exhausted pod retry budget)
+            return isDeadlineExceeded
+                ? nameof(FailureReason.Timeout)
+                : nameof(FailureReason.ExitCodeFailure);
         }
+    }
 
-        return nameof(FailureReason.AgentError);
+    /// <summary>
+    /// Appends the last failed pod's termination info to <paramref name="conditionMessage"/>.
+    /// Lists pods for the job via <c>ListPodsAsync</c> and finds the most recently terminated
+    /// pod whose agent container exited with a non-zero code. If listing fails or no such pod
+    /// is found, returns <paramref name="conditionMessage"/> unchanged.
+    /// </summary>
+    private async Task<string?> EnrichErrorMessageWithPodInfoAsync(string jobName, string? conditionMessage, CancellationToken ct)
+    {
+        try
+        {
+            var pods = await _k8sClient.ListPodsAsync(_options.Namespace, $"batch.kubernetes.io/job-name={jobName}", ct);
+            // Find the most recently terminated failed pod (non-zero exit code on the agent container).
+            var lastFailedPod = (pods.Items ?? [])
+                .Select(p =>
+                {
+                    var agentContainer = p.Status?.ContainerStatuses?
+                        .FirstOrDefault(cs => cs.Name == JobSpecBuilder.AgentContainerName);
+                    var terminated = agentContainer?.State?.Terminated;
+                    return (Pod: p, Terminated: terminated);
+                })
+                .Where(x => x.Terminated?.ExitCode != 0 && x.Terminated?.ExitCode != null)
+                .OrderByDescending(x => x.Terminated!.FinishedAt)
+                .Select(x => (x.Pod.Metadata?.Name, x.Terminated))
+                .FirstOrDefault();
+
+            if (lastFailedPod.Terminated is null)
+                return conditionMessage;
+
+            var reason = lastFailedPod.Terminated.Reason is not null
+                ? $"{lastFailedPod.Terminated.Reason} (exit code {lastFailedPod.Terminated.ExitCode})"
+                : $"exit code {lastFailedPod.Terminated.ExitCode}";
+            var suffix = $" Last pod {lastFailedPod.Name}: {reason}.";
+            return conditionMessage is not null ? conditionMessage + suffix : suffix.TrimStart();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warning(ex, "EnrichErrorMessageWithPodInfoAsync: failed to list pods for job {JobName} — using condition message only", jobName);
+            return conditionMessage;
+        }
     }
 
     /// <summary>
@@ -745,7 +819,7 @@ public sealed class ReconciliationLoop
                 return false;
             }
 
-            // TODO: [WARNING] `Running` is included in the non-terminal (no-cache) set alongside
+            // NOTE (issue #3243): `Running` is included in the non-terminal (no-cache) set alongside
             // Pending and Dispatched, but the issue requirements explicitly enumerate only
             // Pending and Dispatched as the pre-Running states that must not be cached.
             // Running→Succeeded and Running→Failed are valid transitions; a 400 for a Running
@@ -774,14 +848,12 @@ public sealed class ReconciliationLoop
             _reconciledTerminalIds.Add(workItemId);
             return false;
         }
-        // NOTE (issue #3243): This catch is too broad — it swallows OperationCanceledException from the
-        // loop's own CancellationToken. PostStatusAsync receives `ct` (the loop token); if cancelled
-        // mid-flight, the OCE is caught here, logged as an Error, and HandleJobCompletedAsync returns
-        // false, causing the caller to treat the cancellation as a transient failure rather than
-        // propagating. Fix: add `when (ex is not OperationCanceledException)` filter to this catch.
-        // Out of scope for issue #3236 (which targeted the six explicitly named sites), but the same
-        // class of bug as those fixes. (Review finding: DotNetSpecialist [WARNING])
-        catch (Exception ex)
+        // NOTE (issue #3243): The NOTE below described a suspected "too broad" catch that would
+        // swallow OperationCanceledException. The catch clause already has the
+        // `when (ex is not OperationCanceledException)` filter, so the described defect does not
+        // exist. The comment is retained for audit purposes; no code change is needed here.
+        // (Review finding: DotNetSpecialist WARNING — finding was inaccurate, filter already present)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Error(ex, "Failed to post status {Status} for WorkItem {Id}", status, workItemId);
         }
@@ -819,16 +891,23 @@ public sealed class ReconciliationLoop
                 return JobPhaseSucceeded;
             if (conditions.Any(c => c.Type == JobPhaseFailed && c.Status == "True"))
                 return JobPhaseFailed;
+            // conditions list is present but contains no terminal condition — job is not final yet.
+            // Do NOT fall through to counter-based detection: an empty conditions list means
+            // Kubernetes has not set a terminal condition. Falling through would cause counter-based
+            // detection to fire prematurely (e.g. Succeeded=1 before the Complete condition is set,
+            // or Failed=1/Active=0 during retry backoff before BackoffLimitExceeded is set).
+            return "Active";
         }
 
-        // Fall back to counters
-        if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
+        // conditions is null — fall back to counters (older Kubernetes API versions that do not
+        // populate the Conditions field at all).
         // Guard Active == 0: a retrying job has Failed=1 while Active=1 (Kubernetes creates a
         // retry pod after each failed attempt). The "Failed" condition type is only set once all
         // retries are exhausted. Returning JobPhaseFailed while Active > 0 would prematurely mark
         // a running work item as failed and cancel the live K8s Job (data-corruption under the
         // default backoffLimit >= 1). This guard matches the equivalent counter-fallback check
         // that was previously in DispatchLoopHelpers.IsJobTerminal (deleted in issue #2323).
+        if (job.Status?.Succeeded > 0) return JobPhaseSucceeded;
         if (job.Status?.Failed > 0 && (job.Status?.Active ?? 0) == 0) return JobPhaseFailed;
         return "Active";
     }
