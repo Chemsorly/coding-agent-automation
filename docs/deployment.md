@@ -121,7 +121,6 @@ The chart deploys:
 | `credentialPools.kiro` | List of PVC names for Kiro agent credential data. PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent access from multiple agent Jobs. The pipeline API claims one PVC per dispatched Job. |
 | `signalr.redis.enabled` | Documents intent to enable Redis backplane (default: `false`). Note: the Helm templates only check `signalr.redis.connectionString` — setting `enabled: true` without a non-empty `connectionString` has no effect. To activate the backplane, set `signalr.redis.connectionString` to a non-empty value. |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
-| `scheduler.dispatch.enabled` | **Must be `true` for the dispatch loop to run.** Defaults to `false`. The API-side dispatch loop was removed in issue #2547; `scheduler.dispatch.enabled=true` activates the `WorkItemDispatchLoop` in the Scheduler as the sole dispatcher. A deployment with this left at `false` will have no active dispatcher — `Pending` WorkItems accumulate indefinitely. Set explicitly on every install/upgrade: `--set scheduler.dispatch.enabled=true`. |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
 ### Defining Agent Pod Templates

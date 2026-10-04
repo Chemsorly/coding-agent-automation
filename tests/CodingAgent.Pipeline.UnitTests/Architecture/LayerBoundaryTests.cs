@@ -794,10 +794,10 @@ public partial class LayerBoundaryTests
             // "WorkItemDispatchService", // DELETED — do not add back
 
             // WorkItemDispatchLoop is conditionally registered in SchedulerServiceCollectionExtensions
-            // under the Scheduler:Dispatch:Enabled flag (default false). Registration uses the lambda
+            // unless Scheduler:Dispatch:Enabled=false (test hosts only). Registration uses the lambda
             // pattern: services.AddHostedService(sp => sp.GetRequiredService<WorkItemDispatchLoop>()).
             // The T4 scanner only detects AddHostedService<T>() (generic form), not the lambda pattern.
-            // The service IS actively registered when Scheduler:Dispatch:Enabled=true.
+            // The service IS actively registered in production.
             "WorkItemDispatchLoop",
         };
 

@@ -462,17 +462,6 @@ scheduler:
     # Scheduler-specific K8s Lease name — distinct from the API's lease.
     # Empty (default) = release-scoped: caa-<release>-scheduler-lock
     leaseName: ""
-  dispatch:
-    # Whether the Scheduler-side WorkItemDispatchLoop is enabled.
-    # TODO: [WARNING] Stale class name — WorkItemDispatchPoller was renamed to WorkItemDispatchLoop (issue #2844).
-    # The API-side dispatch loop has been removed (issue #2547). Set to true to enable
-    # the Scheduler WorkItemDispatchLoop as the sole dispatcher.
-    # TODO [WARNING]: This defaults to false. With the API-side dispatch loop removed and this
-    # flag still false, a fresh install or an upgrade that does not explicitly set this to true
-    # will have NO active dispatcher — Pending WorkItems will accumulate indefinitely and never
-    # be promoted to Dispatched. Operators MUST set scheduler.dispatch.enabled=true as part of
-    # the cutover. Consider adding a NOTES.txt warning or a Helm validation rule to catch this.
-    enabled: false
   terminationGracePeriodSeconds: 90
   nodeSelector: {}
   env:

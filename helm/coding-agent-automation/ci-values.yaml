@@ -29,7 +29,5 @@ jobController:
     repository: chemsorly/coding-agent
     tag: coding-agent-jobcontroller
 scheduler:
-  dispatch:
-    enabled: true
   image:
     tag: ci-scheduler-placeholder
