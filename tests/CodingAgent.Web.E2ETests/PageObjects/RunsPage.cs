@@ -256,9 +256,15 @@ public sealed class RunsPage
     {
         var row = RunRow(issueIdentifier).First;
         await row.WaitForAsync(new() { Timeout = 10_000 });
+        // Start the URL-wait task BEFORE the click so no history.pushState event is missed.
+        // Blazor's NavigationManager fires history.pushState (not a network "load" event) —
+        // starting WaitForURLAsync after ClickAsync creates a race where the SPA navigation
+        // can complete before the listener is attached, causing a 15s timeout waiting for "Load".
+        // Use Commit (not Load) to match Blazor SPA navigation semantics.
+        var navTask = _page.WaitForURLAsync("**/runs/*",
+            new() { WaitUntil = WaitUntilState.Commit, Timeout = DefaultNavigationTimeout });
         await row.ClickAsync();
-        // Wait for URL to change to /runs/{id}
-        await _page.WaitForURLAsync(url => url.Contains("/runs/"), new() { Timeout = DefaultNavigationTimeout });
+        await navTask;
     }
 
     // ── Links column ──────────────────────────────────────────────────────────
