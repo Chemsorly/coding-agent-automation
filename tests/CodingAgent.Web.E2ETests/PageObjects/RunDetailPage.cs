@@ -25,13 +25,12 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Wait for the Blazor interactive circuit to connect and register event handlers.
-        // PipelineSidebar always renders step cards with @onclick handlers — waiting for the
-        // Blazor event registration on the first step card proves the circuit is fully
-        // interactive and click handlers are attached before we proceed.
-        await _page.WaitForInteractiveAsync(
-            "[data-testid='pipeline-step-Created']",
-            timeoutMs: 15_000);
+        // Wait for the Blazor JS framework to be present (confirms the circuit is connected
+        // or the connection is in progress), then allow time for event handlers to attach.
+        await _page.WaitForBlazorAsync(timeoutMs: 15_000);
+        // Additional settle time for Blazor Server to complete its initial interactive render
+        // and attach onclick handlers to DOM elements. Matches the 3 s used by AgentCodingPage.
+        await _page.WaitForTimeoutAsync(3000);
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
