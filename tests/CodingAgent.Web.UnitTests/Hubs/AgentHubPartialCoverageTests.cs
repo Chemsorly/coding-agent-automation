@@ -40,7 +40,6 @@ public sealed class AgentHubPartialCoverageTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));

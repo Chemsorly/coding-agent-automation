@@ -124,36 +124,6 @@ public sealed class OrchestratorProxy : IAgentIssueOperations, IDisposable
     }
 
     /// <summary>
-    /// Posts a gate rejection comment (not_ready assessment) via the orchestrator.
-    /// </summary>
-    public Task PostGateRejectionAsync(string assessmentJson, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(assessmentJson);
-        return _signalRPipeline.ExecuteAsync(async token =>
-            await _connection.InvokeAsync(
-                HubMethodNames.RequestPostComment,
-                _jobId,
-                CommentType.GateRejection,
-                new CommentPayload { AssessmentJson = assessmentJson },
-                token), ct).AsTask();
-    }
-
-    /// <summary>
-    /// Posts a gate wont-do comment via the orchestrator.
-    /// </summary>
-    public Task PostGateWontDoAsync(string assessmentJson, CancellationToken ct)
-    {
-        ArgumentNullException.ThrowIfNull(assessmentJson);
-        return _signalRPipeline.ExecuteAsync(async token =>
-            await _connection.InvokeAsync(
-                HubMethodNames.RequestPostComment,
-                _jobId,
-                CommentType.GateWontDo,
-                new CommentPayload { AssessmentJson = assessmentJson },
-                token), ct).AsTask();
-    }
-
-    /// <summary>
     /// Requests a fresh short-lived token from the orchestrator when the current one expires.
     /// Caches the returned token and proactively renews it when within
     /// <see cref="TokenRenewalBuffer"/> of expiry, mirroring the server-side

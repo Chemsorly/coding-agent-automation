@@ -617,10 +617,8 @@ public static class ApiServiceCollectionExtensions
         // gates on its own leader election — no API-side lease needed.
         services.AddSingleton<DatabaseMaintenanceService>(sp => new DatabaseMaintenanceService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>()));
+            sp.GetRequiredService<IPipelineConfigStore>()));
     }
 
     /// <summary>

@@ -87,10 +87,6 @@ public sealed class OrchestratorProxyWireContractTests : IAsyncLifetime
     {
         ["PostCommentAsync"] = (HubMethodNames.RequestPostComment,
             p => p.PostCommentAsync("2567", "Analysis", CancellationToken.None)),
-        ["PostGateRejectionAsync"] = (HubMethodNames.RequestPostComment,
-            p => p.PostGateRejectionAsync("{}", CancellationToken.None)),
-        ["PostGateWontDoAsync"] = (HubMethodNames.RequestPostComment,
-            p => p.PostGateWontDoAsync("{}", CancellationToken.None)),
         ["SwapLabelAsync"] = (HubMethodNames.RequestLabelChange,
             p => p.SwapLabelAsync("2567", AgentLabels.Error, CancellationToken.None)),
         ["SwapLabelAsync(targetKind)"] = (HubMethodNames.RequestLabelChange,

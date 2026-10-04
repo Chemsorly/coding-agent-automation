@@ -400,7 +400,6 @@ public class AgentAuthorizationFilterObservabilityTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _loggerMock.Object,
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));

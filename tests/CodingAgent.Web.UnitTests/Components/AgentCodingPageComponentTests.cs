@@ -1478,23 +1478,6 @@ public class AgentCodingPageComponentTests : BunitContext
         Assert.Null(result);
     }
 
-    [Fact]
-    public async Task AgentCoding_GetParentProject_ReturnsProject()
-    {
-        var component = Render<AgentCoding>();
-        PipelineProject? result = null;
-
-        await component.InvokeAsync(() =>
-        {
-            var method = typeof(AgentCoding).GetMethod("GetParentProject",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            result = (PipelineProject?)method!.Invoke(component.Instance, [(TemplateId)"t-1"]);
-        });
-
-        Assert.NotNull(result);
-        Assert.Equal(WellKnownIds.DefaultProjectId, result!.Id);
-    }
-
     // ── HandleStateChanged ────────────────────────────────────────────────────
 
     [Fact]

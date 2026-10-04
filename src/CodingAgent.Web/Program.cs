@@ -153,19 +153,16 @@ Func<StackExchange.Redis.IConnectionMultiplexer>? dpMultiplexerFactory = string.
     ? null
     : () => StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnectionString);
 builder.Services.AddDataProtectionServices(dpMultiplexerFactory);
-// dbConnectionString is null — the Web host has no direct PostgreSQL connection.
-// Npgsql tracing is therefore not registered here (no DB spans to export).
-builder.Services.AddApplicationTelemetry(dbConnectionString: null, redisConnectionString);
+builder.Services.AddApplicationTelemetry(redisConnectionString);
 
 var app = builder.Build();
 
 // ── Post-Build startup sequence ─────────────────────────────────────────────
 // Each concern is extracted into its own WebApplication extension method.
-// Ordering: ValidateShutdownBudget, ValidateDiWiring, RegisterObservableGauges, then MapApplicationEndpoints.
+// Ordering: ValidateShutdownBudget, ValidateDiWiring, then MapApplicationEndpoints.
 
 app.ValidateShutdownBudget();
 app.ValidateDiWiring();
-app.RegisterObservableGauges();
 app.MapApplicationEndpoints();
 
 // Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works

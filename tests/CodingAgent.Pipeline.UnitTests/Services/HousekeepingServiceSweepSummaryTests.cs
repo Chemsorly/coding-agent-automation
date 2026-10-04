@@ -323,7 +323,7 @@ public class HousekeepingServiceSweepSummaryMetricTests
         };
 
     /// <summary>
-    /// Sets up a <see cref="MeterListener"/> that captures all
+    /// Sets up a <see cref="MeterListener"/> that captures this class's
     /// <c>pipeline.housekeeping.pr_evaluated</c> measurements into a list.
     /// Returns a disposable listener and the live measurement list.
     /// </summary>
@@ -348,10 +348,10 @@ public class HousekeepingServiceSweepSummaryMetricTests
                 if (tag.Key == "mergeability_status") status = tag.Value?.ToString() ?? "";
                 if (tag.Key == "repo_provider_id") repoId = tag.Value?.ToString() ?? "";
             }
-            // Filter to this class's own emissions only. HousekeepingServiceTests is not in
-            // [Collection("Metrics")] and runs concurrently, emitting pr_evaluated with
-            // repo_provider_id="rp-1". Without this guard, those emissions bleed into
-            // HaveCount assertions and produce spurious failures.
+            // Keep only this class's repo: the MeterListener sees every emission on the
+            // process-global meter, and [Collection("Metrics")] serialises only the classes that
+            // opt in. Before HousekeepingServiceTests joined, a stray {2, behind, rp-1} from it
+            // failed Metric_MixedStatuses_OneEmissionPerDistinctStatus.
             if (repoId != RepoId) return;
             measurements.Add((value, status, repoId));
         });

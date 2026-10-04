@@ -90,24 +90,6 @@ See [HTTP API Reference](api-reference.md) for full endpoint details.
 
 ---
 
----
-
-## Scenario C — Legacy: File-Based Import (historical — not triggered automatically)
-
-> ⚠️ **This scenario no longer applies.** The API startup path does not call
-> `DatabaseStartupService.ImportJsonConfigIfNeededAsync` and never reads JSON files from disk automatically.
-> The file-based import was removed from the production startup path in the Spec 041–045 split.
-
-To migrate configuration from JSON files to a fresh instance, use the HTTP export/import flow described in
-[Scenario B](#scenario-b--migrate-from-an-existing-instance-http-exportimport) instead:
-
-1. Export the JSON config bundle from your old instance (or construct one manually).
-2. POST it to `POST /api/config/import` on the new instance.
-
-The JSON config directory (`/app/config/pipeline`) is no longer read at startup.
-
----
-
 ## Bundle Format
 
 The export bundle is a flat JSON object with arrays for each entity type:

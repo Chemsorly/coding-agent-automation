@@ -14,9 +14,14 @@
 {{- if .Values.agents }}
   {{- fail "agents[] is removed. Define agent pod specs in jobTemplates[] instead. See NOTES.txt for the migration." }}
 {{- end }}
-{{- $webCfg := mergeOverwrite (deepCopy (.Values.web | default dict)) (.Values.orchestrator | default dict) }}
-{{- if hasKey $webCfg "persistence" }}
-  {{- fail "web.persistence (or legacy orchestrator.persistence) is removed. Configuration now lives in PostgreSQL. Remove it from your values." }}
+{{- if .Values.orchestrator }}
+  {{- fail "The legacy orchestrator block is removed. Rename orchestrator: to web: in your values." }}
+{{- end }}
+{{- if (.Values.otel | default dict).orchestratorServiceName }}
+  {{- fail "otel.orchestratorServiceName is removed. Rename it to otel.webServiceName in your values." }}
+{{- end }}
+{{- if hasKey (.Values.web | default dict) "persistence" }}
+  {{- fail "web.persistence is removed. Configuration now lives in PostgreSQL. Remove it from your values." }}
 {{- end }}
 {{- $redis := (.Values.signalr | default dict).redis | default dict }}
 {{- if and (gt (int (.Values.api.replicas | default 1)) 1) (empty $redis.connectionString) }}

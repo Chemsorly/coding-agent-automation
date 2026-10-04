@@ -140,28 +140,25 @@ public class PipelinePollingHelperTests
     [Fact]
     public async Task PollUntilCompleteAsync_Timeout_NullLastStatus_ReturnsPendingWithNullCommitSha()
     {
-        // TODO: This test is environment-sensitive. It simulates a null lastStatus by blocking the
-        // first poll for 10 seconds with a 100ms timeout, relying on wall-clock timing to ensure
-        // the timeout fires before the poll returns. On slow CI machines the timing may not hold.
-        // A more deterministic approach: provide a getRunStatusAsync that immediately throws
-        // OperationCanceledException when its linkedCt is cancelled, then assert the fallback
-        // Pending result. This avoids relying on a 100ms wall-clock race.
-        // Simulate timeout firing before the first poll returns by using a very long delay
-        using var cts = new CancellationTokenSource();
+        // Deterministic approach: getRunStatusAsync blocks on Timeout.InfiniteTimeSpan with the
+        // linked cancellation token. When the timeout CTS fires it cancels linkedCt, which unblocks
+        // Task.Delay immediately (throws OperationCanceledException). This ensures lastStatus is
+        // always null when onTimeout() runs, regardless of scheduler load or CI timing.
+        // The 5s timeout gives the timer room to fire even under load while keeping the test fast.
         var pollStarted = false;
 
         var result = await PipelinePollingHelper.PollUntilCompleteAsync(
             getRunStatusAsync: async linkedCt =>
             {
                 pollStarted = true;
-                // Delay long enough that the timeout fires — the test timeout is 100ms
-                await Task.Delay(TimeSpan.FromSeconds(10), linkedCt);
-                return MakeStatus(PipelineRunState.Running, "sha6");
+                // Block indefinitely until the timeout cancels linkedCt — never returns Running
+                await Task.Delay(Timeout.InfiniteTimeSpan, linkedCt);
+                return MakeStatus(PipelineRunState.Running, "sha6"); // unreachable
             },
             enrichFailedJobsAsync: (s, _) => Task.FromResult(s),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
             pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromMilliseconds(100),
+            timeout: TimeSpan.FromSeconds(5),
             logPrefix: "CI",
             ct: CancellationToken.None,
             logger: SilentLogger);

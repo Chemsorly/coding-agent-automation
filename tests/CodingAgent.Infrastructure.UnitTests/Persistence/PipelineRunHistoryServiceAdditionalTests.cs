@@ -12,7 +12,6 @@ namespace CodingAgent.Infrastructure.UnitTests;
 /// Additional unit tests for PipelineRunHistoryService covering branches not exercised by PipelineRunHistoryServiceTests:
 /// GetRunHistoryAsync paginated overload (validation, hasMore, feedbackOnly filter),
 /// GetRunAsync,
-/// TryDeleteWorkspace (symlink, path-traversal, delete exception),
 /// GetRunHistory empty-directory path.
 /// </summary>
 public class PipelineRunHistoryServiceAdditionalTests : IDisposable
@@ -308,7 +307,4 @@ public class PipelineRunHistoryServiceAdditionalTests : IDisposable
 
         history.Should().BeEmpty();
     }
-
-    // Note: TryDeleteWorkspace guard logic is tested via WorkspaceDeletionGuardTests.
-
 }

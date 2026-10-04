@@ -23,4 +23,17 @@ public sealed class IssueDetail
     /// <summary>Web URL of the issue on the provider (e.g. GitHub HtmlUrl / GitLab WebUrl), or null if unknown.</summary>
     [Key(5)]
     public string? Url { get; init; }
+
+    /// <summary>Issue creation date, used for FIFO ordering in the pipeline loop.</summary>
+    // TODO [WARNING]: Silent MessagePack key collision risk. IssueDetail now has consecutive keys
+    // 0–6. If a future branch adds a field at Key(6) (or Key(5) colliding with Url), the wire
+    // format resolves the duplicate by last-writer-wins with no compile-time error. In a distributed
+    // deployment where the Scheduler and API hosts can run different build versions simultaneously,
+    // an older consumer that does not know about Key(6) will deserialise CreatedAt as null, causing
+    // FIFO ordering to fall back to "sort last" for all issues from that provider. Always increment
+    // the key sequentially and ensure all keys are unique across branches before merging.
+    // A missing key 6 in wire data produced by an older node deserializes safely as null (the
+    // intended default for DateTime?).
+    [Key(6)]
+    public DateTime? CreatedAt { get; init; }
 }
