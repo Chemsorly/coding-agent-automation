@@ -403,6 +403,20 @@ public static class WorkItemDispatchEndpoints
             DateTimeOffset.UtcNow,
             payloadJson);
 
+        // Pre-check: return 409 if an active WorkItem already exists for the same
+        // (IssueIdentifier, IssueProviderConfigId). This mirrors the pre-check in CreateWorkItem
+        // and is necessary for correctness on non-Postgres stores (EF InMemory, SQLite) that do
+        // not enforce partial unique indexes. On Postgres the unique-violation catch below also
+        // handles concurrent inserts that slip through this check.
+        var activeStatuses = PipelineConstants.ActiveWorkItemStatuses;
+        var activeConflict = await db.WorkItems.AnyAsync(
+            w => w.IssueIdentifier == entity.IssueIdentifier
+              && w.IssueProviderConfigId == entity.IssueProviderConfigId
+              && activeStatuses.Contains(w.Status),
+            ct);
+        if (activeConflict)
+            return DispatchWorkItemService.HandleUniqueViolationFallback();
+
         try
         {
             db.WorkItems.Add(entity);
