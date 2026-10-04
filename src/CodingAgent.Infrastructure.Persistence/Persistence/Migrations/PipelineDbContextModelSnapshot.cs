@@ -257,7 +257,6 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("CodingAgent.Infrastructure.Persistence.Entities.ProjectEntity", b =>
                 {
                     b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
                     b.Property<string>("Description")
