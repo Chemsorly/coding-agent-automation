@@ -115,14 +115,17 @@ internal static class UserAuthenticationRegistration
         cookie.SlidingExpiration = false;
 
         // The Blazor hub and API-style requests get status codes, not an HTML login redirect.
-        cookie.Events.OnRedirectToLogin = context => RedirectOrStatus(context, StatusCodes.Status401Unauthorized);
-        cookie.Events.OnRedirectToAccessDenied = context => RedirectOrStatus(context, StatusCodes.Status403Forbidden);
+        cookie.Events.OnRedirectToLogin = context => RedirectOrStatus(context, AuthPaths.Login, StatusCodes.Status401Unauthorized);
+        cookie.Events.OnRedirectToAccessDenied = context => RedirectOrStatus(context, AuthPaths.AccessDenied, StatusCodes.Status403Forbidden);
     }
 
-    private static Task RedirectOrStatus(Microsoft.AspNetCore.Authentication.RedirectContext<CookieAuthenticationOptions> context, int statusCode)
+    private static Task RedirectOrStatus(
+        Microsoft.AspNetCore.Authentication.RedirectContext<CookieAuthenticationOptions> context, string target, int statusCode)
     {
+        // A request already on the target (e.g. a method /login does not map, such as PUT) gets the
+        // status code too: redirecting it to itself would loop.
         var path = context.Request.Path;
-        if (path.StartsWithSegments("/_blazor") || path.StartsWithSegments("/api"))
+        if (path.StartsWithSegments("/_blazor") || path.StartsWithSegments("/api") || path.StartsWithSegments(target))
             context.Response.StatusCode = statusCode;
         else
             context.Response.Redirect(context.RedirectUri);
