@@ -20,7 +20,7 @@ namespace CodingAgent.Agent;
 /// <see cref="AgentWorkerService"/>. Uses <see cref="ChatSlotManager"/> for single-slot
 /// concurrency control.
 /// </remarks>
-public sealed class ChatJobExecutor
+public sealed class ChatJobExecutor : IAsyncDisposable
 {
     private readonly AgentConnectionLifecycle _connectionLifecycle;
     private readonly ChatSlotManager _slotManager;
@@ -306,6 +306,26 @@ public sealed class ChatJobExecutor
         return provider;
     }
 
+    /// <summary>
+    /// Disposes the Claude Code provider of the current chat conversation, if any. Called when the
+    /// chat ends and when the executor is disposed on shutdown.
+    /// </summary>
+    private async Task ReleaseClaudeChatProviderAsync()
+    {
+        IAgentProvider? provider;
+        lock (_claudeChatProviderLock)
+        {
+            provider = _claudeChatProvider;
+            _claudeChatProvider = null;
+        }
+
+        if (provider is not null)
+            await provider.DisposeAsync();
+    }
+
+    /// <inheritdoc />
+    public async ValueTask DisposeAsync() => await ReleaseClaudeChatProviderAsync();
+
     private async Task<(int exitCode, string? error)> ExecuteChatViaKiroCliAsync(
         ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
     {
@@ -372,6 +392,9 @@ public sealed class ChatJobExecutor
             if (completed != chatTask)
                 _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);
         }
+
+        // The conversation is over: its Claude Code session must not be resumed by a later chat.
+        await ReleaseClaudeChatProviderAsync();
 
         if (_isChatMode)
         {

@@ -220,7 +220,14 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         timeoutCts.CancelAfter(ValidateTimeout);
 
         using var process = _launcher.Start(startInfo, line => { lock (output) output.Add(line); }, line => { lock (output) output.Add(line); });
-        await process.WriteStdinAndCloseAsync(string.Empty, timeoutCts.Token);
+        try
+        {
+            await process.WriteStdinAndCloseAsync(string.Empty, timeoutCts.Token);
+        }
+        catch (IOException)
+        {
+            // The CLI exited before reading stdin; its exit code below tells whether it works.
+        }
         var exitCode = await process.WaitForExitAsync(timeoutCts.Token);
         if (exitCode != ExitCodes.Success)
         {

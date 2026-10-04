@@ -183,6 +183,7 @@ public class AccumulateTokenUsageTests
         phase.SessionCount.Should().Be(1);
         phase.Provider.Should().Be("claude");
         run.Metrics.RateLimits["five_hour"].Status.Should().Be("allowed_warning", "the latest reading per window wins");
+        run.Metrics.RateLimits["five_hour"].Utilization.Should().Be(0.9);
     }
 
     [Fact]

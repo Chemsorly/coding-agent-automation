@@ -62,13 +62,14 @@ public class ClaudeStreamJsonParserTests
     }
 
     [Fact]
-    public void ProcessLine_AssistantError_IsRecorded()
+    public void ProcessLine_AssistantError_ClassifiesTheFailure()
     {
         ClaudeStreamJsonParser.ProcessLine(
             """{"type":"assistant","error":"rate_limit","message":{"content":[]}}""",
             _state);
 
         _state.LastErrorCategory.Should().Be("rate_limit");
+        _state.ClassifyFailure().Should().Be(AgentErrorCategory.ProviderRateLimit);
     }
 
     [Fact]
@@ -129,6 +130,19 @@ public class ClaudeStreamJsonParserTests
         totals.CacheWriteTokens.Should().Be(40);
         totals.WebSearchRequests.Should().Be(3);
         totals.Models.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProcessLine_ModelUsageWithoutTokens_FallsBackToUsage_KeepsPerModelCost()
+    {
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"result","subtype":"success","is_error":false,"session_id":"s","usage":{"input_tokens":11,"output_tokens":22},"modelUsage":{"claude-opus-5-5":{"inputTokens":0,"outputTokens":0,"costUSD":0.02}}}""",
+            _state);
+
+        var totals = _state.Totals!;
+        totals.InputTokens.Should().Be(11);
+        totals.OutputTokens.Should().Be(22);
+        totals.Models["claude-opus-5-5"].CostUsd.Should().Be(0.02m);
     }
 
     [Fact]

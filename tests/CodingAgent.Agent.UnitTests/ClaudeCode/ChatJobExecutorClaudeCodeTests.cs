@@ -106,6 +106,19 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
     }
 
     [Fact]
+    public async Task DisposeAsync_DisposesTheConversationsProvider()
+    {
+        var executor = CreateExecutor();
+        await using var batcher = new OutputBatcher();
+        await executor.ExecuteChatWithOutputAsync(Prompt("hi", useResume: false), batcher, CancellationToken.None);
+
+        await executor.DisposeAsync();
+        await executor.DisposeAsync();
+
+        _created.Should().ContainSingle().Which.Provider.Verify(p => p.DisposeAsync(), Times.Once);
+    }
+
+    [Fact]
     public async Task FirstPrompt_WritesSteeringAsUserRule_AndMcpConfigInClaudeFormat()
     {
         var executor = CreateExecutor();

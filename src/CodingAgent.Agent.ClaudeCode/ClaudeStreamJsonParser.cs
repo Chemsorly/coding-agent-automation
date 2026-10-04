@@ -331,8 +331,10 @@ internal static class ClaudeStreamJsonParser
         };
 
         // modelUsage covers every model call (main loop, subagents, compaction); usage only the
-        // main loop. Prefer the former and fall back to the latter on CLI versions without it.
-        if (models.Count > 0)
+        // main loop. Prefer the former and fall back to the latter on CLI versions without it, or
+        // when modelUsage carries no token counts at all.
+        var modelTokens = models.Values.Sum(m => m.InputTokens + m.OutputTokens + m.CacheReadTokens + m.CacheWriteTokens);
+        if (modelTokens > 0)
         {
             return totals with
             {

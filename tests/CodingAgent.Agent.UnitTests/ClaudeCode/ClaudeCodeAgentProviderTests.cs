@@ -266,6 +266,21 @@ public class ClaudeCodeAgentProviderTests : IDisposable
             });
     }
 
+    [Fact]
+    public async Task ExecuteAsync_RateLimitWarning_IsShownAndReported()
+    {
+        _launcher.Enqueue(
+            Init("s1"),
+            """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"seven_day","utilization":0.91}}""",
+            Result("s1", 1, 1, 0, 0.01m, 1));
+
+        var result = await CreateProvider().ExecuteAsync(Request(), CancellationToken.None);
+
+        result.OutputLines.Should().ContainSingle(l => l.Contains("seven_day") && l.Contains("allowed_warning"));
+        result.UsageDetails!.RateLimits.Should().ContainSingle()
+            .Which.Utilization.Should().Be(0.91);
+    }
+
     // ── Sessions ───────────────────────────────────────────────────────
 
     [Fact]
@@ -301,13 +316,17 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     {
         var provider = CreateProvider();
         _launcher.Enqueue(Init("gen"), Result("gen", 1, 1, 0, 0.01m, 1));
-        _launcher.Enqueue(Init("other"), Result("other", 1, 1, 0, 0.01m, 1));
+        _launcher.Enqueue(Init("other"), Result("other", input: 70, output: 30, thinking: 0, cost: 0.07m, turns: 4));
 
         await provider.ExecuteAsync(Request(), CancellationToken.None);
-        await provider.ExecuteAsync(Request(resumeSessionId: "other"), CancellationToken.None);
+        var resumed = await provider.ExecuteAsync(Request(resumeSessionId: "other"), CancellationToken.None);
 
         _launcher.Started[1].ArgumentList.Should().ContainInOrder("--resume", "other");
         (await provider.GetLatestSessionIdAsync(_workspace, CancellationToken.None)).Should().Be("gen");
+        // Nothing was seen of "other" before, so its totals are reported in full.
+        resumed.Usage!.InputTokens.Should().Be(70);
+        resumed.Cost.Should().Be(0.07m);
+        resumed.UsageDetails!.Turns.Should().Be(4);
     }
 
     [Fact]

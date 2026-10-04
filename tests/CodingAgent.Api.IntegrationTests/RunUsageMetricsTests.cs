@@ -499,6 +499,8 @@ public sealed class RunUsageMetricsTests
             "unknown windows and statuses are folded into 'other' to bound label cardinality");
         utilizationBag.Should().ContainSingle(m => Math.Abs(m.Value - 0.8317) < 1e-9)
             .Which.Tags["window"].Should().Be("seven_day_opus");
+        utilizationBag.Should().NotContain(m => Equals(m.Tags["window"], "other"),
+            "a reading without utilization records no histogram sample");
     }
 
     // ── Test infrastructure ───────────────────────────────────────────────────
