@@ -240,14 +240,9 @@ public partial class QualityGateExecutor
         // UpdatePullRequestAsync(markReady:true) succeeds) over the pre-FinalizePullRequest fallback.
         // This closes the window where a push-event CI that started between prReadyFallback and the
         // actual mark-ready call could be wrongly accepted as the pull_request-event CI — the root
-        // cause of issue #3114.
-        // TODO [WARNING] (Correctness): run.PrMarkedReadyAt is read here after FinalizePullRequest
-        // returns. In the OCE case (UpdatePullRequestAsync(markReady:true) succeeds and sets
-        // PrMarkedReadyAt, then a subsequent call inside RunPostPrSequenceAsync throws OCE),
+        // cause of issue #3114. Note: in the OCE case (UpdatePullRequestAsync(markReady:true) succeeds
+        // and sets PrMarkedReadyAt, then a subsequent call inside RunPostPrSequenceAsync throws OCE),
         // FinalizePullRequest propagates the OCE and this line is never reached — the path is safe.
-        // However, the comment in the XML doc implies the field is set "without error"; it is more
-        // accurate to say the field is set after the mark-ready call completes successfully,
-        // regardless of what follows within the same FinalizePullRequest invocation.
         var notBefore = run.PrMarkedReadyAt ?? prReadyFallback;
         report = await WaitForPostPrCiAsync(context, report, notBefore, linkedCt);
         if (run.CurrentStep.IsQualityGateExitState()) return;
