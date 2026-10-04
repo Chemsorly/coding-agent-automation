@@ -113,12 +113,19 @@
                                         </button>
                                     </td>
                                     <td>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" checked="@template.Enabled"
-                                                   aria-label="@($"Enable {template.Name}")"
-                                                   @onchange="e => OnToggleEnabled.InvokeAsync((template, (bool)(e.Value ?? false)))" />
-                                            <span class="toggle-slider"></span>
-                                        </label>
+                                        @if (CanEdit)
+                                        {
+                                            <label class="toggle-switch">
+                                                <input type="checkbox" checked="@template.Enabled"
+                                                       aria-label="@($"Enable {template.Name}")"
+                                                       @onchange="e => OnToggleEnabled.InvokeAsync((template, (bool)(e.Value ?? false)))" />
+                                                <span class="toggle-slider"></span>
+                                            </label>
+                                        }
+                                        else
+                                        {
+                                            <span class="feature-badge @(template.Enabled ? "feature-on" : "feature-off")" data-testid="template-enabled-readonly">@(template.Enabled ? "On" : "Off")</span>
+                                        }
                                         @if (IsLoopActive && RecentlyToggled.Contains(template.Id))
                                         {
                                             <span class="monitoring-muted" style="font-size: 0.7rem; margin-left: 4px;">next cycle</span>
@@ -153,7 +160,11 @@
                                             <span class="monitoring-muted">—</span>
                                         }
                                     </td>
-                                    @if (!IsLoopActive)
+                                    @if (!IsLoopActive && !CanEdit)
+                                    {
+                                    <td></td>
+                                    }
+                                    else if (!IsLoopActive)
                                     {
                                     <td>
                                         <div style="display: flex; gap: 4px; align-items: center;">
@@ -189,7 +200,7 @@
                                 </tr>
 
                                 @* Inline feature configuration row — shown when badge bar is clicked *@
-                                @if (isExpanded)
+                                @if (isExpanded && CanEdit)
                                 {
                                     <tr class="feature-config-row">
                                         <td colspan="@_columnCount">
@@ -263,7 +274,11 @@
         }
     }
 
-    @if (ShowAddForm)
+    @if (!CanEdit)
+    {
+        @* Spec 049: template configuration is admin-only; the add form and confirmations are never rendered. *@
+    }
+    else if (ShowAddForm)
     {
         <TemplateAddForm Form="AddForm" FormError="@FormError" Projects="Projects"
             IssueProviders="IssueProviders" RepoProviders="RepoProviders"
@@ -276,7 +291,7 @@
         <button class="btn-add" style="margin-top: 12px;" @onclick="() => OnShowAddForm.InvokeAsync()">+ Add Template</button>
     }
 
-    @if (ShowDeleteConfirm && DeletingTemplate != null)
+    @if (CanEdit && ShowDeleteConfirm && DeletingTemplate != null)
     {
         <div class="agent-detail-confirm" style="margin-top: 12px;">
             <p>Remove template <strong>@DeletingTemplate.Name</strong>?</p>

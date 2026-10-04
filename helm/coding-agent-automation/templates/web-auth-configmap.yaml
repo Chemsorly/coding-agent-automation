@@ -1,0 +1,26 @@
+{{- /*
+Spec 049: non-secret authentication settings for the web host, mounted as /app/config/auth.json.
+The .NET configuration binder is case-insensitive, so the Helm value names bind directly. Secrets
+(the admin password, the OIDC client secret) never appear here; they arrive as secretKeyRef env vars.
+*/ -}}
+{{- include "coding-agent-automation.validateAuth" . }}
+{{- $auth := .Values.auth | default dict -}}
+{{- $admin := omit ($auth.admin | default dict) "existingSecret" "existingSecretKey" -}}
+{{- $oidc := omit ($auth.oidc | default dict) "clientSecret" -}}
+{{- $rbac := $auth.rbac | default dict -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-web-auth
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+data:
+  auth.json: |
+    {{- dict "Auth" (dict
+          "sessionDuration" (toString ($auth.sessionDuration | default "12h"))
+          "loginRateLimitPerMinute" ($auth.loginRateLimitPerMinute | default 5)
+          "admin" $admin
+          "oidc" $oidc
+          "rbac" (dict "defaultRole" ($rbac.defaultRole | default "") "bindings" ($rbac.bindings | default list))
+        ) | toPrettyJson | nindent 4 }}

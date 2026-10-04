@@ -31,6 +31,24 @@ Ingress is enabled. Access the UI at:
 {{- end }}
 {{- end }}
 
+── Sign-in ───────────────────────────────────────────────────────────────────
+The web UI requires a signed-in user (see docs/authentication.md). Serve it at the root of
+its own host (web.ingress or kubectl port-forward); path-prefix proxies are not supported.
+{{- if include "coding-agent-automation.adminEnabled" . }}
+
+Local admin: user "admin". Read the password with:
+  kubectl get secret {{ include "coding-agent-automation.adminSecretName" . }} -n {{ .Release.Namespace }} \
+    -o jsonpath='{.data.{{ include "coding-agent-automation.adminSecretKey" . }}}' | base64 -d
+{{- end }}
+{{- with ((.Values.auth | default dict).oidc | default dict) }}
+{{- if .enabled }}
+
+OIDC: sign in with {{ .name }} ({{ .issuer }}). Register the redirect URI
+  https://<web host>/signin-oidc
+with the identity provider.
+{{- end }}
+{{- end }}
+
 ═══════════════════════════════════════════════════════════════════════════════
  KUBERNETES DEPLOYMENT — OPERATIONAL RUNBOOK
 ═══════════════════════════════════════════════════════════════════════════════

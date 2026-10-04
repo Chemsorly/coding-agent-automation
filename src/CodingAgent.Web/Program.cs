@@ -5,6 +5,7 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
+using CodingAgent.Web.Auth;
 using CodingAgent.Web.Models;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
@@ -28,6 +29,12 @@ Log.Logger = HostBootstrap.CreateBootstrapLogger();
 // (review-findings #2865)
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Spec 049: the chart renders the non-secret auth values to /app/config/auth.json. Environment
+// variables are added again afterwards so they keep precedence (secrets, overrides).
+builder.Configuration
+    .AddJsonFile(builder.Configuration[AuthOptions.ConfigPathKey] ?? AuthOptions.DefaultConfigPath, optional: true, reloadOnChange: false)
+    .AddEnvironmentVariables();
 
 // Register services
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
@@ -137,8 +144,8 @@ builder.Services.AddScoped<CodingAgent.Web.Services.IChatPromptBuilder, CodingAg
 // SignalR — hub services with MessagePack protocol and agent authorization filter
 builder.Services.AddSignalRServices(builder.Environment);
 
-// Agent API key authentication and authorization
-builder.Services.AddAgentAuthentication(Serilog.Log.Logger);
+// User authentication (cookie, local admin, OIDC, role bindings) plus the agent API key scheme
+builder.Services.AddUserAuthentication(builder.Configuration, Serilog.Log.Logger);
 
 // Configure Serilog
 builder.Host.ConfigureSerilog();

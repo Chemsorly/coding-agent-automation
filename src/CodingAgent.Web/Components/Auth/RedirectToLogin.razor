@@ -1,0 +1,11 @@
+@using CodingAgent.Web.Auth
+@inject NavigationManager Nav
+
+@code {
+    // Full page load so the login page renders statically and the cookie handler sees the request.
+    protected override void OnInitialized()
+    {
+        var returnUrl = "/" + Nav.ToBaseRelativePath(Nav.Uri);
+        Nav.NavigateTo($"{AuthPaths.Login.TrimStart('/')}?{AuthPaths.ReturnUrlParameter}={Uri.EscapeDataString(returnUrl)}", forceLoad: true);
+    }
+}

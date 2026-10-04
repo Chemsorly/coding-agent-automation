@@ -22,6 +22,12 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     [Parameter, EditorRequired] public Func<string, WorkItemStatus?> GetProcessingStatus { get; set; } = _ => null;
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<TItem> OnDispatch { get; set; }
+
+    /// <summary>
+    /// Spec 049: whether the signed-in user may dispatch from this drawer (operator on the
+    /// template's project). False hides the dispatch button; the page service enforces the rule.
+    /// </summary>
+    [Parameter] public bool CanDispatch { get; set; } = true;
     [Parameter] public RenderFragment? HeaderPrefix { get; set; }
 
     protected string _filter = "";
@@ -66,7 +72,8 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     // TODO: async virtual method may emit CS1998 if derived classes override without awaiting. Consider splitting into non-async guard + async invoke.
     protected virtual async Task DispatchSelected()
     {
-        if (SelectedItem != null)
+        // Enter in the list dispatches too, so the check is here and not only on the button.
+        if (SelectedItem != null && CanDispatch)
             await OnDispatch.InvokeAsync(SelectedItem);
     }
 

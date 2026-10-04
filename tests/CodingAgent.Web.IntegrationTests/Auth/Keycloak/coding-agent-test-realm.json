@@ -1,0 +1,77 @@
+{
+  "realm": "coding-agent-test",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": false,
+  "groups": [
+    { "name": "team-a" },
+    { "name": "platform-team" }
+  ],
+  "clients": [
+    {
+      "clientId": "coding-agent",
+      "name": "Coding Agent web UI (Spec 049 integration tests)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "test-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [ "http://localhost/*", "http://localhost:*" ],
+      "webOrigins": [ "+" ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "alice",
+      "enabled": true,
+      "email": "alice@example.test",
+      "emailVerified": true,
+      "firstName": "Alice",
+      "lastName": "Operator",
+      "groups": [ "/team-a" ],
+      "credentials": [ { "type": "password", "value": "alice-password", "temporary": false } ]
+    },
+    {
+      "username": "bob",
+      "enabled": true,
+      "email": "bob@example.test",
+      "emailVerified": true,
+      "firstName": "Bob",
+      "lastName": "Admin",
+      "groups": [ "/platform-team" ],
+      "credentials": [ { "type": "password", "value": "bob-password", "temporary": false } ]
+    },
+    {
+      "username": "carol",
+      "enabled": true,
+      "email": "carol@example.test",
+      "emailVerified": true,
+      "firstName": "Carol",
+      "lastName": "Nobody",
+      "credentials": [ { "type": "password", "value": "carol-password", "temporary": false } ]
+    }
+  ]
+}

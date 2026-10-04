@@ -1,21 +1,31 @@
 using System.Net;
+using CodingAgent.Web.IntegrationTests.Helpers;
 
 namespace CodingAgent.Web.IntegrationTests.Smoke;
 
 [Collection("SmokeTests")]
-public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
+public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>, IAsyncLifetime
 {
-    private readonly HttpClient _client;
-    private readonly HttpClient _clientNoRedirect;
+    private readonly CustomWebApplicationFactory _factory;
+    private HttpClient _client = default!;
+    private HttpClient _clientNoRedirect = default!;
 
     public PageSmokeTests(CustomWebApplicationFactory factory)
     {
-        _client = factory.CreateClient();
-        _clientNoRedirect = factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
+        _factory = factory;
+    }
+
+    public async Task InitializeAsync()
+    {
+        // Spec 049: pages require a signed-in user.
+        _client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
+        _clientNoRedirect = _factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
     }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Theory]
     [InlineData("/agent-coding")]

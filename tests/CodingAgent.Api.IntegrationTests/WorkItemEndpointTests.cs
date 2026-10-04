@@ -865,6 +865,22 @@ public sealed class WorkItemEndpointTests
             "IssueTitle must be extracted from JobDistributionRequest.IssueDetail.Title in the Payload");
     }
 
+    // Spec 049 Req 8.10: the web UI checks cancel actions against the item's own project.
+    [Fact]
+    public async Task GetActiveWorkItems_ReturnsProjectId()
+    {
+        var projectId = new Guid("49000000-0000-0000-0000-000000000001");
+        var withProject = SeedEntity(WorkItemStatus.Running, projectId: projectId);
+        var withoutProject = SeedEntity(WorkItemStatus.Running);
+
+        var response = await _client.GetAsync("/api/work-items/active?olderThanSeconds=0");
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        var items = await response.Content.ReadFromJsonAsync<List<ActiveWorkItemDto>>(PipelineJsonOptions.Default);
+        items!.Single(i => i.Id == withProject.Id).ProjectId.Should().Be(projectId);
+        items!.Single(i => i.Id == withoutProject.Id).ProjectId.Should().BeNull();
+    }
+
     [Fact]
     public async Task GetActiveWorkItems_ReturnsNullIssueTitle_WhenPayloadLacksIssueDetail()
     {

@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
@@ -46,6 +47,7 @@ public class AgentCodingValidationBannerTests : BunitContext
 
     public AgentCodingValidationBannerTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<ILogger>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))

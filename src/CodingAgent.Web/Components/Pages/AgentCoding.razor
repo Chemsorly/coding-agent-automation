@@ -1,5 +1,6 @@
 @page "/agent-coding"
 @page "/pipelines"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
 @layout CockpitLayout
 @implements IDisposable
 @using CodingAgent.Pipeline.Models
@@ -20,14 +21,18 @@
 
     @* ═══ Overlay toast stack ═══ *@
     <div class="agent-toast-stack">
-        @if (LoopService.IsCircuitBroken)
+        @* Spec 049: the loop spans every project — its details need a global role, its controls global operator. *@
+        @if (LoopService.IsCircuitBroken && Access.HasGlobalRead)
         {
             <div class="agent-summary-bar" style="background: var(--bg-error); color: var(--error); border-color: var(--error);">
                 @LoopService.StatusMessage
-                <span style="margin-left: 1rem;">
-                    <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
-                    <button class="btn-cancel" @onclick="StopLoop" disabled="@_stopPending">Stop</button>
-                </span>
+                @if (Access.HasGlobalOperate)
+                {
+                    <span style="margin-left: 1rem;">
+                        <button class="btn-save" @onclick="ResumeLoop" style="margin-right: 0.5rem;">Resume</button>
+                        <button class="btn-cancel" @onclick="StopLoop" disabled="@_stopPending">Stop</button>
+                    </span>
+                }
             </div>
         }
 
@@ -83,16 +88,19 @@
 
     <div class="agent-content-layout">
         <div class="agent-main">
-            <OnboardingChecklist
-                HasIssueProvider="@(_issueProviders.Count > 0)"
-                HasRepoProvider="@(_repoProviders.Count > 0)"
-                HasProject="@(_projects.Count > 0)"
-                HasTemplate="@(_templates.Count > 0)"
-                HasAgent="@(Registry.GetAllAgents().Count > 0)"
-                IsLoopActive="LoopService.IsLoopActive"
-                OnAddTemplate="ShowAddForm" />
+            @if (Access.IsAdmin)
+            {
+                <OnboardingChecklist
+                    HasIssueProvider="@(_issueProviders.Count > 0)"
+                    HasRepoProvider="@(_repoProviders.Count > 0)"
+                    HasProject="@(_projects.Count > 0)"
+                    HasTemplate="@(_templates.Count > 0)"
+                    HasAgent="@(Registry.GetAllAgents().Count > 0)"
+                    IsLoopActive="LoopService.IsLoopActive"
+                    OnAddTemplate="ShowAddForm" />
+            }
 
-            <TemplateTableSection Templates="_templates" Projects="_projects"
+            <TemplateTableSection Templates="_templates" Projects="_projects" CanEdit="Access.IsAdmin"
                 IssueProviders="_issueProviders" RepoProviders="_repoProviders"
                 BrainProviders="_brainProviders" PipelineProviders="_pipelineProviders"
                 IsLoopActive="LoopService.IsLoopActive" RecentlyToggled="_recentlyToggled"
@@ -110,9 +118,15 @@
                 OnCancelAdd="CancelAddForm" OnRemoveTemplate="RemoveTemplate" OnCancelDelete="CancelDelete" />
 
             <!-- ═══ Loop Controls ═══ -->
-            <section class="settings-section">
+            @if (Access.HasGlobalRead)
+            {
+            <section class="settings-section" data-testid="loop-controls">
                 <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                    @if (!LoopService.IsLoopActive)
+                    @if (!Access.HasGlobalOperate)
+                    {
+                        <span class="monitoring-muted" style="font-size: 0.82rem;">Loop @(LoopService.IsLoopActive ? "running" : "stopped")</span>
+                    }
+                    else if (!LoopService.IsLoopActive)
                     {
                         <button class="btn-save" @onclick="StartLoop" disabled="@(!CanStartLoop)" title="@(!CanStartLoop ? StartLoopDisabledReason : null)"><Icon Name="play" Size="16" /> Start Loop</button>
                     }
@@ -141,6 +155,7 @@
                     </div>
                 }
             </section>
+            }
 
             <!-- ═══ Manual Dispatch ═══ -->
             <section class="settings-section">
@@ -164,7 +179,7 @@
 </div>
 
 <!-- Dispatch Drawers -->
-<IssueDispatchDrawer IsOpen="_drawerOpen" Template="_drawerTemplate"
+<IssueDispatchDrawer IsOpen="_drawerOpen" Template="_drawerTemplate" CanDispatch="CanDispatchFrom(_drawerTemplate)"
     Issues="_drawerIssues" IsLoading="_drawerLoading" HasMore="_drawerHasMore" Page="_drawerPage"
     IsDispatching="_drawerDispatching" GetProcessingStatus="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId ?? ""))"
     Readiness="_drawerReadiness"
@@ -186,7 +201,7 @@
     </HeaderPrefix>
 </IssueDispatchDrawer>
 
-<PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"
+<PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate" CanDispatch="CanDispatchFrom(_prDrawerTemplate)"
     PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
     IsDispatching="_prDrawerDispatching" GetProcessingStatus="@(id => IsIssueActive(id, _prDrawerTemplate?.RepoProviderId ?? ""))"
     AvailableLabels="_prDrawerLabels" SelectedLabels="_prDrawerSelectedLabels"
@@ -204,7 +219,7 @@
     </HeaderPrefix>
 </PrDispatchDrawer>
 
-<EpicDispatchDrawer IsOpen="_epicDrawerOpen" Template="_epicDrawerTemplate"
+<EpicDispatchDrawer IsOpen="_epicDrawerOpen" Template="_epicDrawerTemplate" CanDispatch="CanDispatchFrom(_epicDrawerTemplate)"
     Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" HasMore="_epicDrawerHasMore" Page="_epicDrawerPage"
     IsDispatching="_epicDrawerDispatching" GetProcessingStatus="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
     AvailableLabels="_epicDrawerLabels" SelectedLabels="_epicDrawerSelectedLabels"

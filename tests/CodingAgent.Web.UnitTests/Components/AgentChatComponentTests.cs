@@ -1,3 +1,6 @@
+using CodingAgent.Web.Auth;
+using AwesomeAssertions;
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using Moq;
 using CodingAgent.Api.Client;
@@ -31,6 +34,7 @@ public class AgentChatComponentTests : BunitContext
 
     public AgentChatComponentTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<Serilog.ILogger>();
         _mockStore = new Mock<IConfigurationStore>();
         var mockFactory = new Mock<IProviderFactory>();
@@ -190,6 +194,7 @@ public class AgentChatMcpConfigPathTests : BunitContext
 
     public AgentChatMcpConfigPathTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<Serilog.ILogger>();
         _mockStore = new Mock<IConfigurationStore>();
         _mockAgentClient = new Mock<IPipelineApiAgentClient>();
@@ -529,6 +534,7 @@ public class AgentChatHubStartTimingTests : BunitContext
 
     public AgentChatHubStartTimingTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockStore = new Mock<IConfigurationStore>();
         _mockDispatcher = new Mock<IChatJobDispatcher>();
@@ -676,5 +682,65 @@ public class AgentChatHubStartTimingTests : BunitContext
             h => h.On<string, int, string?>(HubMethodNames.OnChatCompleted, It.IsAny<Action<string, int, string?>>()),
             Times.Once,
             "OnChatCompleted handler must be registered after pod launch");
+    }
+}
+
+/// <summary>Spec 049 (D13): Agent Chat is project-scoped.</summary>
+public class AgentChatAccessTests : BunitContext
+{
+    private readonly Mock<IConfigurationStore> _mockStore = new();
+
+    public AgentChatAccessTests()
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new PipelineConfiguration());
+        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<AgentProfile>());
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<ProviderConfig>());
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineProject>
+        {
+            new() { Id = "6f1c2a9e-0000-0000-0000-00000000000a", Name = "payments" },
+            new() { Id = "6f1c2a9e-0000-0000-0000-00000000000b", Name = "billing" },
+        });
+        var registry = new AgentRegistryService(mockLogger.Object);
+        Services.AddSingleton(new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object));
+        Services.AddSingleton(registry);
+        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(_mockStore.Object);
+        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
+        Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+        var mockHub = new Mock<IAgentHubConnection>();
+        mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
+        Services.AddSingleton(mockHub.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
+        Services.AddSingleton<IChatPromptBuilder>(new ChatPromptBuilder());
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+    }
+
+    private string[] ProjectOptions(IRenderedComponent<AgentChat> cut) =>
+        cut.FindAll("#project-select-k8s option").Select(o => o.GetAttribute("value") ?? "").ToArray();
+
+    [Fact]
+    public void ScopedOperator_ChoosesOnlyFromOperableProjects_AndMustChooseOne()
+    {
+        Services.AddTestAccess(TestAccess.Scoped(("6f1c2a9e-0000-0000-0000-00000000000a", AccessRole.Operator), ("6f1c2a9e-0000-0000-0000-00000000000b", AccessRole.ReadOnly)));
+
+        var cut = Render<AgentChat>();
+
+        ProjectOptions(cut).Should().Equal("6f1c2a9e-0000-0000-0000-00000000000a");
+    }
+
+    [Fact]
+    public void GlobalOperator_MayChatWithoutAProject()
+    {
+        Services.AddTestAccess(TestAccess.Global(AccessRole.Operator));
+
+        var cut = Render<AgentChat>();
+
+        ProjectOptions(cut).Should().Equal("", "6f1c2a9e-0000-0000-0000-00000000000b", "6f1c2a9e-0000-0000-0000-00000000000a");
     }
 }

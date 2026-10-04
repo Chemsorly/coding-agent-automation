@@ -1,0 +1,16 @@
+@inherits LayoutComponentBase
+
+@* Minimal shell for the login, profile-less and access-denied pages (Spec 049). Unlike
+   CockpitLayout it calls no API, so it also renders without an interactive circuit. *@
+<div class="cockpit auth-shell">
+    <main class="auth-main">
+        <div class="auth-brand">
+            <span class="cockpit-brand-mark"><Icon Name="bot" Size="19" /></span>
+            <span class="cockpit-brand-text">
+                <span class="cockpit-brand-name">Coding Agent</span>
+                <span class="cockpit-brand-sub">Automation</span>
+            </span>
+        </div>
+        @Body
+    </main>
+</div>

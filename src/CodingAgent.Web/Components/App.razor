@@ -35,10 +35,10 @@
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="css/cockpit.css" />
     <link rel="stylesheet" href="CodingAgent.Web.styles.css" />
-    <HeadOutlet @rendermode="InteractiveServer" />
+    <HeadOutlet @rendermode="PageRenderMode" />
 </head>
 <body>
-    <Routes @rendermode="InteractiveServer" />
+    <Routes @rendermode="PageRenderMode" />
 
     <script src="_framework/blazor.web.js"></script>
     <script>
@@ -115,3 +115,13 @@
 </body>
 </html>
 
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    // Spec 049: the login page ([ExcludeFromInteractiveRouting]) renders statically so its form can
+    // post to /auth/login and receive the session cookie; every other page stays interactive.
+    private IComponentRenderMode? PageRenderMode =>
+        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+}

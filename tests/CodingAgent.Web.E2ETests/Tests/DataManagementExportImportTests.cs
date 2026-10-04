@@ -64,7 +64,8 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
         var browser = await _fixture.GetBrowserAsync();
         _context = await browser.NewContextAsync(new BrowserNewContextOptions
         {
-            AcceptDownloads = true
+            AcceptDownloads = true,
+            StorageState = await _fixture.GetSignedInStorageStateAsync()
         });
         _page = await _context.NewPageAsync();
     }

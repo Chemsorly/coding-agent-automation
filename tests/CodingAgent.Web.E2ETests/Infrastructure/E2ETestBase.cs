@@ -32,9 +32,12 @@ public abstract class E2ETestBase : IAsyncLifetime
         // Reset all state between tests
         await Fixture.ResetAllAsync();
 
-        // Fresh browser context per test (isolated cookies, storage)
+        // Fresh browser context per test (isolated storage), starting signed in as the local admin
         var browser = await Fixture.GetBrowserAsync();
-        _context = await browser.NewContextAsync();
+        _context = await browser.NewContextAsync(new BrowserNewContextOptions
+        {
+            StorageState = await Fixture.GetSignedInStorageStateAsync()
+        });
         // TODO [WARNING]: StubExternalFontsAsync was removed in this change. The stub intercepted
         // requests to fonts.googleapis.com and fonts.gstatic.com to prevent the Google Fonts CDN
         // from blocking the Playwright "load" event that GotoAsync waits for. Without it, a slow

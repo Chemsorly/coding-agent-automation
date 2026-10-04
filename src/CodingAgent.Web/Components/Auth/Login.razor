@@ -1,0 +1,88 @@
+@page "/login"
+@layout AuthLayout
+@attribute [AllowAnonymous]
+@attribute [ExcludeFromInteractiveRouting]
+@using CodingAgent.Web.Auth
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.Extensions.Options
+@inject IOptions<AuthOptions> AuthOptions
+@inject NavigationManager Nav
+
+@* Static server-rendered (Req 10.1): the form posts to /auth/login, which sets the session cookie. *@
+<PageTitle>Sign in · Coding Agent</PageTitle>
+
+<section class="cockpit-card auth-card" aria-labelledby="login-title">
+    <h1 id="login-title">Sign in</h1>
+
+    @if (_errorMessage is not null)
+    {
+        <div class="auth-error" role="alert" data-testid="login-error">@_errorMessage</div>
+    }
+
+    @if (Oidc.Enabled)
+    {
+        <a class="btn-save auth-oidc" data-testid="login-oidc" href="@OidcHref">Sign in with @Oidc.Name</a>
+    }
+
+    @if (Oidc.Enabled && Admin.Enabled)
+    {
+        <div class="auth-divider"><span>or</span></div>
+    }
+
+    @if (Admin.Enabled)
+    {
+        <form method="post" action="@AuthEndpoints.LoginEndpoint.TrimStart('/')" class="auth-form" data-testid="login-form">
+            <AntiforgeryToken />
+            <input type="hidden" name="ReturnUrl" value="@_returnUrl" />
+            <label class="auth-field">
+                <span>Username</span>
+                <input name="Username" autocomplete="username" required value="@LocalAdminOptions.Username" data-testid="login-username" />
+            </label>
+            <label class="auth-field">
+                <span>Password</span>
+                <input name="Password" type="password" autocomplete="current-password" required autofocus data-testid="login-password" />
+            </label>
+            <button type="submit" class="btn-save" data-testid="login-submit">Sign in</button>
+        </form>
+    }
+</section>
+
+@code {
+    [CascadingParameter]
+    private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromQuery(Name = AuthPaths.ReturnUrlParameter)]
+    private string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery(Name = "error")]
+    private string? Error { get; set; }
+
+    private string _returnUrl = AuthPaths.DefaultLanding;
+    private string? _errorMessage;
+
+    private LocalAdminOptions Admin => AuthOptions.Value.Admin;
+    private OidcProviderOptions Oidc => AuthOptions.Value.Oidc;
+
+    private string OidcHref =>
+        $"{AuthEndpoints.OidcEndpoint.TrimStart('/')}?{AuthPaths.ReturnUrlParameter}={Uri.EscapeDataString(_returnUrl)}";
+
+    protected override void OnInitialized()
+    {
+        _returnUrl = AuthEndpoints.SafeReturnUrl(ReturnUrl);
+
+        if (HttpContext.User.Identity?.IsAuthenticated == true)
+        {
+            Nav.NavigateTo(_returnUrl.TrimStart('/'));
+            return;
+        }
+
+        // Fixed messages only; the query value is never echoed (Req 10.2).
+        _errorMessage = Error switch
+        {
+            LoginErrors.Credentials => "Invalid username or password",
+            LoginErrors.RateLimit => "Too many login attempts, try again in a minute",
+            LoginErrors.Oidc => $"Sign-in with {Oidc.Name} failed",
+            _ => null,
+        };
+    }
+}

@@ -27,6 +27,9 @@ spec:
       app.kubernetes.io/component: web
   template:
     metadata:
+      annotations:
+        # Spec 049: role bindings are read at startup; a changed auth config restarts the pods.
+        checksum/auth: {{ include (print $.Template.BasePath "/web-auth-configmap.yaml") . | sha256sum }}
       labels:
         {{- include "coding-agent-automation.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: web
@@ -106,6 +109,23 @@ spec:
                 name: {{ include "coding-agent-automation.fullname" . }}-web-env
           env:
             {{- include "coding-agent-automation.secretEnv" . | nindent 12 }}
+            # Spec 049: secrets of the user login (the rest of the auth config is in auth.json).
+            {{- if include "coding-agent-automation.adminEnabled" . }}
+            - name: Auth__Admin__Password
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "coding-agent-automation.adminSecretName" . }}
+                  key: {{ include "coding-agent-automation.adminSecretKey" . }}
+            {{- end }}
+            {{- with ((.Values.auth | default dict).oidc | default dict) }}
+            {{- if .enabled }}
+            - name: Auth__Oidc__ClientSecret
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .clientSecret.existingSecret }}
+                  key: {{ .clientSecret.key | default "client-secret" }}
+            {{- end }}
+            {{- end }}
             # KubernetesWorkDistributor and KubernetesJobCleanup have been migrated to
             # IPipelineApiWorkItemClient. IPipelineRunHistoryService, IConsolidationRunStore,
             # IHarnessSuggestionStore, and IWorkItemFallbackTransitionService are all API-backed
@@ -143,12 +163,19 @@ spec:
             # them via $(VAR_NAME) substitution. These MUST come before OTEL_RESOURCE_ATTRIBUTES.
             {{- include "coding-agent-automation.otelEnv" (dict "serviceName" (.Values.otel.webServiceName | default .Values.otel.orchestratorServiceName | default "coding-agent-web") "deploymentName" (printf "%s-web" (include "coding-agent-automation.fullname" .)) "root" .) | nindent 12 }}
           volumeMounts:
+            - name: auth-config
+              mountPath: /app/config/auth.json
+              subPath: auth.json
+              readOnly: true
             - name: job-templates
               mountPath: /app/config/job-templates.yaml
               subPath: job-templates.yaml
               readOnly: true
       volumes:
+        - name: auth-config
+          configMap:
+            name: {{ include "coding-agent-automation.fullname" . }}-web-auth
         - name: job-templates
           configMap:
             name: {{ include "coding-agent-automation.fullname" . }}-job-templates
-            optional: true
+            optional: true

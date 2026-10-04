@@ -809,3 +809,36 @@
     .cockpit-two-col-asymmetric { grid-template-columns: 1fr !important; }
     .cockpit-findings { grid-template-columns: 1fr; }
 }
+
+/* ── Auth pages and user menu (Spec 049) ─────────────────────────────────────── */
+.cockpit.auth-shell { align-items: center; justify-content: center; overflow: auto; padding: 24px 16px; }
+.auth-main { width: 100%; max-width: 420px; display: flex; flex-direction: column; gap: 20px; margin: auto; }
+.auth-main:has(.auth-main-wide-host) { max-width: 760px; }
+.auth-main-wide-host { display: flex; flex-direction: column; gap: 20px; }
+.auth-brand { display: flex; align-items: center; gap: 10px; justify-content: center; }
+.auth-card { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+.auth-card h1 { margin: 0; font-size: 20px; font-weight: 700; color: var(--text); }
+.auth-card p { margin: 0; color: var(--text-muted); line-height: 1.5; }
+.auth-error { padding: 10px 12px; border-radius: 8px; background: var(--error-bg); color: var(--error); font-size: 14px; }
+.auth-form { display: flex; flex-direction: column; gap: 12px; }
+.auth-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.auth-field input { padding: 9px 11px; border: 1px solid var(--ctl-border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: 14px; }
+.auth-form .btn-save, .auth-oidc { border-radius: 8px; text-align: center; text-decoration: none; }
+.auth-divider { display: flex; align-items: center; gap: 10px; color: var(--text-faint); font-size: 12px; text-transform: uppercase; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.auth-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.auth-actions a { border-radius: 8px; text-decoration: none; }
+.auth-authorizing { padding: 24px; color: var(--text-muted); }
+.auth-dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0; font-size: 14px; }
+.auth-dl dt { color: var(--text-muted); font-weight: 600; }
+.auth-dl dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.auth-groups { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-family: var(--font-mono); font-size: 13px; user-select: all; }
+.auth-groups li { user-select: all; overflow-wrap: anywhere; }
+.auth-warning { padding: 10px 12px; border-radius: 8px; background: var(--warning-bg); color: var(--warning); font-size: 14px; }
+.cockpit-user-menu { position: relative; }
+.cockpit-user-menu summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 13px; font-weight: 600; }
+.cockpit-user-menu summary::-webkit-details-marker { display: none; }
+.cockpit-user-menu-panel { position: absolute; right: 0; top: calc(100% + 6px); min-width: 180px; z-index: 50; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 19, 32, .12); padding: 6px; display: flex; flex-direction: column; }
+.cockpit-user-menu-panel a, .cockpit-user-menu-panel button { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 6px; color: var(--text); text-decoration: none; background: none; border: 0; font-size: 13px; cursor: pointer; }
+.cockpit-user-menu-panel a:hover, .cockpit-user-menu-panel button:hover { background: var(--bg-hover); }
+.cockpit-user-menu-panel form { margin: 0; }

@@ -1,0 +1,33 @@
+@inject CurrentAccess Access
+
+@* Shown for a page the signed-in principal may not open (Req 7.1, 5.9). *@
+<section class="cockpit-card auth-card" data-testid="access-denied">
+    @if (_noAccess)
+    {
+        <h1>You have no access yet</h1>
+        <p>Your account is signed in but has no role. Open your profile and send the groups listed there
+            to an administrator, who can bind one of them to a role.</p>
+    }
+    else
+    {
+        <h1>Access denied</h1>
+        <p>Your role does not allow you to open this page.</p>
+    }
+    <div class="auth-actions">
+        <a class="btn-save" href="@AuthPaths.Profile.TrimStart('/')">Show my profile</a>
+        @if (!_noAccess)
+        {
+            <a class="btn-cancel" href="@AuthPaths.DefaultLanding.TrimStart('/')">Back to overview</a>
+        }
+    </div>
+</section>
+
+@code {
+    private bool _noAccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Access.InitializeAsync();
+        _noAccess = !Access.Grant.HasAnyAccess;
+    }
+}

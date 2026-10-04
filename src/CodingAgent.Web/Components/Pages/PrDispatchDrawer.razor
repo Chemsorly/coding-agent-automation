@@ -133,10 +133,13 @@
                             Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("yyyy-MM-dd HH:mm")
                         </p>
                     }
+                    @if (CanDispatch)
+                    {
                     <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
                             data-testid="dispatch-pr-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Review on PR #{SelectedItem.Identifier}")
                     </button>
+                    }
                 </div>
             }
         }
@@ -166,7 +169,7 @@
 
     protected override async Task DispatchSelected()
     {
-        if (SelectedItem == null) return;
+        if (SelectedItem == null || !CanDispatch) return;
         await OnDispatch.InvokeAsync(SelectedItem);
         SelectedItem = null;
     }
