@@ -652,7 +652,8 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.

@@ -131,6 +131,5 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 
 Consolidation run history is automatically pruned by `DatabaseMaintenanceService`. Two retention mechanisms apply:
 
-- **PipelineRun records (backfilled consolidation history):** Consolidation run history is migrated into `PipelineRuns` by `BackfillConsolidationRunsAsync` and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps.
-  <!-- TODO [WARNING]: This bullet is stale after issue #3032. BackfillConsolidationRunsAsync and the ConsolidationRuns table no longer exist. Consolidation runs are now recorded directly as PipelineRuns at dispatch time (PipelineRunFactory.CreateFromWorkItem), so no backfill step is involved. Update to remove the BackfillConsolidationRunsAsync reference. -->
+- **PipelineRun records:** Consolidation runs are recorded as `PipelineRuns` when they are dispatched (`PipelineRunFactory.CreateFromWorkItem`) and pruned by the standard `PipelineRunRetentionDays` (default: `30` days, age-based) and `PipelineRunRetentionCount` (count-based per-project, default disabled) sweeps. The last successful run of a scope and the feedback for harness suggestions are read from these records, so what is pruned no longer counts.
 - **WorkItem rows (K8s mode):** Terminal consolidation `WorkItems` are deleted by `WorkDistribution:Reconciliation:StaleRetentionDays` (default: `7` days).

@@ -847,7 +847,8 @@ public sealed class AssignmentEnricherTests
     /// </summary>
     private static (StubDispatchInfrastructure Infra, Mock<IConsolidationJobPreparationService> ConsolidationPreparer, AssignmentEnricher Enricher) MakeConsolidationEnricher(
         IReadOnlyList<AgentProfile>? profiles = null,
-        ConsolidationJobPreparationResult? preparationResult = null)
+        ConsolidationJobPreparationResult? preparationResult = null,
+        IPipelineRunHistoryService? runHistory = null)
     {
         // Infra must NOT be called for consolidation items — configure to throw if invoked
         var infra = new StubDispatchInfrastructure((_, _) =>
@@ -871,8 +872,115 @@ public sealed class AssignmentEnricherTests
         var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
             infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger);
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger, runHistory);
         return (infra, preparerMock, enricher);
+    }
+
+    // ── Consolidation run history: last successful run + harness feedback ─────────────────────
+
+    private static PipelineRunSummary MakeConsolidationRunSummary(string scopeKey, DateTimeOffset completedAt) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = new IssueIdentifier(scopeKey),
+        IssueTitle = scopeKey,
+        FinalStep = PipelineStep.Completed,
+        CompletedAtOffset = completedAt,
+    };
+
+    private static PipelineRunSummary MakeRunWithFeedback(string stuckReason) => new()
+    {
+        RunId = Guid.NewGuid().ToString(),
+        IssueIdentifier = new IssueIdentifier("1"),
+        IssueTitle = "Some issue",
+        FinalStep = PipelineStep.Failed,
+        Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback { StuckReason = stuckReason }
+        }
+    };
+
+    private static Mock<IPipelineRunHistoryService> MakeRunHistory(
+        IReadOnlyList<PipelineRunSummary> successfulConsolidations, IReadOnlyList<PipelineRunSummary>? runsWithFeedback = null)
+    {
+        var history = new Mock<IPipelineRunHistoryService>();
+        history
+            .Setup(h => h.GetRunHistoryAsync(1, It.IsAny<int>(), false, PipelineStep.Completed, null, null,
+                PipelineRunType.Consolidation, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = successfulConsolidations, Page = 1, PageSize = 100, HasMore = false });
+        history
+            .Setup(h => h.GetRunHistoryAsync(1, It.IsAny<int>(), true, null, null, It.IsAny<DateTimeOffset?>(),
+                null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runsWithFeedback ?? [], Page = 1, PageSize = 200, HasMore = false });
+        return history;
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ConsolidationTask_SetsLastSuccessfulRunOfTheSameScope()
+    {
+        // The work item key "{type}:{scope}" is also the issue identifier of the consolidation's run history entries
+        var identity = MakeConsolidationIdentity() with { IssueIdentifier = new IssueIdentifier("BrainConsolidation:brain-1") };
+        var latest = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        var history = MakeRunHistory(
+        [
+            MakeConsolidationRunSummary("BrainConsolidation:brain-1", latest.AddDays(-3)),
+            MakeConsolidationRunSummary("BrainConsolidation:brain-2", latest.AddDays(1)),
+            MakeConsolidationRunSummary("BrainConsolidation:brain-1", latest),
+        ]);
+        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object);
+
+        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
+
+        result!.ConsolidationLastSuccessfulRunUtc.Should().Be(latest);
+        result.ConsolidationFeedbackDataJson.Should().BeNull("only harness suggestions get run feedback");
+    }
+
+    [Fact]
+    public async Task EnrichAsync_HarnessSuggestions_SetsFeedbackSinceTheLastSuccessfulRun()
+    {
+        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
+            with { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
+        var lastSuccess = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero);
+        var history = MakeRunHistory(
+            [MakeConsolidationRunSummary("HarnessSuggestions:global", lastSuccess)],
+            [MakeRunWithFeedback("Build tool missing"), MakeRunWithFeedback("Flaky test")]);
+        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object);
+
+        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
+
+        result!.ConsolidationFeedbackDataJson.Should().Contain("Build tool missing").And.Contain("Flaky test");
+        history.Verify(h => h.GetRunHistoryAsync(1, ConsolidationRunHistoryContext.MaxFeedbackEntries, true, null, null,
+            lastSuccess, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnrichAsync_HarnessSuggestions_NoFeedback_LeavesFeedbackNull()
+    {
+        var identity = MakeConsolidationIdentity(runType: ConsolidationRunType.HarnessSuggestions, templateId: null)
+            with { IssueIdentifier = new IssueIdentifier("HarnessSuggestions:global") };
+        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: MakeRunHistory([]).Object);
+
+        var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
+
+        result!.ConsolidationLastSuccessfulRunUtc.Should().BeNull();
+        result.ConsolidationFeedbackDataJson.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task EnrichAsync_ConsolidationTask_RunHistoryFails_StillEnrichesWithoutIt()
+    {
+        var history = new Mock<IPipelineRunHistoryService>();
+        history
+            .Setup(h => h.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(),
+                It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("DB timeout"));
+        var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object);
+
+        var result = await enricher.EnrichAsync(MakeConsolidationIdentity(), MakeProject(), CancellationToken.None);
+
+        result.Should().NotBeNull("the run history only adds context; dispatch must not fail on it");
+        result!.ConsolidationLastSuccessfulRunUtc.Should().BeNull();
     }
 
     [Fact]

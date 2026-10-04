@@ -66,6 +66,9 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             TemplateId = assignment.ConsolidationTemplateId,
             ProviderConfigs = assignment.ProviderConfigs,
             PipelineConfiguration = assignment.PipelineConfiguration,
+            LastSuccessfulRunUtc = assignment.ConsolidationLastSuccessfulRunUtc?.UtcDateTime,
+            FeedbackDataJson = assignment.ConsolidationFeedbackDataJson,
+            TraceContext = assignment.TraceContext,
             AutoDispatch = assignment.AutoDispatch,
             McpServers = assignment.McpServers
         };

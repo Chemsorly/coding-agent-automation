@@ -41,15 +41,21 @@ public class AssignmentEnricher
     private readonly IConsolidationJobPreparationService _consolidationPreparer;
     private readonly IProjectStore _projectStore;
     private readonly ConsolidationTemplateResolver _consolidationTemplateResolver;
+    private readonly IPipelineRunHistoryService? _runHistory;
     private readonly ILogger _logger;
 
+    /// <param name="runHistory">
+    /// The run history consolidation assignments read their last successful run and, for harness suggestions,
+    /// the run feedback from. When null, consolidation assignments go out without them.
+    /// </param>
     public AssignmentEnricher(
         DispatchInfrastructure infra,
         IAgentProfileStore agentProfileStore,
         IConsolidationJobPreparationService consolidationPreparer,
         IProjectStore projectStore,
         ConsolidationTemplateResolver consolidationTemplateResolver,
-        ILogger logger)
+        ILogger logger,
+        IPipelineRunHistoryService? runHistory = null)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(agentProfileStore);
@@ -63,6 +69,7 @@ public class AssignmentEnricher
         _consolidationPreparer = consolidationPreparer;
         _projectStore = projectStore;
         _consolidationTemplateResolver = consolidationTemplateResolver;
+        _runHistory = runHistory;
         _logger = logger;
     }
 
@@ -360,11 +367,14 @@ public class AssignmentEnricher
             ? (TemplateId?)null
             : (TemplateId)identity.ConsolidationTemplateId;
 
+        var runType = identity.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation;
         var preparation = await _consolidationPreparer.PrepareAsync(
-            identity.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+            runType,
             templateId,
             agentLabels,
             ct);
+
+        var (lastSuccessfulRunUtc, feedbackDataJson) = await ReadConsolidationHistoryAsync(identity, runType, ct);
 
         // ── Step 4: Build enriched JobDistributionRequest ─────────────────────────
         // QualityGateConfigs and ReviewerConfigs are intentionally not set —
@@ -383,7 +393,36 @@ public class AssignmentEnricher
             McpServers = McpServerMerge.Merge(profile.McpServers, project.McpServers),
             ProjectSteeringContent = project.SteeringContent,
             RepoSteeringContent = providerConfigs.TryGetProviderConfig(preparation.RepoProviderConfigId)?.SteeringContent,
+            ConsolidationLastSuccessfulRunUtc = lastSuccessfulRunUtc,
+            ConsolidationFeedbackDataJson = feedbackDataJson,
         };
+    }
+
+    /// <summary>
+    /// Reads the consolidation's last successful run of the same scope and, for harness suggestions, the run
+    /// feedback collected since. Best effort: a run history failure is logged and the assignment goes out
+    /// without them (brain consolidation then reviews the whole brain, harness suggestions find no feedback).
+    /// </summary>
+    private async Task<(DateTimeOffset? LastSuccessfulRunUtc, string? FeedbackDataJson)> ReadConsolidationHistoryAsync(
+        JobDistributionRequest identity, ConsolidationRunType runType, CancellationToken ct)
+    {
+        if (_runHistory is null)
+            return (null, null);
+
+        try
+        {
+            var lastSuccess = await ConsolidationRunHistoryContext.GetLastSuccessfulRunAsync(_runHistory, identity.IssueIdentifier, ct);
+            var feedbackJson = runType == ConsolidationRunType.HarnessSuggestions
+                ? await ConsolidationRunHistoryContext.BuildFeedbackDataJsonAsync(_runHistory, lastSuccess, ct)
+                : null;
+            return (lastSuccess, feedbackJson);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "AssignmentEnricher: could not read the run history for consolidation {Key}; dispatching without it",
+                identity.IssueIdentifier.Value);
+            return (null, null);
+        }
     }
 
     /// <summary>
