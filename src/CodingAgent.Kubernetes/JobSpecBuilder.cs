@@ -188,8 +188,7 @@ public static class JobSpecBuilder
 
         // Spec 043 Req 8a: every agent Job gets only its own key, HMAC-SHA256(master key, job name),
         // from the per-Job Secret the dispatcher creates (AgentJobKeySecret). The master key is never
-        // mounted into an agent pod. The agent treats a key from the AGENT_API_KEY env var as already
-        // derived and uses it as-is, so it must arrive here and not via AGENT_API_KEY_FILE.
+        // mounted into an agent pod; the agent uses the AGENT_API_KEY value as its bearer token as-is.
         envVars.Add(new V1EnvVar
         {
             Name = AgentDefaults.EnvAgentApiKey,

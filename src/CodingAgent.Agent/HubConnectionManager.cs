@@ -83,8 +83,7 @@ public sealed class HubConnectionManager : IHubConnectionManager
     public HubConnection Connection => _connection;
 
     public HubConnectionManager(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger,
-        Func<HttpMessageHandler, HttpMessageHandler>? httpMessageHandlerFactory = null,
-        bool keyIsPreDerived = false)
+        Func<HttpMessageHandler, HttpMessageHandler>? httpMessageHandlerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
         ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
@@ -93,11 +92,9 @@ public sealed class HubConnectionManager : IHubConnectionManager
 
         _logger = logger;
 
-        // When keyIsPreDerived is true, the caller has already received a pre-computed
-        // HMAC-SHA256(masterKey, agentId) credential (from a per-job K8s Secret).
-        // Use it directly as the bearer token — no further derivation needed.
-        // When false (legacy path: non-work-item pods receiving the master key), derive in-process.
-        var bearerToken = keyIsPreDerived ? apiKey : DeriveKey(apiKey, agentId.Value);
+        // apiKey is the Job's own HMAC-SHA256(masterKey, agentId) credential from its K8s Secret;
+        // it is the bearer token as-is.
+        var bearerToken = apiKey;
         var hubUrl = $"{orchestratorUrl.TrimEnd('/')}{HubRoutes.Agent}?agentId={Uri.EscapeDataString(agentId.Value)}";
 
         _logger.Information("HubConnectionManager: target hub URL = {HubUrl}", hubUrl);
@@ -258,14 +255,6 @@ public sealed class HubConnectionManager : IHubConnectionManager
     {
         await _connection.DisposeAsync();
     }
-
-    /// <summary>
-    /// Derives a per-agent key from the master secret and agent ID (<see cref="AgentKeyDerivation"/>,
-    /// the derivation the server verifies against). Returns the raw key if agentId is empty
-    /// (legacy fallback).
-    /// </summary>
-    internal static string DeriveKey(string masterKey, string agentId)
-        => string.IsNullOrEmpty(agentId) ? masterKey : AgentKeyDerivation.DeriveAgentKey(masterKey, agentId);
 
     /// <summary>
     /// Retry policy that never gives up. Uses exponential backoff (2^n seconds, capped at 2 minutes)

@@ -279,7 +279,7 @@ For full request/response examples, authentication details, and query parameters
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). |
+| `AGENT_API_KEY` | Master key for authenticating agent connections. Each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret; agents never see the master key. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. **Note:** `CodingAgent.Web` reads this via the IConfiguration keys `Orchestrator:PipelineLoopStartupDelaySeconds` or `Env:PipelineLoopStartupDelaySeconds`; the Helm-injected flat env var `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` does not map to either of those paths and is effectively ignored at present (the value is always 0 in Kubernetes). |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
@@ -328,8 +328,7 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `ORCHESTRATOR_URL` | URL of the orchestrator's SignalR hub (e.g., `http://orchestrator:8080`) |
 | `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
-| `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. |
-| `AGENT_API_KEY_FILE` | Path to a file holding the **master** key; the agent derives its own key from it and `AGENT_ID`. Only for agents started by hand. Takes precedence over `AGENT_API_KEY`. |
+| `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. An agent started by hand needs the same derived key. |
 | `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` or `OpenCode`. When absent or empty, defaults to `KiroCli`. |
 | `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/root/.local/bin/kiro-cli`) |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
