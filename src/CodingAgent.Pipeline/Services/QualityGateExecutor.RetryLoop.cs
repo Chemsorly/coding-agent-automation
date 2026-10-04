@@ -402,14 +402,6 @@ public partial class QualityGateExecutor
             // Short-circuit: CI-never-started exhaustion is an infrastructure failure, not a code problem.
             // The LLM cannot fix a missing CI trigger — break immediately so FinalizeDraftPrAsync is called
             // instead of wasting a retry budget slot on a pointless agent invocation.
-            // TODO [WARNING] (Correctness): This PrMerged/PrClosed guard is defensive-redundant dead code.
-            // AppendExternalCiIfNeededAsync already sets run.CurrentStep to PrMerged/PrClosed and every
-            // call site immediately checks run.CurrentStep and returns before entering RunRetryLoopAsync.
-            // The guard therefore never fires in practice — RunRetryLoopAsync is never entered with
-            // CurrentStep already set to PrMerged or PrClosed. The active guard is the IsInfrastructureFailure
-            // check below. Consider removing this guard or adding a comment that explains the defensive intent.
-            if (run.CurrentStep is PipelineStep.PrMerged or PipelineStep.PrClosed)
-                break;
             if (report.ExternalCi is { Passed: false, IsInfrastructureFailure: true })
             {
                 _logger.Warning("Pipeline {RunId} CI-never-started infrastructure failure — not invoking LLM fix", run.RunId);

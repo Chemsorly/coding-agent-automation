@@ -138,6 +138,24 @@ public static class AgentWorkspacePaths
     public const string RefactoringDesignFindingsFilePath = ".agent/refactoring-design-findings.json";
 
     /// <summary>
+    /// The file path (relative to workspace) where the refactoring aggregation step writes its analysis log
+    /// (findings received, dropped and why, ranking scores) for the review step to read.
+    /// </summary>
+    public const string RefactoringAnalysisFilePath = ".agent/refactoring-analysis.md";
+
+    /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes the open issues and past proposal outcomes
+    /// that refactoring proposals must not duplicate, so the review step can check overlap too.
+    /// </summary>
+    public const string RefactoringIssueContextFilePath = ".agent/refactoring-issue-context.md";
+
+    /// <summary>
+    /// The directory (relative to workspace) where refactoring Phase 0 saves the raw output of the project's
+    /// analyzers, so the parallel detection agents read it instead of each running builds in the shared workspace.
+    /// </summary>
+    public const string RefactoringToolOutputDirectory = ".agent/refactoring-tool-output";
+
+    /// <summary>
     /// The directory (relative to workspace) where open issue context files are written
     /// for the agent to consult during decomposition and refactoring detection.
     /// </summary>
