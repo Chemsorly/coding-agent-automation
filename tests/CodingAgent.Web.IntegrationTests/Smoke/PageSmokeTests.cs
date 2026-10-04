@@ -1,10 +1,19 @@
 using System.Net;
+using System.Text.RegularExpressions;
 
 namespace CodingAgent.Web.IntegrationTests.Smoke;
 
 [Collection("SmokeTests")]
-public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
+public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
 {
+    // The rendered <base href> value.
+    [GeneratedRegex("<base href=\"([^\"]*)\"")]
+    private static partial Regex BaseHrefPattern();
+
+    // The src/href of every <script src> and <link rel="stylesheet" href> in the page.
+    [GeneratedRegex("<(?:link rel=\"stylesheet\" href|script src)=\"([^\"]+)\"")]
+    private static partial Regex AssetReferencePattern();
+
     private readonly HttpClient _client;
     private readonly HttpClient _clientNoRedirect;
 
@@ -36,6 +45,42 @@ public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
         var response = await _client.GetAsync(path);
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+    }
+
+    /// <summary>
+    /// Loading a route directly must resolve the page's relative asset URLs (stylesheets, faro-init.js,
+    /// _framework/blazor.web.js) from the app root. A fixed &lt;base href="./"&gt; resolved against the
+    /// document URL, so a directly loaded /runs/{id} requested /runs/css/app.css etc. (all 404) and
+    /// rendered unstyled and non-interactive.
+    /// </summary>
+    [Theory]
+    [InlineData("/overview")]
+    [InlineData("/runs")]
+    [InlineData("/runs/00000000-0000-0000-0000-000000000000")]
+    public async Task Get_Page_Resolves_Assets_From_App_Root(string path)
+    {
+        var documentUri = new Uri(_client.BaseAddress!, path);
+        var html = await _client.GetStringAsync(documentUri);
+
+        var baseHref = BaseHrefPattern().Match(html).Groups[1].Value;
+        Assert.False(string.IsNullOrEmpty(baseHref), "The page must render a <base href>.");
+        var baseUri = new Uri(documentUri, baseHref);
+        Assert.Equal(new Uri(_client.BaseAddress!, "/"), baseUri);
+
+        var assets = AssetReferencePattern().Matches(html)
+            .Select(m => m.Groups[1].Value)
+            .Where(href => !Uri.TryCreate(href, UriKind.Absolute, out var u) || u.Scheme is not ("http" or "https"))
+            .ToList();
+        Assert.Contains("css/app.css", assets);
+        Assert.Contains("_framework/blazor.web.js", assets);
+
+        foreach (var asset in assets)
+        {
+            var assetUri = new Uri(baseUri, asset);
+            var response = await _client.GetAsync(assetUri);
+            Assert.True(response.StatusCode == HttpStatusCode.OK,
+                $"{path}: asset '{asset}' resolved to {assetUri.AbsolutePath} and returned {(int)response.StatusCode}.");
+        }
     }
 
     [Fact]
