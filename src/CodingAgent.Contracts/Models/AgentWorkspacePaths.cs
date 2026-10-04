@@ -160,6 +160,13 @@ public static class AgentWorkspacePaths
     public const string PrConversationContextFilePath = ".agent/pr-conversation-context.md";
 
     /// <summary>
+    /// The file path (relative to workspace) where the pipeline writes, for a rework run whose
+    /// rebase onto main dropped the branch's changes to conflicting files, what was dropped and
+    /// what main changed in those files.
+    /// </summary>
+    public const string ReworkContextFilePath = ".agent/rework-context.md";
+
+    /// <summary>
     /// The directory (relative to workspace) where sub-issue JSON files are written
     /// by the decomposition agent for subsequent issue creation.
     /// </summary>

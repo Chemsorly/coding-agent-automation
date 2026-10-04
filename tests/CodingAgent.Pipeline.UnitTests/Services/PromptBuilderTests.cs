@@ -178,6 +178,17 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void BuildAnalysisPrompt_WithForceResolvedFiles_PointsToReworkContextAndScope()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
+            reworkContext: CreateReworkContext(forceResolvedFiles: new[] { "src/Foo.cs" }));
+
+        result.Should().Contain("Main is authoritative");
+        result.Should().Contain(AgentWorkspacePaths.ReworkContextFilePath);
+        result.Should().Contain("outside this issue's scope");
+    }
+
+    [Fact]
     public void BuildAnalysisPrompt_WithEmptyForceResolvedFiles_NoConflictList()
     {
         var result = PromptBuilder.BuildAnalysisPrompt("Instructions", CreateIssue(), CreateParsedIssue(),
@@ -517,6 +528,25 @@ public class PromptBuilderTests
 
         result.Should().NotBeNull();
         result.Should().Contain("Draft PR");
+    }
+
+    /// <summary>
+    /// Issue #3093: the rebase keeps main's version of conflicting files. The prompt must say so,
+    /// point the agent at what was dropped, and keep re-applying within the issue's scope.
+    /// </summary>
+    [Fact]
+    public void BuildReworkPrompt_ForceResolved_KeepsMainAndPointsToReworkContext()
+    {
+        var result = PromptBuilder.BuildReworkPrompt(
+            new[] { "src/Foo.cs" },
+            Array.Empty<PullRequestReviewComment>(),
+            forceResolved: true);
+
+        result.Should().Contain("Main is authoritative");
+        result.Should().Contain(AgentWorkspacePaths.ReworkContextFilePath);
+        result.Should().Contain("outside this issue's scope");
+        result.Should().Contain("`src/Foo.cs`");
+        result.Should().NotContain("incoming");
     }
 
     [Fact]
