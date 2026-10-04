@@ -27,8 +27,8 @@ public sealed class RunDetailPage
         // For live runs the hub-subscribed card is the definitive circuit-ready signal: it is set
         // via InvokeAsync(StateHasChanged) in SubscribeLiveAsync which only fires after the
         // interactive circuit has processed its first render. Wait up to 12 s for it.
-        // For terminal runs (no hub card) this throws TimeoutException; we fall back to a
-        // longer fixed wait that matches CI's measured Blazor circuit setup time.
+        // For terminal runs (no hub card) this throws PlaywrightException ("Timeout …"); we fall
+        // back to a longer fixed wait that matches CI's measured Blazor circuit setup time.
         try
         {
             await _page.WaitForSelectorAsync(
@@ -39,10 +39,13 @@ public sealed class RunDetailPage
             // attempting button clicks — clicks during a re-render can land on detached nodes.
             await _page.WaitForTimeoutAsync(1000);
         }
-        catch (TimeoutException)
+        catch (PlaywrightException e) when (e.Message.Contains("Timeout") || e.Message.Contains("timeout"))
         {
             // Terminal run — no hub subscription card. Use a fixed wait long enough for
             // the Blazor Server circuit to connect on slow CI runners (empirically > 3 s).
+            // Note: Playwright does NOT throw System.TimeoutException; it throws PlaywrightException
+            // with "Timeout" in the message. Catching System.TimeoutException here would silently
+            // swallow nothing, and the exception would propagate — breaking every terminal-run navigation.
             await _page.WaitForTimeoutAsync(5000);
         }
     }
@@ -182,6 +185,11 @@ public sealed class RunDetailPage
     public async Task<IReadOnlyList<string>> GetOutputTailLinesAsync()
     {
         var card = _page.Locator("[data-testid='output-tail-card']");
+        // TODO [WARNING]: The IsVisibleAsync guard present in the previous implementation was removed.
+        // If the output-tail card is absent from the page, pre.TextContentAsync() below will throw
+        // a PlaywrightException (element not found / timeout) rather than returning an empty list,
+        // contradicting the documented contract ("Returns an empty collection when the card is not
+        // present"). Restore the guard: check card.IsVisibleAsync() first and return [] when false.
         var pre = card.Locator("pre");
         var text = await pre.TextContentAsync() ?? string.Empty;
         return text

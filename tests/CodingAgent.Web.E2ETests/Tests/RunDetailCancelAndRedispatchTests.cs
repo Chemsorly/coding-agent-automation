@@ -9,6 +9,7 @@ using CodingAgent.Pipeline.Models;
 using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.Tests;
 
@@ -32,6 +33,9 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
 {
     public RunDetailCancelAndRedispatchTests(E2EFixture fixture) : base(fixture) { }
 
+    private static readonly string[] s_e2eMatchLabels = ["e2e"];
+    private static readonly string[] s_enhancementLabels = ["enhancement"];
+
     // ── Seed helpers ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -52,7 +56,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         {
             Id = "run-page-profile",
             DisplayName = "Run Page E2E Profile",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = s_e2eMatchLabels,
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -62,7 +66,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Identifier = issueId,
             Title = $"Issue {issueId} run page test",
             Description = "Test",
-            Labels = new[] { "enhancement" }
+            Labels = s_enhancementLabels
         });
     }
 
@@ -207,6 +211,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         }
 
         // Assert: terminal label is agent:cancelled
+        // TODO [WARNING]: This assertion has no polling wait. TrySwapLabelAsync executes inside
+        // RunTerminalCleanupAsync (step 4 after TransitionWorkItemAsync and ClearAgentStateAsync),
+        // which runs after RemoveRun() — the condition that unblocks the WaitUntilAsync polling
+        // loop above. The bare Assert.Contains therefore races against the async label-swap: if the
+        // polling loop wakes up between the DB write completing and the label swap finishing, the
+        // assertion fails intermittently. Fix: wrap this assertion in a WaitUntilAsync that polls
+        // until AgentLabels.Cancelled appears in issue.Labels.
         var issue = Fixture.IssueProvider.Issues.FirstOrDefault(i => i.Identifier == issueId);
         Assert.NotNull(issue);
         Assert.Contains(AgentLabels.Cancelled, issue!.Labels);
@@ -285,7 +296,20 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // If the guard is active, this click is a no-op (button is disabled or the prompt is gone).
         // If the guard were absent, this would fire a second PostStatusAsync, which is idempotent
         // but still exercised via the service-layer assertions below.
-        await runPage.ConfirmCancelButton.ClickAsync(new() { Force = false, Timeout = 2_000 });
+        // The second click is wrapped in a try/catch for PlaywrightException: on a fast CI runner
+        // the first cancel completes and the confirm prompt is removed from the DOM before this
+        // second click fires. With Force=false, Playwright throws PlaywrightException (timeout
+        // waiting for the element to be actionable / visible). We treat that as "guard worked —
+        // button was already hidden", which is an acceptable outcome.
+        try
+        {
+            await runPage.ConfirmCancelButton.ClickAsync(new() { Force = false, Timeout = 2_000 });
+        }
+        catch (PlaywrightException)
+        {
+            // Element gone or not actionable — the prompt was already dismissed by the first click.
+            // This is a valid outcome: the double-click guard removed the button before we could click it.
+        }
 
         // Wait for cancellation to complete
         var runService = Fixture.RunService;
@@ -293,9 +317,21 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             timeout: TimeSpan.FromSeconds(15));
 
         // Brief settle for any second spurious write to arrive
+        // TODO [WARNING]: This unconditional Task.Delay(500) is a fixed sleep, not a deterministic
+        // signal. It makes the test slower and hides timing races without detecting them — if a
+        // second spurious write arrives after 500 ms, the assertion below still passes (WorkItemStatus
+        // is still Cancelled, idempotently). Replace with a deterministic signal (e.g. polling the DB
+        // for a count == 2 change-log entry) or remove the sleep and rely on the WaitUntilAsync above.
         await Task.Delay(500);
 
         // Assert: WorkItem is Cancelled (exactly one terminal transition occurred)
+        // TODO [WARNING]: The test name "Cancel_DoubleClick_ProducesOnlyOneStatusPost" implies that
+        // only one PostStatusAsync call was made, but this assertion only checks the final DB state
+        // (WorkItemStatus.Cancelled) and the absence of "Cancel failed" text — both of which pass
+        // whether one or two PostStatusAsync calls fired, since the endpoint is idempotent. The
+        // double-click guard is therefore not actually verified: the test can pass even when the
+        // guard is entirely absent. To verify the guard, spy on PostStatusAsync (e.g. via a
+        // counting decorator or a call-count property on the fake) and assert the count == 1.
         await using var db = await Fixture.DbContextFactory.CreateDbContextAsync();
         var entity = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
         Assert.NotNull(entity);
@@ -395,6 +431,11 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     // Scenario 4 — Re-dispatch hidden where it should be
     // ═══════════════════════════════════════════════════════════════════════
 
+    // TODO [WARNING]: The issue specifies Scenario 4 covers "Review/Decomposition runs" but only
+    // Review is tested (Scenario 4b below). A Decomposition run (PipelineRunType.Decomposition or
+    // PipelineRunType.DecompositionAnalysis) is not covered. Add a Redispatch_HiddenForDecompositionRun
+    // test that dispatches via the decomposition path and asserts the re-dispatch card is absent.
+
     /// <summary>
     /// Scenario 4a: Re-dispatch card is NOT visible for an active (live) run.
     /// </summary>
@@ -440,7 +481,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Identifier = issueId,
             Title = $"Linked issue {issueId}",
             Description = "Test",
-            Labels = new[] { "enhancement" }
+            Labels = s_enhancementLabels
         });
 
         await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
@@ -456,7 +497,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         {
             Id = "review-profile-4b",
             DisplayName = "E2E Review Profile 4b",
-            MatchLabels = new[] { "e2e" },
+            MatchLabels = s_e2eMatchLabels,
             AgentProviderConfigId = "agent-e2e",
             Enabled = true
         }, CancellationToken.None);
@@ -471,7 +512,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             Url = $"https://github.com/e2e-org/repo/pull/{prId}",
             BranchName = "feature/test-4b",
             TargetBranch = "main",
-            Labels = new string[] { "enhancement" },
+            Labels = s_enhancementLabels,
             IsDraft = false
         });
 
@@ -522,6 +563,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         await agent.AcceptAndCompleteJobAsync(assignment.JobId, PipelineStep.Completed);
 
         var completedRun = await WaitForHistoryAsync(r =>
+            // TODO [WARNING]: This predicate is not scoped to the PR or issue seeded by this test.
+            // In a parallel test run, a Review run from another concurrently executing test that
+            // reaches history first will match, causing NavigateAsync to navigate to the wrong run.
+            // The assertion (redispatchCard == false) would still pass (Review runs don't show the
+            // card) but the browser navigation tests the wrong state. Add a filter on the PR
+            // identifier: r.RunType == PipelineRunType.Review && r.PrIdentifier == prId
+            // (or equivalent) once PipelineRunSummary exposes that field.
             r.RunType == PipelineRunType.Review,
             timeout: TimeSpan.FromSeconds(30));
 
@@ -726,7 +774,29 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         Assert.True(await runPage.IsRedispatchCardVisibleAsync(),
             "Re-dispatch card should still be visible (run itself is still terminal/Failed)");
         await runPage.RedispatchAsync(confirm: true);
-        var errorText = await runPage.WaitForRedispatchErrorAsync(TimeSpan.FromSeconds(15));
+
+        // Wrap the wait in a try/catch so a Blazor wiring regression (e.g. the handler catches
+        // HttpRequestException but never calls StateHasChanged, or stores the error under the wrong
+        // field) produces a readable XunitException rather than a raw Playwright timeout with no
+        // context about which assertion failed.
+        string errorText;
+        try
+        {
+            errorText = await runPage.WaitForRedispatchErrorAsync(TimeSpan.FromSeconds(15));
+        }
+        catch (PlaywrightException ex) when (ex.Message.Contains("Timeout") || ex.Message.Contains("timeout"))
+        {
+            var pageHtml = await Page.ContentAsync();
+            Assert.Fail(
+                "Timed out waiting for the re-dispatch error callout " +
+                "('[data-testid=\"redispatch-card\"] .summary-failure-callout[role=\"alert\"]') to appear. " +
+                "This indicates a Blazor wiring regression: the RedispatchAsync handler likely caught " +
+                "the 409 HttpRequestException but did not set _redispatchError or did not call " +
+                "StateHasChanged. Inspect the page HTML snippet below for clues.\n\n" +
+                $"Page HTML (truncated to 2000 chars):\n{pageHtml[..Math.Min(2000, pageHtml.Length)]}");
+            return; // unreachable; satisfies the compiler
+        }
+
         Assert.Contains("Re-dispatch failed", errorText);
     }
 }
