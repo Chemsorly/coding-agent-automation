@@ -44,13 +44,8 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Pre-create config and app directories with correct ownership (before USER switch)
-RUN mkdir -p /app/config/pipeline/providers/issue \
-             /app/config/pipeline/providers/repository \
-             /app/config/pipeline/providers/agent \
-             /app/config/pipeline/providers/pipeline \
-             /app/config/pipeline/runs && \
-    chown -R ubuntu:ubuntu /app
+# Pre-create the app directory with correct ownership (before USER switch)
+RUN mkdir -p /app && chown ubuntu:ubuntu /app
 
 USER ubuntu
 WORKDIR /app
@@ -86,10 +81,6 @@ RUN echo "{\"commitSha\":\"${BUILD_COMMIT_SHA}\",\"branch\":\"${BUILD_BRANCH}\",
 
 # Expose git SHA as SERVICE_VERSION for OTEL service.version resource attribute
 ENV SERVICE_VERSION=${BUILD_COMMIT_SHA}
-
-# Mount points:
-#   /app/config/pipeline - Pipeline provider & settings config (mount for persistence across restarts)
-VOLUME ["/app/config/pipeline"]
 
 HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
     CMD curl -f http://localhost:8080/healthz || exit 1

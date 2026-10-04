@@ -589,11 +589,16 @@ public class QualityGateValidator : IQualityGateValidator
     internal static string BuildCiFailureDetails(
         PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
     {
-        var failedJobs = status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
+        // When the overall run was Cancelled (e.g. by concurrency:cancel-in-progress), dependent
+        // jobs cascade to Failure conclusion even though no code failed. Do not report those as
+        // "failed jobs" — they are artefacts of the cancellation, not real code failures.
+        var failedJobs = status.State == PipelineRunState.Cancelled
+            ? new List<PipelineJobResult>()
+            : status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
         var cancelledJobs = status.Jobs.Where(j => j.State == PipelineRunState.Cancelled).ToList();
 
         var details = new System.Text.StringBuilder($"CI {status.State}.");
-        if (failedJobs.Count > 0 || cancelledJobs.Count == 0)
+        if (failedJobs.Count > 0 || (cancelledJobs.Count == 0 && status.State != PipelineRunState.Cancelled))
         {
             var jobNames = failedJobs.Count > 0
                 ? string.Join(", ", failedJobs.Select(j => $"'{j.Name}'"))

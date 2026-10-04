@@ -287,8 +287,9 @@ public sealed partial class PipelineRun
     public BrainValidationResult? BrainValidation { get; set; }
 
     /// <summary>
-    /// UTC timestamp recorded immediately after the PR was successfully promoted to ready-for-review
-    /// (after <c>UpdatePullRequestAsync(markReady: true)</c> completes without error).
+    /// UTC timestamp recorded immediately after <c>UpdatePullRequestAsync(markReady: true)</c>
+    /// completes successfully. Set independently of whether subsequent steps within the same
+    /// <c>FinalizePullRequest</c> invocation (brain sync, reflection, PR description generation) succeed.
     /// Used by <see cref="CodingAgent.Pipeline.Services.CiPollingCoordinator.WaitForPostPrCiAsync"/>
     /// as the <c>notBefore</c> anchor to filter out push-event CI runs that completed before mark-ready,
     /// ensuring the post-PR CI check targets only the pull_request-event CI triggered by mark-ready.

@@ -32,7 +32,6 @@ public sealed class AgentHubOnDisconnectedTests
             IssueOps: Mock.Of<IHubIssueOperations>(),
             LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
             TokenRefreshService: Mock.Of<IAgentTokenRefreshService>(),
-            GateCommentFormatter: Mock.Of<IGateCommentFormatter>(),
             Logger: _logger.Object,
             OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
             UiContext: HubTestHelpers.CreateNoOpHubContext()));

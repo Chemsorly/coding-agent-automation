@@ -214,11 +214,4 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             _logger.Warning(ex, "Failed to load run history");
         }
     }
-
-    /// <summary>
-    /// Attempts to delete a workspace directory. Logs but does not throw on failure.
-    /// Validates the path is a subdirectory of the workspace base and not a symlink.
-    /// </summary>
-    public void TryDeleteWorkspace(WorkspacePath? workspacePath, string runId, string workspaceBaseDirectory)
-        => WorkspaceDeletionGuard.TryDelete(workspacePath?.Value, runId, workspaceBaseDirectory, _logger);
 }

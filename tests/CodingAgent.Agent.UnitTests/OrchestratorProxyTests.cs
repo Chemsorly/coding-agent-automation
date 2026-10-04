@@ -274,22 +274,6 @@ public class OrchestratorProxyTests
         await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("newLabel");
     }
 
-    [Fact]
-    public async Task PostGateRejectionAsync_ThrowsOnNullAssessmentJson()
-    {
-        var proxy = CreateProxy();
-        var act = () => proxy.PostGateRejectionAsync(null!, CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("assessmentJson");
-    }
-
-    [Fact]
-    public async Task PostGateWontDoAsync_ThrowsOnNullAssessmentJson()
-    {
-        var proxy = CreateProxy();
-        var act = () => proxy.PostGateWontDoAsync(null!, CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("assessmentJson");
-    }
-
     private static OrchestratorProxy CreateProxy()
     {
         var connection = new HubConnectionBuilder()

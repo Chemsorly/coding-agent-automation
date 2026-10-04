@@ -49,31 +49,4 @@ public static class ConsolidationTemplateFilter
         return !string.IsNullOrWhiteSpace(template.RepoProviderId)
             && !string.IsNullOrWhiteSpace(template.IssueProviderId);
     }
-
-    /// <summary>
-    /// Filters a collection of templates to only those that support the specified consolidation type.
-    /// For <see cref="ConsolidationRunType.HarnessSuggestions"/>, returns an empty list
-    /// (harness suggestions are global and not template-scoped).
-    /// </summary>
-    /// <param name="templates">The templates to filter.</param>
-    /// <param name="type">The consolidation run type to filter by.</param>
-    /// <returns>Templates that support the specified consolidation type.</returns>
-    public static IReadOnlyList<PipelineJobTemplate> FilterByType(
-        IEnumerable<PipelineJobTemplate> templates,
-        ConsolidationRunType type)
-    {
-        ArgumentNullException.ThrowIfNull(templates);
-
-        return type switch
-        {
-            ConsolidationRunType.BrainConsolidation => templates
-                .Where(SupportsBrainConsolidation)
-                .ToList(),
-            ConsolidationRunType.RefactoringDetection => templates
-                .Where(SupportsRefactoringDetection)
-                .ToList(),
-            ConsolidationRunType.HarnessSuggestions => [],
-            _ => []
-        };
-    }
 }

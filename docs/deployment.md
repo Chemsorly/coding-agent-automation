@@ -92,8 +92,8 @@ The chart deploys:
 
 | Path | Description |
 |------|-------------|
-| `orchestrator.image.repository/tag` | Orchestrator container image |
-| `web.replicas` | Number of Orchestrator (web) replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below). |
+| `web.image.repository/tag` | Web container image |
+| `web.replicas` | Number of web replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below). |
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
@@ -101,9 +101,9 @@ The chart deploys:
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
 | `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
 | `otel.endpoint` | OTLP collector endpoint |
-| `otel.webServiceName` | `OTEL_SERVICE_NAME` for the web service (default: `coding-agent-web`; legacy alias `otel.orchestratorServiceName` still honored). The web service's service name is hardcoded at compile time via `AddService(serviceName:...)` in `OpenTelemetryRegistration.cs` — it is not configurable via the `OTEL_SERVICE_NAME` env var the way the other processes are. API, Job Controller, and Scheduler read `OTEL_SERVICE_NAME` at startup with fixed-name fallbacks (`coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). |
+| `otel.webServiceName` | `OTEL_SERVICE_NAME` for the web service (default: `coding-agent-web`). The web service's service name is hardcoded at compile time via `AddService(serviceName:...)` in `OpenTelemetryRegistration.cs` — it is not configurable via the `OTEL_SERVICE_NAME` env var the way the other processes are. API, Job Controller, and Scheduler read `OTEL_SERVICE_NAME` at startup with fixed-name fallbacks (`coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). |
 | `otel.apiServiceName` | `OTEL_SERVICE_NAME` for the Pipeline API process (default: `coding-agent-api`). Separates API spans and metrics from the Blazor web process in Tempo and Prometheus. ⚠️ If upgrading from a release where this defaulted to `coding-agent-web`, update any Grafana dashboards or alerts that filter on `service.name="coding-agent-web"` for API traffic. |
-| `web.env.faroCollectorUrl` | Grafana Faro collector URL for frontend RUM monitoring. Leave empty to disable (default: `""`). See [Faro configuration](configuration.md#frontend-observability-grafana-faro) for details. (Legacy alias `orchestrator.env.faroCollectorUrl` still honored.) |
+| `web.env.faroCollectorUrl` | Grafana Faro collector URL for frontend RUM monitoring. Leave empty to disable (default: `""`). See [Faro configuration](configuration.md#frontend-observability-grafana-faro) for details. |
 | `web.env.basePath` | Base path for the Blazor web UI, injected as the `<base href>` in the HTML shell (default: `"./"`, the app root). With the default or another relative value, the web host renders a relative base that climbs from the requested route back to the app root (`./` on `/overview`, `../` on `/runs/{id}`), so directly loaded nested routes find their assets both at a root-path deployment and behind a reverse proxy that strips its prefix (e.g., Rancher's service proxy). An absolute path (e.g., Rancher: `"/k8s/clusters/c-xxxxx/proxy/"`) pins the base and is used as is; a trailing `/` is appended if missing. |
 | `database.host` | PostgreSQL hostname (required) |
 | `database.port` | PostgreSQL port (default: `5432`) |
@@ -222,7 +222,7 @@ Bound from the `LeaderElection` configuration section:
 | `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
 | `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
 
-Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `orchestrator.leaderElection.pipelineLoopLeaseName` (Orchestrator, defaults to `caa-{release}-pipeline-loop-lock`), and `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`). The Pipeline API has no leader election lease.
+Helm sets the lease name via `jobController.leaderElection.dispatchLeaseName` (Job Controller, defaults to `caa-{release}-dispatch-lock`), `web.leaderElection.pipelineLoopLeaseName` (web, defaults to `caa-{release}-pipeline-loop-lock`), and `scheduler.leaderElection.leaseName` (Scheduler, defaults to `caa-{release}-scheduler-lock`). The Pipeline API has no leader election lease.
 
 #### RBAC Requirements
 

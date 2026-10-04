@@ -115,19 +115,6 @@ public class PipelineRunInstrumentationTests
     }
 
     [Fact]
-    public void StopTiming_IsNoOp_DoesNotThrow()
-    {
-        using var instrumentation = StartRun();
-        // StopTiming is a no-op for compatibility — should not throw.
-        var act = () =>
-        {
-            PipelineRunInstrumentation.StopTiming();
-            PipelineRunInstrumentation.StopTiming(); // idempotent
-        };
-        act.Should().NotThrow();
-    }
-
-    [Fact]
     public void MarkCompleted_SetsActivityStatusOk()
     {
         using var listener = new ActivityListener

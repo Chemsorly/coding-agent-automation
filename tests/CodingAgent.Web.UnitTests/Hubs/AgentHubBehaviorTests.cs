@@ -46,7 +46,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockIssueOps.Object,
             _mockLifecycleService.Object,
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -1018,7 +1017,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockIssueOps.Object,
             CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -1042,7 +1040,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockIssueOps.Object,
             CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object), HubTestHelpers.CreateNoOpHubContext()));
 

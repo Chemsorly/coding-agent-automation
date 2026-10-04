@@ -38,11 +38,9 @@ public static class DispatchResolutionServiceCollectionExtensions
         services.AddSingleton<ReviewerResolver>();
 
         services.AddSingleton(sp => new DispatchResolutionService(
-            sp.GetRequiredService<ProfileResolver>(),
             sp.GetRequiredService<QualityGateResolver>(),
             sp.GetRequiredService<ReviewerResolver>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
-            Log.Logger));
+            sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>()));
 
         services.AddSingleton(sp => new DispatchInfrastructure(
             sp.GetRequiredService<ITokenVendingService>(),

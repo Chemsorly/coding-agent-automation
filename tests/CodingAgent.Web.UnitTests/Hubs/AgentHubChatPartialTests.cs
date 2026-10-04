@@ -35,7 +35,6 @@ public sealed class AgentHubChatPartialTests
             IssueOps: Mock.Of<IHubIssueOperations>(),
             LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
             TokenRefreshService: Mock.Of<IAgentTokenRefreshService>(),
-            GateCommentFormatter: Mock.Of<IGateCommentFormatter>(),
             OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
             Logger: Log.Logger,
             UiContext: HubTestHelpers.CreateNoOpHubContext()));
