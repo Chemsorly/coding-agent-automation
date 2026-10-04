@@ -25,7 +25,7 @@
 
 <PageTitle>Run - Coding Agent</PageTitle>
 
-<div class="cockpit-page" data-testid="run-page" data-interactive="@_interactive.ToString().ToLowerInvariant()">
+<div class="cockpit-page" data-testid="run-page">
     <a href="runs" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Runs</a>
 
     @if (_loading)
@@ -328,11 +328,6 @@
     private int _maxRetries = 3;
     private PeriodicTimer? _elapsedTimer;
 
-    // Set to true after the first OnAfterRenderAsync — proves the Blazor interactive circuit
-    // is connected. Surfaced as data-interactive on the root div so E2E tests can wait for
-    // it before clicking buttons (avoids clicking on the static pre-render before the circuit connects).
-    private bool _interactive;
-
     // Re-dispatch state
     private bool _showRedispatchConfirm;
     private bool _redispatchInProgress;
@@ -405,18 +400,6 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // Mark the circuit as interactive on the first OnAfterRenderAsync call for this
-        // page instance. OnAfterRenderAsync is only called in interactive render contexts
-        // (never during static prerendering), so this reliably signals the circuit is connected.
-        // Using !_interactive rather than firstRender because Blazor 8 enhanced navigation
-        // reuses the circuit across page transitions — OnAfterRenderAsync fires with
-        // firstRender=false when the user navigates from another page in the same session.
-        if (!_interactive)
-        {
-            _interactive = true;
-            StateHasChanged();
-        }
-
         // Subscribe to the live run stream once, after the interactive circuit exists (not during prerender).
         if (_isLive && !_subscribed)
             await SubscribeLiveAsync();
