@@ -43,7 +43,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     public void TemplateFilter_BrainConsolidation_OnlyIncludesTemplatesWithBrainProvider(
         List<PipelineJobTemplate> templates)
     {
-        var result = ConsolidationTemplateFilter.FilterByType(templates, ConsolidationRunType.BrainConsolidation);
+        var result = templates.Where(ConsolidationTemplateFilter.SupportsBrainConsolidation).ToList();
 
         foreach (var t in result)
             t.BrainProviderId.Should().NotBeNullOrWhiteSpace(
@@ -61,7 +61,7 @@ public class ConsolidationServicePropertyTests : IDisposable
     public void TemplateFilter_RefactoringDetection_OnlyIncludesTemplatesWithRepoAndIssueProvider(
         List<PipelineJobTemplate> templates)
     {
-        var result = ConsolidationTemplateFilter.FilterByType(templates, ConsolidationRunType.RefactoringDetection);
+        var result = templates.Where(ConsolidationTemplateFilter.SupportsRefactoringDetection).ToList();
 
         foreach (var t in result)
         {

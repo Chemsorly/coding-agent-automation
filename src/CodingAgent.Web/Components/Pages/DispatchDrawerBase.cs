@@ -34,33 +34,30 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     // parent passes a mutable List<T> reference. Consider caching or using ShouldRender override.
     protected override void OnParametersSet()
     {
-        // The parent re-renders for reasons that have nothing to do with this list — loop-status
-        // changes, readiness checks, dispatch state — and each re-render sets the parameters
-        // again. Keep the keyboard highlight on the same item across those, or it vanishes and a
-        // following Enter silently does nothing. Only a filter change resets it (ApplyFilter).
+        // The parent re-renders on agent and status updates. Keep the keyboard highlight on the
+        // same item across those re-renders; only a filter change resets it.
         var highlightedId = _highlightedIndex >= 0 && _highlightedIndex < FilteredItems.Count
             ? GetIdentifier(FilteredItems[_highlightedIndex])
             : null;
-        FilteredItems = FilterItems();
-        _highlightedIndex = highlightedId is null
-            ? -1
-            : FilteredItems.FindIndex(i => GetIdentifier(i) == highlightedId);
+        ApplyFilter();
+        if (highlightedId is not null)
+            _highlightedIndex = FilteredItems.FindIndex(i => GetIdentifier(i) == highlightedId);
         if (!IsOpen) { SelectedItem = default; _filter = ""; _highlightedIndex = -1; }
     }
 
     protected void ApplyFilter()
     {
-        FilteredItems = FilterItems();
+        if (string.IsNullOrWhiteSpace(_filter))
+        {
+            FilteredItems = Items.ToList();
+        }
+        else
+        {
+            var f = _filter.Trim();
+            FilteredItems = Items.Where(i => MatchesFilter(i, f)).ToList();
+        }
         // Reset highlight when filter changes
         _highlightedIndex = -1;
-    }
-
-    private List<TItem> FilterItems()
-    {
-        if (string.IsNullOrWhiteSpace(_filter))
-            return Items.ToList();
-        var f = _filter.Trim();
-        return Items.Where(i => MatchesFilter(i, f)).ToList();
     }
 
     protected abstract bool MatchesFilter(TItem item, string filter);

@@ -20,7 +20,6 @@ public sealed class AgentHubIssueOpsPartialTests
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<IHubIssueOperations> _issueOps = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
-    private readonly Mock<IGateCommentFormatter> _gateCommentFormatter = new();
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
@@ -35,7 +34,6 @@ public sealed class AgentHubIssueOpsPartialTests
             IssueOps: _issueOps.Object,
             LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
             TokenRefreshService: _tokenRefreshService.Object,
-            GateCommentFormatter: _gateCommentFormatter.Object,
             Logger: Log.Logger,
             OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
             UiContext: HubTestHelpers.CreateNoOpHubContext()));
@@ -107,48 +105,6 @@ public sealed class AgentHubIssueOpsPartialTests
         _issueOps.Verify(
             o => o.PostCommentViaIssueProviderAsync(run, string.Empty, It.IsAny<CancellationToken>()),
             Times.Once);
-    }
-
-    // ── RequestPostComment — CommentType.GateRejection ───────────────────
-
-    [Fact]
-    public async Task RequestPostComment_GateRejection_UsesFormatterWithIsWontDoFalse()
-    {
-        var run = CreateRun();
-        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
-        _gateCommentFormatter.Setup(f => f.FormatGateComment(It.IsAny<string?>(), false))
-                              .Returns("formatted-rejection");
-        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection", It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((string?)null);
-
-        var hub = CreateHub();
-        await hub.RequestPostComment(
-            new JobId("job-1"), CommentType.GateRejection,
-            new CommentPayload { AssessmentJson = "{}" });
-
-        _gateCommentFormatter.Verify(f => f.FormatGateComment("{}", false), Times.Once);
-        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection", It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    // ── RequestPostComment — CommentType.GateWontDo ──────────────────────
-
-    [Fact]
-    public async Task RequestPostComment_GateWontDo_UsesFormatterWithIsWontDoTrue()
-    {
-        var run = CreateRun();
-        _facade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
-        _gateCommentFormatter.Setup(f => f.FormatGateComment(It.IsAny<string?>(), true))
-                              .Returns("formatted-wontdo");
-        _issueOps.Setup(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo", It.IsAny<CancellationToken>()))
-                 .ReturnsAsync((string?)null);
-
-        var hub = CreateHub();
-        await hub.RequestPostComment(
-            new JobId("job-1"), CommentType.GateWontDo,
-            new CommentPayload { AssessmentJson = "{wont}" });
-
-        _gateCommentFormatter.Verify(f => f.FormatGateComment("{wont}", true), Times.Once);
-        _issueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // ── RequestPostComment — unknown CommentType → silent return ──────────

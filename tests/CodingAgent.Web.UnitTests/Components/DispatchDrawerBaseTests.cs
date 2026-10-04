@@ -255,10 +255,34 @@ public class DispatchDrawerBaseTests : BunitContext
         Assert.Equal(-1, drawer.GetHighlightedIndex());
     }
 
-    // ── Highlight across parent re-renders ──────────────────────────────────
-    // The page re-renders the drawer whenever something else on it changes (loop status, readiness
-    // checks, dispatch state), so OnParametersSet runs while the user is navigating with the
-    // keyboard. It must not drop the highlight.
+    [Fact]
+    public async Task OnParametersSet_ParentRerender_KeepsHighlightOnSameItem()
+    {
+        var drawer = CreateDrawer(new[] { new TestItem("1", "A"), new TestItem("2", "B"), new TestItem("3", "C") });
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        Assert.Equal(1, drawer.GetHighlightedIndex());
+
+        // The refreshed list puts item "2" first.
+        drawer.SetItems(new[] { new TestItem("2", "B"), new TestItem("3", "C") });
+        drawer.InvokeOnParametersSet();
+
+        Assert.Equal(0, drawer.GetHighlightedIndex());
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+        Assert.Equal(1, drawer.GetHighlightedIndex());
+    }
+
+    [Fact]
+    public async Task OnParametersSet_HighlightedItemGone_ClearsHighlight()
+    {
+        var drawer = CreateDrawer(new[] { new TestItem("1", "A"), new TestItem("2", "B") });
+        await drawer.InvokeHandleKeyDown("ArrowDown");
+
+        drawer.SetItems(new[] { new TestItem("2", "B") });
+        drawer.InvokeOnParametersSet();
+
+        Assert.Equal(-1, drawer.GetHighlightedIndex());
+    }
 
     [Fact]
     public async Task OnParametersSet_SameItems_KeepsHighlight()
@@ -271,31 +295,6 @@ public class DispatchDrawerBaseTests : BunitContext
         drawer.InvokeOnParametersSet();
 
         Assert.Equal(1, drawer.GetHighlightedIndex());
-    }
-
-    [Fact]
-    public async Task OnParametersSet_ItemsReordered_HighlightFollowsItem()
-    {
-        var drawer = CreateDrawer([new TestItem("1", "A"), new TestItem("2", "B"), new TestItem("3", "C")]);
-        await drawer.InvokeHandleKeyDown("ArrowDown"); // "1"
-
-        drawer.SetItems([new TestItem("3", "C"), new TestItem("2", "B"), new TestItem("1", "A")]);
-        drawer.InvokeOnParametersSet();
-
-        Assert.Equal(2, drawer.GetHighlightedIndex());
-        Assert.Equal("1", drawer.GetFilteredItems()[drawer.GetHighlightedIndex()].Identifier);
-    }
-
-    [Fact]
-    public async Task OnParametersSet_HighlightedItemGone_ClearsHighlight()
-    {
-        var drawer = CreateDrawer([new TestItem("1", "A"), new TestItem("2", "B")]);
-        await drawer.InvokeHandleKeyDown("ArrowDown"); // "1"
-
-        drawer.SetItems([new TestItem("2", "B")]);
-        drawer.InvokeOnParametersSet();
-
-        Assert.Equal(-1, drawer.GetHighlightedIndex());
     }
 
     [Fact]

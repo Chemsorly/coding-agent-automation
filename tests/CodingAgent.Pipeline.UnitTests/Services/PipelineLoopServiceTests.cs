@@ -1209,18 +1209,19 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var svc = CreateService();
         using var cts = new CancellationTokenSource();
 
+        // The tripped state lasts only the 1-second cooldown, so polling IsCircuitBroken can miss it
+        // when the test thread is starved. OnChange fires on the loop thread right after the trip.
+        var tripped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        svc.OnChange += () =>
+        {
+            if (svc.IsCircuitBroken)
+                tripped.TrySetResult();
+        };
+
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for circuit breaker to trip.
-        // Use a 30-second deadline: under full parallel test suite load (~10 000 concurrent tests)
-        // the loop thread can be CPU-starved, making the poll cycle (which includes SnapshotCycleConfigAsync
-        // with several mock round-trips) significantly slower than the 50ms poll interval suggests.
-        // Previous 15s deadline proved insufficient in CI and caused a flaky failure.
-        var deadline = DateTime.UtcNow.AddSeconds(30);
-        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-        Assert.True(svc.IsCircuitBroken);
+        await tripped.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Wait for auto-resume after cooldown (no manual intervention needed).
         // Use a 15-second deadline: the 1-second cooldown fires quickly in isolation, but under
@@ -1228,7 +1229,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         // CPU-starved, making the SnapshotCycleConfigAsync round-trip that precedes the
         // circuit-breaker wait significantly slower.  15 s matches the deadline used by the
         // analogous Loop_CircuitBreakerResume_ResetsAndContinuesPolling test.
-        deadline = DateTime.UtcNow.AddSeconds(15);
+        var deadline = DateTime.UtcNow.AddSeconds(15);
         while (svc.IsCircuitBroken && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 

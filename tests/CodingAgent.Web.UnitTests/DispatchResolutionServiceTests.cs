@@ -1,11 +1,9 @@
 using AwesomeAssertions;
 using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using Moq;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Web.UnitTests;
 
@@ -15,64 +13,14 @@ namespace CodingAgent.Web.UnitTests;
 public class DispatchResolutionServiceTests
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
-    private readonly Mock<ILogger> _mockLogger = new();
     private readonly DispatchResolutionService _service;
 
     public DispatchResolutionServiceTests()
     {
         _service = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockConfigStore.Object,
-            _mockLogger.Object);
-    }
-
-    [Fact]
-    public async Task ResolveProfileAsync_ReturnsMatchingProfile()
-    {
-        var profile = new AgentProfile
-        {
-            Id = "p1",
-            DisplayName = "Test",
-            AgentProviderConfigId = "ap1",
-            Enabled = true,
-            MatchLabels = ["dotnet"]
-        };
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new[] { profile });
-
-        var registry = new AgentRegistryService(_mockLogger.Object);
-        var agent = registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host",
-            Labels = ["dotnet"]
-        }, "conn-1");
-
-        var result = await _service.ResolveProfileAsync(agent, CancellationToken.None);
-
-        result.Should().NotBeNull();
-        result!.Id.Should().Be("p1");
-    }
-
-    [Fact]
-    public async Task ResolveProfileAsync_NoMatch_ReturnsNull()
-    {
-        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
-
-        var registry = new AgentRegistryService(_mockLogger.Object);
-        var agent = registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-1",
-            Hostname = "host",
-            Labels = ["dotnet"]
-        }, "conn-1");
-
-        var result = await _service.ResolveProfileAsync(agent, CancellationToken.None);
-
-        result.Should().BeNull();
+            _mockConfigStore.Object);
     }
 
     [Fact]

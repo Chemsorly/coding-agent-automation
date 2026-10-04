@@ -139,14 +139,11 @@ KiroCliLib/
 │   ├── ProcessWrapper.cs       — Manages CLI process lifecycle + WSL integration
 │   ├── IOutputParser.cs        — Output parser interface
 │   ├── OutputParser.cs         — Parses CLI output for state/test detection
-│   ├── IFileSystemMonitor.cs   — File system monitor interface (for testing)
-│   ├── FileSystemMonitor.cs    — Before/after workspace snapshot comparison
 │   ├── AnsiStripper.cs         — Strips ANSI escape codes from output
 │   ├── GracefulShutdownHelper.cs — Async shutdown with timeout + logging
 │   └── ExitCodes.cs            — Well-known exit code constants (shared with pipeline)
 └── Models/
     ├── KiroState.cs            — Execution state enum (9 states)
-    ├── FileChange.cs           — File change record (path + type)
     └── TestResult.cs           — Parsed test results (passed/failed counts)
 ```
 
@@ -154,24 +151,20 @@ KiroCliLib/
 
 | Component | Role |
 |-----------|------|
-| **KiroCliOrchestrator** | Coordinates the full execution workflow: scan workspace → start process → parse output → detect changes |
+| **KiroCliOrchestrator** | Coordinates the execution workflow: start process → parse output → stream output lines |
 | **ProcessWrapper** | Starts and manages the Kiro CLI OS process. Handles WSL integration on Windows (auto-detects platform, converts paths). Supports cancellation and forceful termination. |
 | **OutputParser** | Processes stdout/stderr lines using regex patterns to detect execution phases (Research → Plan → Implement → Test → Completed) and test results. Emits `StateChanged` events and exposes detected test results via the `TestResults` property. |
-| **FileSystemMonitor** | Takes recursive filesystem snapshots before and after execution, then compares them to produce a list of Created/Modified/Deleted file changes. |
 
 ### Execution Flow
 
 ```
 ExecutePromptAsync(prompt, workspace, useResume, ct)
   │
-  ├─ FileSystemMonitor.ScanWorkspace(before)
-  ├─ ProcessWrapper.StartAsync(prompt, workspace, useResume, ct)
-  │     ├─ Write prompt to .agent/prompt-input.md
-  │     ├─ Start process: kiro-cli chat [--resume] @.agent/prompt-input.md
-  │     ├─ OutputReceived → OutputParser.ProcessLine → StateChanged
-  │     └─ WaitForExitAsync
-  ├─ FileSystemMonitor.ScanWorkspace(after)
-  └─ FileSystemMonitor.CompareSnapshots(before, after)
+  └─ ProcessWrapper.StartAsync(prompt, workspace, useResume, ct)
+        ├─ Write prompt to .agent/prompt-input.md
+        ├─ Start process: kiro-cli chat [--resume] @.agent/prompt-input.md
+        ├─ OutputReceived → OutputParser.ProcessLine → StateChanged
+        └─ WaitForExitAsync
 ```
 
 ## Exit Codes

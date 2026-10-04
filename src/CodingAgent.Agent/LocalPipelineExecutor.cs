@@ -205,7 +205,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
         finally
         {
-            PipelineRunInstrumentation.StopTiming();
             await ProviderDisposer.DisposeAllAsync(repoProvider, agentProvider, brainProvider, pipelineProvider);
             if (additionalRepoProviders is not null)
                 await ProviderDisposer.DisposeAllAsync(additionalRepoProviders.Select(p => p.Provider as IAsyncDisposable));

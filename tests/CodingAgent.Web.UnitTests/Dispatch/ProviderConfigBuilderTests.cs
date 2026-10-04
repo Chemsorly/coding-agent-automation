@@ -30,11 +30,9 @@ public class ProviderConfigBuilderTests
     public ProviderConfigBuilderTests()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockConfigStore.Object,
-            _logger);
+            _mockConfigStore.Object);
 
         _infra = new DispatchInfrastructure(
             _mockTokenVending.Object,

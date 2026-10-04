@@ -70,11 +70,9 @@ public class DispatchOrchestrationServiceTests
     {
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockProviderConfigStore.Object,
-            _mockLogger.Object);
+            _mockProviderConfigStore.Object);
     }
 
     private DispatchOrchestrationService CreateService()
@@ -2498,11 +2496,9 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         var mockProviderFactory = new Mock<IProviderFactory>();
         var mockTokenVending = new Mock<ITokenVendingService>();
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            mockConfigStore.Object,
-            _mockLogger.Object);
+            mockConfigStore.Object);
 
         _service = new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(
@@ -2737,11 +2733,9 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         var mockProviderFactory = new Mock<IProviderFactory>();
         var mockTokenVending = new Mock<ITokenVendingService>();
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            mockConfigStore.Object,
-            _mockLogger.Object);
+            mockConfigStore.Object);
 
         _service = new DispatchOrchestrationService(
             new DispatchOrchestrationServiceDependencies(

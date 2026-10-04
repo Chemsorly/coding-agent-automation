@@ -12,7 +12,6 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     private readonly ILogger _logger;
     private readonly Func<IProcessWrapper> _processWrapperFactory;
     private readonly Func<IOutputParser> _outputParserFactory;
-    private readonly Func<IFileSystemMonitor> _fileSystemMonitorFactory;
     private volatile IProcessWrapper? _activeProcess;
     private bool _disposed;
 
@@ -56,21 +55,17 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// <param name="logger">The logger instance.</param>
     /// <param name="processWrapperFactory">Factory to create <see cref="IProcessWrapper"/> instances.</param>
     /// <param name="outputParserFactory">Factory to create <see cref="IOutputParser"/> instances.</param>
-    /// <param name="fileSystemMonitorFactory">Factory to create <see cref="IFileSystemMonitor"/> instances.</param>
     public KiroCliOrchestrator(
         ILogger logger,
         Func<IProcessWrapper> processWrapperFactory,
-        Func<IOutputParser> outputParserFactory,
-        Func<IFileSystemMonitor> fileSystemMonitorFactory)
+        Func<IOutputParser> outputParserFactory)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(processWrapperFactory);
         ArgumentNullException.ThrowIfNull(outputParserFactory);
-        ArgumentNullException.ThrowIfNull(fileSystemMonitorFactory);
         _logger = logger;
         _processWrapperFactory = processWrapperFactory;
         _outputParserFactory = outputParserFactory;
-        _fileSystemMonitorFactory = fileSystemMonitorFactory;
     }
 
     /// <summary>
@@ -80,7 +75,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         Configuration.Configuration config,
         ILogger logger,
         Func<IProcessWrapper> processWrapperFactory)
-        : this(logger, processWrapperFactory, () => new OutputParser(), () => new FileSystemMonitor())
+        : this(logger, processWrapperFactory, () => new OutputParser())
     {
     }
 
@@ -91,8 +86,7 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         : this(
             logger,
             () => new ProcessWrapper(config, logger),
-            () => new OutputParser(),
-            () => new FileSystemMonitor())
+            () => new OutputParser())
     {
     }
 
@@ -106,7 +100,6 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         {
             _activeProcess = processWrapper;
             var outputParser = _outputParserFactory();
-            var fileSystemMonitor = _fileSystemMonitorFactory();
 
             var channel = onOutputLine != null
                 ? System.Threading.Channels.Channel.CreateUnbounded<string>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true })
@@ -126,10 +119,6 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 
             try
             {
-                IReadOnlyList<FileSnapshot> beforeSnapshot;
-                try { beforeSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace before execution"); beforeSnapshot = Array.Empty<FileSnapshot>(); }
-
                 // Start a background task to drain the channel and invoke the async callback
                 Task? drainTask = null;
                 if (channel != null && onOutputLine != null)
@@ -149,14 +138,6 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 channel?.Writer.TryComplete();
                 if (drainTask != null)
                     await drainTask;
-
-                IReadOnlyList<FileChange> fileChanges;
-                try
-                {
-                    var afterSnapshot = fileSystemMonitor.ScanWorkspace(workspaceDirectory);
-                    fileChanges = fileSystemMonitor.CompareSnapshots(beforeSnapshot, afterSnapshot);
-                }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to scan workspace after execution"); fileChanges = Array.Empty<FileChange>(); }
 
                 return exitCode;
             }
