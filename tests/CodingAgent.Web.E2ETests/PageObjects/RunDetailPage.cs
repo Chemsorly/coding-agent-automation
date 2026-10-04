@@ -141,6 +141,31 @@ public sealed class RunDetailPage
     }
 
     /// <summary>
+    /// Returns true when the output tail card (<c>data-testid="output-tail-card"</c>) is visible.
+    /// This card is rendered for completed/terminal runs that produced output; it is absent while
+    /// the run is active (<c>_isLive == true</c>) and absent for terminal runs with no output.
+    /// </summary>
+    public async Task<bool> HasOutputTailCardAsync()
+        => await _page.Locator("[data-testid='output-tail-card']").IsVisibleAsync();
+
+    /// <summary>
+    /// Returns the lines displayed inside the output tail card (<c>data-testid="output-tail-card"</c>).
+    /// Splits the pre-formatted text on newlines and trims blank entries.
+    /// Returns an empty collection when the card is not present or contains no text.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> GetOutputTailLinesAsync()
+    {
+        var card = _page.Locator("[data-testid='output-tail-card']");
+        var pre = card.Locator("pre");
+        var text = await pre.TextContentAsync() ?? string.Empty;
+        return text
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+    }
+
+    /// <summary>
     /// Returns true if the Run page shows an "Issue #&lt;issueIdentifier&gt;" chip linking to the issue.
     /// Uses the <c>cockpit-link-chip</c> anchor rendered by RunPage.razor when <c>run.IssueUrl</c>
     /// is non-null (added for issue #3095 coverage).
@@ -169,11 +194,33 @@ public sealed class RunDetailPage
     /// <summary>
     /// Waits until "Re-dispatched successfully" is shown on the page.
     /// </summary>
+    /// TODO [WARNING]: This method uses `:has-text('Re-dispatched successfully')` with no element
+    /// type qualifier, so it matches every ancestor DOM node that contains that text (including
+    /// `<body>`, `<div>`, etc.). This is functionally equivalent for a success assertion but would
+    /// also resolve against a broader match if the text appeared in an unrelated context. Consider
+    /// scoping to the specific container, e.g. `[data-testid='redispatch-card'] :has-text(...)`,
+    /// once the element structure is stable.
     public async Task WaitForRedispatchSuccessAsync(TimeSpan? timeout = null)
     {
         var effectiveTimeout = (int)(timeout ?? TimeSpan.FromSeconds(15)).TotalMilliseconds;
         await _page.WaitForSelectorAsync(
             ":has-text('Re-dispatched successfully')",
             new() { Timeout = effectiveTimeout });
+    }
+
+    /// <summary>
+    /// Waits until the re-dispatch error callout is shown on the page and returns its text.
+    /// The error is rendered inside <c>div.summary-failure-callout[role=alert]</c> within the
+    /// re-dispatch card (<c>data-testid="redispatch-card"</c>) as:
+    /// <c>Re-dispatch failed: &lt;exception message&gt;</c>.
+    /// </summary>
+    /// <param name="timeout">Maximum time to wait before throwing.</param>
+    /// <returns>The full text content of the error callout.</returns>
+    public async Task<string> WaitForRedispatchErrorAsync(TimeSpan? timeout = null)
+    {
+        var effectiveTimeout = (int)(timeout ?? TimeSpan.FromSeconds(15)).TotalMilliseconds;
+        var errorLocator = _page.Locator("[data-testid='redispatch-card'] .summary-failure-callout[role='alert']");
+        await errorLocator.WaitForAsync(new() { Timeout = effectiveTimeout });
+        return await errorLocator.TextContentAsync() ?? string.Empty;
     }
 }

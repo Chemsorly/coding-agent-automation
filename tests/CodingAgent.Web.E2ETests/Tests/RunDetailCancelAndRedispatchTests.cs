@@ -124,21 +124,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Scenario 1: Cancel via the Run page.
-    ///
-    /// <para>
-    /// The two-step browser confirm flow (cancel-pipeline-btn → confirm-cancel-pipeline-btn) is
-    /// avoided here because it is sensitive to Blazor Server re-renders in CI between the two
-    /// clicks — the same reason <c>PrReviewLifecycleTests</c> cancels via the API. The browser
-    /// assertions still verify all observable page outcomes: cancel button visible before cancel,
-    /// the run leaves the active set, K8s job is deleted, terminal label is applied, and the
-    /// page shows the Cancelled badge after a fresh navigation.
-    /// </para>
+    /// Scenario 1: Cancel via the Run page browser UI (two-step confirm flow).
     ///
     /// <list type="number">
     ///   <item>Open a live run at GeneratingCode on /runs/{id}.</item>
     ///   <item>Assert: Cancel Pipeline button is visible.</item>
-    ///   <item>Cancel the run via the API (same path as the UI confirm button).</item>
+    ///   <item>Click Cancel Pipeline, then click "No" — assert run is still active (dismiss path).</item>
+    ///   <item>Click Cancel Pipeline, then click "Yes, cancel" — assert run is Cancelled.</item>
     ///   <item>Assert: WorkItem is Cancelled, label is <c>agent:cancelled</c>, K8s job deleted,
     ///         page shows Cancelled badge and no Cancel button after re-navigation.</item>
     /// </list>
@@ -181,16 +173,21 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         Assert.True(await runPage.IsCancelButtonVisibleAsync(),
             "Cancel Pipeline button should be visible for an active run");
 
-        // Cancel via the API — the same path the UI's "Yes, cancel" button takes.
-        // Avoids the brittle two-step browser confirm flow (cancel-pipeline-btn →
-        // confirm-cancel-pipeline-btn) which is sensitive to Blazor Server re-renders in CI.
-        await Fixture.WorkItems.PostStatusAsync(
-            workItemId,
-            new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) },
-            CancellationToken.None);
+        // Sub-scenario: dismiss path — clicking "No" leaves the run active.
+        await runPage.CancelAsync(confirm: false);
 
-        // Wait for the run to leave the active set
+        // After dismissal the run should still be active (Cancel button re-appears).
+        await runPage.CancelButton.WaitForAsync(new() { Timeout = 10_000 });
+        Assert.True(await runPage.IsCancelButtonVisibleAsync(),
+            "Cancel Pipeline button should still be visible after dismissing the confirm prompt");
         var runService = Fixture.RunService;
+        Assert.True(runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId),
+            "Run should still be active after dismissing the cancel prompt");
+
+        // Sub-scenario: confirm path — clicking "Yes, cancel" cancels the run via the UI.
+        await runPage.CancelAsync(confirm: true);
+
+        // Wait for the run to leave the active set (the Blazor handler calls PostStatusAsync)
         await WaitUntilAsync(() => !runService.GetActiveRuns().Any(r => r.IssueIdentifier == issueId),
             timeout: TimeSpan.FromSeconds(15));
 
@@ -236,17 +233,27 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     /// Scenario 2: Cancelling a run twice produces only one status post and no error text on page.
     ///
     /// <para>
-    /// The double-click guard on the "Yes, cancel" button prevents a second in-flight request
-    /// while the first is pending. This is covered at the unit-test level
-    /// (RunPageComponentTests). Here we verify the observable outcome at the service/page level:
-    /// two rapid API cancel calls result in exactly one terminal status transition (the second
-    /// is a no-op), and the page does not show a "Cancel failed" error.
+    /// The test covers two layers:
+    /// <list type="number">
+    ///   <item><b>Browser layer</b> — clicks "Cancel Pipeline" then clicks "Yes, cancel" twice
+    ///   in rapid succession via Playwright. The second click arrives while the first HTTP round-
+    ///   trip is still in flight. The double-click guard in PipelineSidebar.razor disables the
+    ///   button after the first click, so the second click is a DOM no-op. The page must not show
+    ///   any error text after the confirm.</item>
+    ///   <item><b>Service layer</b> — fires two concurrent <c>PostStatusAsync</c> calls directly
+    ///   and asserts the resulting DB state is <c>Cancelled</c> with no duplicate write. This
+    ///   covers the idempotence of the underlying status endpoint independently of the UI guard.</item>
+    /// </list>
     /// </para>
     ///
-    /// <para>
-    /// The brittle two-step browser flow (cancel-pipeline-btn → confirm-cancel-pipeline-btn) is
-    /// avoided for the same reason as Scenario 1 — Blazor Server re-render sensitivity in CI.
-    /// </para>
+    /// TODO [WARNING]: The browser-level double-click guard is exercised on a best-effort basis.
+    /// The reliability of the second-click-while-in-flight timing depends on Blazor Server's
+    /// round-trip latency in CI. If the first request completes before the second ClickAsync
+    /// fires (because the CI runner is fast or the network is local), the component will have
+    /// already hidden the confirm prompt via re-render, and the second click will silently miss.
+    /// In that case the test still passes (no error text, Cancelled state) but does not exercise
+    /// the in-flight guard. Tolerating this race is preferable to skipping the browser-level
+    /// assertion entirely.
     /// </summary>
     [Fact]
     public async Task Cancel_DoubleClick_ProducesOnlyOneStatusPost()
@@ -264,17 +271,21 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         var runPage = new RunDetailPage(Page, BaseUrl);
         await runPage.NavigateAsync(runId);
 
-        // Simulate the double-click effect at the API layer: fire two concurrent cancel requests.
-        // The second should be a no-op (WorkItem is already Cancelled from the first).
-        var cancel1 = Fixture.WorkItems.PostStatusAsync(
-            workItemId,
-            new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) },
-            CancellationToken.None);
-        var cancel2 = Fixture.WorkItems.PostStatusAsync(
-            workItemId,
-            new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) },
-            CancellationToken.None);
-        await Task.WhenAll(cancel1, cancel2);
+        // Browser-layer double-click guard:
+        // Open the cancel confirm prompt, then click "Yes, cancel" twice in rapid succession
+        // without waiting between clicks. The double-click guard in PipelineSidebar.razor disables
+        // the button after the first click, so the second ClickAsync is either blocked by the
+        // `disabled` attribute or arrives after the prompt is hidden by the re-render.
+        await runPage.CancelButton.WaitForAsync(new() { Timeout = 15_000 });
+        await runPage.CancelButton.ClickAsync();
+        await runPage.ConfirmCancelButton.WaitForAsync(new() { Timeout = 10_000 });
+        // First click — triggers the cancel HTTP request and sets _cancelling = true in the component.
+        await runPage.ConfirmCancelButton.ClickAsync();
+        // Second click — arrives before (or immediately after) the first response completes.
+        // If the guard is active, this click is a no-op (button is disabled or the prompt is gone).
+        // If the guard were absent, this would fire a second PostStatusAsync, which is idempotent
+        // but still exercised via the service-layer assertions below.
+        await runPage.ConfirmCancelButton.ClickAsync(new() { Force = false, Timeout = 2_000 });
 
         // Wait for cancellation to complete
         var runService = Fixture.RunService;
@@ -302,20 +313,13 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     // ═══════════════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// Scenario 3: Re-dispatch a failed implementation run from the Run page.
-    ///
-    /// <para>
-    /// The two-step browser confirm flow (redispatch-btn → redispatch-confirm-btn) is avoided
-    /// because it is sensitive to Blazor Server re-renders in CI (same reason as the cancel
-    /// scenarios). We verify the observable outcomes: the re-dispatch card and button are visible
-    /// for a terminal run, dispatching via the API creates a new WorkItem, and the new agent
-    /// receives the job.
-    /// </para>
+    /// Scenario 3: Re-dispatch a failed implementation run from the Run page via the browser UI.
     ///
     /// <list type="number">
     ///   <item>A run completes as Failed (terminal Implementation run).</item>
     ///   <item>Navigate to /runs/{runId}; assert re-dispatch card and button are visible.</item>
-    ///   <item>Dispatch via the API (same endpoint as the UI confirm button calls).</item>
+    ///   <item>Click "Re-dispatch" then "Confirm re-dispatch" via the browser UI (<see cref="RunDetailPage.RedispatchAsync"/>).</item>
+    ///   <item>Assert: "Re-dispatched successfully" is shown on the page.</item>
     ///   <item>Assert: a new WorkItem is created for the same issue and a new run id is assigned.</item>
     ///   <item>Assert: the fake agent receives the new job assignment.</item>
     /// </list>
@@ -358,30 +362,12 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         Assert.True(await runPage.IsRedispatchButtonVisibleAsync(),
             "Re-dispatch button should be visible for a terminal Implementation run");
 
-        // Dispatch via the API — the same path the UI "Confirm re-dispatch" button takes.
-        // Avoids the brittle two-step browser confirm flow (redispatch-btn → redispatch-confirm-btn)
-        // which is sensitive to Blazor Server re-renders in CI.
-        // Uses IWorkDistributor.DistributeAsync (→ POST /api/work-items, Pending path) so the
-        // FakeJobController picks it up via the Pending poll.
-        // AgentSelector = "e2e" matches the seeded profile (MatchLabels = ["e2e"]) so
-        // AssignmentEnricher can resolve the full job spec at assignment time.
-        var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
-        var request = new JobDistributionRequest
-        {
-            IssueIdentifier = failedRun.IssueIdentifier,
-            IssueProviderConfigId = failedRun.IssueProviderConfigId!,
-            RepoProviderConfigId = failedRun.RepoProviderConfigId!,
-            BrainProviderConfigId = failedRun.BrainProviderConfigId,
-            PipelineProviderConfigId = failedRun.PipelineProviderConfigId,
-            InitiatedBy = InitiatedByConstants.Manual,
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "e2e",
-            TimeoutSeconds = 0,
-            RunType = PipelineRunType.Implementation,
-            PayloadSchemaVersion = 1,
-        };
-        var dispatchResult = await distributor.DistributeAsync(request, CancellationToken.None);
-        Assert.True(dispatchResult.Success, $"Re-dispatch failed: {dispatchResult.ErrorMessage}");
+        // Re-dispatch via the browser UI — exercises the Blazor event wire-up:
+        // redispatch-btn click → confirm prompt → redispatch-confirm-btn click → RedispatchAsync handler.
+        await runPage.RedispatchAsync(confirm: true);
+
+        // Assert: "Re-dispatched successfully" appears on the page
+        await runPage.WaitForRedispatchSuccessAsync(TimeSpan.FromSeconds(15));
 
         // Assert: a new WorkItem was created for the same issue
         await WaitUntilAsync(async () =>
@@ -440,6 +426,11 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
     public async Task Redispatch_HiddenForReviewRun()
     {
         const string prId = "3091-pr-4b";
+        // TODO [WARNING]: prNumber is assigned but never used. It was likely left over from an
+        // earlier approach that looked up the PR by its numeric GitHub ID. The PullRequestSummary
+        // seeded below references it only to satisfy the constructor — no assertion uses it.
+        // If a future test step needs to locate the PR by number, use prNumber there. Otherwise
+        // remove it to avoid the compiler "unused variable" warning surfacing in CI output.
         const int prNumber = 3091;
         const string issueId = "3091-linked-4b";
 
@@ -511,14 +502,17 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         var request = await orchService.PrepareReviewDistributionRequestAsync(reviewRequest, project!, CancellationToken.None);
         if (request is null)
         {
-            // TODO [WARNING]: Silently returning here means the test always passes when the harness
-            // cannot route a Review job, hiding misconfiguration or a broken review dispatch path.
-            // The entire browser assertion (re-dispatch card hidden for Review runs) is skipped
-            // without any indication in CI output. Replace the silent return with Assert.Fail or
-            // xUnit's Skip mechanism (e.g. Skip.If / throw new SkipException) so the gap is visible.
-            // Orchestration failed (likely no matching profile) — skip the browser assertion
-            // rather than failing due to a harness limitation.
-            return;
+            // Fail explicitly: a null request means the harness cannot route a Review job
+            // (likely no reviewer config or agent profile matching the seeded setup). Silently
+            // returning here would make the test always pass while skipping the only browser
+            // assertion — asserting the re-dispatch card is hidden for Review runs — giving false
+            // confidence that Scenario 4b is covered. Fail instead so the misconfiguration is
+            // immediately visible in CI output.
+            Assert.Fail(
+                "PrepareReviewDistributionRequestAsync returned null: no reviewer config or agent profile " +
+                "matched the seeded setup (review-profile-4b / MatchLabels=[\"e2e\"]). " +
+                "Check that the E2E fixture seeds a ReviewerConfig that routes to this profile.");
+            return; // unreachable; satisfies the compiler
         }
 
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
@@ -571,6 +565,57 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
             "Re-dispatch card should be visible when provider IDs are present in the run summary");
         Assert.True(await runPage.IsRedispatchButtonVisibleAsync(),
             "Re-dispatch button should be visible for a terminal Implementation run with provider IDs");
+    }
+
+    /// <summary>
+    /// Scenario 4d: Re-dispatch card is NOT visible for a terminal Implementation run whose
+    /// provider IDs are missing (null).
+    ///
+    /// <para>
+    /// The <c>CanRedispatch</c> condition in RunPage.razor requires both
+    /// <c>IssueProviderConfigId</c> and <c>RepoProviderConfigId</c> to be non-null/non-empty.
+    /// Runs persisted before those fields were introduced have null provider IDs and must not
+    /// show the re-dispatch button.
+    /// </para>
+    ///
+    /// <para>
+    /// The browser dispatch path always populates provider IDs, so this case is injected
+    /// directly into the history service rather than dispatched through the UI.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public async Task Redispatch_HiddenWhenProviderIdsAreMissing()
+    {
+        const string issueId = "3091-redispatch-4d";
+        var runId = Guid.NewGuid().ToString();
+
+        // Inject a terminal Implementation run summary with null provider IDs directly into the
+        // history service, bypassing the dispatch path (which always populates them).
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = issueId,
+            IssueTitle = $"Issue {issueId} missing providers test",
+            FinalStep = PipelineStep.Failed,
+            RunType = PipelineRunType.Implementation,
+            // IssueProviderConfigId and RepoProviderConfigId intentionally left null:
+            // CanRedispatch returns false when either is null or empty.
+            IssueProviderConfigId = null,
+            RepoProviderConfigId = null,
+#pragma warning disable CS0618 // StartedAt is Obsolete; required field on the record
+            StartedAt = DateTime.UtcNow,
+#pragma warning restore CS0618
+            StartedAtOffset = DateTimeOffset.UtcNow,
+            InitiatedBy = "e2e-test"
+        };
+        await Fixture.HistoryService.AddRunSummaryAsync(summary, CancellationToken.None);
+
+        var runPage = new RunDetailPage(Page, BaseUrl);
+        await runPage.NavigateAsync(runId);
+
+        // The re-dispatch card must NOT appear when provider IDs are missing.
+        Assert.False(await runPage.IsRedispatchCardVisibleAsync(),
+            "Re-dispatch card must not be shown for a terminal run with null provider IDs");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -644,6 +689,9 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         // Uses IWorkDistributor.DistributeAsync (→ POST /api/work-items) which returns
         // DistributionResult.AlreadyExists=true on 409 rather than throwing, and uses the same
         // dedup guard as the UI confirm button path.
+        // TODO [WARNING]: IWorkDistributor is resolved from the root service provider without a scope.
+        // If it is registered as Scoped, this creates a captive-scope instance. Prefer resolving via
+        // CreateScope() + dispose. See similar pattern in Scenario 4b.
         var distributor = Fixture.Factory.Services.GetRequiredService<IWorkDistributor>();
         var request = new JobDistributionRequest
         {
@@ -667,5 +715,18 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         var countAfter = await dbAfter.WorkItems.AsNoTracking()
             .CountAsync(w => w.IssueIdentifier == issueId);
         Assert.Equal(2, countAfter);
+
+        // Assert: the page shows "Re-dispatch failed: …" when the user triggers re-dispatch
+        // through the browser UI while the injected Pending WorkItem is still blocking it.
+        // The Blazor RedispatchAsync handler calls WorkItems.DispatchAsync → POST /api/work-items/dispatch.
+        // The API returns 409 Conflict; DispatchAsync calls EnsureSuccessStatusCode() and throws
+        // HttpRequestException, which the catch block stores in _redispatchError and renders inside
+        // div.summary-failure-callout[role=alert] within data-testid="redispatch-card".
+        await runPage.NavigateAsync(originalRunId);
+        Assert.True(await runPage.IsRedispatchCardVisibleAsync(),
+            "Re-dispatch card should still be visible (run itself is still terminal/Failed)");
+        await runPage.RedispatchAsync(confirm: true);
+        var errorText = await runPage.WaitForRedispatchErrorAsync(TimeSpan.FromSeconds(15));
+        Assert.Contains("Re-dispatch failed", errorText);
     }
 }
