@@ -6,6 +6,10 @@ metadata:
   labels:
     {{- include "coding-agent-automation.labels" . | nindent 4 }}
     app.kubernetes.io/component: web
+  {{- with $web.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   type: {{ $web.service.type }}
   ports:

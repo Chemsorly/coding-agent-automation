@@ -1,0 +1,39 @@
+# helm unittest suite for the web Service.
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Covers:
+#   1. No annotations by default
+#   2. web.service.annotations passed through (e.g. Traefik sticky sessions for several web replicas)
+
+suite: web service
+
+templates:
+  - templates/web-service.yaml
+
+# Required values to avoid render failures in dependent templates
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  signalr.redis.connectionString: "redis:6379"
+
+tests:
+
+  - it: renders no annotations by default
+    asserts:
+      - isKind:
+          of: Service
+      - notExists:
+          path: metadata.annotations
+
+  - it: passes web.service.annotations through
+    set:
+      web.service.annotations:
+        traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+        traefik.ingress.kubernetes.io/service.sticky.cookie.name: ca_affinity
+    asserts:
+      - equal:
+          path: metadata.annotations["traefik.ingress.kubernetes.io/service.sticky.cookie"]
+          value: "true"
+      - equal:
+          path: metadata.annotations["traefik.ingress.kubernetes.io/service.sticky.cookie.name"]
+          value: ca_affinity
