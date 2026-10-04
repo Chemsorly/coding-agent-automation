@@ -8,7 +8,7 @@
        preview (the agent registry raises no change events). *@
     @if (HasLiveValues)
     {
-        <AutoRefresh IntervalSeconds="3" OnTick="RedrawLiveValues" />
+        <AutoRefresh IntervalSeconds="3" OnTick="StateHasChanged" />
     }
     <div class="cockpit-card-header"><h2>Pipeline Job Templates</h2></div>
     @if (Templates.Count == 0)
