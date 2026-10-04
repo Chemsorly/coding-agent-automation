@@ -24,7 +24,13 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(1500);
+        // Wait for the Blazor interactive circuit to connect. The static prerender renders all
+        // elements immediately, but Blazor Server onclick handlers are only active once the
+        // circuit is established. RunPage sets data-interactive="true" in OnAfterRenderAsync
+        // (which only fires after circuit connect), so this is the reliable "ready to click" marker.
+        await _page.WaitForSelectorAsync(
+            "[data-testid='run-page'][data-interactive='true']",
+            new() { Timeout = 15_000 });
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
