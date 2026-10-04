@@ -125,4 +125,52 @@ public class FeedbackCommentFormatterTests
     }
 
     #endregion
+
+    #region ReadSummary reads a formatted comment back
+
+    [Fact]
+    public void ReadSummary_FormattedComment_ReturnsCategoryAndDescriptionOnly()
+    {
+        var comment = FeedbackCommentFormatter.FormatComment(new IssueFeedback
+        {
+            Category = "partial scope",
+            Description = "The criteria named the inner catch\nbut omitted the outer catch at L777.",
+            AffectedFiles = ["src/ReconciliationLoop.cs"],
+            HumanActionNeeded = "Open a follow-up issue."
+        })!;
+
+        var summary = FeedbackCommentFormatter.ReadSummary(comment);
+
+        summary.Should().Be("partial scope: The criteria named the inner catch but omitted the outer catch at L777.");
+    }
+
+    [Fact]
+    public void ReadSummary_UndoesTheCommentEscaping()
+    {
+        var comment = FeedbackCommentFormatter.FormatComment(new IssueFeedback
+        {
+            Description = "List<T> is mutated by @owner's code"
+        })!;
+
+        FeedbackCommentFormatter.ReadSummary(comment).Should().Be("List<T> is mutated by @owner's code");
+    }
+
+    [Fact]
+    public void ReadSummary_LongDescription_IsCut()
+    {
+        var comment = FeedbackCommentFormatter.FormatComment(new IssueFeedback { Description = new string('x', 600) })!;
+
+        var summary = FeedbackCommentFormatter.ReadSummary(comment, maxLength: 100);
+
+        summary.Should().HaveLength(101).And.EndWith("…");
+    }
+
+    [Fact]
+    public void ReadSummary_NoDescription_ReturnsNull()
+    {
+        FeedbackCommentFormatter.ReadSummary("<!-- agent:issue-feedback -->\n## 🤖 Agent Feedback — Issue Quality\n\n**Category:** x")
+            .Should().BeNull();
+    }
+
+    #endregion
 }
