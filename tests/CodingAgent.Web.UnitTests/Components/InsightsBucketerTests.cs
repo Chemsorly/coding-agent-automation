@@ -33,6 +33,15 @@ public class InsightsBucketerTests
     // ── Empty input ───────────────────────────────────────────────────────
 
     /// <summary>Empty input produces an empty list regardless of window.</summary>
+    // TODO: [WARNING] This test exercises the public BuildBuckets entry point, which returns []
+    // before reaching BuildAllWindowBuckets (windowHours == 0 path). The guard clause added to
+    // BuildAllWindowBuckets itself (`if (items.Count == 0) return [];`) is therefore never
+    // exercised: BuildBuckets intercepts all empty-input calls first. If a future refactor
+    // adds a second call path that bypasses the public entry-point guard, the
+    // BuildAllWindowBuckets guard is what prevents InvalidOperationException, but no dedicated
+    // test covers it. Consider adding a test that reaches BuildAllWindowBuckets with empty input
+    // via a non-public entry point (e.g., reflection or making the method internal/testable) to
+    // lock in that behaviour independently.
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
