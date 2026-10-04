@@ -302,7 +302,7 @@ public static class WorkItemDispatchEndpoints
         // NOTE (issue #3243): templateStore is received here from DI but is not passed separately
         // to the service — the service holds its own _templateStore instance injected at
         // construction time, which is the same singleton registered in the DI container.
-        // TODO (issue #3243): This unused DI-injected parameter creates a hidden runtime risk:
+        // NOTE (issue #3243): This unused DI-injected parameter creates a hidden runtime risk:
         // if JobTemplateStore is ever unregistered or its DI registration changes (e.g., singleton
         // to scoped), the endpoint will throw InvalidOperationException at invocation time with no
         // indication the parameter is unused. Consider removing this parameter since the service
