@@ -8,7 +8,7 @@ namespace CodingAgent.Api;
 /// <summary>
 /// Reads what a consolidation run needs from the run history at delivery time: when the last run of the
 /// same type and scope succeeded (brain consolidation focuses on what changed since), and for harness
-/// suggestions the run feedback collected since their last successful run.
+/// suggestions the run feedback collected since a given time.
 /// </summary>
 /// <remarks>
 /// A consolidation run's history entry has the work item's <c>{type}:{scope}</c> key as its issue identifier
