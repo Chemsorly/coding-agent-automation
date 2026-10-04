@@ -34,14 +34,6 @@ public sealed partial class AgentHub
                 commentBody = payload.AnalysisMarkdown ?? string.Empty;
                 break;
 
-            case CommentType.GateRejection:
-                commentBody = _gateCommentFormatter.FormatGateComment(payload.AssessmentJson, isWontDo: false);
-                break;
-
-            case CommentType.GateWontDo:
-                commentBody = _gateCommentFormatter.FormatGateComment(payload.AssessmentJson, isWontDo: true);
-                break;
-
             default:
                 _logger.Warning("Unknown comment type {CommentType} for job {JobId}", commentType, jobId);
                 return;

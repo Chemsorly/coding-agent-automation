@@ -13,13 +13,12 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// <summary>
 /// Tests for AgentHub issue-provider proxy methods (RequestCreateIssue, RequestListOpenIssues,
 /// RequestListClosedIssues, RequestGetIssue, RequestListComments, RequestUpdateComment,
-/// RequestCreateIssueForProvider) and the RequestPostComment GateRejection/GateWontDo paths.
+/// RequestCreateIssueForProvider).
 /// These methods route through ExecuteWithIssueProviderAsync and were previously uncovered.
 /// </summary>
 public sealed class AgentHubIssueProxyTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
-    private readonly Mock<IGateCommentFormatter> _mockGateFormatter = new();
     private readonly Mock<IHubIssueOperations> _mockIssueOps = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
@@ -33,7 +32,6 @@ public sealed class AgentHubIssueProxyTests
             _mockIssueOps.Object,
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            _mockGateFormatter.Object,
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
 
@@ -72,38 +70,6 @@ public sealed class AgentHubIssueProxyTests
         _mockFacade.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
 
         return (config, mockProvider);
-    }
-
-    // ── RequestPostComment — GateRejection and GateWontDo paths ──────────
-
-    [Fact]
-    public async Task RequestPostComment_GateRejection_FormatsAndPosts()
-    {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockGateFormatter.Setup(f => f.FormatGateComment(It.IsAny<string?>(), false)).Returns("formatted-rejection");
-
-        var hub = CreateHub();
-        var payload = new CommentPayload { AssessmentJson = "{}" };
-        await hub.RequestPostComment("job-1", CommentType.GateRejection, payload);
-
-        _mockGateFormatter.Verify(f => f.FormatGateComment("{}", false), Times.Once);
-        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-rejection"), Times.Once);
-    }
-
-    [Fact]
-    public async Task RequestPostComment_GateWontDo_FormatsAndPosts()
-    {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockGateFormatter.Setup(f => f.FormatGateComment(It.IsAny<string?>(), true)).Returns("formatted-wontdo");
-
-        var hub = CreateHub();
-        var payload = new CommentPayload { AssessmentJson = "{\"verdict\":\"wont-do\"}" };
-        await hub.RequestPostComment("job-1", CommentType.GateWontDo, payload);
-
-        _mockGateFormatter.Verify(f => f.FormatGateComment("{\"verdict\":\"wont-do\"}", true), Times.Once);
-        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "formatted-wontdo"), Times.Once);
     }
 
     // ── RequestLabelChange — logs before swap ─────────────────────────────

@@ -23,7 +23,6 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
-    private readonly Mock<IConsolidationService> _mockConsolidationService = new();
     private readonly Mock<IPipelineConfigStore> _mockConfigStore = new();
 
     private readonly IConfiguration _configuration = new ConfigurationBuilder()
@@ -59,7 +58,7 @@ public class DatabaseMaintenanceServiceAdditionalTests : IDisposable
     }
 
     private DatabaseMaintenanceService CreateService() =>
-        new(_dbFactory, _mockConsolidationService.Object, _configuration, _mockConfigStore.Object);
+        new(_dbFactory, _configuration, _mockConfigStore.Object);
 
     // ── CleanupStaleWorkItems — cancellation path ────────────────────────────
 

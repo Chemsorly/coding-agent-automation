@@ -617,10 +617,8 @@ public static class ApiServiceCollectionExtensions
         // gates on its own leader election — no API-side lease needed.
         services.AddSingleton<DatabaseMaintenanceService>(sp => new DatabaseMaintenanceService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>()));
+            sp.GetRequiredService<IPipelineConfigStore>()));
     }
 
     /// <summary>
@@ -652,7 +650,9 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ConsolidationTemplateResolver>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<IPipelineRunHistoryService>(),
+            sp.GetRequiredService<IHarnessSuggestionStore>()));
 
         // ── Synchronous dispatch services (POST /api/work-items/dispatch) ────────────────────
         // DispatchLifecycleService — shared PVC-selection lock + K8s Job creation lifecycle.

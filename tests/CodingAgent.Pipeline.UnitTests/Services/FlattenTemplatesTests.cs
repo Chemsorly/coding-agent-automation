@@ -68,6 +68,10 @@ public class FlattenTemplatesTests : IAsyncDisposable
     }
 
     // ── Requirement 8.1: Projects ordered alphabetically by Name ──────────────
+    // NOTE (bug, see #3093 AC2): docs/projects.md says "project order" means list/insertion order,
+    // but FlattenTemplates currently uses OrderBy(p => p.Name, StringComparer.Ordinal) (alphabetical).
+    // These tests pin the actual (alphabetical) behaviour. When the bug is fixed to honour list order,
+    // these tests must be updated to assert insertion order instead.
 
     /// <summary>
     /// Validates: Requirement 8.1 — projects ordered alphabetically by Name.

@@ -516,7 +516,6 @@ public class AgentAuthorizationFilterInvokeTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object,
             Mock.Of<IAgentOrphanRecoveryService>(), HubTestHelpers.CreateNoOpHubContext()));
         hub.Context = MakeContext(connectionId);
@@ -620,7 +619,6 @@ public class AgentAuthorizationFilterRedisFallbackTests
             Mock.Of<IHubIssueOperations>(),
             Mock.Of<IAgentJobLifecycleService>(),
             Mock.Of<IAgentTokenRefreshService>(),
-            Mock.Of<IGateCommentFormatter>(),
             _loggerMock.Object,
             Mock.Of<IAgentOrphanRecoveryService>(),
             HubTestHelpers.CreateNoOpHubContext()));

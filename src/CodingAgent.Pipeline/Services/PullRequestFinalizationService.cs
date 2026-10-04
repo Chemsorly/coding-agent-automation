@@ -198,10 +198,10 @@ public sealed class PullRequestFinalizationService
                     // On a busy thread pool the delta between HTTP completion and this assignment
                     // can be a few ms. This cannot produce a false-negative (timestamp is always
                     // >= actual mark-ready, never before it), so no CI run will be wrongly accepted
-                    // due to this. The XML doc on PrMarkedReadyAt says "immediately after … completes
-                    // without error" — that approximation is acceptable given the usage as a filter
-                    // anchor, but reviewers should be aware of the imprecision if clock resolution
-                    // requirements tighten.
+                    // due to this. The XML doc on PrMarkedReadyAt describes the field as set after
+                    // UpdatePullRequestAsync(markReady:true) completes successfully — that approximation
+                    // is acceptable given the usage as a filter anchor, but reviewers should be aware
+                    // of the imprecision if clock resolution requirements tighten.
                     run.PrMarkedReadyAt = DateTime.UtcNow;
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -233,11 +233,6 @@ public sealed class PullRequestFinalizationService
         else
         {
             // The brain post-run sync was skipped — log the reason.
-            // Priority: isDraft wins → no_provider → no_sync_service → read_only.
-            var skipReason = isDraft ? "is_draft"
-                : brainProvider is null ? "no_provider"
-                : brainSync is null ? "no_sync_service"
-                : "read_only";
             _logger.Information(
                 "Pipeline {RunId} skipping brain post-run sync: isDraft={IsDraft}, brainProvider={HasProvider}, brainSync={HasSync}, brainReadOnly={ReadOnly}",
                 run.RunId, isDraft, brainProvider is not null, brainSync is not null, config.BrainReadOnly);

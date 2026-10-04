@@ -79,41 +79,4 @@ public class CostFormatterTests
         CostFormatter.FormatTokens(1_500).Should().Contain(".");
         CostFormatter.FormatTokens(1_500).Should().NotContain(",");
     }
-
-    // ── FormatBadge ────────────────────────────────────────────────────
-
-    [Fact]
-    public void FormatBadge_HasCost_ReturnsCostNotTokens()
-    {
-        CostFormatter.FormatBadge(totalTokens: 50_000, totalCost: 0.05m)
-            .Should().Be("$0.05");
-    }
-
-    [Fact]
-    public void FormatBadge_NoCostButHasTokens_ReturnsTokensWithSuffix()
-    {
-        CostFormatter.FormatBadge(totalTokens: 12_400, totalCost: null)
-            .Should().Be("12.4K tok");
-    }
-
-    [Fact]
-    public void FormatBadge_NoCostZeroCost_FallsBackToTokens()
-    {
-        CostFormatter.FormatBadge(totalTokens: 5_000, totalCost: 0m)
-            .Should().Be("5.0K tok");
-    }
-
-    [Fact]
-    public void FormatBadge_NoCostNoTokens_ReturnsDash()
-    {
-        CostFormatter.FormatBadge(totalTokens: 0, totalCost: null)
-            .Should().Be("—");
-    }
-
-    [Fact]
-    public void FormatBadge_BothZero_ReturnsDash()
-    {
-        CostFormatter.FormatBadge(totalTokens: 0, totalCost: 0m)
-            .Should().Be("—");
-    }
 }

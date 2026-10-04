@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Prompts;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
@@ -49,12 +50,25 @@ public class ConsolidationPromptBuilderRefactoringTests
     }
 
     [Fact]
+    public void BuildRefactoringContextExtractionPrompt_DiscoversMcpToolsAndRunsAnalyzersOnce()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt();
+
+        result.Should().Contain("Check your available MCP tools for additional data sources");
+        result.Should().Contain($"`{AgentWorkspacePaths.RefactoringToolOutputDirectory}/<name>.txt`");
+        result.Should().Contain("\"availableTools\"");
+    }
+
+    [Fact]
     public void BuildRefactoringStructuralDebtPrompt_IncludesPreambleWithToolAugmentation()
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt();
 
-        result.Should().Contain("Tool augmentation encouraged");
-        result.Should().Contain("install tools");
+        result.Should().Contain("Use the available tools");
+        result.Should().Contain(AgentWorkspacePaths.RefactoringToolOutputDirectory);
+        result.Should().Contain("Query the listed MCP tools");
+        // The three detection agents share one workspace: parallel builds would collide
+        result.Should().Contain("Do NOT run builds");
     }
 
     [Fact]
@@ -126,7 +140,8 @@ public class ConsolidationPromptBuilderRefactoringTests
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt();
 
-        result.Should().Contain("install and run them");
+        result.Should().Contain("install and run");
+        result.Should().Contain("read-only analyzer that does not build");
     }
 
     // ─── Phase 1, Agent C: Design Consistency ────────────────────────────
@@ -294,14 +309,132 @@ public class ConsolidationPromptBuilderRefactoringTests
     }
 
     [Fact]
-    public void BuildRefactoringAggregationPrompt_ListsValidNonCodeReadingSources()
+    public void BuildRefactoringAggregationPrompt_HotspotIsNotEvidence()
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
 
-        result.Should().Contain("\"hotspot:\"");
-        result.Should().Contain("\"grep:\"");
-        result.Should().Contain("\"usage-search:\"");
-        result.Should().Contain("\"tool:\"");
+        result.Should().Contain("`hotspot:` is a priority signal, not evidence");
+        result.Should().Contain("A `tool:` source counts only when it names a compiler, linter, analyzer or MCP tool");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_EvidenceGateCoversEveryCategory()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+        var gate = Section(result, "### Step 3: Evidence Quality Gate", "### Step 4");
+
+        foreach (var category in RefactoringCategories.All)
+            gate.Should().Contain($"`{category}`");
+    }
+
+    [Fact]
+    public void RefactoringPrompts_SchemaCategoriesMatchTheSingleCategoryList()
+    {
+        ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt()
+            .Should().Contain($"\"category\": \"{string.Join("|", RefactoringCategories.Structural)}\"");
+        ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt()
+            .Should().Contain($"\"category\": \"{string.Join("|", RefactoringCategories.Correctness)}\"");
+        ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt()
+            .Should().Contain($"\"category\": \"{string.Join("|", RefactoringCategories.Design)}\"");
+        ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt()
+            .Should().Contain($"\"category\": \"{string.Join("|", RefactoringCategories.All)}\"");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_KnownDebtDoesNotDropTodoFindings()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("This does not apply to `todo` findings");
+    }
+
+    [Fact]
+    public void BuildRefactoringContextExtractionPrompt_KeepsInlineTodosOutOfKnownDebt()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt();
+
+        result.Should().Contain("Do NOT copy inline TODO/FIXME/HACK comments into knownDebt");
+        result.Should().NotContain("anything acknowledged in TODOs");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_RanksBugsFirstAndSpreadsWork()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("**Bugs first.**");
+        result.Should().Contain("at most one proposal per primary file");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_HandlesMissingFindingsFile()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("If a findings file is missing or is not valid JSON, that agent failed");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_RequiresEvidenceAndScopeQuery()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("\"evidence\":");
+        result.Should().Contain("\"scopeQuery\":");
+        result.Should().Contain("one criterion MUST state that no match of the pattern remains");
+        result.Should().Contain("one criterion MUST require a test that reproduces the failure scenario");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ForbidsPipelineNarrationAndAlternatives()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("Do NOT mention the analysis agents (A, B, C), phases, scores, rankings, or this scan");
+        result.Should().Contain("Propose ONE approach");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_WritesAnalysisLogToConstantPath()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
+        result.Should().Contain("The `notChecked` areas the agents reported");
+    }
+
+    [Theory]
+    [MemberData(nameof(SubAgentPrompts))]
+    public void SubAgentPrompts_ExcludePipelineScratchSpaceAndReportNotChecked(string prompt)
+    {
+        prompt.Should().Contain("**Out of scope:** `.agent/`, `.brain/`");
+        prompt.Should().Contain("\"notChecked\":");
+        prompt.Should().Contain("\"findings\": [");
+        prompt.Should().Contain("Nothing else is `tool:`");
+    }
+
+    public static TheoryData<string> SubAgentPrompts() => new()
+    {
+        ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt(),
+        ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt(),
+        ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt()
+    };
+
+    [Fact]
+    public void BuildRefactoringStructuralDebtPrompt_DoesNotFlagInjectedSingleImplementationInterfaces()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt();
+
+        result.Should().Contain("is NOT a finding when it is registered for dependency injection");
+    }
+
+    private static string Section(string text, string startHeading, string endHeading)
+    {
+        var start = text.IndexOf(startHeading, StringComparison.Ordinal);
+        start.Should().BeGreaterThanOrEqualTo(0, $"the prompt should contain '{startHeading}'");
+        var end = text.IndexOf(endHeading, start + startHeading.Length, StringComparison.Ordinal);
+        end.Should().BeGreaterThan(start, $"the prompt should contain '{endHeading}' after '{startHeading}'");
+        return text[start..end];
     }
 
     // ─── Review Prompt (Strengthened) ────────────────────────────────────
@@ -376,11 +509,76 @@ public class ConsolidationPromptBuilderRefactoringTests
     }
 
     [Fact]
+    public void BuildRefactoringReviewPrompt_ReadsAnalysisLogAndIssueContextFiles()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
+        result.Should().Contain(AgentWorkspacePaths.RefactoringIssueContextFilePath);
+    }
+
+    [Fact]
+    public void BuildRefactoringReviewPrompt_FlagsIncompleteScopeAndBugsWithoutReproduction()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().Contain("**Incomplete scope**");
+        result.Should().Contain("**Bug without a reproduction**");
+        result.Should().Contain("**Evidence not shown**");
+    }
+
+    [Fact]
+    public void BuildRefactoringReviewPrompt_DoesNotDemandAMinimumFindingCount()
+    {
+        // The refinement step cannot add findings, so a minimum-count CRITICAL could never be fixed
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().NotContain("Shallow exploration");
+        result.Should().NotContain("fewer than 15");
+    }
+
+    [Fact]
+    public void BuildRefactoringRefinementPrompt_LetsRefinementCompleteTheScope()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt();
+
+        result.Should().Contain("add them to `affectedFiles` and fix `scopeQuery`");
+    }
+
+    [Fact]
     public void BuildRefactoringReviewPrompt_IncludesAcceptanceCriteriaQualityBullets()
     {
         var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
 
         result.Should().Contain("Unverifiable acceptance criteria");
         result.Should().Contain("Implementation-prescriptive acceptance criteria");
+    }
+
+    // TODO: These tests verify the correct content is present in the prompt output but cannot
+    // distinguish between the constant being interpolated versus a duplicate bare string literal
+    // with the same value. If AgentWorkspacePaths.RefactoringAnalysisFilePath were removed and
+    // ".agent/refactoring-analysis.md" re-introduced as a literal, these tests would still pass.
+    // To close this gap, consider adding a source-scan test that asserts no .cs file outside
+    // AgentWorkspacePaths.cs contains a raw ".agent/refactoring-analysis.md" string literal.
+    // TODO: This test is a duplicate of BuildRefactoringReviewPrompt_ReadsAnalysisLogAndIssueContextFiles (line ~512),
+    // which already asserts result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath) on the same method.
+    // This test adds no new assertion and would pass or fail under exactly the same conditions. Consider removing it.
+    [Fact]
+    public void BuildRefactoringReviewPrompt_ReferencesAnalysisFilePath()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
+    }
+
+    // TODO: This test is a duplicate of BuildRefactoringAggregationPrompt_WritesAnalysisLogToConstantPath (line ~399),
+    // which already asserts result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath) on the same method.
+    // This test adds no new assertion and would pass or fail under exactly the same conditions. Consider removing it.
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ReferencesAnalysisFilePath()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain(AgentWorkspacePaths.RefactoringAnalysisFilePath);
     }
 }

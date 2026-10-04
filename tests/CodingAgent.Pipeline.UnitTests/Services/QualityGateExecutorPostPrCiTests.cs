@@ -1011,6 +1011,48 @@ public class QualityGateExecutorEdgeCaseTests
             Times.Once, "post-PR CI retry exhaustion must finalize as draft PR (lines 149-157)");
     }
 
+    /// <summary>
+    /// Regression test for issue #3111 (run 6d7b4aa1): post-PR CI failed on a flaky test, and
+    /// the retry loop's CI round then passed. The retry loop had moved the run back to
+    /// RunningQualityGates, so the run ended on a non-terminal step and was recorded as
+    /// Failed/AgentError although its PR was ready and green.
+    /// </summary>
+    [Fact]
+    public async Task WhenPostPrCiFails_AndRetryPasses_RunEndsCompleted()
+    {
+        SetupValidatorAlwaysPasses();
+
+        // Mirror the production callbacks: TransitionTo moves the run's step, and
+        // FinalizePullRequest leaves the run of a ready PR on Completed.
+        _mockCallbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
+            .Callback<PipelineStep>(step => _run.CurrentStep = step);
+        _mockCallbacks.Setup(c => c.FinalizePullRequest(_run, false, It.IsAny<CancellationToken>()))
+            .Callback(() => _run.CurrentStep = PipelineStep.Completed)
+            .Returns(Task.CompletedTask);
+
+        _mockPipelineProvider
+            .Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] });
+
+        var ciPassed = new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [new() { Name = "build", State = PipelineRunState.Passed }] };
+        var ciFailure = new PipelineRunStatus { State = PipelineRunState.Failed, Jobs = [new() { Name = "build", State = PipelineRunState.Failed, FailureReason = "CI failure" }] };
+
+        _mockPipelineProvider
+            .SetupSequence(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ciPassed)   // pre-PR CI passes
+            .ReturnsAsync(ciPassed)   // cleanup-path CI passes
+            .ReturnsAsync(ciFailure)  // post-PR CI fails → retry loop
+            .ReturnsAsync(ciPassed);  // the retry's CI round passes
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(maxRetries: 1), CancellationToken.None);
+
+        _mockCallbacks.Verify(
+            c => c.FinalizePullRequest(_run, true, It.IsAny<CancellationToken>()),
+            Times.Never, "a passing retry must not demote the PR to draft");
+        _run.CurrentStep.Should().Be(PipelineStep.Completed,
+            "the run must end on the terminal step FinalizePullRequest set, not on the retry loop's RunningQualityGates");
+    }
+
     // TODO [WARNING]: The first guard in HandlePostPrCiAsync (line 153 — after WaitForPostPrCiAsync,
     // before the retry loop) has no dedicated test for ConflictRestart. If that guard were silently
     // reverted to `== PipelineStep.Failed`, the test below would not catch the regression because

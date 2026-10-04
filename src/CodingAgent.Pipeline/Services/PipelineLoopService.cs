@@ -71,6 +71,21 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     /// <summary>Number of agent:next issues remaining in the current queue snapshot.</summary>
     public int QueueCount { get; private set; }
 
+    /// <summary>
+    /// Number of poll cycles completed since the loop was last started.
+    /// Incremented once per successful <see cref="ExecuteCycleAsync"/> call (return value true).
+    /// Reset to zero when the loop stops (<see cref="CleanupAsync"/>).
+    /// Used by tests to confirm at least one cycle ran before asserting negative (empty) outcomes.
+    /// </summary>
+    // TODO [WARNING]: The volatile keyword on _cycleCount is redundant alongside
+    // Interlocked.Increment (MultiTemplateLoop.cs) — Interlocked operations are full
+    // memory barriers, so volatile adds nothing. Both are currently present; removing
+    // volatile would be cleaner but is a low-priority cosmetic change. Reads via
+    // CycleCount => _cycleCount observe fresh values on all .NET platforms because the
+    // field is volatile; no additional Interlocked on reads is necessary.
+    private volatile int _cycleCount;
+    public int CycleCount => _cycleCount;
+
     /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
     public bool IsCircuitBroken => _circuitBreaker.IsTripped;
 
@@ -254,6 +269,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             ProcessedCount = 0;
             FailedCount = 0;
             QueueCount = 0;
+            _cycleCount = 0;
             _circuitBreaker.Reset();
             CurrentIssueIdentifier = null;
             CurrentCycleTemplateIndex = 0;

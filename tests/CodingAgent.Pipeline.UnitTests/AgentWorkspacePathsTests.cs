@@ -36,4 +36,17 @@ public class AgentWorkspacePathsTests
     {
         AgentWorkspacePaths.BrainDirectory.Should().Be(".brain");
     }
+
+    // TODO: This test pins the constant's raw string value but cannot detect the real regression
+    // (constant defined but not used in the prompt, or prompt falling back to a bare string).
+    // The stronger guards are BuildRefactoringReviewPrompt_ReferencesAnalysisFilePath and
+    // BuildRefactoringAggregationPrompt_ReferencesAnalysisFilePath in ConsolidationPromptBuilderRefactoringTests.cs.
+    // Consider adding a source-scan test (similar to the TODO above) that asserts no .cs file outside
+    // AgentWorkspacePaths.cs contains a raw ".agent/refactoring-analysis.md" literal, to catch any future
+    // reintroduction of the hardcoded string.
+    [Fact]
+    public void RefactoringAnalysisFilePath_IsAgentRefactoringAnalysisMd()
+    {
+        AgentWorkspacePaths.RefactoringAnalysisFilePath.Should().Be(".agent/refactoring-analysis.md");
+    }
 }

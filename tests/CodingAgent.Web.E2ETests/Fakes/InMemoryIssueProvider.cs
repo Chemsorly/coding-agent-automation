@@ -71,6 +71,13 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     {
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
 
+        // TODO [WARNING]: `filtered` is the live Issues reference when labels is null/empty (the
+        // ternary below uses `Issues` directly). The subsequent `.Skip().Take().ToList()` snapshots
+        // `paged`, but `filtered.Count` is evaluated against the live list at a different point.
+        // If AddLabelsAsync (running on the FakeJobController poll thread) mutates Issues concurrently
+        // with a paging read on the PipelineLoopService background thread, `HasMore` and the item
+        // projection can observe different list states. Materialize `filtered` to a list up front
+        // (e.g. `.ToList()`) so both the Count and the Skip/Take operate on the same snapshot.
         var filtered = labels is { Count: > 0 }
             ? Issues.Where(i => labels.Any(l => i.Labels.Contains(l))).ToList()
             : Issues;
@@ -78,7 +85,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         var paged = filtered.Skip((page - 1) * pageSize).Take(pageSize).ToList();
         return Task.FromResult(new PagedResult<IssueSummary>
         {
-            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description }).ToList(),
+            Items = paged.Select(i => new IssueSummary { Identifier = i.Identifier, Title = i.Title, Labels = i.Labels, Description = i.Description, CreatedAt = i.CreatedAt }).ToList(),
             Page = page,
             PageSize = pageSize,
             HasMore = filtered.Count > page * pageSize
@@ -149,6 +156,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
                 Title = existing.Title,
                 Images = existing.Images,
                 Url = existing.Url,
+                CreatedAt = existing.CreatedAt,
             };
         }
         foreach (var label in labels)
@@ -171,6 +179,7 @@ public sealed class InMemoryIssueProvider : IIssueProvider
                 Title = existing.Title,
                 Images = existing.Images,
                 Url = existing.Url,
+                CreatedAt = existing.CreatedAt,
             };
         }
         LabelChanges.Add((identifier.Value, label, false));

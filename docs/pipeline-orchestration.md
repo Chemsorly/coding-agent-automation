@@ -514,8 +514,8 @@ When multiple issue references are found, ALL are retrieved and written as separ
 
 | Metric | Description | Tags |
 |--------|-------------|------|
-| `pipeline.dispatch.linked_issues.resolved` | Issues successfully fetched per dispatch, emitted after the fetch loop | `source=closing_keyword\|issue_url` |
-| `pipeline.dispatch.linked_issues.fetch_failed` | Non-fatal `GetIssueAsync` failures per issue number | (none) |
+| `pipeline.dispatch.linked_issues_resolved` | Issues successfully fetched per dispatch, emitted after the fetch loop | `source=closing_keyword\|issue_url` |
+| `pipeline.dispatch.linked_issue_fetch_failed` | Non-fatal `GetIssueAsync` failures per issue number | (none) |
 
 `source` values are a closed set defined in `PipelineTelemetry.LinkedIssueSource`: `closing_keyword` for issues found via closing-keyword forms, `issue_url` for issues found via GitHub issue URLs. Only emitted when count > 0 for a given source.
 

@@ -37,14 +37,14 @@ internal static class SharedRepositoryOperations
     }
 
     [ExcludeFromCodeCoverage]
-    internal static async Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, string baseBranch, ResiliencePipeline gitPipeline, CancellationToken ct)
+    internal static async Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, BranchName baseBranch, ResiliencePipeline gitPipeline, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         return await RepositoryGitOperations.HasCommitsAhead(workspacePath, baseBranch, gitPipeline, ct);
     }
 
     [ExcludeFromCodeCoverage]
-    internal static Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, string baseBranch, CancellationToken ct)
+    internal static Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, BranchName baseBranch, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         return Task.Run(() => RepositoryGitOperations.GetFileChanges(workspacePath, baseBranch), ct);

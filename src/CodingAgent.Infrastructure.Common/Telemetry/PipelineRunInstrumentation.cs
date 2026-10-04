@@ -14,8 +14,7 @@ namespace CodingAgent.Pipeline.Telemetry;
 /// in the long-lived API process, which avoids the first-series-zero problem that affects
 /// ephemeral agent pods. See issue #2967.
 ///
-/// <see cref="MarkCompleted"/> and <see cref="MarkFailed"/> still set the span status;
-/// <see cref="StopTiming"/> is a no-op retained for call-site compatibility.
+/// <see cref="MarkCompleted"/> and <see cref="MarkFailed"/> still set the span status.
 ///
 /// Call <see cref="MarkCompleted"/> before disposal to mark the span as successful.
 /// If not called, the run span is left without an explicit OK status.
@@ -48,19 +47,11 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
     /// <param name="projectName">The project name (set as <c>pipeline.project_name</c> tag).</param>
     /// <param name="kind">The <see cref="ActivityKind"/> for the activity. Defaults to <see cref="ActivityKind.Internal"/>.</param>
     /// <param name="parentContext">Optional parent <see cref="ActivityContext"/> for trace propagation.</param>
-    /// <param name="meterFactory">Ignored. Retained for call-site compatibility; no instruments are created.</param>
-    // TODO: [WARNING] The meterFactory parameter was narrowed from IMeterFactory? to object? when metric
-    // recording was removed from this class (issue #2967). Callers that previously passed an IMeterFactory
-    // for test isolation now pass it as object? without a compile error, but the factory is silently ignored.
-    // If any call site passes a non-null IMeterFactory believing it provides meter isolation, it is silently
-    // a no-op. Consider removing the parameter entirely on the next breaking-change opportunity, or adding
-    // an [Obsolete] attribute to signal that it is ignored.
     public static PipelineRunInstrumentation Start(
         string runId, string issueIdentifier,
         PipelineRunType runType, string? projectId, string? projectName,
         ActivityKind kind = ActivityKind.Internal,
-        ActivityContext parentContext = default,
-        object? meterFactory = null)
+        ActivityContext parentContext = default)
     {
         var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline", kind, parentContext);
         activity?.SetTag("pipeline.run_id", runId);
@@ -89,11 +80,6 @@ public sealed partial class PipelineRunInstrumentation : IDisposable
             Activity?.SetTag("pipeline.failure_reason", reason.Value.ToString());
     }
 
-    /// <summary>
-    /// No-op. Retained for call-site compatibility.
-    /// (Timing was previously used to gate metric recording; metrics are now emitted by the API.)
-    /// </summary>
-    public static void StopTiming() { /* intentional no-op — see class-level remarks */ }
 
     /// <summary>
     /// Stops the activity.
