@@ -8,14 +8,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Coding Agent</title>
     @{
-        // Base path for the <base href> tag. Configurable via WebUI__BasePath (e.g. for Rancher
-        // reverse-proxy deployments). Defaults to "./" which works for non-proxied root deployments.
-        // Must end with "/" for the browser's base-href resolution to work correctly.
-        const string defaultBasePath = "./";
-        const string trailingSlash = "/";
-        var rawBasePath = Configuration["WebUI:BasePath"] ?? defaultBasePath;
-        // Normalise: ensure it ends with "/" so browser relative-href resolution works.
-        var basePath = rawBasePath.EndsWith(trailingSlash) ? rawBasePath : rawBasePath + trailingSlash;
+        // Base path for the <base href> tag. Unset or relative WebUI__BasePath values (the Helm
+        // default is "./") produce a relative base that points from the current route back to the
+        // app root ("../" on /runs/{id}), so nested routes load their assets both at a root
+        // deployment and behind a prefix-stripping reverse proxy such as Rancher. A rooted value
+        // (e.g. "/k8s/clusters/c-xxxxx/proxy/") is used as is. See BaseHrefResolver.
+        var basePath = BaseHrefResolver.Resolve(Configuration["WebUI:BasePath"], HttpContext?.Request.Path.Value);
     }
     <base href="@basePath" />
     @{
@@ -115,13 +113,13 @@
 </body>
 </html>
 
-
 @code {
-    [CascadingParameter]
-    private HttpContext HttpContext { get; set; } = default!;
+    // App renders statically (only HeadOutlet and Routes are interactive), so the request's
+    // HttpContext is available here; the request path decides the relative base href.
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
 
     // Spec 049: the login page ([ExcludeFromInteractiveRouting]) renders statically so its form can
     // post to /auth/login and receive the session cookie; every other page stays interactive.
     private IComponentRenderMode? PageRenderMode =>
-        HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
+        HttpContext is null || HttpContext.AcceptsInteractiveRouting() ? InteractiveServer : null;
 }
