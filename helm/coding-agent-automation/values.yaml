@@ -10,8 +10,6 @@ image:
   pullPolicy: IfNotPresent
 
 # ── Web ──────────────────────────────────────────────────────────────────────
-# (Legacy alias: an `orchestrator:` block is still honored if present — its keys
-#  override these `web:` defaults. Prefer `web:` in new values files.)
 
 web:
   image:
@@ -183,7 +181,6 @@ otel:
   protocol: grpc
   # OTEL_SERVICE_NAME for the web component (Blazor UI process). API, JobController and Scheduler have
   # their own service names set in their deployment templates.
-  # (Legacy alias: orchestratorServiceName is still honored if set — see web-env-configmap.yaml.)
   webServiceName: coding-agent-web
   # OTEL_SERVICE_NAME for the API process.
   # Set to "coding-agent-api" to distinguish API spans, metrics and logs from the Blazor web process.
