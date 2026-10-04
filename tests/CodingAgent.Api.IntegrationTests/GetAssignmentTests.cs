@@ -157,50 +157,19 @@ public sealed class GetAssignmentTests
         }
     }
 
-    // ── Old-payload path (full snapshot, ProviderConfigs != null) ──────────────
-
     [Fact]
-    public async Task GetAssignment_OldPayload_ServedDirectlyFromSnapshot()
+    public async Task GetAssignment_RunIdMatchesWorkItemId()
     {
-        // ARRANGE: seed a work item with an old-schema payload (ProviderConfigs != null)
-        var dbName = $"GetAssignment-OldPayload-{Guid.NewGuid():N}";
+        // ARRANGE
+        var dbName = $"GetAssignment-RunId-{Guid.NewGuid():N}";
         var dbFactory = CreateDbFactory(dbName);
-        const string frozenSteering = "frozen-steering-content-from-enqueue";
-        var fullRequest = MakeFullRequest(frozenSteering);
-        var payloadJson = JsonSerializer.Serialize(fullRequest, PipelineJsonOptions.Default);
+        var payloadJson = JsonSerializer.Serialize(MakeMinimalRequest(), PipelineJsonOptions.Default);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
-
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r));
 
         // ACT
         var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
-
-        // ASSERT: 200 returned, enricher NOT called (old schema served from snapshot)
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-        okResult.Should().NotBeNull("old-schema payload should return 200 OK");
-        enricher.CallCount.Should().Be(0, "old-schema payload (ProviderConfigs != null) must not trigger enricher");
-
-        // RepoSteeringContent from the frozen snapshot is returned
-        okResult!.Value!.RepoSteeringContent.Should().Be(frozenSteering);
-        // TODO: [WARNING] This test does not assert that the full frozen ProviderConfigs array is
-        // forwarded intact in the response. A regression clearing ProviderConfigs on the old-schema
-        // path before building JobAssignmentMessage would not be caught. Add:
-        //   okResult.Value.ProviderConfigs.Should().NotBeEmpty("frozen snapshot must forward ProviderConfigs intact");
-    }
-
-    [Fact]
-    public async Task GetAssignment_OldPayload_RunIdMatchesWorkItemId()
-    {
-        // ARRANGE
-        var dbName = $"GetAssignment-RunId-{Guid.NewGuid():N}";
-        var dbFactory = CreateDbFactory(dbName);
-        var payloadJson = JsonSerializer.Serialize(MakeFullRequest(), PipelineJsonOptions.Default);
-        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
-
-        // ACT
-        var result = await WorkItemAgentEndpoints.GetAssignment(
-            id, dbFactory, CreateNullProjectStore(), null);
 
         // ASSERT: JobId in returned message matches the WorkItem GUID
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
@@ -352,7 +321,7 @@ public sealed class GetAssignmentTests
     }
 
     [Fact]
-    public async Task GetAssignment_MinimalPayload_WithoutEnricher_ServedAsIdentityOnly()
+    public async Task GetAssignment_MinimalPayload_WithoutEnricher_Returns503()
     {
         // ARRANGE: no AssignmentEnricher registered (null)
         var dbName = $"GetAssignment-NoEnricher-{Guid.NewGuid():N}";
@@ -361,15 +330,14 @@ public sealed class GetAssignmentTests
         var payloadJson = JsonSerializer.Serialize(minimalPayload, PipelineJsonOptions.Default);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
-        // ACT: no enricher → skip fresh-fetch path
+        // ACT
         var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), assignmentEnricher: null);
 
-        // ASSERT: 200 but without enriched data (ProviderConfigs will be empty defaults)
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-        okResult.Should().NotBeNull("should return 200 even without enricher (graceful degradation)");
-        // TODO: [WARNING] No JobId assertion here. The minimum meaningful verification is that
-        // the identity data is intact. Add: okResult!.Value!.JobId.Should().Be(id.ToString());
+        // ASSERT: an assignment without configs is never served (decisions.md payload invariant)
+        var problem = result as Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult;
+        problem.Should().NotBeNull("without an enricher the agent must retry, not run without configs");
+        problem!.StatusCode.Should().Be(503);
     }
 
     // ── Terminal status → 410 ────────────────────────────────────────────────────
@@ -616,20 +584,17 @@ public sealed class GetAssignmentTests
         // deserialized!.PayloadSchemaVersion.Should().Be(1, "PayloadSchemaVersion must survive JSON round-trip");
     }
 
-    // ── Legacy null-schema path: PayloadSchemaVersion = null served as snapshot ──
+    // ── Payload without PayloadSchemaVersion: fail closed ────────────────────────
 
     [Fact]
-    public async Task GetAssignment_LegacyNullSchemaVersion_ServedFromSnapshot()
+    public async Task GetAssignment_PayloadWithoutSchemaVersion_Returns503WithoutEnriching()
     {
-        // ARRANGE: a row written after #2171 but before #2221 — ProviderConfigs is null
-        // (identity-only content) but PayloadSchemaVersion was never set (null).
-        // Under the new discriminator (PayloadSchemaVersion == 1), this must route to the
-        // old-schema path (no enrichment) rather than entering the enrichment path.
-        var dbName = $"GetAssignment-LegacyNull-{Guid.NewGuid():N}";
+        // ARRANGE: a payload without PayloadSchemaVersion can't be enriched, and the agent must
+        // never receive an assignment without configs.
+        var dbName = $"GetAssignment-NoSchema-{Guid.NewGuid():N}";
         var dbFactory = CreateDbFactory(dbName);
 
-        // Build a minimal-style payload (no ProviderConfigs) but leave PayloadSchemaVersion = null
-        var legacyRequest = new JobDistributionRequest
+        var request = new JobDistributionRequest
         {
             IssueIdentifier = new IssueIdentifier("owner/repo#42"),
             IssueProviderConfigId = "prov-1",
@@ -638,10 +603,8 @@ public sealed class GetAssignmentTests
             TaskType = WorkItemTaskType.Implementation,
             AgentSelector = "dotnet",
             TimeoutSeconds = 3600,
-            // PayloadSchemaVersion intentionally absent (null) — simulates pre-#2221 row
-            // ProviderConfigs intentionally absent (null) — simulates minimal-style content
         };
-        var payloadJson = JsonSerializer.Serialize(legacyRequest, PipelineJsonOptions.Default);
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
         var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
 
         var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r));
@@ -650,19 +613,11 @@ public sealed class GetAssignmentTests
         var result = await WorkItemAgentEndpoints.GetAssignment(
             id, dbFactory, CreateNullProjectStore(), enricher);
 
-        // ASSERT: 200 returned, enricher NOT called
-        // PayloadSchemaVersion == null (not 1) must route to the old-schema path even though
-        // ProviderConfigs is also null — the versioned discriminator is immune to ProviderConfigs nullability.
-        var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;
-        okResult.Should().NotBeNull("legacy null-PayloadSchemaVersion row should return 200 OK");
-        enricher.CallCount.Should().Be(0,
-            "PayloadSchemaVersion == null must not trigger enricher — null means old-schema (snapshot) path");
-        // TODO: [WARNING] This test only asserts routing (enricher not called) but does not verify that
-        // the returned JobAssignmentMessage reflects the seeded payload. A regression where GetAssignment
-        // returns 200 with a zeroed-out or incorrectly reconstructed message (e.g., because payload
-        // deserialization silently failed before this point) would pass here since CallCount == 0 is
-        // satisfied by any early return including error paths. Add a content assertion, e.g.:
-        // okResult!.Value!.JobId.Should().Be(id.ToString(), "response must reflect the seeded work item");
+        // ASSERT
+        var problem = result as Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult;
+        problem.Should().NotBeNull("a payload without a schema version must fail closed");
+        problem!.StatusCode.Should().Be(503);
+        enricher.CallCount.Should().Be(0);
     }
 
     // ── InjectProjectSecretsAsync: consolidation template-ownership fallback ─────────
@@ -1119,7 +1074,7 @@ public sealed class GetAssignmentTests
     [Fact]
     public async Task GetAssignment_PascalCasePayload_Returns200()
     {
-        // ARRANGE: seed a work item with a hand-crafted PascalCase payload (old-schema, ProviderConfigs != null).
+        // ARRANGE: seed a work item with a hand-crafted PascalCase payload.
         // With PipelineJsonOptions.Default (case-sensitive), this payload would deserialize to null
         // → GetAssignment returned 404. With PipelineJsonOptions.Lenient it must return 200.
         // This test is a RED→GREEN characterization: it must fail before the fix and pass after.
@@ -1132,6 +1087,7 @@ public sealed class GetAssignmentTests
                 "IssueProviderConfigId": "prov-1",
                 "RepoProviderConfigId": "repo-1",
                 "InitiatedBy": "legacy-test",
+                "PayloadSchemaVersion": 1,
                 "TaskType": "Implementation",
                 "AgentSelector": "dotnet",
                 "TimeoutSeconds": 3600,
@@ -1154,7 +1110,7 @@ public sealed class GetAssignmentTests
 
         // ACT
         var result = await WorkItemAgentEndpoints.GetAssignment(
-            id, dbFactory, CreateNullProjectStore(), null);
+            id, dbFactory, CreateNullProjectStore(), new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r)));
 
         // ASSERT: must return 200 (Lenient options parse PascalCase successfully)
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<JobAssignmentMessage>;

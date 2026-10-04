@@ -119,29 +119,12 @@ public static class WorkItemAgentEndpoints
     /// <summary>
     /// GET /api/work-items/{id}/assignment
     /// Returns the job assignment payload for an agent.
-    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal.
+    /// 200 with JobAssignmentMessage, 404 if not found or null payload, 410 if terminal,
+    /// 503 when the assignment can't be enriched (the agent retries).
     /// <para>
-    /// Supports two payload schemas for backward compatibility:
-    /// <list type="bullet">
-    /// <item>
-    /// <term>Old schema (full snapshot)</term>
-    /// <description>
-    /// Work items created before #2221: <c>Payload</c> contains a full <see cref="JobDistributionRequest"/>
-    /// including <c>ProviderConfigs</c>, <c>QualityGateConfigs</c>, etc. Detected by
-    /// <c>PayloadSchemaVersion == null</c>. Served directly from payload as before — the frozen
-    /// snapshot is returned as-is (tokens may be expired for long-queued items).
-    /// </description>
-    /// </item>
-    /// <item>
-    /// <term>New schema (minimal identity)</term>
-    /// <description>
-    /// Work items created after #2221: <c>Payload</c> contains only identity fields
-    /// (<c>PayloadSchemaVersion == 1</c>). Mutable config is fetched fresh from the database
-    /// at assignment time via <see cref="AssignmentEnricher"/>, vending fresh tokens and
-    /// picking up the latest steering, QG, and pipeline configuration.
-    /// </description>
-    /// </item>
-    /// </list>
+    /// The payload contains only identity fields (<c>PayloadSchemaVersion == 1</c>). Mutable config
+    /// is fetched fresh from the database at assignment time via <see cref="AssignmentEnricher"/>,
+    /// vending fresh tokens and picking up the latest steering, QG, and pipeline configuration.
     /// </para>
     /// </summary>
     internal static async Task<IResult> GetAssignment(
@@ -232,35 +215,28 @@ public static class WorkItemAgentEndpoints
         // only asserts bucket boundaries. Add an integration test exercising this endpoint to lock
         // in the measurement contract.
 
-        // ── Backward-compatibility: detect payload schema ─────────────────
-        // Old schema: PayloadSchemaVersion == null → serve from frozen snapshot.
-        // New schema: PayloadSchemaVersion == 1  → fresh-fetch all mutable config.
-        if (request.PayloadSchemaVersion == 1 && assignmentEnricher is not null)
+        // The payload holds identity only (PayloadSchemaVersion 1); every config is resolved here.
+        // Without enrichment the agent would run without configs, so fail closed and let it retry.
+        // The WorkItem stays Dispatched; the reconciler TTL provides the hard timeout.
+        if (request.PayloadSchemaVersion != 1 || assignmentEnricher is null)
         {
-            try
-            {
-                request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // EnrichAsync already logged at Error level; return 503 so the agent retries.
-                // The WorkItem remains in Dispatched state — the reconciler TTL provides the hard timeout.
-                // TODO: [WARNING] For the null-return path (no profile matched), EnrichAsync does NOT log
-                // at Error — it returns null after Warning-level logs in EnrichCoreAsync, and then
-                // EnrichRequestAsync throws InvalidOperationException which propagates here unlogged at
-                // Error level. Add Log.Error(ex, ...) here so all paths producing a 503 have an Error-level
-                // trace, regardless of where in the call chain the exception originates. This makes permanent
-                // config failures (missing profile, deleted provider) distinguishable from transient failures
-                // in alerting dashboards.
-                return TypedResults.Problem(
-                    detail: "Assignment enrichment failed; please retry.",
-                    statusCode: StatusCodes.Status503ServiceUnavailable);
-            }
+            Log.Error(
+                "GetAssignment {WorkItemId}: cannot enrich (payload schema {SchemaVersion}, enricher registered: {HasEnricher}); returning 503",
+                id, request.PayloadSchemaVersion, assignmentEnricher is not null);
+            return EnrichmentFailed();
         }
-        // TODO: When assignmentEnricher is null and request.PayloadSchemaVersion == 1 (new-schema path),
-        // enrichment is silently skipped and an identity-only 200 is returned with no log output.
-        // A DI misconfiguration that drops AssignmentEnricher is now undetectable from logs at this site.
-        // Restore a Log.Warning when the enricher is null on the new-schema path (was present before #2172).
+
+        try
+        {
+            request = await EnrichRequestAsync(request, projectStore, assignmentEnricher, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // EnrichAsync logs its own transient failures; this also covers the permanent ones
+            // (no matching profile, deleted provider) that surface as InvalidOperationException.
+            Log.Error(ex, "GetAssignment {WorkItemId}: assignment enrichment failed; returning 503", id);
+            return EnrichmentFailed();
+        }
 
         var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(id, request);
         // Secret injection delegates to AssignmentEnricher.InjectProjectSecretsAsync (issue #2914),
@@ -268,18 +244,13 @@ public static class WorkItemAgentEndpoints
         // a reimplemented ownership-resolution loop.
         // projectStore is passed as a fallback so test subclasses of AssignmentEnricher constructed
         // via the protected logger-only constructor (which set _projectStore = null!) still work.
-        // TODO: [WARNING] InjectProjectSecretsAsync is now called unconditionally for all GetAssignment
-        // requests, including old-schema requests where request.PayloadSchemaVersion == null. In the
-        // prior code, secret injection was inside the isNewSchema branch only. Old-schema callers that
-        // log or persist the full response message now receive live ProjectSecrets where they did not
-        // before, widening the secret exposure surface even though the endpoint already requires Operator
-        // auth. Gate this call on request.PayloadSchemaVersion == 1 (new-schema path only), or explicitly
-        // document the intentional behavior change so operators are aware secrets are now injected on all
-        // paths. (Security review finding — issue #2914.)
-        if (assignmentEnricher is not null)
-            message = await assignmentEnricher.InjectProjectSecretsAsync(message, request, ct, projectStore);
+        message = await assignmentEnricher.InjectProjectSecretsAsync(message, request, ct, projectStore);
 
         return TypedResults.Ok(message);
+
+        static IResult EnrichmentFailed() => TypedResults.Problem(
+            detail: "Assignment enrichment failed; please retry.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     /// <summary>
