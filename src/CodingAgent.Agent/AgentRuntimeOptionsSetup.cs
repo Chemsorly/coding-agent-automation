@@ -43,5 +43,9 @@ internal sealed class AgentRuntimeOptionsSetup : IConfigureOptions<AgentRuntimeO
         var kiroPath = Environment.GetEnvironmentVariable(AgentDefaults.EnvKiroCliPath);
         if (!string.IsNullOrEmpty(kiroPath))
             options.KiroCliPath = kiroPath;
+
+        var claudePath = Environment.GetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath);
+        if (!string.IsNullOrEmpty(claudePath))
+            options.ClaudeCliPath = claudePath;
     }
 }

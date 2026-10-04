@@ -37,6 +37,37 @@ public class AgentSessionSpanTests : IDisposable
     public void Dispose() => _listener.Dispose();
 
     [Fact]
+    public async Task ExecuteWithMonitoringAsync_ClaudeCodeProvider_TagsSpanWithUsageDetails()
+    {
+        var uniquePhase = $"codegen_{_testRunTag}";
+        var agentResult = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = new TokenUsage { InputTokens = 10, OutputTokens = 20, ReasoningTokens = 5, CacheReadTokens = 300, CacheWriteTokens = 40 },
+            Cost = 0.12m,
+            UsageDetails = new AgentUsageDetails { BillingMode = AgentBillingModes.Api, Turns = 3, ApiDurationSeconds = 4.5, WebSearchRequests = 2 }
+        };
+        var provider = CreateMockProvider(AgentProviderType.ClaudeCode, model: "claude-opus-5-5", result: agentResult);
+
+        await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            provider.Object, CreateRequest(), CreateRun(), CreateConfig(),
+            "Codegen agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            phase: uniquePhase);
+
+        var span = _stoppedActivities.Should()
+            .Contain(a => a.OperationName == $"invoke_agent {uniquePhase}").Which;
+        span.GetTagItem("gen_ai.provider.name").Should().Be("claude");
+        span.GetTagItem("gen_ai.usage.reasoning_tokens").Should().Be(5L);
+        span.GetTagItem("gen_ai.usage.cache_read_input_tokens").Should().Be(300L);
+        span.GetTagItem("gen_ai.usage.cache_creation_input_tokens").Should().Be(40L);
+        span.GetTagItem("agent.cost_usd").Should().Be(0.12);
+        span.GetTagItem("agent.billing").Should().Be("api");
+        span.GetTagItem("agent.turns").Should().Be(3);
+        span.GetTagItem("agent.web_search_requests").Should().Be(2);
+    }
+
+    [Fact]
     public async Task ExecuteWithMonitoringAsync_KiroProvider_CreatesSpanWithGenAiAttributes()
     {
         var uniquePhase = $"analysis_{_testRunTag}";

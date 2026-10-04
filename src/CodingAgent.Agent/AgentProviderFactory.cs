@@ -1,4 +1,5 @@
 using KiroCliLib.Core;
+using CodingAgent.Agent.ClaudeCode;
 using CodingAgent.Agent.KiroCli;
 using CodingAgent.Agent.OpenCode;
 using CodingAgent.Infrastructure;
@@ -75,6 +76,9 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (config.ProviderType.Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
             return CreateOpenCodeAgentProvider(config);
 
+        if (config.ProviderType.Equals(ProviderTypes.ClaudeCode, StringComparison.OrdinalIgnoreCase))
+            return CreateClaudeCodeAgentProvider(config);
+
         Serilog.Log.Error("Unsupported agent provider type: {ProviderType}", config.ProviderType);
         throw new NotSupportedException(
             $"Unsupported agent provider type: '{config.ProviderType}'");
@@ -131,6 +135,25 @@ public sealed class AgentProviderFactory : IProviderFactory
         var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, AgentDefaults.KiroCliPath);
         var effort = AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort));
         return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath, effort);
+    }
+
+    /// <summary>
+    /// Builds a <see cref="ClaudeCodeAgentProvider"/>. The executable path falls back to
+    /// <c>CLAUDE_CLI_PATH</c> and then the image default; credentials come from the pod environment.
+    /// </summary>
+    internal static ClaudeCodeAgentProvider CreateClaudeCodeAgentProvider(ProviderConfig config)
+    {
+        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath);
+        if (string.IsNullOrWhiteSpace(executablePath))
+            executablePath = Environment.GetEnvironmentVariable(AgentDefaults.EnvClaudeCliPath) ?? AgentDefaults.ClaudeCliPath;
+
+        return new ClaudeCodeAgentProvider(
+            Serilog.Log.Logger,
+            config.Settings.GetValueOrDefault(ProviderSettingKeys.Model),
+            executablePath,
+            AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort)),
+            config.Settings.GetValueOrDefault(ProviderSettingKeys.AuthMode),
+            config.Settings.GetValueOrDefault(ProviderSettingKeys.McpConfigPath));
     }
 
     private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)

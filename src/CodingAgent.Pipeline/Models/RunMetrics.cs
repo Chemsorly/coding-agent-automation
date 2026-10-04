@@ -37,4 +37,9 @@ public sealed class RunMetrics
 
     /// <summary>Per-phase token/cost breakdown accumulated during the run. Thread-safe for concurrent review agents.</summary>
     public ConcurrentDictionary<string, PhaseUsage> PhaseBreakdown { get; } = new();
+
+    /// <summary>
+    /// Latest subscription rate-limit reading per window (e.g. "five_hour"), from providers that report one.
+    /// </summary>
+    public ConcurrentDictionary<string, AgentRateLimitObservation> RateLimits { get; } = new();
 }

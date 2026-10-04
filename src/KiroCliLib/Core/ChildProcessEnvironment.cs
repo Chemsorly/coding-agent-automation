@@ -10,14 +10,22 @@ public static class ChildProcessEnvironment
     // W3C Trace Context keys that are not covered by the OTEL_ prefix but must also be stripped.
     private static readonly string[] TelemetryExactKeys = ["TRACEPARENT", "TRACESTATE"];
 
+    // Pipeline-owned LLM credentials injected into agent pods. Only the Claude Code provider hands
+    // them on (under the CLI's own variable names) to the claude process; every other child process
+    // — quality gates, setup commands, git — must not inherit them.
+    // KiroCliLib cannot reference CodingAgent.Contracts (circular dependency), so these mirror
+    // AgentDefaults.EnvClaudeApiKey and AgentDefaults.EnvClaudeOAuthToken; keep them in sync.
+    internal static readonly string[] PipelineCredentialKeys = ["AGENT_CLAUDE_API_KEY", "AGENT_CLAUDE_OAUTH_TOKEN"];
+
     /// <summary>
-    /// Removes all OpenTelemetry configuration and trace-context variables from the child
-    /// process environment captured in <paramref name="psi"/>.
+    /// Removes all OpenTelemetry configuration and trace-context variables, and the pipeline-owned
+    /// LLM credentials, from the child process environment captured in <paramref name="psi"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Removes every key whose name starts with <c>OTEL_</c> (case-insensitive) and the
-    /// W3C trace-context keys <c>TRACEPARENT</c> and <c>TRACESTATE</c> (case-insensitive).
+    /// Removes every key whose name starts with <c>OTEL_</c> (case-insensitive), the
+    /// W3C trace-context keys <c>TRACEPARENT</c> and <c>TRACESTATE</c> (case-insensitive), and
+    /// <c>AGENT_CLAUDE_API_KEY</c> / <c>AGENT_CLAUDE_OAUTH_TOKEN</c>.
     /// </para>
     /// <para>
     /// Why enumeration + comparison instead of a direct <c>Remove(key)</c>: on Linux,
@@ -48,7 +56,8 @@ public static class ChildProcessEnvironment
         // ever changes, external synchronisation on the psi instance is required.
         var keysToRemove = psi.Environment.Keys
             .Where(k => k.StartsWith("OTEL_", StringComparison.OrdinalIgnoreCase)
-                     || TelemetryExactKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+                     || TelemetryExactKeys.Contains(k, StringComparer.OrdinalIgnoreCase)
+                     || PipelineCredentialKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
             .ToList();
 
         foreach (var key in keysToRemove)

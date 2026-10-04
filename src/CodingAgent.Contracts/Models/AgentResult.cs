@@ -32,6 +32,12 @@ public sealed class AgentResult
     public decimal? Cost { get; init; }
 
     /// <summary>
+    /// Further usage the provider reports for this invocation (turns, billing mode, per-model
+    /// breakdown, rate limits), or null when the provider reports none.
+    /// </summary>
+    public AgentUsageDetails? UsageDetails { get; init; }
+
+    /// <summary>
     /// Classifies the cause of a failure when the agent call was rejected by the provider
     /// rather than failing due to a code-level problem. Defaults to <see cref="AgentErrorCategory.None"/>.
     /// The QG retry loop uses this to skip <c>RetryCount</c> increments on transient provider errors.

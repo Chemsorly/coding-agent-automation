@@ -38,6 +38,7 @@ COPY src/CodingAgent.Web/CodingAgent.Web.csproj src/CodingAgent.Web/
 COPY src/CodingAgent.Agent/CodingAgent.Agent.csproj src/CodingAgent.Agent/
 COPY src/CodingAgent.Agent.KiroCli/CodingAgent.Agent.KiroCli.csproj src/CodingAgent.Agent.KiroCli/
 COPY src/CodingAgent.Agent.OpenCode/CodingAgent.Agent.OpenCode.csproj src/CodingAgent.Agent.OpenCode/
+COPY src/CodingAgent.Agent.ClaudeCode/CodingAgent.Agent.ClaudeCode.csproj src/CodingAgent.Agent.ClaudeCode/
 COPY tests/CodingAgent.Web.E2ETests/CodingAgent.Web.E2ETests.csproj tests/CodingAgent.Web.E2ETests/
 COPY tests/CodingAgent.Web.TestUtilities/CodingAgent.Web.TestUtilities.csproj tests/CodingAgent.Web.TestUtilities/
 RUN dotnet restore tests/CodingAgent.Web.E2ETests/CodingAgent.Web.E2ETests.csproj

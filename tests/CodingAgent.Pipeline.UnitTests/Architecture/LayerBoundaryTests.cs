@@ -47,6 +47,9 @@ public partial class LayerBoundaryTests
     private static readonly System.Reflection.Assembly AgentOpenCodeAssembly =
         typeof(CodingAgent.Agent.OpenCode.OpenCodeAgentProvider).Assembly;
 
+    private static readonly System.Reflection.Assembly AgentClaudeCodeAssembly =
+        typeof(CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider).Assembly;
+
     private static readonly System.Reflection.Assembly ApiAssembly =
         typeof(CodingAgent.Api.ApiHostMarker).Assembly;
 
@@ -314,6 +317,18 @@ public partial class LayerBoundaryTests
 
         Assert.True(result.IsSuccessful,
             $"Agent.OpenCode must not reference Orchestration. Violating types: {FormatViolations(result)}");
+    }
+
+    [Fact]
+    public void AgentClaudeCode_ShouldNot_DependOnOrchestration()
+    {
+        var result = Types.InAssembly(AgentClaudeCodeAssembly)
+            .ShouldNot()
+            .HaveDependencyOn("CodingAgent.Orchestration")
+            .GetResult();
+
+        Assert.True(result.IsSuccessful,
+            $"Agent.ClaudeCode must not reference Orchestration. Violating types: {FormatViolations(result)}");
     }
 
     [Fact]

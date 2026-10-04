@@ -21,6 +21,23 @@ namespace CodingAgent.Agent;
 /// </summary>
 internal static class AgentChatModeRegistration
 {
+    /// <summary>
+    /// Maps <c>AGENT_PROVIDER_TYPE</c> to the provider a chat pod runs. The chat dispatcher sets it
+    /// to the job template's providerType ("kiro", "opencode", "claude"); the agent-provider names
+    /// ("KiroCli", "OpenCode", "ClaudeCode") are accepted too. Anything else means Kiro CLI.
+    /// </summary>
+    internal static AgentProviderType ResolveChatProviderType(string? agentProviderType)
+    {
+        if (string.Equals(agentProviderType, AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
+            return AgentProviderType.OpenCode;
+
+        if (string.Equals(agentProviderType, AgentDefaults.ClaudeTemplateProviderType, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(agentProviderType, ProviderTypes.ClaudeCode, StringComparison.OrdinalIgnoreCase))
+            return AgentProviderType.ClaudeCode;
+
+        return AgentProviderType.KiroCli;
+    }
+
     internal static IServiceCollection AddSignalRModeServices(
         this IServiceCollection services,
         ILogger logger)
@@ -38,8 +55,8 @@ internal static class AgentChatModeRegistration
         {
             var agentId = sp.GetRequiredService<AgentId>().Value;
             var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
-            var isOpenCodeProvider = runtimeOpts.AgentProviderType
-                .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
+            var providerType = ResolveChatProviderType(runtimeOpts.AgentProviderType);
+            var isOpenCodeProvider = providerType == AgentProviderType.OpenCode;
             var isChatMode = runtimeOpts.IsChatMode;
             return new ChatJobExecutor(new ChatJobExecutorDependencies(
                 sp.GetRequiredService<AgentConnectionLifecycle>(),
@@ -70,7 +87,13 @@ internal static class AgentChatModeRegistration
                 },
                 IsOpenCodeProvider: isOpenCodeProvider,
                 IsChatMode: isChatMode,
-                Logger: logger));
+                Logger: logger)
+            {
+                ProviderType = providerType,
+                ChatModel = runtimeOpts.ChatModel,
+                ChatEffort = runtimeOpts.ChatEffort,
+                ClaudeCliPath = runtimeOpts.ClaudeCliPath
+            });
         });
         services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),

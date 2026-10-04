@@ -155,6 +155,24 @@ public class ChatPromptBuilderTests
         msg.ChatWindowId.Should().Be("wid-42");
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Build_SendsAuthModeWithEveryPrompt(bool isFirstPrompt)
+    {
+        var p = new ChatPromptParameters(
+            SessionId: "sid",
+            Prompt: "p",
+            IsFirstPrompt: isFirstPrompt,
+            ChatWindowId: "wid",
+            ResolvedProfile: null,
+            SelectedProject: null,
+            ResolvedMcpConfigPath: null,
+            ResolvedAuthMode: "subscription");
+
+        _sut.Build(p).AgentAuthMode.Should().Be("subscription");
+    }
+
     // ── 7. UseResume is false on first prompt, true on subsequent ──
 
     [Fact]
