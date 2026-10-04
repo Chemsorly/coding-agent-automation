@@ -773,18 +773,22 @@ public static partial class PromptBuilder
 
         if (conflictFiles.Count > 0 && forceResolved)
         {
-            sb.AppendLine("## Force-Rebased Files (Main Wins)");
+            sb.AppendLine("## Files Reset to Main (Main Wins)");
             sb.AppendLine();
-            sb.AppendLine("The branch was rebased onto the latest main. The following files had " +
-                "conflicts that were **force-resolved by accepting main's version** (incoming wins). " +
-                "Your previous branch changes for these files were discarded.");
-            sb.AppendLine();
-            sb.AppendLine("You must **re-implement your changes** for these files on top of the " +
-                "current main state. The files currently contain main's version — there are NO " +
-                "conflict markers. Review the issue requirements and apply the necessary changes:");
+            sb.AppendLine("The branch was rebased onto the latest main. Main is authoritative: the following " +
+                "files had conflicts, so they were **force-resolved by keeping main's version** and your " +
+                "branch's changes to them were dropped. The files contain no conflict markers.");
             sb.AppendLine();
             foreach (var file in conflictFiles)
                 sb.AppendLine($"- `{file}`");
+            sb.AppendLine();
+            sb.AppendLine($"Read `{AgentWorkspacePaths.ReworkContextFilePath}` before changing them. For each file " +
+                "it shows the change your branch had made, main's change since your branch point, and main's " +
+                "commits that touched the file.");
+            sb.AppendLine();
+            sb.AppendLine("Re-apply only what this issue still needs, on top of main's version:");
+            sb.AppendLine("- Do not re-apply a change that is outside this issue's scope.");
+            sb.AppendLine("- Do not re-apply a change that main has since made in another way. Keep main's way.");
             sb.AppendLine();
         }
         else if (conflictFiles.Count > 0)
@@ -933,14 +937,17 @@ public static partial class PromptBuilder
 
         if (ctx.ForceResolvedFiles.Count > 0)
         {
-            sb.AppendLine("The branch was rebased onto main. The following files had merge conflicts that were");
-            sb.AppendLine("**force-resolved by accepting main's version** — your prior implementation for these");
-            sb.AppendLine("files was discarded:");
+            sb.AppendLine("The branch was rebased onto main. Main is authoritative: the following files had merge");
+            sb.AppendLine("conflicts that were **force-resolved by keeping main's version**, and your prior changes");
+            sb.AppendLine("to them were dropped:");
             sb.AppendLine();
             foreach (var file in ctx.ForceResolvedFiles)
                 sb.AppendLine($"- `{file}`");
             sb.AppendLine();
-            sb.AppendLine("Your analysis must determine what needs to be re-implemented in those files on top of the current main state.");
+            sb.AppendLine($"`{AgentWorkspacePaths.ReworkContextFilePath}` shows, for each file, your dropped change, main's change");
+            sb.AppendLine("since your branch point, and main's commits that touched the file.");
+            sb.AppendLine("Your analysis must decide what to re-apply on top of main: only what this issue still needs.");
+            sb.AppendLine("Plan to drop changes that are outside this issue's scope, and changes main has since made in another way.");
         }
         else
         {

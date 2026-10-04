@@ -244,6 +244,11 @@ public partial class QualityGateExecutor
         // and sets PrMarkedReadyAt, then a subsequent call inside RunPostPrSequenceAsync throws OCE),
         // FinalizePullRequest propagates the OCE and this line is never reached — the path is safe.
         var notBefore = run.PrMarkedReadyAt ?? prReadyFallback;
+        // FinalizePullRequest has just set the run's terminal step (Completed for a ready PR).
+        // The retry loop moves the run through GeneratingCode and RunningQualityGates, so a
+        // passing retry must restore that step. Otherwise the run ends on a non-terminal step
+        // and is recorded as Failed/AgentError although its PR is ready and green (issue #3111).
+        var finalizedStep = run.CurrentStep;
         report = await WaitForPostPrCiAsync(context, report, notBefore, linkedCt);
         if (run.CurrentStep.IsQualityGateExitState()) return;
 
@@ -252,7 +257,9 @@ public partial class QualityGateExecutor
             report = await RunRetryLoopAsync(context, report, "Post-PR CI retry agent", linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
 
-            if (!report.AllPassed)
+            if (report.AllPassed)
+                run.CurrentStep = finalizedStep;
+            else
                 await FinalizeDraftPrAsync(context, run, report, "post-PR CI failed after retries", linkedCt);
         }
     }
