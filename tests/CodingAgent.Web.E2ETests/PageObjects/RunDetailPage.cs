@@ -24,11 +24,23 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Allow time for the Blazor Server circuit to connect and attach event handlers.
-        // Matches the pattern used by AgentCodingPage (3 s), which is the empirically-validated
-        // baseline for slow CI runners. Avoids WaitForFunctionAsync which adds its own
-        // 15 s timeout and has been observed to fail inconsistently in this test suite.
-        await _page.WaitForTimeoutAsync(3000);
+        // For live runs the hub-subscribed card is the definitive circuit-ready signal: it is set
+        // via InvokeAsync(StateHasChanged) in SubscribeLiveAsync which only fires after the
+        // interactive circuit has processed its first render. Wait up to 12 s for it.
+        // For terminal runs (no hub card) this throws TimeoutException; we fall back to a
+        // longer fixed wait that matches CI's measured Blazor circuit setup time.
+        try
+        {
+            await _page.WaitForSelectorAsync(
+                "[data-hub-subscribed='true']",
+                new() { Timeout = 12_000 });
+        }
+        catch (TimeoutException)
+        {
+            // Terminal run — no hub subscription card. Use a fixed wait long enough for
+            // the Blazor Server circuit to connect on slow CI runners (empirically > 3 s).
+            await _page.WaitForTimeoutAsync(5000);
+        }
     }
 
     /// <summary>The whole-page text, for asserting the issue identifier / title is shown.</summary>
@@ -94,25 +106,7 @@ public sealed class RunDetailPage
     public async Task CancelAsync(bool confirm)
     {
         await CancelButton.WaitForAsync(new() { Timeout = 15_000 });
-
-        // The cancel button is present in the static prerender but the Blazor @onclick handler
-        // only fires once the interactive circuit is established. Retry the click until the
-        // confirm prompt appears — this covers the window where the button is visible but the
-        // circuit is not yet active. Each attempt: click, wait up to 2 s for the prompt.
-        var deadline = DateTime.UtcNow.AddSeconds(20);
-        while (DateTime.UtcNow < deadline)
-        {
-            await CancelButton.ClickAsync();
-            try
-            {
-                await ConfirmCancelButton.WaitForAsync(new() { Timeout = 2_000 });
-                break; // confirm section appeared — click landed on the live circuit
-            }
-            catch (TimeoutException)
-            {
-                // Circuit wasn't ready yet; loop and try again
-            }
-        }
+        await CancelButton.ClickAsync();
 
         if (confirm)
         {
@@ -139,23 +133,7 @@ public sealed class RunDetailPage
     public async Task RedispatchAsync(bool confirm)
     {
         await RedispatchButton.WaitForAsync(new() { Timeout = 15_000 });
-
-        // Same retry pattern as CancelAsync: the redispatch button is in static prerender but
-        // @onclick only fires once the Blazor circuit is active. Retry until confirm prompt appears.
-        var deadline = DateTime.UtcNow.AddSeconds(20);
-        while (DateTime.UtcNow < deadline)
-        {
-            await RedispatchButton.ClickAsync();
-            try
-            {
-                await ConfirmRedispatchButton.WaitForAsync(new() { Timeout = 2_000 });
-                break; // confirm section appeared
-            }
-            catch (TimeoutException)
-            {
-                // Circuit wasn't ready yet; loop and try again
-            }
-        }
+        await RedispatchButton.ClickAsync();
 
         if (confirm)
         {
