@@ -268,6 +268,9 @@ public sealed partial class WorkItemStatusTransitionService
             if (payload?.PhaseBreakdown is { Count: > 0 })
                 RecordRunUsageMetrics(runTypeTag, payload.PhaseBreakdown);
 
+            if (payload?.RateLimits is { Count: > 0 })
+                RecordRateLimitMetrics(payload.RateLimits);
+
             WorkDistributionTelemetry.LogTerminalStatus(
                 id, request.Status, duration, request.AgentId,
                 failureReason);
@@ -282,7 +285,9 @@ public sealed partial class WorkItemStatusTransitionService
     /// <summary>
     /// Records <c>pipeline.run.tokens</c>, <c>pipeline.run.cost_usd</c>,
     /// <c>pipeline.run.agent_sessions</c>, and <c>pipeline.run.agent_time</c>
-    /// for each phase in the per-phase breakdown.
+    /// for each phase in the per-phase breakdown, plus the phase-less detail counters
+    /// (<c>pipeline.run.token_usage</c>, <c>pipeline.run.agent_turns</c>,
+    /// <c>pipeline.run.web_search_requests</c>, <c>pipeline.run.billing_cost_usd</c>).
     /// </summary>
     private static void RecordRunUsageMetrics(
         string runTypeTag,
@@ -291,12 +296,9 @@ public sealed partial class WorkItemStatusTransitionService
         foreach (var (rawPhase, usage) in phaseBreakdown)
         {
             var phase = PipelineTelemetry.NormalizeRunPhase(rawPhase);
-            // TODO: usage.Provider is forwarded directly from the agent-submitted payload without
-            // normalization to the closed set (kiro, opencode, unknown). A rogue or compromised agent
-            // could supply an arbitrary string and inflate label cardinality on the OTLP backend.
-            // Add a NormalizeProvider() helper (similar to NormalizeRunPhase) that maps to the
-            // RunProviders closed set and falls back to RunProviders.Unknown for unrecognized values.
-            var provider = usage.Provider ?? PipelineTelemetry.RunProviders.Unknown;
+            var provider = PipelineTelemetry.NormalizeRunProvider(usage.Provider);
+
+            RecordUsageDetailMetrics(runTypeTag, provider, usage);
 
             if (usage.Tokens > 0)
             {
@@ -330,6 +332,65 @@ public sealed partial class WorkItemStatusTransitionService
                     new KeyValuePair<string, object?>("phase", phase),
                     new KeyValuePair<string, object?>("provider", provider));
             }
+        }
+    }
+
+    /// <summary>
+    /// Records the phase-less usage detail counters for one phase of the breakdown.
+    /// Zero values are skipped; the series exist from pre-initialization.
+    /// </summary>
+    private static void RecordUsageDetailMetrics(string runTypeTag, string provider, PhaseUsagePayload usage)
+    {
+        var runTypeTagPair = new KeyValuePair<string, object?>("run_type", runTypeTag);
+        var providerTagPair = new KeyValuePair<string, object?>("provider", provider);
+
+        (string Type, long Count)[] tokenCounts =
+        [
+            (PipelineTelemetry.TokenTypes.Input, usage.InputTokens),
+            (PipelineTelemetry.TokenTypes.Output, usage.OutputTokens),
+            (PipelineTelemetry.TokenTypes.Reasoning, usage.ReasoningTokens),
+            (PipelineTelemetry.TokenTypes.CacheRead, usage.CacheReadTokens),
+            (PipelineTelemetry.TokenTypes.CacheWrite, usage.CacheWriteTokens)
+        ];
+        foreach (var (type, count) in tokenCounts)
+        {
+            if (count > 0)
+                PipelineTelemetry.RunTokenUsage.Add(count, runTypeTagPair, providerTagPair,
+                    new KeyValuePair<string, object?>("token_type", type));
+        }
+
+        if (usage.Turns > 0)
+            PipelineTelemetry.RunAgentTurns.Add(usage.Turns, runTypeTagPair, providerTagPair);
+
+        if (usage.WebSearchRequests > 0)
+            PipelineTelemetry.RunWebSearchRequests.Add(usage.WebSearchRequests, runTypeTagPair, providerTagPair);
+
+        if (usage.Cost is { } cost && cost > 0)
+        {
+            PipelineTelemetry.RunBillingCostUsd.Add((double)cost, runTypeTagPair, providerTagPair,
+                new KeyValuePair<string, object?>("billing", PipelineTelemetry.NormalizeBillingMode(usage.BillingMode)));
+        }
+    }
+
+    /// <summary>
+    /// Records <c>pipeline.run.rate_limit_events</c> and <c>pipeline.run.rate_limit_utilization</c>
+    /// for the latest rate-limit reading per window the agent saw during the run.
+    /// </summary>
+    private static void RecordRateLimitMetrics(IReadOnlyList<AgentRateLimitObservation> rateLimits)
+    {
+        foreach (var observation in rateLimits)
+        {
+            KeyValuePair<string, object?>[] tags =
+            [
+                new("provider", PipelineTelemetry.NormalizeRunProvider(observation.Provider)),
+                new("window", PipelineTelemetry.RateLimitTags.NormalizeWindow(observation.Window)),
+                new("status", PipelineTelemetry.RateLimitTags.NormalizeStatus(observation.Status))
+            ];
+
+            PipelineTelemetry.RunRateLimitEvents.Add(1, tags);
+
+            if (observation.Utilization is { } utilization)
+                PipelineTelemetry.RunRateLimitUtilization.Record(Math.Clamp(utilization, 0d, 1d), tags);
         }
     }
 

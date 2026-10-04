@@ -12,6 +12,7 @@
 @inject NotificationFaroBridge FaroBridge
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject CurrentAccess Access
 
 @*
     Cockpit shell — the redesigned frontend's layout (see docs/frontend-redesign-handoff.md).
@@ -32,50 +33,78 @@
         </div>
 
         <div class="cockpit-nav">
-            <NavLink class="cockpit-nav-link" href="overview" Match="NavLinkMatch.Prefix" aria-label="Overview" title="Overview">
-                <span class="cockpit-nav-icon"><Icon Name="monitor" Size="18" /></span><span class="cockpit-nav-text">Overview</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="work" Match="NavLinkMatch.Prefix" aria-label="Work" title="Work">
-                <span class="cockpit-nav-icon"><Icon Name="clipboard-list" Size="18" /></span><span class="cockpit-nav-text">Work</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix" aria-label="Runs" title="Runs">
-                <span class="cockpit-nav-icon"><Icon Name="scroll-text" Size="18" /></span><span class="cockpit-nav-text">Runs</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="fleet" Match="NavLinkMatch.Prefix" aria-label="Fleet" title="Fleet">
-                <span class="cockpit-nav-icon"><Icon Name="bot" Size="18" /></span><span class="cockpit-nav-text">Fleet</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="attention" Match="NavLinkMatch.Prefix" aria-label="Attention" title="Attention">
-                <span class="cockpit-nav-icon"><Icon Name="alert-triangle" Size="18" /></span><span class="cockpit-nav-text">Attention</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="insights" Match="NavLinkMatch.Prefix" aria-label="Insights" title="Insights">
-                <span class="cockpit-nav-icon"><Icon Name="bar-chart-2" Size="18" /></span><span class="cockpit-nav-text">Insights</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="pipelines" Match="NavLinkMatch.Prefix" aria-label="Pipelines" title="Pipelines">
-                <span class="cockpit-nav-icon"><Icon Name="refresh-cw" Size="18" /></span><span class="cockpit-nav-text">Pipelines</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="consolidation" Match="NavLinkMatch.Prefix" aria-label="Consolidation" title="Consolidation">
-                <span class="cockpit-nav-icon"><Icon Name="layers" Size="18" /></span>
-                <span class="cockpit-nav-text">Consolidation</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="settings" Match="NavLinkMatch.Prefix" aria-label="Settings" title="Settings">
-                <span class="cockpit-nav-icon"><Icon Name="settings" Size="18" /></span><span class="cockpit-nav-text">Settings</span>
-            </NavLink>
+            @* Spec 049: links follow the page policies (Req 7.5). *@
+            @if (Access.Grant.HasAnyAccess)
+            {
+                <NavLink class="cockpit-nav-link" href="overview" Match="NavLinkMatch.Prefix" aria-label="Overview" title="Overview">
+                    <span class="cockpit-nav-icon"><Icon Name="monitor" Size="18" /></span><span class="cockpit-nav-text">Overview</span>
+                </NavLink>
+                <NavLink class="cockpit-nav-link" href="work" Match="NavLinkMatch.Prefix" aria-label="Work" title="Work">
+                    <span class="cockpit-nav-icon"><Icon Name="clipboard-list" Size="18" /></span><span class="cockpit-nav-text">Work</span>
+                </NavLink>
+                <NavLink class="cockpit-nav-link" href="runs" Match="NavLinkMatch.Prefix" aria-label="Runs" title="Runs">
+                    <span class="cockpit-nav-icon"><Icon Name="scroll-text" Size="18" /></span><span class="cockpit-nav-text">Runs</span>
+                </NavLink>
+            }
+            @if (Access.HasGlobalRead)
+            {
+                <NavLink class="cockpit-nav-link" href="fleet" Match="NavLinkMatch.Prefix" aria-label="Fleet" title="Fleet">
+                    <span class="cockpit-nav-icon"><Icon Name="bot" Size="18" /></span><span class="cockpit-nav-text">Fleet</span>
+                </NavLink>
+            }
+            @if (Access.Grant.HasAnyAccess)
+            {
+                <NavLink class="cockpit-nav-link" href="attention" Match="NavLinkMatch.Prefix" aria-label="Attention" title="Attention">
+                    <span class="cockpit-nav-icon"><Icon Name="alert-triangle" Size="18" /></span><span class="cockpit-nav-text">Attention</span>
+                </NavLink>
+                <NavLink class="cockpit-nav-link" href="insights" Match="NavLinkMatch.Prefix" aria-label="Insights" title="Insights">
+                    <span class="cockpit-nav-icon"><Icon Name="bar-chart-2" Size="18" /></span><span class="cockpit-nav-text">Insights</span>
+                </NavLink>
+                <NavLink class="cockpit-nav-link" href="pipelines" Match="NavLinkMatch.Prefix" aria-label="Pipelines" title="Pipelines">
+                    <span class="cockpit-nav-icon"><Icon Name="refresh-cw" Size="18" /></span><span class="cockpit-nav-text">Pipelines</span>
+                </NavLink>
+            }
+            @if (Access.HasGlobalRead)
+            {
+                <NavLink class="cockpit-nav-link" href="consolidation" Match="NavLinkMatch.Prefix" aria-label="Consolidation" title="Consolidation">
+                    <span class="cockpit-nav-icon"><Icon Name="layers" Size="18" /></span>
+                    <span class="cockpit-nav-text">Consolidation</span>
+                </NavLink>
+            }
+            @if (Access.IsAdmin)
+            {
+                <NavLink class="cockpit-nav-link" href="settings" Match="NavLinkMatch.Prefix" aria-label="Settings" title="Settings">
+                    <span class="cockpit-nav-icon"><Icon Name="settings" Size="18" /></span><span class="cockpit-nav-text">Settings</span>
+                </NavLink>
+            }
 
-            <div class="cockpit-nav-sep"></div>
-            <span class="cockpit-nav-group">Tools</span>
-            <NavLink class="cockpit-nav-link" href="knowledge" Match="NavLinkMatch.Prefix" aria-label="Knowledge" title="Knowledge">
-                <span class="cockpit-nav-icon"><Icon Name="brain" Size="18" /></span><span class="cockpit-nav-text">Knowledge</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="agent-chat" Match="NavLinkMatch.Prefix" aria-label="Agent Chat" title="Agent Chat">
-                <span class="cockpit-nav-icon"><Icon Name="message-circle" Size="18" /></span><span class="cockpit-nav-text">Agent Chat</span>
-            </NavLink>
-            <NavLink class="cockpit-nav-link" href="about" Match="NavLinkMatch.Prefix" aria-label="About" title="About">
-                <span class="cockpit-nav-icon"><Icon Name="info" Size="18" /></span><span class="cockpit-nav-text">About</span>
-            </NavLink>
+            @if (Access.Grant.HasAnyAccess)
+            {
+                <div class="cockpit-nav-sep"></div>
+                <span class="cockpit-nav-group">Tools</span>
+                <NavLink class="cockpit-nav-link" href="knowledge" Match="NavLinkMatch.Prefix" aria-label="Knowledge" title="Knowledge">
+                    <span class="cockpit-nav-icon"><Icon Name="brain" Size="18" /></span><span class="cockpit-nav-text">Knowledge</span>
+                </NavLink>
+            }
+            @if (Access.Grant.HasAnyOperator)
+            {
+                <NavLink class="cockpit-nav-link" href="agent-chat" Match="NavLinkMatch.Prefix" aria-label="Agent Chat" title="Agent Chat">
+                    <span class="cockpit-nav-icon"><Icon Name="message-circle" Size="18" /></span><span class="cockpit-nav-text">Agent Chat</span>
+                </NavLink>
+            }
+            @if (Access.Grant.HasAnyAccess)
+            {
+                <NavLink class="cockpit-nav-link" href="about" Match="NavLinkMatch.Prefix" aria-label="About" title="About">
+                    <span class="cockpit-nav-icon"><Icon Name="info" Size="18" /></span><span class="cockpit-nav-text">About</span>
+                </NavLink>
+            }
         </div>
 
         <div class="cockpit-sidebar-footer">
-            <SidebarHealthIndicators />
+            @if (Access.HasGlobalRead)
+            {
+                <SidebarHealthIndicators />
+            }
             <button class="cockpit-theme-toggle" @onclick="ToggleTheme" title="Toggle light / dark">
                 <Icon Name="@(_theme == "dark" ? "sun" : "moon")" Size="16" />
                 <span>@(_theme == "dark" ? "Light" : "Dark") mode</span>
@@ -94,29 +123,62 @@
                 <Icon Name="menu" Size="20" />
             </button>
 
-            <label class="cockpit-project-switcher" title="Project scope">
-                <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
-                <select value="@State.SelectedProjectId" @onchange="OnProjectChanged" aria-label="Project scope">
-                    <option value="">All projects</option>
-                    @foreach (var p in _projects)
-                    {
-                        <option value="@p.Id">@p.Name</option>
-                    }
-                </select>
-            </label>
+            @if (Access.Grant.HasAnyAccess)
+            {
+                <label class="cockpit-project-switcher" title="Project scope">
+                    <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></svg>
+                    <select value="@State.SelectedProjectId" @onchange="OnProjectChanged" aria-label="Project scope">
+                        @* Spec 049 Req 8.1: "All projects" spans every project, so only a global role gets it. *@
+                        @if (!Access.Grant.IsScoped)
+                        {
+                            <option value="">All projects</option>
+                        }
+                        @foreach (var p in _projects)
+                        {
+                            <option value="@p.Id">@p.Name</option>
+                        }
+                    </select>
+                </label>
+            }
 
             <div class="cockpit-topbar-right">
-                <a href="attention" data-testid="topbar-attention-badge" class="cockpit-attention @(State.AttentionCount > 0 ? "" : "is-disabled")" title="Attention inbox" style="text-decoration: none;">
-                    <Icon Name="alert-triangle" Size="14" /> @(State.AttentionCount > 0 ? $"{State.AttentionCount} need attention" : "Attention")
-                </a>
+                @if (Access.Grant.HasAnyAccess)
+                {
+                    <a href="attention" data-testid="topbar-attention-badge" class="cockpit-attention @(State.AttentionCount > 0 ? "" : "is-disabled")" title="Attention inbox" style="text-decoration: none;">
+                        <Icon Name="alert-triangle" Size="14" /> @(State.AttentionCount > 0 ? $"{State.AttentionCount} need attention" : "Attention")
+                    </a>
+                }
+                <UserMenu />
             </div>
         </div>
 
         <div class="cockpit-body">
-            <FirstRunBanner />
-            <CascadingValue Value="this" IsFixed="true">
-                @Body
-            </CascadingValue>
+            @if (Access.IsAdmin)
+            {
+                <FirstRunBanner />
+            }
+            @* Spec 049 Req 8.3: no page renders (or queries) before the access and the project scope are settled. *@
+            @if (!_accessReady)
+            {
+                <p class="auth-authorizing">Loading…</p>
+            }
+            else if (!Access.Grant.HasAnyAccess)
+            {
+                <AccessDeniedPanel />
+            }
+            else if (_noReadableProject)
+            {
+                <section class="cockpit-card auth-card" data-testid="no-readable-project">
+                    <h1>No project available</h1>
+                    <p>Your roles are bound to projects that are not available right now. Reload the page, or open your profile to see your bindings.</p>
+                </section>
+            }
+            else
+            {
+                <CascadingValue Value="this" IsFixed="true">
+                    @Body
+                </CascadingValue>
+            }
         </div>
     </div>
 </div>
@@ -125,6 +187,10 @@
 
 @code {
     private IReadOnlyList<PipelineProject> _projects = [];
+
+    // Spec 049: set once the access grant and (for scoped users) the project scope are known.
+    private bool _accessReady;
+    private bool _noReadableProject;
 
     // Mobile sidebar overlay state.
     private bool _sidebarOpen;
@@ -154,6 +220,13 @@
 
     protected override async Task OnInitializedAsync()
     {
+        await Access.InitializeAsync();
+        if (!Access.Grant.HasAnyAccess)
+        {
+            _accessReady = true;
+            return;
+        }
+
         try
         {
             _projects = await ConfigClient.GetProjectsAsync(CancellationToken.None);
@@ -165,12 +238,35 @@
             _projects = [];
         }
 
-        await RefreshAttentionCountAsync();
+        // Spec 049 Req 8.1/8.2: only readable projects; a scoped user always has one selected
+        // before any page renders (Req 8.3), and has none at all when no bound project exists.
+        _projects = _projects.Where(p => Access.CanRead(p.Id)).ToList();
+        if (Access.Grant.IsScoped && !_projects.Any(p => p.Id == State.SelectedProjectId))
+        {
+            var first = _projects.OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault();
+            if (first is null)
+                _noReadableProject = true;
+            else
+                State.SetProject(first.Id, first.Name);
+        }
+
+        _accessReady = true;
+        if (!_noReadableProject)
+            await RefreshAttentionCountAsync();
     }
+
+    /// <summary>
+    /// Whether the switcher may select <paramref name="id"/>. The value comes from the browser
+    /// (switcher or local storage), so it is checked against the readable set (Req 7.4).
+    /// </summary>
+    private bool IsSelectable(string id) =>
+        id.Length == 0 ? !Access.Grant.IsScoped : _projects.Any(p => p.Id == id);
 
     private async Task OnProjectChanged(ChangeEventArgs e)
     {
         var id = e.Value as string ?? "";
+        if (!IsSelectable(id))
+            return;
         var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
         State.SetProject(id, name);
         try { await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", id); }
@@ -268,11 +364,12 @@
                 // Restore persisted project scope. Must run after OnInitializedAsync so _projects
                 // is populated. null = key absent (first visit); "" = "All projects" explicitly saved.
                 var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
-                if (savedProjectId is not null)
+                if (savedProjectId is not null && _accessReady && !_noReadableProject && Access.Grant.HasAnyAccess)
                 {
                     if (string.IsNullOrEmpty(savedProjectId))
                     {
-                        State.SetProject("", null);
+                        if (IsSelectable(""))
+                            State.SetProject("", null);
                     }
                     else
                     {

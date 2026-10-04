@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
@@ -47,15 +48,11 @@ public class AgentCodingAdditionalTests : BunitContext
 
     public AgentCodingAdditionalTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<ILogger>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
@@ -66,7 +63,6 @@ public class AgentCodingAdditionalTests : BunitContext
         SetupProjectStoreMocks();
         SetupConfigClientMocks();
 
-        Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
         // Spec 047: component injects ILoopStatusService (not IPipelineLoopService)

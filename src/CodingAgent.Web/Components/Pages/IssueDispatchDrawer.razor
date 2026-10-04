@@ -166,12 +166,15 @@
                        (agent:done, agent:error, etc.). Manual dispatch is a force-re-queue workflow that
                        clears the blocking label via AgentLabelOperations.SwapAsync. Do not add disabled
                        conditions for label-only states without reading IssueDrawerService.DispatchIssueAsync. *@
+                    @if (CanDispatch)
+                    {
                     <button class="btn-save" @onclick="DispatchSelected"
                             disabled="@(IsDispatching || selectedBlocked)"
                             title="@(selectedBlocked ? $"Blocked by open dependencies: {string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}").Concat(selectedReadiness.BlockedByUrls ?? []))}" : "")"
                             data-testid="dispatch-issue-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Pipeline on #{SelectedItem.Identifier}")
                     </button>
+                    }
                 </div>
             }
         }

@@ -142,15 +142,13 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
         var result = await cmd.ExecuteScalarAsync();
 
         result.Should().Be("uuid",
-            "WorkItems.ProjectId was migrated from text to uuid in " +
-            "20260829000000_WorkItemProjectIdToUuidWithFk. If this fails, the migration " +
+            "WorkItems.ProjectId is a uuid. If this fails, the migration " +
             "did not apply correctly or the column was reverted.");
     }
 
     /// <summary>
     /// The FK constraint from WorkItems.ProjectId to Projects.Id must exist.
-    /// This validates that the FK created by WorkItemProjectIdToUuidWithFk is present
-    /// and correctly named — a missing FK would silently allow orphaned WorkItems.
+    /// A missing FK would silently allow orphaned WorkItems.
     /// </summary>
     [Fact]
     public async Task WorkItems_ForeignKey_ToProjects_Exists()
@@ -175,16 +173,14 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
         var count = (long)(await cmd.ExecuteScalarAsync())!;
 
         count.Should().Be(1,
-            "WorkItems.ProjectId must have a FK constraint to Projects.Id " +
-            "(added by 20260829000000_WorkItemProjectIdToUuidWithFk). " +
+            "WorkItems.ProjectId must have a FK constraint to Projects.Id. " +
             "If this fails, the FK was not created or was dropped without a compensating migration.");
     }
 
     /// <summary>
     /// The spurious IX_WorkItems_ProjectId single-column index must NOT exist after migration.
-    /// This index was created by WorkItemProjectIdToUuidWithFk but was absent from
-    /// OnModelCreating, causing PendingModelChangesWarning. It was dropped by
-    /// 20260829124255_DropSpuriousWorkItemProjectIdIndex.
+    /// An earlier migration created it without a matching HasIndex in OnModelCreating,
+    /// which caused PendingModelChangesWarning.
     /// </summary>
     [Fact]
     public async Task WorkItems_SpuriousSingleColumnProjectIdIndex_DoesNotExist()
@@ -205,9 +201,8 @@ public sealed class MigrationIntegrityTests : IClassFixture<MigrationIntegrityFi
         var count = (long)(await cmd.ExecuteScalarAsync())!;
 
         count.Should().Be(0,
-            "IX_WorkItems_ProjectId must not exist — it was dropped by " +
-            "20260829124255_DropSpuriousWorkItemProjectIdIndex to resolve the " +
-            "PendingModelChangesWarning that caused the production startup crash. " +
+            "IX_WorkItems_ProjectId must not exist — it caused the " +
+            "PendingModelChangesWarning behind a production startup crash. " +
             "If this index reappears, a future migration re-created it without adding " +
             "the corresponding HasIndex call to OnModelCreating.");
     }

@@ -92,7 +92,7 @@ public class RunPhaseNormalizationTests
     public void RunProviders_All_ContainsExpectedValues()
     {
         PipelineTelemetry.RunProviders.All.Should().BeEquivalentTo(
-            new[] { "kiro", "opencode", "unknown" });
+            new[] { "kiro", "opencode", "claude", "unknown" });
     }
 
     [Fact]
@@ -100,6 +100,47 @@ public class RunPhaseNormalizationTests
     {
         PipelineTelemetry.RunProviders.Kiro.Should().Be("kiro");
         PipelineTelemetry.RunProviders.OpenCode.Should().Be("opencode");
+        PipelineTelemetry.RunProviders.Claude.Should().Be("claude");
         PipelineTelemetry.RunProviders.Unknown.Should().Be("unknown");
+    }
+
+    [Theory]
+    [InlineData("claude", "claude")]
+    [InlineData("KIRO", "kiro")]
+    [InlineData("opencode", "opencode")]
+    [InlineData("rogue", "unknown")]
+    [InlineData("", "unknown")]
+    [InlineData(null, "unknown")]
+    public void NormalizeRunProvider_MapsToClosedSet(string? raw, string expected)
+    {
+        PipelineTelemetry.NormalizeRunProvider(raw).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("api", "api")]
+    [InlineData("Subscription", "subscription")]
+    [InlineData("free", "unknown")]
+    [InlineData(null, "unknown")]
+    public void NormalizeBillingMode_MapsToClosedSet(string? raw, string expected)
+    {
+        PipelineTelemetry.NormalizeBillingMode(raw).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("five_hour", "five_hour")]
+    [InlineData("SEVEN_DAY", "seven_day")]
+    [InlineData("next_month", "other")]
+    [InlineData(null, "other")]
+    public void RateLimitTags_NormalizeWindow_MapsToClosedSet(string? raw, string expected)
+    {
+        PipelineTelemetry.RateLimitTags.NormalizeWindow(raw).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("allowed_warning", "allowed_warning")]
+    [InlineData("throttled", "other")]
+    public void RateLimitTags_NormalizeStatus_MapsToClosedSet(string? raw, string expected)
+    {
+        PipelineTelemetry.RateLimitTags.NormalizeStatus(raw).Should().Be(expected);
     }
 }

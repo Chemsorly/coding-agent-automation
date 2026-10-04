@@ -292,6 +292,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             Namespace = _options.Namespace,
             OpencodeConfigSecretName = IsOpencodeAgent(template.ProviderType)
                 ? _options.OpencodeConfigSecretName : null,
+            ClaudeAuthSecretName = _options.ClaudeAuthSecretName,
             ProjectSecrets = null
         };
 

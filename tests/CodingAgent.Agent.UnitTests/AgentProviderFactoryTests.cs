@@ -190,6 +190,34 @@ public class AgentProviderFactoryTests
     }
 
     [Fact]
+    public void CreateAgentProvider_ClaudeCode_ReturnsProviderWithSettings()
+    {
+        var factory = CreateFactory();
+        var config = new ProviderConfig
+        {
+            Id = "agent-claude",
+            Kind = ProviderKind.Agent,
+            ProviderType = "claudecode",
+            DisplayName = "Claude Code Agent",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Model] = "claude-opus-4-8",
+                [ProviderSettingKeys.Effort] = "xhigh",
+                [ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Subscription,
+                [ProviderSettingKeys.McpConfigPath] = "/tmp/mcp.json"
+            }
+        };
+
+        var provider = factory.CreateAgentProvider(config);
+
+        var claude = provider.Should().BeOfType<CodingAgent.Agent.ClaudeCode.ClaudeCodeAgentProvider>().Subject;
+        claude.Model.Should().Be("claude-opus-4-8");
+        claude.Effort.Should().Be(AgentEffortLevel.XHigh);
+        claude.AuthMode.Should().Be(ClaudeCodeAuthModes.Subscription);
+        claude.McpConfigPath.Should().Be("/tmp/mcp.json");
+    }
+
+    [Fact]
     public async Task CreatePipelineProviderAsync_NullConfig_Throws()
     {
         var factory = CreateFactory();

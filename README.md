@@ -27,6 +27,7 @@ Detailed documentation lives in the [`docs/`](docs/) folder:
 8. [Feedback & Consolidation](docs/feedback-and-consolidation.md) — Agent feedback loops, brain consolidation
 9. [Observability](docs/observability.md) — Metrics, traces, OTLP configuration
 10. [Deployment](docs/deployment.md) — Helm chart, Kubernetes setup, scaling agents, local development
+    - [Authentication](docs/authentication.md) — Sign-in (OIDC, local admin) and role bindings
 11. [Bootstrap](docs/bootstrap.md) — Migrating config from an existing instance, fresh-install setup
 12. [HTTP API Reference](docs/api-reference.md) — REST endpoints, authentication, request/response examples
 
@@ -133,7 +134,7 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 ## Features
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, picking jobs from a shared queue
-- **Multi-stack support** — Label-based routing dispatches jobs to the right agent and backend (dotnet, python, java × Kiro CLI, OpenCode) with stack-specific quality gates
+- **Multi-stack support** — Label-based routing dispatches jobs to the right agent and backend (dotnet, python, java × Kiro CLI, OpenCode, Claude Code) with stack-specific quality gates
 - **PR review pipeline** — Automated code review for pull requests, triggered by labeling PRs with `agent:next`
 - **Epic decomposition** — Two-phase workflow that breaks epics into implementation-ready sub-issues with human approval
 - **Multi-agent code review** — Specialized review agents (Correctness, Security, etc.) run in parallel with inline PR comments
@@ -169,7 +170,7 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set jobController.enabled=true
 ```
 
-Open the orchestrator URL in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service).
+Open the web UI in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service) and sign in as `admin` with the password from the `<release>-coding-agent-automation-admin` Secret. See [Authentication](docs/authentication.md) to connect Keycloak or Entra ID and bind roles.
 
 ### First-Time Setup
 

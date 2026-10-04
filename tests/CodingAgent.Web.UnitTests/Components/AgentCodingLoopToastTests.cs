@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -43,15 +44,11 @@ public class AgentCodingLoopToastTests : BunitContext
 
     public AgentCodingLoopToastTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<ILogger>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
-
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
 
         SetupStoreMocks();
         SetupProjectStoreMocks();
@@ -72,7 +69,6 @@ public class AgentCodingLoopToastTests : BunitContext
         mockSchedulerClient.Setup(c => c.StopLoopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
         Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);

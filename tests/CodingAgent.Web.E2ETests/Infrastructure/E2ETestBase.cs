@@ -32,9 +32,12 @@ public abstract class E2ETestBase : IAsyncLifetime
         // Reset all state between tests
         await Fixture.ResetAllAsync();
 
-        // Fresh browser context per test (isolated cookies, storage)
+        // Fresh browser context per test (isolated storage), starting signed in as the local admin
         var browser = await Fixture.GetBrowserAsync();
-        _context = await browser.NewContextAsync();
+        _context = await browser.NewContextAsync(new BrowserNewContextOptions
+        {
+            StorageState = await Fixture.GetSignedInStorageStateAsync()
+        });
         await StubExternalFontsAsync(_context);
         Page = await _context.NewPageAsync();
 
@@ -52,7 +55,7 @@ public abstract class E2ETestBase : IAsyncLifetime
     /// Playwright's 30s timeout (seen once for /agent-coding). An empty stylesheet leaves the
     /// fallback fonts in place, so no font file is requested either.
     /// </summary>
-    private static async Task StubExternalFontsAsync(IBrowserContext context)
+    internal static async Task StubExternalFontsAsync(IBrowserContext context)
     {
         await context.RouteAsync("https://fonts.googleapis.com/**", route => route.FulfillAsync(new RouteFulfillOptions
         {

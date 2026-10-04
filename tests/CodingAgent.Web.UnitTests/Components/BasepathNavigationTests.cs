@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using Bunit;
+using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Web.Components.Pages;
@@ -30,6 +31,9 @@ namespace CodingAgent.Web.UnitTests.Components;
 /// </summary>
 public class BasepathNavigationTests : BunitContext
 {
+    // Spec 049: pages read CurrentAccess; a global admin renders every control as before.
+    public BasepathNavigationTests() => Services.AddTestAccess();
+
     // ── Helper ──────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -281,6 +285,7 @@ public class BasepathNavigationTests : BunitContext
     [Fact]
     public void CockpitLayout_AttentionBadge_UsesRelativeHref()
     {
+        Services.AddTestAccess();
         var mockLogger = new Mock<ILogger>();
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();

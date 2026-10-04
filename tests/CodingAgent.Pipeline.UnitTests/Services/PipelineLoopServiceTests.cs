@@ -14,7 +14,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     private readonly Mock<IIssueProvider> _mockIssueProvider;
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly DispatchRunCreationService _runCreator;
-    private readonly PipelineOrchestrationService _orchestration;
     private readonly PipelineRunLifecycleService _lifecycle;
     private PipelineLoopService? _loopService;
 
@@ -27,12 +26,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         _lifecycle = new PipelineRunLifecycleService(
             new TestOrchestrationFactory.NullHistoryService(), null, _mockLogger.Object);
-
-        _orchestration = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            lifecycle: _lifecycle,
-            logger: _mockLogger.Object);
 
         _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
@@ -1539,7 +1532,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             try { await _loopService.StopAsync(CancellationToken.None); } catch { }
             _loopService.Dispose();
         }
-        _orchestration.Dispose();
     }
 
     // ── Housekeeping per-repo dedup ───────────────────────────────────────────

@@ -17,4 +17,5 @@ public static class ProviderTypes
     public const string GitHub = "GitHub";
     public const string GitLab = "GitLab";
     public const string KiroCli = "KiroCli";
+    public const string ClaudeCode = "ClaudeCode";
 }

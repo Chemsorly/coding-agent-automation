@@ -279,12 +279,24 @@ For full request/response examples, authentication details, and query parameters
 
 | Variable | Description |
 |----------|-------------|
-| `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). |
+| `AGENT_API_KEY` | Master key for authenticating agent connections. Each agent Job receives its own key, HMAC(master_key, agent_id), from a per-Job Secret; agents never see the master key. |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 0, range: 0–300). The API now owns `IOrchestratorRunService` and rehydrates independently, so the Orchestrator no longer needs a startup delay. Increase only when a rolling-restart race condition is observed. **Note:** `CodingAgent.Web` reads this via the IConfiguration keys `Orchestrator:PipelineLoopStartupDelaySeconds` or `Env:PipelineLoopStartupDelaySeconds`; the Helm-injected flat env var `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` does not map to either of those paths and is effectively ignored at present (the value is always 0 in Kubernetes). |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15, range: 0–120). Used for zero-downtime rolling updates. |
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 | `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
+
+### Web UI Authentication
+
+The Helm chart sets these from the `auth` values; see [Authentication](authentication.md).
+
+| Variable | Description |
+|----------|-------------|
+| `Auth__Admin__Password` | Password of the local `admin` account (from the admin Secret). Required while the local admin is enabled. |
+| `Auth__Oidc__ClientSecret` | Client secret of the OIDC identity provider. Required when OIDC is enabled. |
+| `Auth__ConfigPath` | Path of the auth settings file the chart renders (default: `/app/config/auth.json`). |
+
+Every other `Auth__*` variable overrides the same setting in the file, for example `Auth__Rbac__DefaultRole=readonly` for a local run.
 
 ### Pipeline API
 
@@ -318,7 +330,7 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`, `coding-agent-worker`). For the web service, configure via `otel.webServiceName` in `values.yaml` (legacy alias `otel.orchestratorServiceName` still honored). For agent pods, `JobSpecBuilder` sets this to `coding-agent-worker` unconditionally. Other processes use fixed names set in their own deployment templates. |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`, `coding-agent-worker`). For the web service, configure via `otel.webServiceName` in `values.yaml`. For agent pods, `JobSpecBuilder` sets this to `coding-agent-worker` unconditionally. Other processes use fixed names set in their own deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers
@@ -328,10 +340,12 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `ORCHESTRATOR_URL` | URL of the orchestrator's SignalR hub (e.g., `http://orchestrator:8080`) |
 | `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
-| `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. |
-| `AGENT_API_KEY_FILE` | Path to a file holding the **master** key; the agent derives its own key from it and `AGENT_ID`. Only for agents started by hand. Takes precedence over `AGENT_API_KEY`. |
-| `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` or `OpenCode`. When absent or empty, defaults to `KiroCli`. |
+| `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. An agent started by hand needs the same derived key. |
+| `AGENT_PROVIDER_TYPE` | Agent backend of a chat pod: the job template's `providerType` (`kiro`, `opencode`, `claude`); `KiroCli`, `OpenCode` and `ClaudeCode` are accepted too. When absent or empty, defaults to Kiro CLI. |
 | `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/root/.local/bin/kiro-cli`) |
+| `CLAUDE_CLI_PATH` | Override path for the Claude Code CLI executable (default: `/home/ubuntu/.local/bin/claude`) |
+| `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; stripped from every other child process. |
+| `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
@@ -389,8 +403,24 @@ Repository providers can include custom markdown steering content that is writte
 Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
 - `.kiro/steering/pipeline-repo.md` for Kiro agents (repository-level steering)
 - `AGENTS.md` for OpenCode agents
+- `~/.claude/rules/pipeline-repo.md` for Claude Code agents — a user-level rule the CLI loads in every session, outside the workspace, so it is never committed and does not touch the repository's own `CLAUDE.md` or `.claude/rules/`
 
-Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents.
+Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents and `~/.claude/rules/pipeline-project.md` for Claude Code agents.
+
+Claude Code also loads what the repository itself provides — `CLAUDE.md`, `.claude/rules/`, `.claude/settings.json` (including hooks) and `.mcp.json` — because the workspace is its working directory.
+
+## Claude Code Agent Provider
+
+Agent provider configs of type `ClaudeCode` run the Claude Code CLI headless (`claude -p --output-format stream-json`), one process per call, with the prompt on stdin.
+
+| Setting | Description |
+|---------|-------------|
+| Executable Path | Path to the `claude` binary (default `/home/ubuntu/.local/bin/claude`) |
+| Model | Full model ID to pin a version (e.g. `claude-opus-5-5`, `claude-opus-4-8`), an alias for the latest of a family (`opus`, `sonnet`, `haiku`, `fable`), or `auto` for the CLI default. The CLI cannot list models, so the form suggests a fixed list and accepts any other ID. |
+| Effort | `low`, `medium`, `high`, `xhigh`, `max` or `auto` — passed as `--effort` |
+| Auth Mode | `auto` (API key if configured, else subscription token), `apiKey`, or `subscription`. Exactly one credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order. |
+
+Credentials live in the agent Secret (`claude-api-key`, `claude-oauth-token`; see [Deployment](deployment.md)). The subscription token comes from `claude setup-token`, is valid for one year, needs a Pro, Max, Team or Enterprise plan, and expires without warning — renew it before then. The CLI runs with `--dangerously-skip-permissions`, the same trust level as Kiro's `--trust-all-tools`; the agent pod is the sandbox. MCP servers from the agent profile are written to `~/.claude/pipeline-mcp.json` and passed with `--mcp-config`; a repository's `.mcp.json` servers load as well.
 
 ## Runtime System Packages
 

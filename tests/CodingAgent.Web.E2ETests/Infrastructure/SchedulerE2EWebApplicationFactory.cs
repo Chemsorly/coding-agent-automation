@@ -156,6 +156,8 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
         // builder.UseSetting() / builder.ConfigureAppConfiguration() to avoid process-global state.
         Environment.SetEnvironmentVariable("PipelineApi__BaseUrl", _pipelineApiBaseUrl);
         Environment.SetEnvironmentVariable("AGENT_API_KEY", _apiKey);
+        // The dispatch loop is on by default in production; these tests drive dispatch themselves.
+        Environment.SetEnvironmentVariable("Scheduler__Dispatch__Enabled", "false");
 
         // Match the pattern from ApiE2EWebApplicationFactory.
         E2ETestDefaults.ResetSerilogBootstrapLogger();

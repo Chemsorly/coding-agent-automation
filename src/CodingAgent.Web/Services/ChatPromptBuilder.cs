@@ -23,7 +23,8 @@ public sealed record ChatPromptParameters(
     string ChatWindowId,
     AgentProfile? ResolvedProfile,
     PipelineProject? SelectedProject,
-    string? ResolvedMcpConfigPath);
+    string? ResolvedMcpConfigPath,
+    string? ResolvedAuthMode = null);
 
 /// <summary>
 /// Default implementation of <see cref="IChatPromptBuilder"/>.
@@ -55,6 +56,9 @@ public sealed class ChatPromptBuilder : IChatPromptBuilder
             ProjectSteeringContent = parameters.IsFirstPrompt ? parameters.SelectedProject?.SteeringContent : null,
             ProjectId = parameters.IsFirstPrompt ? parameters.SelectedProject?.Id : null,
             ProjectName = parameters.IsFirstPrompt ? parameters.SelectedProject?.Name : null,
+            // Sent with every prompt: the Claude Code provider is recreated on the first prompt only,
+            // but a pod that restarted mid-conversation needs it on a follow-up too.
+            AgentAuthMode = parameters.ResolvedAuthMode,
         };
     }
 }

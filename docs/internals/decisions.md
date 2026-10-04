@@ -15,6 +15,7 @@ The rules a plausible change could break. Details are in the linked entries.
 - Private keys never enter an agent pod; agents get short-lived tokens only. ([Token vending](#token-vending-private-keys-never-leave-orchestrator-or-api-containers-security-invariant))
 - No agent pod receives the master key; each Job gets its own derived key, and an agent can resume only its own run. ([Agent keys](#hmac-key-derivation-for-agent-auth--intentional-simplicity))
 - Agents can't set human-approval labels such as `agent:epic-approved`. ([Gated labels](#dispatchgatedlabels-extensible-set-for-human-approval-required-label-transitions))
+- The web UI requires a signed-in user, and `admin` is only ever bound globally. ([Sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database), [Project scope](#admin-is-global-only-project-bindings-scope-actions-and-visibility))
 - Clones of a project's other repositories are read-only and never reach the diff or a commit. ([Project review](#project-review-one-project-reviewer-per-project-with-read-only-clones-of-the-projects-other-repositories))
 - Only the API reads or writes PostgreSQL. ([Services](#only-the-api-owns-the-database-each-service-has-one-job))
 - Every background loop runs on one elected leader; the API runs no loops. ([Loops](#dispatch-loop-belongs-in-a-leader-elected-controller-not-the-stateless-api))
@@ -68,6 +69,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** The UI must consume the API, not be the source of truth; dispatch and reconciliation need their own leader lease; scheduled maintenance is isolated from both.
 **Not:** a Kubernetes operator with CRDs; one monolith.
 **Revisit when:** a layer needs scaling it can't get, or the JobController and Scheduler should merge back for simplicity.
+
+### EF migrations start from a baseline that reuses the newest original ID
+<!-- 2026-10-04 -->
+**Rule:** The first migration is the baseline (class `Baseline`, ID `20260930213632_DropConsolidationRuns`). Keep that ID and add new migrations on top. A database that stopped before it must first upgrade through v0.4.9 or v0.4.10; the API refuses it at startup.
+**Why:** The 23 original migrations (~11,800 lines) were squashed. With the reused ID, a database that applied every original migration and a build from before the squash both see the history they expect, so nothing rewrites `__EFMigrationsHistory` and rolling back stays safe.
+**Not:** a new baseline ID plus a startup step that rewrites the migration history (an older build would then re-run its first migration).
+**Revisit when:** squashing again: reuse the newest migration's ID the same way.
 
 ### Dispatch loop belongs in a leader-elected controller, not the stateless API
 <!-- 2026-09-12; includes the 2026-08-14 leader-gating decisions -->
@@ -125,6 +133,21 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** An agent must not escalate its own privileges by setting its own transition label.
 **Not:** per-label gating config; webhook approval gates.
 **Revisit when:** a human gate needs something other than a label, such as a UI action.
+
+### Web UI sign-in: one OIDC provider, roles in Helm values, no user database
+<!-- 2026-10-04 -->
+**Rule:** Every web UI page requires a signed-in user, and sign-in can't be turned off. Users sign in through one OIDC identity provider or the local `admin` account. Three fixed roles (`readonly` < `operator` < `admin`) are bound to OIDC groups or users in the Helm values, globally or for one project.
+**Why:** The UI controls agents that hold repository credentials. The identity provider owns users and groups and the chart owns who may do what, as in ArgoCD. **Accepting:** binding changes need a web pod restart; there is no record of who dispatched or cancelled what; logging out does not end the identity provider's session.
+**Not:** an own user database; custom roles or policy lines; several identity providers at once; a switch that disables sign-in.
+**Revisit when:** a team needs a permission between the three roles, or an audit trail becomes a requirement.
+
+### admin is global-only; project bindings scope actions and visibility
+<!-- 2026-10-04 -->
+**Rule:** `admin` can only be bound globally. A project binding (`readonly` or `operator`) decides both what a user may do with the project's work and whose data the user sees: a user with only project bindings sees one project at a time and none of the cross-project pages. Agent Chat on a project needs `operator` there; a chat without a project needs global `operator`. Template changes, including the enable toggles, are admin-only.
+**Why:** Templates and settings point at the global provider credentials, so a project admin could reach other projects' repositories. A chat on a project gets that project's MCP servers and secrets, the same exposure as dispatching work on it.
+**Accepting:** a project team can't pause its own templates; a user bound to several projects switches between them.
+**Not:** project admins; an "All projects" view across a user's projects.
+**Revisit when:** templates stop sharing the global provider credentials.
 
 ## Dispatch and scheduling
 

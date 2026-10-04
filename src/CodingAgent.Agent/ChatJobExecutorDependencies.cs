@@ -1,3 +1,5 @@
+using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Models;
 using KiroCliLib.Core;
 using Microsoft.Extensions.Hosting;
 
@@ -33,4 +35,28 @@ public sealed record ChatJobExecutorDependencies(
     /// </summary>
     public Func<System.Diagnostics.ProcessStartInfo, System.Diagnostics.Process?> ProcessStarter { get; init; }
         = System.Diagnostics.Process.Start;
+
+    /// <summary>
+    /// The provider the chat pod runs. Null derives it from <see cref="IsOpenCodeProvider"/>
+    /// (OpenCode or Kiro CLI), which is all the type could express before Claude Code.
+    /// </summary>
+    public AgentProviderType? ProviderType { get; init; }
+
+    /// <summary>Model for Claude Code chat (AGENT_CHAT_MODEL); null or "auto" uses the CLI default.</summary>
+    public string? ChatModel { get; init; }
+
+    /// <summary>Effort for Claude Code chat (AGENT_CHAT_EFFORT); null or "auto" uses the CLI default.</summary>
+    public string? ChatEffort { get; init; }
+
+    /// <summary>Claude Code CLI path override (CLAUDE_CLI_PATH); null uses the image default.</summary>
+    public string? ClaudeCliPath { get; init; }
+
+    /// <summary>
+    /// Creates the provider a Claude Code chat prompt runs on. Tests substitute a fake;
+    /// null builds a <c>ClaudeCodeAgentProvider</c> from the chat settings and the prompt message.
+    /// </summary>
+    public Func<ChatPromptMessage, IAgentProvider>? ClaudeCodeProviderFactory { get; init; }
+
+    /// <summary>Directory for Claude Code steering rules; null means <c>~/.claude/rules</c>.</summary>
+    public string? ClaudeRulesDirectory { get; init; }
 }

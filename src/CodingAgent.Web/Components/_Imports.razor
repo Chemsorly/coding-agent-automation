@@ -10,3 +10,9 @@
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Models
 @using static CodingAgent.Web.UiFormatters
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using CodingAgent.Web.Auth
+@using CodingAgent.Web.Components.Auth
+@* Spec 049: every routable component requires a signed-in user unless it opts out with [AllowAnonymous]. *@
+@attribute [Authorize]

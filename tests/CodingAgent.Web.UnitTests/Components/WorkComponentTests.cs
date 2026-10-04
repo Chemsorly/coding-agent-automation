@@ -1,3 +1,5 @@
+using CodingAgent.Web.Auth;
+using CodingAgent.Web.UnitTests.Auth;
 using System.Reflection;
 using AwesomeAssertions;
 using Bunit;
@@ -48,6 +50,7 @@ public class WorkComponentTests : BunitContext
 
     public WorkComponentTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         // IPipelineApiWorkItemClient — mocked; default stubs return empty lists.
         _mockWorkItems
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
@@ -902,5 +905,70 @@ public class WorkComponentTests : BunitContext
             "header count must not include the issue that has an active work item");
         headerSpan.TextContent.Should().Contain("2 open",
             "both issues should still be counted as open");
+    }
+
+    // ── Spec 049: actions follow the role on the item's own project ───────────
+
+    private const string AccessProjectP = "6f1c2a9e-0000-0000-0000-00000000000a";
+    private const string AccessProjectQ = "6f1c2a9e-0000-0000-0000-00000000000b";
+
+    private void SetupItemsOfBothProjects(Guid pendingP, Guid pendingQ, Guid activeP, Guid activeQ)
+    {
+        _mockWorkItems
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                MakePendingItem(pendingP, 10) with { ProjectId = Guid.Parse(AccessProjectP) },
+                MakePendingItem(pendingQ, 20) with { ProjectId = Guid.Parse(AccessProjectQ) },
+            ]);
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([
+                MakeActiveItem(activeP, "1") with { ProjectId = Guid.Parse(AccessProjectP) },
+                MakeActiveItem(activeQ, "2") with { ProjectId = Guid.Parse(AccessProjectQ) },
+            ]);
+    }
+
+    [Fact]
+    public void Access_OperatorOfOneProject_GetsControlsOnlyForThatProjectsItems()
+    {
+        Guid pendingP = Guid.NewGuid(), pendingQ = Guid.NewGuid(), activeP = Guid.NewGuid(), activeQ = Guid.NewGuid();
+        SetupItemsOfBothProjects(pendingP, pendingQ, activeP, activeQ);
+        Services.AddTestAccess(TestAccess.Scoped((AccessProjectP, AccessRole.Operator), (AccessProjectQ, AccessRole.ReadOnly)));
+
+        var cut = Render<Work>();
+
+        cut.FindAll($"[data-testid='cancel-btn-{activeP}']").Should().ContainSingle();
+        cut.FindAll($"[data-testid='cancel-btn-{activeQ}']").Should().BeEmpty("readonly on Q renders no cancel control");
+        cut.FindAll($"input[aria-label='Priority weight for {pendingP}']").Should().ContainSingle();
+        cut.FindAll($"input[aria-label='Priority weight for {pendingQ}']").Should().BeEmpty();
+        cut.Find($"[data-testid='priority-readonly-{pendingQ}']").TextContent.Should().Be("20");
+    }
+
+    [Fact]
+    public void Access_GlobalReadOnly_GetsNoActionControls()
+    {
+        Guid pendingP = Guid.NewGuid(), pendingQ = Guid.NewGuid(), activeP = Guid.NewGuid(), activeQ = Guid.NewGuid();
+        SetupItemsOfBothProjects(pendingP, pendingQ, activeP, activeQ);
+        Services.AddTestAccess(TestAccess.Global(AccessRole.ReadOnly));
+
+        var cut = Render<Work>();
+
+        cut.FindAll("[data-testid^='cancel-btn-']").Should().BeEmpty();
+        cut.FindAll("input.priority-input").Should().BeEmpty();
+        cut.FindAll("button").Should().NotContain(b => b.TextContent.Contains("Remove"));
+    }
+
+    [Fact]
+    public void Access_ItemWithoutProject_NeedsAGlobalRole()
+    {
+        var id = Guid.NewGuid();
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([MakeActiveItem(id)]);
+        Services.AddTestAccess(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
+
+        var cut = Render<Work>();
+
+        cut.FindAll($"[data-testid='cancel-btn-{id}']").Should().BeEmpty();
     }
 }

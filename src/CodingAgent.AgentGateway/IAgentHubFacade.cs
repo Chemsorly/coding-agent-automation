@@ -18,7 +18,7 @@ namespace CodingAgent.AgentGateway;
 /// </para>
 /// <para>
 /// Direct dependencies remaining on <see cref="AgentHub"/>:
-/// <see cref="ITokenVendingService"/>, <see cref="PipelineOrchestrationService"/>,
+/// <see cref="ITokenVendingService"/>,
 /// <see cref="CodingAgent.Orchestration.Health.ModelFetchService"/>, and <c>ILogger</c>.
 /// </para>
 /// </remarks>

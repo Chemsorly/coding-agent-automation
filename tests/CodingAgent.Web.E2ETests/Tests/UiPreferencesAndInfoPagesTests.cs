@@ -162,6 +162,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             Assert.Equal("60", await Page.InputValueAsync(".refresh-bar-select"));
 
             // Set Work to 10s — SelectOptionAsync fires the DOM change event (@onchange handler)
+            await Page.WaitForInteractiveAsync(".refresh-bar-select", 20_000);
             await Page.SelectOptionAsync(".refresh-bar-select", "10");
             // Wait for localStorage write to complete
             await Page.WaitForFunctionAsync(
@@ -177,6 +178,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             // If a previous test left autoRefresh.runs in localStorage the select would start at
             // that value, and the test would still pass because it only checks the final "0" — the
             // starting condition is never asserted.
+            // The select is prerendered; a change before the circuit attaches @onchange is lost.
+            await Page.WaitForInteractiveAsync(".refresh-bar-select", 20_000);
             await Page.SelectOptionAsync(".refresh-bar-select", "0");
             await Page.WaitForFunctionAsync(
                 "() => localStorage.getItem('autoRefresh.runs') === '0'",

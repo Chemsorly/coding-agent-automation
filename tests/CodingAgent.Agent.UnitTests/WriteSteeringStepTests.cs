@@ -246,6 +246,40 @@ public class WriteSteeringStepTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
+    // ── Claude Code scenarios ───────────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_ClaudeCode_WritesUserRules_NotIntoTheWorkspace()
+    {
+        var rulesDir = Path.Combine(_tempDir, "home-rules");
+        var step = new WriteSteeringStep(CreateJob("project instructions", "repo instructions"), claudeRulesDirectory: rulesDir);
+
+        await step.ExecuteAsync(CreateContext(AgentProviderType.ClaudeCode), CancellationToken.None);
+
+        File.ReadAllText(Path.Combine(rulesDir, "pipeline-project.md")).Should().Contain("project instructions");
+        File.ReadAllText(Path.Combine(rulesDir, "pipeline-repo.md")).Should().Contain("repo instructions");
+        File.Exists(Path.Combine(_tempDir, "AGENTS.md")).Should().BeFalse();
+        Directory.Exists(Path.Combine(_tempDir, ".kiro")).Should().BeFalse();
+        _mockCallbacks.Verify(c => c.EmitOutputLine(It.Is<string>(s => s.Contains("project+repo"))), Times.Once);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ClaudeCode_NoSteering_RemovesRulesLeftByAnEarlierJob()
+    {
+        var rulesDir = Path.Combine(_tempDir, "home-rules");
+        Directory.CreateDirectory(rulesDir);
+        File.WriteAllText(Path.Combine(rulesDir, "pipeline-project.md"), "stale");
+        File.WriteAllText(Path.Combine(rulesDir, "pipeline-repo.md"), "stale");
+        File.WriteAllText(Path.Combine(rulesDir, "personal.md"), "keep");
+        var step = new WriteSteeringStep(CreateJob(null, null), claudeRulesDirectory: rulesDir);
+
+        var result = await step.ExecuteAsync(CreateContext(AgentProviderType.ClaudeCode), CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        Directory.GetFiles(rulesDir).Select(Path.GetFileName).Should().Equal("personal.md");
+        _mockCallbacks.Verify(c => c.EmitOutputLine(It.IsAny<string>()), Times.Never);
+    }
+
     private PipelineStepContext CreateContext(AgentProviderType providerType)
     {
         var run = new PipelineRun

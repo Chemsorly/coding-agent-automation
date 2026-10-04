@@ -299,6 +299,33 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
     }
 
     [Fact]
+    public async Task ChatModel_ClaudeCodePod_KiroCliSettingsWriterNotCalled()
+    {
+        // Arrange — Claude Code takes model and effort as CLI flags, so no Kiro settings file
+        SetEnv("AGENT_CHAT_MODE", "true");
+        SetEnv(AgentDefaults.EnvChatModel, "claude-opus-5-5");
+        SetEnv(AgentDefaults.EnvAgentProviderType, "claude");
+
+        var applyCalled = false;
+        var lifecycle = CreateLifecycle();
+        lifecycle.KiroCliSettingsApplyFunc = (model, effort, ct) =>
+        {
+            applyCalled = true;
+            return Task.CompletedTask;
+        };
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        try
+        {
+            await lifecycle.ConnectAndRunAsync(cts.Token);
+        }
+        catch { /* expected: OperationCanceledException on cancellation, HttpRequestException if no server */ }
+
+        // Assert
+        applyCalled.Should().BeFalse("a Claude Code chat pod must not write the Kiro CLI settings file");
+    }
+
+    [Fact]
     public async Task ChatModel_AutoValue_KiroCliSettingsWriterNotCalled()
     {
         // Arrange — model="auto" → no file write

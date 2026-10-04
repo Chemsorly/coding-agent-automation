@@ -1,10 +1,11 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using CodingAgent.Web.IntegrationTests.Helpers;
 
 namespace CodingAgent.Web.IntegrationTests.Smoke;
 
 [Collection("SmokeTests")]
-public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
+public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>, IAsyncLifetime
 {
     // The rendered <base href> value.
     [GeneratedRegex("<base href=\"([^\"]*)\"")]
@@ -14,17 +15,26 @@ public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
     [GeneratedRegex("<(?:link rel=\"stylesheet\" href|script src)=\"([^\"]+)\"")]
     private static partial Regex AssetReferencePattern();
 
-    private readonly HttpClient _client;
-    private readonly HttpClient _clientNoRedirect;
+    private readonly CustomWebApplicationFactory _factory;
+    private HttpClient _client = default!;
+    private HttpClient _clientNoRedirect = default!;
 
     public PageSmokeTests(CustomWebApplicationFactory factory)
     {
-        _client = factory.CreateClient();
-        _clientNoRedirect = factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
+        _factory = factory;
+    }
+
+    public async Task InitializeAsync()
+    {
+        // Spec 049: pages require a signed-in user.
+        _client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory);
+        _clientNoRedirect = _factory.CreateClient(new Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactoryClientOptions
         {
             AllowAutoRedirect = false
         });
     }
+
+    public Task DisposeAsync() => Task.CompletedTask;
 
     [Theory]
     [InlineData("/agent-coding")]
@@ -81,6 +91,22 @@ public partial class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
             Assert.True(response.StatusCode == HttpStatusCode.OK,
                 $"{path}: asset '{asset}' resolved to {assetUri.AbsolutePath} and returned {(int)response.StatusCode}.");
         }
+    }
+
+    /// <summary>
+    /// The favicon is needed before sign-in (the login page) and by dashboards that load it without
+    /// a session, so it must be linked from the shell and served anonymously.
+    /// </summary>
+    [Fact]
+    public async Task Favicon_Is_Linked_And_Served_Without_Sign_In()
+    {
+        var html = await _clientNoRedirect.GetStringAsync("/login");
+        Assert.Contains("<link rel=\"icon\" type=\"image/svg+xml\" href=\"favicon.svg\"", html);
+
+        var response = await _clientNoRedirect.GetAsync("/favicon.svg");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("image/svg+xml", response.Content.Headers.ContentType?.MediaType);
     }
 
     [Fact]
