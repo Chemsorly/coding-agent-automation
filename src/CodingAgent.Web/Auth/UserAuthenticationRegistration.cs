@@ -57,6 +57,9 @@ internal static class UserAuthenticationRegistration
         AccessPolicies.Register(authorization);
         services.AddSingleton<IAuthorizationHandler, AccessAuthorizationHandler>();
 
+        // The antiforgery cookie defaults to no Secure flag; behind the TLS ingress it gets one.
+        services.AddAntiforgery(options => options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest);
+
         services.AddCascadingAuthenticationState();
         services.AddScoped<AuthenticationStateProvider, SessionRevalidatingAuthenticationStateProvider>();
         services.AddSingleton<IRbacEvaluator, RbacEvaluator>();
