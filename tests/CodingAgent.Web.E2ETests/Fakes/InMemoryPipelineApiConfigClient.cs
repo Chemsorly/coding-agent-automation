@@ -337,12 +337,61 @@ public sealed class InMemoryPipelineApiConfigClient : IPipelineApiConfigClient
                 await _store.SavePipelineConfigAsync(pipelineConfig, ct);
         }
 
-        // TODO [WARNING]: Projects and JobTemplates are serialised into the export bundle by
-        // ExportConfigAsync but are never restored here. A round-trip import silently drops all
-        // projects and job templates, leaving the store diverged from the exported state.
-        // Scenario 2 does not assert on projects/templates so the gap goes undetected.
-        // Implement restore blocks for bundle.Projects and bundle.JobTemplates to mirror the
-        // destructive semantics of POST /api/config/import on the real API.
+        // Projects — clear existing and re-import from bundle
+        var existingProjects = await _store.LoadProjectsAsync(ct);
+        foreach (var p in existingProjects)
+            await _store.DeleteProjectAsync(p.Id, ct);
+
+        if (bundle.Projects is not null)
+        {
+            foreach (var dto in bundle.Projects)
+            {
+                // TODO [WARNING]: TemplateIds is always initialised as empty, discarding the
+                // project↔template membership from the bundle. Any store query against
+                // LoadTemplatesForProjectAsync(nonDefaultProjectId) after import will return empty,
+                // diverging from the real API behaviour. Restore template membership here, or track
+                // it via the owning project ID stored in JobTemplateExportDto.
+                await _store.SaveProjectAsync(new PipelineProject
+                {
+                    Id = dto.Id.ToString(),
+                    Name = dto.Name,
+                    Enabled = dto.Enabled,
+                    Description = dto.Description,
+                    TemplateIds = new List<string>()
+                }, ct);
+            }
+        }
+
+        // Job templates — clear existing and re-import from bundle
+        var existingTemplates = await _store.LoadAllTemplatesAsync(ct);
+        foreach (var t in existingTemplates)
+        {
+            // TODO [WARNING]: existingProjects was captured before the project-delete loop ran.
+            // DeleteProjectAsync reassigns the deleted project's templates to DefaultProjectId in
+            // _templateProjects, so owningProjectId derived from the original snapshot may no longer
+            // reflect the live store state. This is harmless for now because DeleteTemplateAsync
+            // removes by template ID regardless of project ID, but is misleading for future readers.
+            // Capture existingProjects before any mutations and document that it's a pre-delete snapshot.
+            var owningProject = existingProjects.FirstOrDefault(p => p.TemplateIds?.Contains(t.Id) == true);
+            var owningProjectId = owningProject?.Id ?? WellKnownIds.DefaultProjectId;
+            await _store.DeleteTemplateAsync(owningProjectId, new TemplateId(t.Id), ct);
+        }
+
+        if (bundle.JobTemplates is not null)
+        {
+            foreach (var dto in bundle.JobTemplates)
+            {
+                if (dto.Configuration is null) continue;
+                // TODO [WARNING]: All imported templates are unconditionally assigned to
+                // WellKnownIds.DefaultProjectId, discarding their original owning project. A bundle
+                // exported from a store with templates under non-default projects will not restore
+                // those project associations after a round-trip. JobTemplateExportDto carries no
+                // project ID; add one to the DTO to make the association round-trip correctly.
+                var template = JsonSerializer.Deserialize<PipelineJobTemplate>(dto.Configuration, PipelineJsonOptions.Default);
+                if (template is not null)
+                    await _store.SaveTemplateAsync(WellKnownIds.DefaultProjectId, template, ct);
+            }
+        }
     }
 
     // ── JSON options for export/import ──────────────────────────────────

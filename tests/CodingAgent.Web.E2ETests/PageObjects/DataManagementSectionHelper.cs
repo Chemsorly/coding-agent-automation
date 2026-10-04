@@ -85,7 +85,10 @@ public sealed class DataManagementSectionHelper
     public async Task SelectImportFileAsync(string filePath)
     {
         await FileInput.SetInputFilesAsync(filePath);
-        // Wait for Blazor to process OnChange and render the Import button
+        // TODO [WARNING]: Unconditional 1s sleep is brittle: too short under CI load, wastes time
+        // on fast machines. Replace with a deterministic poll on IsImportButtonVisibleAsync(),
+        // e.g. await Assertions.Expect(ImportButton).ToBeVisibleAsync(new() { Timeout = 5_000 }),
+        // which waits for the Blazor OnChange handler to render the Import button.
         await _page.WaitForTimeoutAsync(1_000);
     }
 
