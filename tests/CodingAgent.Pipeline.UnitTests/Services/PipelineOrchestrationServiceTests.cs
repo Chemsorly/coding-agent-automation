@@ -43,17 +43,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
         mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
-        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<WorkspacePath?>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Callback<WorkspacePath?, string, string>((path, _, _) =>
-            {
-                // TODO [WARNING]: WorkspacePath has an implicit WorkspacePath→string conversion, so
-                // Directory.Exists(path) resolves via that operator. If the conversion were broken, this
-                // callback would silently fail to delete. No assertion verifies that cleanup actually
-                // occurred after a successful run. Consider adding a Verify call that TryDeleteWorkspace
-                // was invoked with the expected path, or asserting the directory no longer exists.
-                if (path != null && Directory.Exists(path))
-                    Directory.Delete(path, true);
-            });
 
         _service = new TestPipelineRunner(
             _mockConfigStore.Object,
@@ -1662,17 +1651,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
         mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
-        mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<WorkspacePath?>(), It.IsAny<string>(), It.IsAny<string>()))
-            .Callback<WorkspacePath?, string, string>((path, _, _) =>
-            {
-                // TODO [WARNING]: WorkspacePath has an implicit WorkspacePath→string conversion, so
-                // Directory.Exists(path) resolves via that operator. If the conversion were broken, this
-                // callback would silently fail to delete. No assertion verifies that cleanup actually
-                // occurred after a successful run. Consider adding a Verify call that TryDeleteWorkspace
-                // was invoked with the expected path, or asserting the directory no longer exists.
-                if (path != null && Directory.Exists(path))
-                    Directory.Delete(path, true);
-            });
 
         var service = new TestPipelineRunner(
             mockConfigStore.Object,

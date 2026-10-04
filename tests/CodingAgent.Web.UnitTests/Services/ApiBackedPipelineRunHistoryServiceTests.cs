@@ -393,16 +393,6 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
             "permanent failure (not HttpRequestException) must not be retried — exactly 1 call expected");
     }
 
-    // ── Workspace methods are no-ops ──────────────────────────────────────
-
-    [Fact]
-    public void TryDeleteWorkspace_DoesNotThrow()
-    {
-        var sut = CreateSut();
-        var act = () => sut.TryDeleteWorkspace("/some/path", "run-1", "/base");
-        act.Should().NotThrow("orchestrator has no local workspace — must be a no-op");
-    }
-
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static PipelineRun MakeRun(

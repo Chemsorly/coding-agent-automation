@@ -62,7 +62,6 @@ public class WorkDistributionRegistrationTests
         // to exercise the DI registration lambdas without requiring a real Kubernetes cluster.
         // Verifies that registrations are ADDED to the container (not resolved).
         // This method replaced RegisterKubernetesMode after Spec 043 Task 9.
-        // Note: Spec 045 Req 1.2 (M1) removed IPendingWorkQuery from this method.
         var configData = new Dictionary<string, string?>
         {
             ["WorkDistribution:Namespace"] = "default",
@@ -81,16 +80,9 @@ public class WorkDistributionRegistrationTests
         method.Should().NotBeNull("RegisterConsolidationServices must exist as a private static method");
         method!.Invoke(null, [services, config]);
 
-        // Verify IWorkDistributor is registered (replaces old IPendingWorkQuery assertion)
         var workDistributorDescriptor = services.FirstOrDefault(
             d => d.ServiceType == typeof(CodingAgent.Pipeline.Interfaces.IWorkDistributor));
         workDistributorDescriptor.Should().NotBeNull(
             "RegisterConsolidationServices must register IWorkDistributor");
-
-        // IPendingWorkQuery was removed in Spec 045 Req 1.2 (M1 gauge audit)
-        var pendingWorkQueryDescriptor = services.FirstOrDefault(
-            d => d.ServiceType == typeof(CodingAgent.Pipeline.Interfaces.IPendingWorkQuery));
-        pendingWorkQueryDescriptor.Should().BeNull(
-            "IPendingWorkQuery was removed in Spec 045 Req 1.2 (M1 gauge audit)");
     }
 }

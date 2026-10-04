@@ -223,10 +223,8 @@ database:
   # Npgsql SSL mode: Disable, Prefer, Require, VerifyCA, VerifyFull.
   # Defaults to Require in production if not set. Use "Disable" for in-cluster Postgres without TLS.
   sslMode: ""
-  # Apply EF Core migrations on web startup.
-  # true  — apply automatically on startup (safe for single-replica; avoid concurrent upgrades)
-  # false — startup aborts when migrations are pending (blue/green — run them manually via
-  #         `kubectl exec deployment/<name>-web -- dotnet CodingAgent.Web.dll migrate`)
+  # Apply EF Core migrations when the Pipeline API starts (under an advisory lock).
+  # false — the API aborts startup while migrations are pending.
   migrateOnStartup: true
 
 # ── Work Distribution ────────────────────────────────────────────────────────

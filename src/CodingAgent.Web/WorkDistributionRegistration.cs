@@ -35,14 +35,6 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<IPipelineApiRunHistoryClient>(),
                 Log.Logger));
 
-        // ── IWorkItemFallbackTransitionService — API-backed (T8 item 3) ─────
-        // WorkItem status transitions route through POST /api/work-items/{id}/status.
-        // IWorkItemFallbackTransitionService is no longer backed by direct EF Core access.
-        services.AddSingleton<IWorkItemFallbackTransitionService>(sp =>
-            new CodingAgent.Web.Services.ApiBackedWorkItemFallbackTransitionService(
-                sp.GetRequiredService<IPipelineApiWorkItemClient>(),
-                Log.Logger));
-
         // ── Harness suggestions persistence — API-backed ────────────────────────────────────────
         services.AddSingleton<IHarnessSuggestionStore>(sp =>
             new ApiBackedHarnessSuggestionStore(sp.GetRequiredService<IPipelineApiHarnessSuggestionClient>()));
