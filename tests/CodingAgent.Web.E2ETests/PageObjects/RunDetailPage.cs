@@ -1,4 +1,3 @@
-using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -25,11 +24,10 @@ public sealed class RunDetailPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Wait for the Blazor JS framework to be present (confirms the circuit is connected
-        // or the connection is in progress), then allow time for event handlers to attach.
-        await _page.WaitForBlazorAsync(timeoutMs: 15_000);
-        // Additional settle time for Blazor Server to complete its initial interactive render
-        // and attach onclick handlers to DOM elements. Matches the 3 s used by AgentCodingPage.
+        // Allow time for the Blazor Server circuit to connect and attach event handlers.
+        // Matches the pattern used by AgentCodingPage (3 s), which is the empirically-validated
+        // baseline for slow CI runners. Avoids WaitForFunctionAsync which adds its own
+        // 15 s timeout and has been observed to fail inconsistently in this test suite.
         await _page.WaitForTimeoutAsync(3000);
     }
 
