@@ -76,6 +76,8 @@ public class AuthOptionsValidatorTests
     [InlineData("")]
     [InlineData("not a url")]
     [InlineData("/realms/relative")]
+    [InlineData("file:///realms/acme")]
+    [InlineData("ftp://kc.example.com/realms/acme")]
     public void OidcWithoutAbsoluteIssuer_Fails(string? issuer)
     {
         var options = Valid();

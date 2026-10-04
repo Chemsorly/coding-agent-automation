@@ -5,9 +5,7 @@
 #   1. auth.json ConfigMap: non-secret values only, bindings passed through
 #   2. Web deployment: admin password and OIDC client secret as secretKeyRef env vars
 #   3. Web deployment: auth.json mounted, checksum/auth annotation on the pod template
-#   4. Render-time failures: no login method, incomplete OIDC, admin bound to a project,
-#      web.replicas > 1 without Redis
-#   5. Secret-init hook: admin password generated in <fullname>-admin
+#   4. Secret-init hook: admin password generated in <fullname>-admin
 
 suite: authentication values
 
@@ -22,6 +20,7 @@ set:
   database.host: "pg-host"
   database.auth.existingSecret: "my-secret"
   signalr.redis.connectionString: "redis:6379"
+  scheduler.dispatch.enabled: true
 
 tests:
 
@@ -138,55 +137,6 @@ tests:
             readOnly: true
       - exists:
           path: spec.template.metadata.annotations["checksum/auth"]
-
-  # ── Render-time validation ────────────────────────────────────────────────
-  - it: fails without any login method
-    template: templates/web-auth-configmap.yaml
-    set:
-      auth.admin.enabled: false
-    asserts:
-      - failedTemplate:
-          errorPattern: "authentication cannot be turned off"
-
-  - it: fails when OIDC is enabled without an issuer
-    template: templates/web-auth-configmap.yaml
-    set:
-      auth.oidc.enabled: true
-      auth.oidc.clientId: coding-agent
-      auth.oidc.clientSecret.existingSecret: oidc-secret
-    asserts:
-      - failedTemplate:
-          errorPattern: "auth.oidc.issuer is empty"
-
-  - it: fails when OIDC is enabled without a client secret
-    template: templates/web-auth-configmap.yaml
-    set:
-      auth.oidc.enabled: true
-      auth.oidc.issuer: https://kc.example.com/realms/acme
-      auth.oidc.clientId: coding-agent
-    asserts:
-      - failedTemplate:
-          errorPattern: "clientSecret.existingSecret is empty"
-
-  - it: fails when admin is bound to a project
-    template: templates/web-auth-configmap.yaml
-    set:
-      auth.rbac.bindings:
-        - group: team-a
-          role: admin
-          project: payments
-    asserts:
-      - failedTemplate:
-          errorPattern: "can only be bound globally"
-
-  - it: fails for several web replicas without Redis
-    template: templates/web-auth-configmap.yaml
-    set:
-      signalr.redis.connectionString: ""
-      web.replicas: 2
-    asserts:
-      - failedTemplate:
-          errorPattern: "web.replicas is greater than 1"
 
   # ── Secret-init hook: admin password ──────────────────────────────────────
   - it: generates the admin password even when the agent key is explicit

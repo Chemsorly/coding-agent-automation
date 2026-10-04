@@ -57,18 +57,19 @@ internal static class OidcRegistration
             if (result.GroupOverage)
             {
                 logger.LogWarning(
-                    "OIDC user '{Username}' has too many groups for the token (group overage); no groups were received. " +
+                    "OIDC subject '{Subject}' has too many groups for the token (group overage); no groups were received. " +
                     "Assign groups to the application or use app roles (see docs/authentication.md)",
-                    LogSanitizer.SanitizeForLog(result.Username));
+                    LogSanitizer.SanitizeForLog(result.Subject));
             }
 
             context.Principal = result.Principal;
             context.Properties!.IsPersistent = true;
             context.Properties.ExpiresUtc = expiresAt;
             context.Properties.AllowRefresh = false;
+            // Log the opaque subject, not the username: the username can fall back to the email address.
             logger.LogInformation(
-                "Login succeeded for user '{Username}' ({IdentitySource}) from {ClientIp} with {GroupCount} groups",
-                LogSanitizer.SanitizeForLog(result.Username), IdentitySources.Oidc,
+                "Login succeeded for subject '{Subject}' ({IdentitySource}) from {ClientIp} with {GroupCount} groups",
+                LogSanitizer.SanitizeForLog(result.Subject), IdentitySources.Oidc,
                 context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown", result.GroupCount);
             return Task.CompletedTask;
         };

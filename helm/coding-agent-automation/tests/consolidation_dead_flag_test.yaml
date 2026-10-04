@@ -17,6 +17,9 @@ set:
   secrets.agentApiKey: "test-key"
   api.enabled: true
   scheduler.enabled: true
+  # Required by the chart's render-time checks (api.replicas > 1 needs Redis; an enabled scheduler needs dispatch).
+  scheduler.dispatch.enabled: true
+  signalr.redis.connectionString: "redis:6379"
   jobController.enabled: true
 
 tests:

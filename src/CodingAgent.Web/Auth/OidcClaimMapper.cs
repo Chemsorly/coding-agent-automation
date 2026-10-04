@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace CodingAgent.Web.Auth;
 
 /// <summary>Result of mapping a validated ID token to a session principal.</summary>
-public sealed record OidcMappingResult(ClaimsPrincipal Principal, string Username, int GroupCount, bool GroupOverage);
+public sealed record OidcMappingResult(ClaimsPrincipal Principal, string Subject, string Username, int GroupCount, bool GroupOverage);
 
 /// <summary>
 /// Reduces the claims of a validated OIDC ID token to the session identity (Spec 049 Req 3.4–3.6):
@@ -23,7 +23,7 @@ public static class OidcClaimMapper
 
         var principal = AuthPrincipals.Create(
             IdentitySources.Oidc, subject, username, email, First(token, "name"), groups, expiresAt);
-        return new OidcMappingResult(principal, username, groups.Count, overage);
+        return new OidcMappingResult(principal, subject, username, groups.Count, overage);
     }
 
     private static string? First(ClaimsPrincipal token, string type)

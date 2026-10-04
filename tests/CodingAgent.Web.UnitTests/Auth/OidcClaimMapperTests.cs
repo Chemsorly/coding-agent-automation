@@ -33,6 +33,7 @@ public class OidcClaimMapperTests
         AuthPrincipals.GetGroups(principal).Should().Equal("team-a", "platform-team");
         AuthPrincipals.GetSessionExpiry(principal).Should().Be(Expires);
         AuthPrincipals.IsLocalAdmin(principal).Should().BeFalse();
+        result.Subject.Should().Be("f81d4fae");
         result.GroupCount.Should().Be(2);
         result.GroupOverage.Should().BeFalse();
     }

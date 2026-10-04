@@ -34,8 +34,10 @@ public sealed class AuthOptionsValidator : IValidateOptions<AuthOptions>
 
     private static void ValidateOidc(OidcProviderOptions oidc, List<string> errors)
     {
-        if (string.IsNullOrWhiteSpace(oidc.Issuer) || !Uri.TryCreate(oidc.Issuer, UriKind.Absolute, out _))
-            errors.Add("Auth:Oidc:Issuer must be an absolute URL when OIDC is enabled.");
+        // Scheme check: on Linux "/realms/x" parses as an absolute file:// URI.
+        if (!Uri.TryCreate(oidc.Issuer, UriKind.Absolute, out var issuer)
+            || (issuer.Scheme != Uri.UriSchemeHttps && issuer.Scheme != Uri.UriSchemeHttp))
+            errors.Add("Auth:Oidc:Issuer must be an absolute http(s) URL when OIDC is enabled.");
         if (string.IsNullOrWhiteSpace(oidc.ClientId))
             errors.Add("Auth:Oidc:ClientId is required when OIDC is enabled.");
         if (string.IsNullOrEmpty(oidc.ClientSecret))
