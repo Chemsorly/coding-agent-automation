@@ -167,7 +167,7 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         // Listener BEFORE Act — must be started before DispatchChatPodAsync so the
         // RegisterWatcher +1 increment is captured.
@@ -181,6 +181,8 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
         // Assert: the increment site emitted pool="kiro", not a hardcoded literal.
         measurements.Should().Contain(m => m.Value == 1L && m.Pool == "kiro",
             "RegisterWatcher must emit PvcUtilization +1 with pool='kiro' for a Kiro agent with a claimed PVC");
+        // DisposeAsync (called via await using) cancels _shutdownCts → WatcherCts → stops the
+        // background watcher task so it cannot leak PvcUtilization measurements into the next test.
     }
 
     /// <summary>
@@ -368,5 +370,9 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
         // Assert the ForceDeleteAndCleanupAsync -1 decrement was captured with the correct pool tag.
         measurements.Should().Contain(m => m.Value == -1L && m.Pool == "kiro",
             "ForceDeleteAndCleanupAsync must emit PvcUtilization -1 with pool='kiro' for a Kiro agent");
+
+        // Dispose the dispatcher to cancel _shutdownCts → stops any remaining background watcher
+        // tasks so they cannot leak PvcUtilization measurements into subsequent tests' listeners.
+        await dispatcher.DisposeAsync();
     }
 }

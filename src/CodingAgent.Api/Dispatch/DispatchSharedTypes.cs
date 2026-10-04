@@ -81,7 +81,7 @@ internal sealed record DispatchLifecycleContext(
 internal enum DispatchInterpretOutcome
 {
     /// <summary>
-    /// Success or any unhandled result — <c>DispatchPendingWorkItemAsync</c>
+    /// Success result — <c>DispatchPendingWorkItemAsync</c>
     /// emits <c>RecordDispatchAttempt("dispatched","none")</c> and returns the structured success body.
     /// On the <c>DispatchWorkItem</c> path, also used for a 409 pass-through
     /// (rewriteConcurrencyLimitAsDeferred=false).
