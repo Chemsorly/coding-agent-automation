@@ -128,14 +128,15 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
     }
 
     [Fact]
-    public async Task LoginPage_WhenSignedIn_RedirectsToReturnUrl()
+    public async Task LoginPage_WhenSignedIn_RedirectsToTheLandingPage()
     {
         var client = await AuthTestEnvironment.CreateSignedInClientAsync(_factory, allowAutoRedirect: false);
 
         var response = await client.GetAsync("/login?returnUrl=%2Fruns");
 
+        // The fixed landing page, not the return URL: no redirect target comes from the query here.
         response.StatusCode.Should().Be(HttpStatusCode.Redirect);
-        response.Headers.Location!.ToString().Should().EndWith("runs");
+        response.Headers.Location!.AbsolutePath.Should().Be("/overview");
     }
 
     [Fact]

@@ -70,9 +70,11 @@
     {
         _returnUrl = AuthEndpoints.SafeReturnUrl(ReturnUrl);
 
+        // Already signed in: go to the fixed landing page. The return URL only matters for the
+        // login itself (the endpoints use LocalRedirect), and a page never sends a signed-in user here.
         if (HttpContext.User.Identity?.IsAuthenticated == true)
         {
-            Nav.NavigateTo(_returnUrl.TrimStart('/'));
+            Nav.NavigateTo(AuthPaths.DefaultLanding.TrimStart('/'));
             return;
         }
 

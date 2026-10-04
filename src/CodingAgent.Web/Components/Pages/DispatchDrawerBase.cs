@@ -73,7 +73,7 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     protected virtual async Task DispatchSelected()
     {
         // Enter in the list dispatches too, so the check is here and not only on the button.
-        if (SelectedItem != null && CanDispatch)
+        if (SelectedItem is not null && CanDispatch)
             await OnDispatch.InvokeAsync(SelectedItem);
     }
 
