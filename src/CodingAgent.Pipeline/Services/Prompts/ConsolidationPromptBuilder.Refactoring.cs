@@ -19,25 +19,21 @@ public static partial class ConsolidationPromptBuilder
     //  Exploits primacy bias (arXiv:2307.03172 "lost in the middle").
     // ─────────────────────────────────────────────────────────────────────
 
-    // TODO: Rule 3 of this constant contains the bare string ".agent/refactoring-tool-output/" which duplicates
-    // AgentWorkspacePaths.RefactoringToolOutputDirectory. Because this is a non-interpolated raw string literal,
-    // the placeholder {AgentWorkspacePaths.RefactoringToolOutputDirectory} is resolved via .Replace() at call
-    // sites, but the rule 3 literal bypasses that mechanism entirely. If RefactoringToolOutputDirectory changes,
-    // rule 3 will silently diverge. Fix by converting this constant to use a composite/split approach so the
-    // constant can be referenced here too.
-    private const string RefactoringSubAgentPreamble =
-"""
-## CRITICAL RULES — Read First
+    // The preamble is a composite of a static prefix and a suffix that references constants,
+    // assembled in BuildRefactoringSubAgentPreamble() to avoid bare string literals.
+    private static string BuildRefactoringSubAgentPreamble() =>
+        $"""
+        ## CRITICAL RULES — Read First
 
-1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
-2. **Use the available tools.** Check your available MCP tools for additional data sources. Read pre-built analyzer output from `{AgentWorkspacePaths.RefactoringToolOutputDirectory}` when present. Query the listed MCP tools before deciding a tool category is unavailable.
-3. **Do NOT run builds.** The three detection agents share one workspace: parallel builds would collide. Use a read-only analyzer that does not build if a static analysis tool is needed. Use pre-built output from `.agent/refactoring-tool-output/` when available.
-4. **Declare what you did NOT check.** At the end of your output, list files/areas you skipped due to context limits.
-5. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
-6. **Out of scope:** `.agent/`, `.brain/` — these are pipeline scratch space and knowledge base, not product code.
-7. **Nothing else is `tool:`.** Only mark evidence `tool:` when it comes from a compiler, linter, static analyzer, or MCP tool. Code reading is `code-reading:`, not `tool:`.
+        1. **Evidence over speculation.** Every finding must cite a specific file path + line number or code snippet. "This looks complex" is not a finding.
+        2. **Use the available tools.** Check your available MCP tools for additional data sources. Read pre-built analyzer output from `{AgentWorkspacePaths.RefactoringToolOutputDirectory}` when present. Query the listed MCP tools before deciding a tool category is unavailable.
+        3. **Do NOT run builds.** The three detection agents share one workspace: parallel builds would collide. Use a read-only analyzer that does not build if a static analysis tool is needed. Use pre-built output from `{AgentWorkspacePaths.RefactoringToolOutputDirectory}` when available.
+        4. **Declare what you did NOT check.** At the end of your output, list files/areas you skipped due to context limits.
+        5. **Reasoning length scales with severity.** 1-2 sentences for low-impact observations. 4-6 sentences with full evidence chain for high-impact findings.
+        6. **Out of scope:** `.agent/`, `.brain/` — these are pipeline scratch space and knowledge base, not product code.
+        7. **Nothing else is `tool:`.** Only mark evidence `tool:` when it comes from a compiler, linter, static analyzer, or MCP tool. Code reading is `code-reading:`, not `tool:`.
 
-""";
+        """;
 
     // ─────────────────────────────────────────────────────────────────────
     //  Phase 0: Context Extraction
@@ -73,10 +69,7 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("## What to Extract");
         sb.AppendLine();
-        // TODO: The bare string ".agent/refactoring-conventions.json" below duplicates AgentWorkspacePaths.RefactoringConventionsFilePath.
-        // Use $"Produce a JSON file at `{AgentWorkspacePaths.RefactoringConventionsFilePath}` with this structure:"
-        // to keep it consistent with the surrounding interpolated AppendLine calls that already reference that constant.
-        sb.AppendLine("Produce a JSON file at `.agent/refactoring-conventions.json` with this structure:");
+        sb.AppendLine($"Produce a JSON file at `{AgentWorkspacePaths.RefactoringConventionsFilePath}` with this structure:");
         sb.AppendLine();
         sb.AppendLine("```json");
         sb.AppendLine("{");
@@ -132,8 +125,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble
-            .Replace("{AgentWorkspacePaths.RefactoringToolOutputDirectory}", AgentWorkspacePaths.RefactoringToolOutputDirectory));
+        sb.Append(BuildRefactoringSubAgentPreamble());
 
         sb.AppendLine("# Agent A: Structural Debt Detection");
         sb.AppendLine();
@@ -175,26 +167,13 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` as a JSON object:");
-        sb.AppendLine();
-        sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("{");
-        sb.AppendLine("  \"findings\": [");
-        sb.AppendLine("    {");
-        sb.AppendLine("      \"title\": \"Short descriptive title\",");
-        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.Structural)}\",");
-        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine("      \"evidence\": \"Concrete code snippet or line reference proving the issue\",");
-        sb.AppendLine("      \"evidenceSources\": [\"code-reading:File.cs:L42\", \"hotspot:18-changes\", \"tool:eslint-unused-vars\"],");
-        sb.AppendLine("      \"crossReference\": \"Second file/location that corroborates (duplication partner, drift boundary, etc.)\",");
-        sb.AppendLine("      \"impact\": \"What goes wrong because of this — be specific\",");
-        sb.AppendLine("      \"suggestedFix\": \"Brief approach, not full implementation\"");
-        sb.AppendLine("    }");
-        sb.AppendLine("  ],");
-        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
-        sb.AppendLine("}");
-        sb.AppendLine("```");
-        sb.AppendLine();
+        AppendFindingsOutputSection(
+            sb,
+            AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
+            RefactoringCategories.ToSchemaList(RefactoringCategories.Structural),
+            "Concrete code snippet or line reference proving the issue",
+            "\"code-reading:File.cs:L42\", \"hotspot:18-changes\", \"tool:eslint-unused-vars\"",
+            "Second file/location that corroborates (duplication partner, drift boundary, etc.)");
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
         sb.AppendLine("- Every finding MUST have `crossReference` — a second location proving the issue isn't isolated.");
@@ -219,8 +198,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble
-            .Replace("{AgentWorkspacePaths.RefactoringToolOutputDirectory}", AgentWorkspacePaths.RefactoringToolOutputDirectory));
+        sb.Append(BuildRefactoringSubAgentPreamble());
 
         sb.AppendLine("# Agent B: Correctness & Hygiene Detection");
         sb.AppendLine();
@@ -278,26 +256,15 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` as a JSON object:");
-        sb.AppendLine();
-        sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("{");
-        sb.AppendLine("  \"findings\": [");
-        sb.AppendLine("    {");
-        sb.AppendLine("      \"title\": \"Short descriptive title\",");
-        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.Correctness)}\",");
-        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine("      \"evidence\": \"The exact code snippet or comment text proving the issue\",");
-        sb.AppendLine("      \"evidenceSources\": [\"grep:TODO:File.cs:L15\", \"tool:IDE0051\", \"usage-search:zero-callers\"],");
-        sb.AppendLine("      \"crossReference\": \"For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.\",");
-        sb.AppendLine("      \"impact\": \"What goes wrong or what cognitive cost this imposes\",");
-        sb.AppendLine("      \"suggestedFix\": \"Brief approach\"");
-        sb.AppendLine("    }");
-        sb.AppendLine("  ],");
-        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
-        sb.AppendLine("}");
-        sb.AppendLine("```");
-        sb.AppendLine();
+        AppendFindingsOutputSection(
+            sb,
+            AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
+            RefactoringCategories.ToSchemaList(RefactoringCategories.Correctness),
+            "The exact code snippet or comment text proving the issue",
+            "\"grep:TODO:File.cs:L15\", \"tool:IDE0051\", \"usage-search:zero-callers\"",
+            "For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.",
+            "What goes wrong or what cognitive cost this imposes",
+            "Brief approach");
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
         sb.AppendLine("- **Dead code findings MUST include proof of zero usage** — either tool output or a usage search showing no callers.");
@@ -324,8 +291,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(RefactoringSubAgentPreamble
-            .Replace("{AgentWorkspacePaths.RefactoringToolOutputDirectory}", AgentWorkspacePaths.RefactoringToolOutputDirectory));
+        sb.Append(BuildRefactoringSubAgentPreamble());
 
         sb.AppendLine("# Agent C: Design Consistency Detection");
         sb.AppendLine();
@@ -373,26 +339,15 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` as a JSON object:");
-        sb.AppendLine();
-        sb.AppendLine(JsonCodeFence);
-        sb.AppendLine("{");
-        sb.AppendLine("  \"findings\": [");
-        sb.AppendLine("    {");
-        sb.AppendLine("      \"title\": \"Short descriptive title\",");
-        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(RefactoringCategories.Design)}\",");
-        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine("      \"evidence\": \"The specific naming deviation or primitive usage with concrete examples\",");
-        sb.AppendLine("      \"evidenceSources\": [\"convention-rule:services-suffix\", \"grep:repositoryUrl:5-occurrences\"],");
-        sb.AppendLine("      \"crossReference\": \"For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.\",");
-        sb.AppendLine("      \"impact\": \"Cognitive cost, confusion risk, or bug risk from the inconsistency\",");
-        sb.AppendLine("      \"suggestedFix\": \"Brief approach — rename to X, introduce value type Y, extract constant Z\"");
-        sb.AppendLine("    }");
-        sb.AppendLine("  ],");
-        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
-        sb.AppendLine("}");
-        sb.AppendLine("```");
-        sb.AppendLine();
+        AppendFindingsOutputSection(
+            sb,
+            AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
+            RefactoringCategories.ToSchemaList(RefactoringCategories.Design),
+            "The specific naming deviation or primitive usage with concrete examples",
+            "\"convention-rule:services-suffix\", \"grep:repositoryUrl:5-occurrences\"",
+            "For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.",
+            "Cognitive cost, confusion risk, or bug risk from the inconsistency",
+            "Brief approach — rename to X, introduce value type Y, extract constant Z");
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
         sb.AppendLine("- **Naming findings require a convention rule reference.** \"This name seems odd\" is not a finding.");
@@ -624,5 +579,44 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("- The `notChecked` areas the agents reported");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends the common findings JSON output section used by all three sub-agent prompts.
+    /// Differs per agent only in the findings file path, category schema, evidence field text,
+    /// evidence sources example, cross-reference description, impact description, and suggested-fix hint.
+    /// </summary>
+    private static void AppendFindingsOutputSection(
+        StringBuilder sb,
+        string findingsFilePath,
+        string categorySchema,
+        string evidenceDescription,
+        string evidenceSourcesExample,
+        string crossReferenceDescription,
+        string impactDescription = "What goes wrong because of this — be specific",
+        string suggestedFixHint = "Brief approach, not full implementation")
+    {
+        sb.AppendLine(OutputFormatHeading);
+        sb.AppendLine();
+        sb.AppendLine($"Write findings to `{findingsFilePath}` as a JSON object:");
+        sb.AppendLine();
+        sb.AppendLine(JsonCodeFence);
+        sb.AppendLine("{");
+        sb.AppendLine("  \"findings\": [");
+        sb.AppendLine("    {");
+        sb.AppendLine("      \"title\": \"Short descriptive title\",");
+        sb.AppendLine($"      \"category\": \"{categorySchema}\",");
+        sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
+        sb.AppendLine($"      \"evidence\": \"{evidenceDescription}\",");
+        sb.AppendLine($"      \"evidenceSources\": [{evidenceSourcesExample}],");
+        sb.AppendLine($"      \"crossReference\": \"{crossReferenceDescription}\",");
+        sb.AppendLine($"      \"impact\": \"{impactDescription}\",");
+        sb.AppendLine($"      \"suggestedFix\": \"{suggestedFixHint}\"");
+        sb.AppendLine("    }");
+        sb.AppendLine("  ],");
+        sb.AppendLine("  \"notChecked\": [\"List files or areas skipped due to context limits\"]");
+        sb.AppendLine("}");
+        sb.AppendLine("```");
+        sb.AppendLine();
     }
 }
