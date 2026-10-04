@@ -27,7 +27,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task Clone(
-        WorkspacePath workspacePath, string cloneUrl, string baseBranch,
+        WorkspacePath workspacePath, string cloneUrl, BranchName baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         var options = new CloneOptions
@@ -48,7 +48,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task Pull(
-        WorkspacePath workspacePath, string baseBranch,
+        WorkspacePath workspacePath, BranchName baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         await pipeline.ExecuteAsync(async _ =>
@@ -79,7 +79,7 @@ internal static class RepositoryGitOperations
         }, ct);
     }
 
-    public static string CreateBranch(WorkspacePath workspacePath, string branchName)
+    public static string CreateBranch(WorkspacePath workspacePath, BranchName branchName)
     {
         using var repo = new Repository(workspacePath);
         var branch = repo.CreateBranch(branchName);
@@ -87,7 +87,7 @@ internal static class RepositoryGitOperations
         return branch.FriendlyName;
     }
 
-    public static void CheckoutRemoteBranch(WorkspacePath workspacePath, string branchName)
+    public static void CheckoutRemoteBranch(WorkspacePath workspacePath, BranchName branchName)
     {
         using var repo = new Repository(workspacePath);
 
@@ -255,7 +255,7 @@ internal static class RepositoryGitOperations
     // Integration coverage is provided by end-to-end pipeline runs.
     [ExcludeFromCodeCoverage]
     public static async Task Push(
-        WorkspacePath workspacePath, string branchName, bool forcePush,
+        WorkspacePath workspacePath, BranchName branchName, bool forcePush,
         string tokenUsername, Func<CancellationToken, Task<string>> tokenFactory,
         ResiliencePipeline pipeline, CancellationToken ct)
     {
@@ -322,7 +322,7 @@ internal static class RepositoryGitOperations
         ResiliencePipeline pipeline,
         CancellationToken ct,
         bool retryOnAuth = true,
-        string? branchName = null)
+        BranchName? branchName = null)
     {
         await pipeline.ExecuteAsync(async innerCt =>
         {
@@ -338,9 +338,9 @@ internal static class RepositoryGitOperations
             catch (LibGit2SharpException ex)
             {
                 var category = PushErrorClassifier.Classify(ex.Message);
-                var message = PushErrorClassifier.GetActionableMessage(category, branchName);
+                var message = PushErrorClassifier.GetActionableMessage(category, branchName?.Value);
                 Log.Error("Push failed for branch {BranchName}: {PushError} (category={Category})",
-                    branchName ?? "unknown", ex.Message, category);
+                    branchName?.Value ?? "unknown", ex.Message, category);
 
                 switch (category)
                 {
@@ -369,7 +369,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task<bool> HasCommitsAhead(
-        WorkspacePath workspacePath, string baseBranch, ResiliencePipeline pipeline, CancellationToken ct)
+        WorkspacePath workspacePath, BranchName baseBranch, ResiliencePipeline pipeline, CancellationToken ct)
     {
         return await pipeline.ExecuteAsync(async _ =>
         {
@@ -393,7 +393,7 @@ internal static class RepositoryGitOperations
         }, ct);
     }
 
-    public static IReadOnlyList<FileChangeSummary> GetFileChanges(WorkspacePath workspacePath, string baseBranch)
+    public static IReadOnlyList<FileChangeSummary> GetFileChanges(WorkspacePath workspacePath, BranchName baseBranch)
     {
         try
         {
@@ -441,7 +441,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task<MergeResult> MergeFromBase(
-        WorkspacePath workspacePath, string baseBranchName,
+        WorkspacePath workspacePath, BranchName baseBranchName,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         using var repo = new Repository(workspacePath);
