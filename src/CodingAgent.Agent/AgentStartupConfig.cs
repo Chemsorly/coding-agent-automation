@@ -38,22 +38,7 @@ internal sealed record AgentStartupConfig
     /// </summary>
     public required bool IsWorkItemMode { get; init; }
 
-    /// <summary>
-    /// <see langword="true"/> when <see cref="AgentApiKey"/> was loaded from the <c>AGENT_API_KEY</c>
-    /// environment variable (i.e. it is a pre-computed per-job credential:
-    /// <c>HMAC-SHA256(masterKey, jobName)</c> stored in a per-job K8s Secret). Every dispatched agent
-    /// Job — work item, consolidation, chat and model fetch — receives its key this way.
-    /// <see langword="false"/> when loaded from <c>AGENT_API_KEY_FILE</c> (legacy path for agents
-    /// started outside the dispatchers: the file contains the raw master key and the agent derives
-    /// its own key in-process).
-    ///
-    /// When <see langword="true"/>, <see cref="HubConnectionManager"/> and
-    /// <see cref="WorkItemHttpClient"/> use <see cref="AgentApiKey"/> directly as the bearer token
-    /// without further derivation, preventing double-derivation.
-    /// </summary>
-    public required bool KeyIsPreDerived { get; init; }
-
-    internal static async Task<AgentStartupConfig> ResolveAsync(string[] args)
+    internal static Task<AgentStartupConfig> ResolveAsync(string[] args)
     {
         var workItemId = args
             .FirstOrDefault(a => a.StartsWith(AgentDefaults.CliWorkItemIdPrefix, StringComparison.OrdinalIgnoreCase))
@@ -87,42 +72,24 @@ internal sealed record AgentStartupConfig
                 $"Unknown --mode value '{modeArg}'. Valid values: workitem | chat.");
         }
 
-        // Read API key: prefer AGENT_API_KEY_FILE (K8s Secret mount), fall back to AGENT_API_KEY env var.
-        string agentApiKey;
-        bool keyIsPreDerived;
-        var apiKeyFilePath = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKeyFile);
-        if (!string.IsNullOrEmpty(apiKeyFilePath))
-        {
-            // File-mounted path: the file contains the raw master key.
-            // In-process derivation (HubConnectionManager.DeriveKey) is required. No dispatched
-            // agent Job mounts the master key any more; this path serves agents started by hand.
-            agentApiKey = (await File.ReadAllTextAsync(apiKeyFilePath)).Trim();
-            keyIsPreDerived = false;
-        }
-        else
-        {
-            // Env-var path: every dispatcher (work item, consolidation, chat, model fetch) stores
-            // HMAC-SHA256(masterKey, jobName) here via the Job's own K8s Secret (AgentJobKeySecret).
-            // Use the key directly — no further derivation needed.
-            agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
-                ?? throw new InvalidOperationException(
-                    $"Neither {AgentDefaults.EnvAgentApiKeyFile} nor {AgentDefaults.EnvAgentApiKey} is set.");
-            keyIsPreDerived = true;
-        }
+        // Every dispatcher (work item, consolidation, chat, model fetch) stores the Job's own key,
+        // HMAC-SHA256(masterKey, jobName), here via the Job's K8s Secret (AgentJobKeySecret).
+        // No agent pod ever receives the master key; the key is used as-is.
+        var agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
+            ?? throw new InvalidOperationException($"{AgentDefaults.EnvAgentApiKey} is not set.");
 
         var orchestratorUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl)
             ?? throw new InvalidOperationException("ORCHESTRATOR_URL environment variable is required");
         var agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
             ?? Environment.MachineName;
 
-        return new AgentStartupConfig
+        return Task.FromResult(new AgentStartupConfig
         {
             AgentApiKey = agentApiKey,
             OrchestratorUrl = orchestratorUrl,
             AgentId = agentId,
             WorkItemId = workItemId,
-            IsWorkItemMode = isWorkItemMode,
-            KeyIsPreDerived = keyIsPreDerived
-        };
+            IsWorkItemMode = isWorkItemMode
+        });
     }
 }

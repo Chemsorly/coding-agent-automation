@@ -43,11 +43,6 @@ public class DrawerMultiPanelTests : BunitContext
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
-
         SetupDefaults();
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
@@ -55,7 +50,6 @@ public class DrawerMultiPanelTests : BunitContext
             providerFactory: _mockFactory.Object,
             historyService: mockHistoryService.Object);
 
-        Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
         // Spec 047: component injects ILoopStatusService (not IPipelineLoopService)

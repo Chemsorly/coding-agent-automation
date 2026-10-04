@@ -73,15 +73,6 @@ To migrate config from an existing instance:
                    -F "file=@config.json" https://NEW_HOST/api/config/import
   WARNING: import is destructive — it clears existing config before importing.
 
-── Scheduler Dispatch ────────────────────────────────────────────────────────
-
-⚠️  REQUIRED: scheduler.dispatch.enabled must be set to true.
-The Scheduler's WorkItemDispatchLoop is the sole dispatcher for Pending WorkItems.
-Without this flag, Pending WorkItems accumulate indefinitely and are never
-promoted to Dispatched.
-
-  --set scheduler.dispatch.enabled=true
-
 ── Kubernetes Operations ─────────────────────────────────────────────────────
 
 Agent Jobs are created by the Pipeline API. Job naming: caa-{workItemId[0:8]}

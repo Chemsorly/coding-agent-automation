@@ -53,11 +53,6 @@ public class AgentCodingValidationBannerTests : BunitContext
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
-
         TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
             providerFactory: _mockFactory.Object,
@@ -88,7 +83,6 @@ public class AgentCodingValidationBannerTests : BunitContext
         mockSchedulerClient.Setup(c => c.ResumeLoopAsync(It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
         Services.AddSingleton<ILoopStatusService>(_mockLoopStatus.Object);

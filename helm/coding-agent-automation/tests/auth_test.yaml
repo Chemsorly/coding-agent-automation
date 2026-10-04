@@ -20,7 +20,6 @@ set:
   database.host: "pg-host"
   database.auth.existingSecret: "my-secret"
   signalr.redis.connectionString: "redis:6379"
-  scheduler.dispatch.enabled: true
 
 tests:
 

@@ -30,7 +30,6 @@ public class AgentCodingPageComponentTests : BunitContext
     private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<CodingAgent.Api.Client.IPipelineApiConfigClient> _mockConfigClient;
-    private readonly PipelineOrchestrationService _pipelineService;
 
     public AgentCodingPageComponentTests()
     {
@@ -47,11 +46,6 @@ public class AgentCodingPageComponentTests : BunitContext
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        _pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
-
         SetupDefaults();
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
@@ -59,7 +53,6 @@ public class AgentCodingPageComponentTests : BunitContext
             providerFactory: _mockFactory.Object,
             historyService: mockHistoryService.Object);
 
-        Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
 

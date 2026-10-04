@@ -123,11 +123,6 @@ public static class AgentDefaults
     /// </summary>
     public const string EnvChatEffort = "AGENT_CHAT_EFFORT";
 
-    // ── K8s mode environment variables ───────────────────────────────────
-
-    /// <summary>File path containing the agent API key (K8s Secret mount).</summary>
-    public const string EnvAgentApiKeyFile = "AGENT_API_KEY_FILE";
-
     // ── CLI arguments ────────────────────────────────────────────────────
 
     /// <summary>CLI argument prefix for work item ID (K8s mode).</summary>

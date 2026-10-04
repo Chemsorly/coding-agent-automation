@@ -54,11 +54,6 @@ public class AgentCodingAdditionalTests : BunitContext
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: _mockFactory.Object,
-            historyService: mockHistoryService.Object);
-
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
             providerFactory: _mockFactory.Object,
@@ -68,7 +63,6 @@ public class AgentCodingAdditionalTests : BunitContext
         SetupProjectStoreMocks();
         SetupConfigClientMocks();
 
-        Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
         // Spec 047: component injects ILoopStatusService (not IPipelineLoopService)

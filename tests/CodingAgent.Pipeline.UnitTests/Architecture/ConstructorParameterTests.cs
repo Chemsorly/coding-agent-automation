@@ -12,23 +12,7 @@ namespace CodingAgent.Pipeline.UnitTests.Architecture;
 public class ConstructorParameterTests
 {
     private static readonly Assembly PipelineAssembly =
-        typeof(PipelineOrchestrationService).Assembly;
-
-    [Fact]
-    public void PipelineOrchestrationService_ShouldHave_AtMost9NonLoggerParameters()
-    {
-        var ctors = typeof(PipelineOrchestrationService).GetConstructors();
-        Assert.Single(ctors);
-
-        var parameters = ctors[0].GetParameters();
-        // Count non-logger parameters (ILogger is a cross-cutting concern, not counted per convention)
-        var nonLoggerParams = parameters.Where(p => p.ParameterType != typeof(Serilog.ILogger)).ToArray();
-
-        Assert.True(
-            nonLoggerParams.Length <= 9,
-            $"PipelineOrchestrationService has {nonLoggerParams.Length} non-logger constructor parameters (max 9). " +
-            $"Parameters: {string.Join(", ", nonLoggerParams.Select(p => $"{p.ParameterType.Name} {p.Name}"))}");
-    }
+        typeof(PipelineRunLifecycleService).Assembly;
 
     [Fact]
     public void Pipeline_Services_ShouldNotExceed_MaxConstructorParameters()
