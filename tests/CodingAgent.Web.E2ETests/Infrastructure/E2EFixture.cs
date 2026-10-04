@@ -37,6 +37,8 @@ public sealed class E2EFixture : IAsyncLifetime
     private IPlaywright? _playwright;
     private IBrowser? _browser;
     private readonly SemaphoreSlim _browserLock = new(1, 1);
+    private string? _signedInStorageState;
+    private readonly SemaphoreSlim _signInLock = new(1, 1);
 
     public E2EWebApplicationFactory Factory { get; } = new();
 
@@ -333,12 +335,53 @@ public sealed class E2EFixture : IAsyncLifetime
         return _browser;
     }
 
+    /// <summary>
+    /// Playwright storage state of a browser signed in as the local admin (Spec 049: every page
+    /// requires a signed-in user). The login goes through the real login form once per fixture;
+    /// every browser context then starts from this state instead of logging in again.
+    /// </summary>
+    public async Task<string> GetSignedInStorageStateAsync()
+    {
+        if (_signedInStorageState is not null) return _signedInStorageState;
+
+        await _signInLock.WaitAsync();
+        try
+        {
+            if (_signedInStorageState is null)
+            {
+                var browser = await GetBrowserAsync();
+                await using var context = await browser.NewContextAsync();
+                await E2ETestBase.StubExternalFontsAsync(context);
+                var page = await context.NewPageAsync();
+                await SignInAsync(page, ServerAddress);
+                _signedInStorageState = await context.StorageStateAsync();
+            }
+        }
+        finally
+        {
+            _signInLock.Release();
+        }
+
+        return _signedInStorageState;
+    }
+
+    /// <summary>Signs <paramref name="page"/> in through the login form and waits until it left /login.</summary>
+    public static async Task SignInAsync(IPage page, string serverAddress, string password = E2EWebApplicationFactory.TestAdminPassword)
+    {
+        await page.GotoAsync($"{serverAddress}/login");
+        await page.FillAsync("[data-testid=login-password]", password);
+        await page.ClickAsync("[data-testid=login-submit]");
+        await page.WaitForURLAsync(url => !url.Contains("/login", StringComparison.OrdinalIgnoreCase),
+            new PageWaitForURLOptions { Timeout = 30_000 });
+    }
+
     public async Task DisposeAsync()
     {
         if (_browser is not null)
             await _browser.DisposeAsync();
         _playwright?.Dispose();
         _browserLock.Dispose();
+        _signInLock.Dispose();
 
         if (_jobController is not null)
             await _jobController.DisposeAsync();

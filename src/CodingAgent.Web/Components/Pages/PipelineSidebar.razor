@@ -118,7 +118,7 @@
         </Collapsible>
     }
 
-    @if (IsRunning)
+    @if (IsRunning && CanCancel)
     {
         <div class="sidebar-footer">
             @if (_showCancelConfirm)
@@ -152,6 +152,9 @@
 
     /// <summary>Callback invoked when the user clicks the cancel button.</summary>
     [Parameter] public EventCallback OnCancel { get; set; }
+
+    /// <summary>Spec 049: whether the signed-in user may cancel this run (operator on its project).</summary>
+    [Parameter] public bool CanCancel { get; set; } = true;
 
     /// <summary>Maximum retry count from pipeline configuration (for QG attempt display).</summary>
     [Parameter] public int MaxRetries { get; set; } = 3;

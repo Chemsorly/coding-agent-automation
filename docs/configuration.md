@@ -286,6 +286,18 @@ For full request/response examples, authentication details, and query parameters
 | `PipelineApi__BaseUrl` | Base URL of the Pipeline API (e.g., `http://my-release-api.coding-agent.svc.cluster.local:8080`). **Required.** Used by `IPipelineApiConfigClient` to load pipeline configuration and by `IAgentHubConnection` as the fallback hub URL base. Set automatically by the Helm chart; override via `api.baseUrl` in `values.yaml` when the API is deployed externally or in a different namespace. |
 | `PipelineApi__HubUrl` | Full URL of the Pipeline API SignalR hub (default: `{PipelineApi__BaseUrl}/hubs/agent`). The Orchestrator's `IAgentHubConnection` subscribes to this hub for live run streaming. Override via `api.hubUrl` in `values.yaml` only when the hub path differs from the default. |
 
+### Web UI Authentication
+
+The Helm chart sets these from the `auth` values; see [Authentication](authentication.md).
+
+| Variable | Description |
+|----------|-------------|
+| `Auth__Admin__Password` | Password of the local `admin` account (from the admin Secret). Required while the local admin is enabled. |
+| `Auth__Oidc__ClientSecret` | Client secret of the OIDC identity provider. Required when OIDC is enabled. |
+| `Auth__ConfigPath` | Path of the auth settings file the chart renders (default: `/app/config/auth.json`). |
+
+Every other `Auth__*` variable overrides the same setting in the file, for example `Auth__Rbac__DefaultRole=readonly` for a local run.
+
 ### Pipeline API
 
 | Variable | Description |

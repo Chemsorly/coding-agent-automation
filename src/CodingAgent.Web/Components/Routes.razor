@@ -1,6 +1,24 @@
+@using CodingAgent.Web.Components.Auth
+@using Microsoft.AspNetCore.Components.Authorization
+
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
-        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.CockpitLayout)" />
+        @* Spec 049: page policies apply on full page loads (endpoint metadata) and here for in-app navigation. *@
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Layout.CockpitLayout)">
+            <NotAuthorized>
+                @if (context.User.Identity?.IsAuthenticated == true)
+                {
+                    <AccessDeniedPanel />
+                }
+                else
+                {
+                    <RedirectToLogin />
+                }
+            </NotAuthorized>
+            <Authorizing>
+                <p class="auth-authorizing">Checking access…</p>
+            </Authorizing>
+        </AuthorizeRouteView>
     </Found>
     <NotFound>
         <LayoutView Layout="typeof(Layout.CockpitLayout)">

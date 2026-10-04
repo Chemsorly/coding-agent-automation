@@ -1,4 +1,5 @@
 @page "/about"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
 @layout CockpitLayout
 @using CodingAgent.Web.Models
 @using CodingAgent.Pipeline.Models
@@ -7,6 +8,7 @@
 @using System.Runtime.InteropServices
 @inject IPipelineRunHistoryService HistoryService
 @inject BuildInfo BuildInfo
+@inject CurrentAccess Access
 
 @* TODO(#1772): Add E2E tests verifying <PageTitle> on all pages (About, AgentChat, AgentCoding, AgentMonitoring, AgentRefinement, Settings) — only Consolidation has title coverage (ConsolidationPageTests.cs:35) *@
 <PageTitle>About - Coding Agent</PageTitle>
@@ -80,7 +82,10 @@
             </div>
         </section>
 
-        <section class="about-section">
+        @* Spec 049 Req 8.7: the statistics span every project, so only global roles see them. *@
+        @if (Access.HasGlobalRead)
+        {
+        <section class="about-section" data-testid="about-stats">
             <div class="cockpit-card-header"><h2>Pipeline Stats</h2></div>
             <div class="about-section-body">
             @if (_totalRuns == 0)
@@ -106,6 +111,7 @@
             }
             </div>
         </section>
+        }
 
         <section class="about-section">
             <div class="cockpit-card-header"><h2>Links</h2></div>
@@ -149,6 +155,8 @@
             ?? "unknown";
         _runtimeVersion = RuntimeInformation.FrameworkDescription;
 
+        if (!Access.HasGlobalRead)
+            return;
         var history = await HistoryService.GetRunHistoryAsync();
         _totalRuns = history.Count;
         _successCount = history.Count(r => r.FinalStep == PipelineStep.Completed);
