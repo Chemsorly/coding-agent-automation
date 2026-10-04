@@ -72,6 +72,18 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
         (await client.GetAsync("/overview")).StatusCode.Should().Be(HttpStatusCode.OK);
     }
 
+    [Fact]
+    public async Task Login_BehindTlsIngress_SetsSecureSessionCookie()
+    {
+        var client = NoRedirectClient();
+        client.DefaultRequestHeaders.Add("X-Forwarded-For", "203.0.113.40");
+        client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
+
+        var response = await AuthTestEnvironment.PostLoginAsync(client, "admin", AuthTestEnvironment.AdminPassword, "/runs");
+
+        response.Headers.GetValues("Set-Cookie").Should().Contain(c => c.StartsWith("ca_session") && c.Contains("secure", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Theory]
     [InlineData("https://evil.example/phish")]
     [InlineData("//evil.example/phish")]
@@ -242,6 +254,41 @@ public class LoginRateLimitTests : IClassFixture<RateLimitedWebApplicationFactor
         AuthenticationEndpointTests.SetsSessionCookie(third).Should().BeFalse("a rate-limited attempt must not sign in, even with the right password");
 
         (await client.GetStringAsync("/login?error=ratelimit")).Should().Contain("Too many login attempts");
+    }
+
+    [Fact]
+    public async Task ForwardedClientIp_PartitionsTheLimit()
+    {
+        // Behind the ingress every request comes from an ingress pod; X-Forwarded-For names the client.
+        var first = ForwardedClient("203.0.113.10");
+        await AuthTestEnvironment.PostLoginAsync(first, "admin", "wrong-1");
+        await AuthTestEnvironment.PostLoginAsync(first, "admin", "wrong-2");
+        var third = await AuthTestEnvironment.PostLoginAsync(first, "admin", "wrong-3");
+
+        var other = await AuthTestEnvironment.PostLoginAsync(ForwardedClient("203.0.113.20"), "admin", "wrong-1");
+
+        third.Headers.Location!.ToString().Should().Be("/login?error=ratelimit");
+        other.Headers.Location!.ToString().Should().StartWith("/login?error=credentials", "another client keeps its own budget");
+    }
+
+    [Fact]
+    public async Task ForwardedClientIp_UsesOnlyTheEntryTheIngressAdded()
+    {
+        // A client-supplied entry comes first; the ingress appends the address it saw.
+        var spoofing = ForwardedClient("198.51.100.1, 203.0.113.30");
+        await AuthTestEnvironment.PostLoginAsync(spoofing, "admin", "wrong-1");
+        await AuthTestEnvironment.PostLoginAsync(spoofing, "admin", "wrong-2");
+
+        var rotated = await AuthTestEnvironment.PostLoginAsync(ForwardedClient("198.51.100.2, 203.0.113.30"), "admin", "wrong-3");
+
+        rotated.Headers.Location!.ToString().Should().Be("/login?error=ratelimit", "changing the client-supplied entry must not reset the budget");
+    }
+
+    private HttpClient ForwardedClient(string forwardedFor)
+    {
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+        client.DefaultRequestHeaders.Add("X-Forwarded-For", forwardedFor);
+        return client;
     }
 }
 

@@ -84,11 +84,17 @@ internal static class UserAuthenticationRegistration
             };
         });
 
-        // The web Service is ClusterIP behind the ingress. Trust only the client IP (rate-limit
-        // partition) and the protocol (redirect URI, Secure cookie); the host comes from Host.
+        // The web Service is ClusterIP behind the ingress, whose pod IPs are not known in advance.
+        // Empty KnownIPNetworks/KnownProxies make the middleware accept any forwarder (as
+        // ASPNETCORE_FORWARDEDHEADERS_ENABLED does). ForwardLimit 1 reads only the last
+        // X-Forwarded-For entry, the one the ingress adds, so a client cannot choose its rate-limit
+        // partition through the ingress; it can only by reaching the pod directly, inside the cluster.
+        // Read: client IP (rate-limit partition, logs) and protocol (redirect URI, Secure cookie).
+        // The host comes from Host.
         services.Configure<ForwardedHeadersOptions>(options =>
         {
             options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+            options.ForwardLimit = 1;
             options.KnownIPNetworks.Clear();
             options.KnownProxies.Clear();
         });
