@@ -1,4 +1,5 @@
 using CodingAgent.Api.Client;
+using CodingAgent.Api.Client.Stores;
 using CodingAgent.Web.E2ETests.Fakes;
 using CodingAgent.Infrastructure;
 using CodingAgent.Kubernetes;
@@ -129,15 +130,17 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
 
     /// <summary>
     /// Resets per-test state owned by this factory. The shared fakes are reset by
-    /// <see cref="E2EFixture.ResetAll"/>; nothing additional is needed here.
+    /// <see cref="E2EFixture.ResetAll"/>; nothing additional is needed here because
+    /// the Scheduler's API-backed stores (ApiProjectStore, ApiPipelineConfigStore,
+    /// ApiProviderConfigStore, ApiConfigurationStore) are replaced in
+    /// <see cref="ConfigureWebHost"/> with instances that have <c>CacheTtlSeconds = 0</c>,
+    /// so every load fetches fresh data from the reset <c>InMemoryConfigurationStore</c>.
     /// </summary>
-    // TODO [WARNING]: ResetAll() is intentionally empty because the loop is stopped and reset
-    // via E2EFixture.ResetAllAsync (which calls loop.StopLoop() and busy-waits up to 10s before
-    // calling this). However, if that 10s deadline expires before IsLoopActive becomes false, this
-    // no-op is still called, meaning a stale loop iteration may remain in flight. There is no
-    // warning logged when the deadline is exceeded, so a test isolation failure is invisible until
-    // the next test fails with an unexpected "Stop Loop" button. Consider adding an assertion or
-    // logging when the deadline expires in ResetAllAsync, rather than silently proceeding.
+    // TODO [WARNING]: ResetAll() is called after loop.StopLoop() and a busy-wait up to 10s.
+    // If that 10s deadline expires before IsLoopActive becomes false, this is still called,
+    // meaning a stale loop iteration may remain in flight. There is no warning logged when the
+    // deadline is exceeded, so a test isolation failure is invisible until the next test fails.
+    // Consider adding an assertion or logging when the deadline expires in ResetAllAsync.
     public void ResetAll() { }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
@@ -188,6 +191,48 @@ public sealed class SchedulerE2EWebApplicationFactory : WebApplicationFactory<Sc
             var configClient = new InMemoryPipelineApiConfigClient(_configStore);
             services.RemoveAll<IPipelineApiConfigClient>();
             services.AddSingleton<IPipelineApiConfigClient>(configClient);
+
+            // ── Disable TTL caching on all Scheduler-side config stores ────────────────────────
+            // ApiProjectStore, ApiPipelineConfigStore, ApiProviderConfigStore and ApiConfigurationStore
+            // all cache results for 60 s by default. When the shared InMemoryConfigurationStore is
+            // reset between tests, these caches still serve the previous test's templates, projects,
+            // provider configs and agent profiles. Setting CacheTtlSeconds = 0 ensures every load
+            // fetches fresh data from the InMemoryPipelineApiConfigClient above without any TTL delay.
+            // The stores are replaced here rather than via ConfigureAppConfiguration so that no new
+            // configuration source is introduced (which caused a hang by racing with Program.cs's
+            // AutoStartSchedulerLoopAsync in earlier fix attempts).
+            services.RemoveAll<ApiPipelineConfigStore>();
+            services.AddSingleton<ApiPipelineConfigStore>(_ =>
+                new ApiPipelineConfigStore(configClient) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IPipelineConfigStore>();
+            services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<ApiPipelineConfigStore>());
+
+            services.RemoveAll<ApiProviderConfigStore>();
+            services.AddSingleton<ApiProviderConfigStore>(_ =>
+                new ApiProviderConfigStore(configClient) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IProviderConfigStore>();
+            services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<ApiProviderConfigStore>());
+
+            services.RemoveAll<ApiProjectStore>();
+            services.AddSingleton<ApiProjectStore>(_ =>
+                new ApiProjectStore(configClient) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IProjectStore>();
+            services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<ApiProjectStore>());
+
+            services.RemoveAll<ApiConfigurationStore>();
+            services.AddSingleton<ApiConfigurationStore>(sp => new ApiConfigurationStore(
+                configClient,
+                sp.GetRequiredService<ApiPipelineConfigStore>(),
+                sp.GetRequiredService<ApiProviderConfigStore>(),
+                sp.GetRequiredService<ApiProjectStore>()) { CacheTtlSeconds = 0 });
+            services.RemoveAll<IConfigurationStore>();
+            services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+            services.RemoveAll<IAgentProfileStore>();
+            services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+            services.RemoveAll<IQualityGateConfigStore>();
+            services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+            services.RemoveAll<IReviewerConfigStore>();
+            services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
 
             // ── Provider factory and Kubernetes job client ────────────────────────────────────────
             services.RemoveAll<IProviderFactory>();

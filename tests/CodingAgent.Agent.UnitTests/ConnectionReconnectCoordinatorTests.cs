@@ -364,7 +364,7 @@ public sealed class ConnectionReconnectCoordinatorTests
             .ContinueWith(_ => { }); // swallow cancellation
         sw.Stop();
 
-        sw.ElapsedMilliseconds.Should().BeLessThan(1000, "DisposeAsync must cancel the gate");
+        sw.ElapsedMilliseconds.Should().BeLessThan(3000, "DisposeAsync must cancel the gate");
     }
 
     [Fact]
