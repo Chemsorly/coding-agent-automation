@@ -39,7 +39,11 @@ public static class CiFailureClassifier
         "ECONNREFUSED",
         "Executing the custom container implementation failed",
         "Cache service responded with",
-        "Unable to load the service index"
+        "Unable to load the service index",
+        // Container registry 5xx while pulling a base image (buildah and BuildKit wording)
+        "received unexpected HTTP status: 5",
+        "503 Service Unavailable",
+        "502 Bad Gateway"
     };
 
     private static readonly string[] CodeFailurePatterns =

@@ -53,4 +53,11 @@ public interface IWorkItemTransitionStore
     /// does not exist. Callers wrap this to translate failures into telemetry.
     /// </summary>
     Task TouchLastProgressAsync(Guid workItemId, DateTimeOffset timestamp, CancellationToken ct);
+
+    /// <summary>
+    /// Stores the branch a running work item works on in <c>WorkItemEntity.BranchName</c>, so
+    /// <c>GET /api/pipeline-runs/active-branches</c> lists it while the run is still active.
+    /// Writes only when the stored value differs. No-op when the work item does not exist.
+    /// </summary>
+    Task RecordBranchNameAsync(Guid workItemId, string branchName, CancellationToken ct);
 }

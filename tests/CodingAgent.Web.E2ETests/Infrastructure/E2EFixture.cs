@@ -334,6 +334,7 @@ public sealed class E2EFixture : IAsyncLifetime
             {
                 var browser = await GetBrowserAsync();
                 await using var context = await browser.NewContextAsync();
+                await E2ETestBase.StubExternalFontsAsync(context);
                 var page = await context.NewPageAsync();
                 await SignInAsync(page, ServerAddress);
                 _signedInStorageState = await context.StorageStateAsync();

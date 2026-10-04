@@ -67,6 +67,7 @@ public sealed class DataManagementExportImportTests : IAsyncLifetime
             AcceptDownloads = true,
             StorageState = await _fixture.GetSignedInStorageStateAsync()
         });
+        await E2ETestBase.StubExternalFontsAsync(_context);
         _page = await _context.NewPageAsync();
     }
 
