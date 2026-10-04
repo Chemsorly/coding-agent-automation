@@ -1,4 +1,7 @@
+using AwesomeAssertions;
 using Moq;
+using CodingAgent.Web.Auth;
+using CodingAgent.Web.UnitTests.Auth;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Orchestration.Health;
@@ -68,12 +71,21 @@ public class AgentCodingPageServiceTests
         _mockSchedulerClient.Setup(c => c.StartLoopAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new LoopStartResultDto(true, null));
 
-        _service = new AgentCodingPageService(
+        _service = CreateService();
+    }
+
+    /// <summary>The page service as a given principal (Spec 049); a global admin by default.</summary>
+    private AgentCodingPageService CreateService(AccessGrant? grant = null)
+    {
+        var (access, guard) = TestAccess.Create(grant);
+        return new AgentCodingPageService(
             _mockSchedulerClient.Object,
             _mockConfigClient.Object,
             _mockIssueDrawerService.Object,
             _mockPrReviewDrawerService.Object,
-            _mockEpicDrawerService.Object);
+            _mockEpicDrawerService.Object,
+            access,
+            guard);
     }
 
     private static ProviderConfig MakeProvider(string id, ProviderKind kind = ProviderKind.Issue) =>
@@ -656,5 +668,150 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
         _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
+    }
+
+    // ── Spec 049: project scope and guards ──
+
+    private const string AccessProjectP = "6f1c2a9e-0000-0000-0000-00000000000a";
+    private const string AccessProjectQ = "6f1c2a9e-0000-0000-0000-00000000000b";
+
+    /// <summary>Project P owns template t-p, project Q owns t-q.</summary>
+    private void SetupTwoProjects()
+    {
+        _mockConfigClient.Setup(s => s.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockConfigClient.Setup(s => s.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockConfigClient.Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { MakeTemplate("t-p", "Payments"), MakeTemplate("t-q", "Billing") });
+        _mockConfigClient.Setup(s => s.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = AccessProjectP, Name = "payments", TemplateIds = ["t-p"] },
+                new() { Id = AccessProjectQ, Name = "billing", TemplateIds = ["t-q"] },
+            });
+        _mockConfigClient.Setup(s => s.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockConfigClient.Setup(s => s.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        _mockConfigClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+    }
+
+    [Fact]
+    public async Task Access_ScopedUser_SeesOnlyItsProjectsAndTemplates()
+    {
+        SetupTwoProjects();
+        var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.ReadOnly)));
+
+        await service.InitializeAsync();
+
+        service.Projects.Select(p => p.Id).Should().Equal(AccessProjectP);
+        service.Templates.Select(t => t.Id).Should().Equal("t-p");
+    }
+
+    [Fact]
+    public async Task Access_GlobalReadOnly_SeesEverything()
+    {
+        SetupTwoProjects();
+        var service = CreateService(TestAccess.Global(AccessRole.ReadOnly));
+
+        await service.InitializeAsync();
+
+        service.Projects.Should().HaveCount(2);
+        service.Templates.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task Access_DrawerOfAnotherProjectsTemplate_IsDenied_EvenWhenForced()
+    {
+        SetupTwoProjects();
+        var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
+        await service.InitializeAsync();
+
+        var error = await service.OpenIssueDrawerAsync("t-q");
+        var prError = await service.OpenPrDrawerAsync("t-q");
+        var epicError = await service.SwitchToEpicDrawerAsync("t-q");
+
+        error.Should().Be(AccessDeniedException.UserMessage);
+        prError.Should().Be(AccessDeniedException.UserMessage);
+        epicError.Should().Be(AccessDeniedException.UserMessage);
+        _mockIssueDrawerService.Verify(s => s.OpenIssueDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<Func<Task>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Access_DrawerOfOwnProjectsTemplate_Opens()
+    {
+        SetupTwoProjects();
+        _mockIssueDrawerService
+            .Setup(s => s.OpenIssueDrawerAsync(It.IsAny<TemplateId>(), It.IsAny<IReadOnlyList<PipelineJobTemplate>>(), It.IsAny<Func<Task>?>()))
+            .ReturnsAsync((string?)null);
+        var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.ReadOnly)));
+        await service.InitializeAsync();
+
+        (await service.OpenIssueDrawerAsync("t-p")).Should().BeNull();
+    }
+
+    [Theory]
+    [InlineData(AccessRole.ReadOnly, false)]
+    [InlineData(AccessRole.Operator, true)]
+    public async Task Access_DispatchNeedsOperatorOnTheTemplatesProject(AccessRole role, bool allowed)
+    {
+        SetupTwoProjects();
+        _mockIssueDrawerService
+            .Setup(s => s.DispatchFromIssueDrawerAsync(It.IsAny<IssueSummary>(), It.IsAny<List<ProviderConfig>>(), It.IsAny<List<ProviderConfig>>(), It.IsAny<PipelineProject?>()))
+            .ReturnsAsync((true, null, "dispatched"));
+        var service = CreateService(TestAccess.Scoped((AccessProjectP, role)));
+        await service.InitializeAsync();
+        _issueDrawerState.Template = MakeTemplate("t-p", "Payments");
+
+        var (success, error, _) = await service.DispatchFromIssueDrawerAsync(MakeIssue());
+
+        success.Should().Be(allowed);
+        error.Should().Be(allowed ? null : AccessDeniedException.UserMessage);
+        service.CanDispatch("t-p").Should().Be(allowed);
+        service.CanDispatch("t-q").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Access_TemplateConfiguration_IsAdminOnly()
+    {
+        SetupTwoProjects();
+        var service = CreateService(TestAccess.Global(AccessRole.Operator));
+        await service.InitializeAsync();
+        var template = service.Templates[0];
+
+        var toggle = await service.ToggleTemplateEnabledAsync(template, false);
+        var remove = await service.RemoveTemplateAsync(template);
+        var move = await service.MoveTemplateToProjectAsync("t-p", AccessProjectP, AccessProjectQ);
+
+        toggle.Should().Be((false, AccessDeniedException.UserMessage));
+        remove.Error.Should().Be(AccessDeniedException.UserMessage);
+        move.Error.Should().Be(AccessDeniedException.UserMessage);
+        _mockConfigClient.Verify(c => c.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockConfigClient.Verify(c => c.DeleteTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(AccessRole.ReadOnly, false)]
+    [InlineData(AccessRole.Operator, true)]
+    public async Task Access_LoopControlsNeedGlobalOperator(AccessRole role, bool allowed)
+    {
+        var service = CreateService(TestAccess.Global(role));
+
+        var (success, error) = await service.StartLoopAsync();
+
+        success.Should().Be(allowed);
+        if (!allowed)
+            error.Should().Be(AccessDeniedException.UserMessage);
+    }
+
+    [Fact]
+    public async Task Access_ScopedOperator_CannotControlTheLoop()
+    {
+        var service = CreateService(TestAccess.Scoped((AccessProjectP, AccessRole.Operator)));
+
+        (await service.StopLoopAsync()).Should().Be((false, AccessDeniedException.UserMessage));
+        _mockSchedulerClient.Verify(c => c.StopLoopAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 }

@@ -2,6 +2,7 @@ using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.Auth;
 using CodingAgent.Web.Services;
 using CodingAgent.Web.Components.Layout;
 using CodingAgent.Web.Components.Shared;
@@ -16,7 +17,12 @@ public partial class AgentCoding : IDisposable
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
+    [Inject] private CurrentAccess Access { get; set; } = default!;
     [CascadingParameter] private CockpitLayout? Layout { get; set; }
+
+    /// <summary>Spec 049: dispatch controls render only for an operator of the template's project.</summary>
+    private bool CanDispatchFrom(PipelineJobTemplate? template) =>
+        template is not null && PageService.CanDispatch(template.Id);
 
     /// <summary>
     /// When <c>dispatch=issues</c> is present in the query string, the issue drawer is opened

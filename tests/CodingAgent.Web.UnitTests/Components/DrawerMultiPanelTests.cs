@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using Moq;
 using CodingAgent.Api.Client;
@@ -28,6 +29,7 @@ public class DrawerMultiPanelTests : BunitContext
 
     public DrawerMultiPanelTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         _mockStore = new Mock<IConfigurationStore>();
         _mockFactory = new Mock<IProviderFactory>();
         _mockIssueProvider = new Mock<IIssueProvider>();

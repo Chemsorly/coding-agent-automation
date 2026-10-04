@@ -182,7 +182,8 @@ public static class WorkItemQueryEndpoints
                 w.IssueIdentifier,
                 w.K8sJobName,
                 w.TimeoutSeconds,
-                w.Payload
+                w.Payload,
+                w.ProjectId
             })
             .ToListAsync(ct);
 
@@ -207,7 +208,8 @@ public static class WorkItemQueryEndpoints
                 TimeoutSeconds = w.TimeoutSeconds,
                 IssueTitle = issueTitle,
                 IssueUrl = issueUrl,
-                InitiatedBy = initiatedBy
+                InitiatedBy = initiatedBy,
+                ProjectId = w.ProjectId
             };
             // TODO [WARNING]: ct is available and used in the SQL phase (ToListAsync(ct)) but is not
             // propagated to this in-memory LINQ loop. Under normal payload sizes this is harmless because

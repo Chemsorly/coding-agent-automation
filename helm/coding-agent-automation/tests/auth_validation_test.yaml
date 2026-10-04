@@ -1,0 +1,69 @@
+# helm unittest suite for the render-time validation of the auth values (Spec 049).
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Only the auth ConfigMap is rendered, so the failure is attributed to it (the web Deployment
+# includes the ConfigMap for its checksum and would otherwise report the same error).
+
+suite: authentication values validation
+
+templates:
+  - templates/web-auth-configmap.yaml
+
+set:
+  signalr.redis.connectionString: "redis:6379"
+
+tests:
+  - it: renders with the default values
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  - it: fails without any login method
+    set:
+      auth.admin.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "authentication cannot be turned off"
+
+  - it: fails when OIDC is enabled without an issuer
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.clientId: coding-agent
+      auth.oidc.clientSecret.existingSecret: oidc-secret
+    asserts:
+      - failedTemplate:
+          errorPattern: "auth.oidc.issuer is empty"
+
+  - it: fails when OIDC is enabled without a client secret
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://kc.example.com/realms/acme
+      auth.oidc.clientId: coding-agent
+    asserts:
+      - failedTemplate:
+          errorPattern: "clientSecret.existingSecret is empty"
+
+  - it: fails when admin is bound to a project
+    set:
+      auth.rbac.bindings:
+        - group: team-a
+          role: admin
+          project: payments
+    asserts:
+      - failedTemplate:
+          errorPattern: "can only be bound globally"
+
+  - it: fails for several web replicas without Redis
+    set:
+      signalr.redis.connectionString: ""
+      web.replicas: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: "web.replicas is greater than 1"
+
+  - it: accepts several web replicas with Redis
+    set:
+      web.replicas: 2
+    asserts:
+      - hasDocuments:
+          count: 1

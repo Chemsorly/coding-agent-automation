@@ -1,3 +1,6 @@
+using CodingAgent.Web.Auth;
+using AwesomeAssertions;
+using CodingAgent.Web.UnitTests.Auth;
 using Bunit;
 using CodingAgent.Api.Client;
 using CodingAgent.Web.Components.Pages;
@@ -28,6 +31,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
     public ConsolidationPageComponentTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         // IAgentHubConnection mock: On<T1,T2> returns a no-op disposable (page subscribes in OnInitializedAsync).
         _mockHubConnection
             .Setup(h => h.On<string, JobCompletionPayload>(It.IsAny<string>(), It.IsAny<Action<string, JobCompletionPayload>>()))
@@ -1186,5 +1190,20 @@ public class ConsolidationPageComponentTests : BunitContext
 
         // No override indicators when no project overrides are active
         Assert.Empty(modal.QuerySelectorAll(".refactoring-modal-param-override"));
+    }
+
+    // ── Spec 049: consolidation runs need global operator ─────────────────────
+
+    [Theory]
+    [InlineData(AccessRole.ReadOnly, false)]
+    [InlineData(AccessRole.Operator, true)]
+    public void Access_TriggerControls_NeedGlobalOperator(AccessRole role, bool visible)
+    {
+        Services.AddTestAccess(TestAccess.Global(role));
+        RegisterServices(templates: Array.Empty<PipelineJobTemplate>());
+
+        var cut = Render<Consolidation>();
+
+        cut.Markup.Contains("Generate Suggestions").Should().Be(visible);
     }
 }

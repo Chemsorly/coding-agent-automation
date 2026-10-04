@@ -1,3 +1,4 @@
+using CodingAgent.Web.UnitTests.Auth;
 using AwesomeAssertions;
 using Bunit;
 using CodingAgent.Api.Client;
@@ -43,6 +44,7 @@ public class AgentCodingLoopToastTests : BunitContext
 
     public AgentCodingLoopToastTests()
     {
+        Services.AddTestAccess(); // Spec 049: global admin, so every control renders as before
         var mockLogger = new Mock<ILogger>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
