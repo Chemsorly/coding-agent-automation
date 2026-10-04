@@ -136,11 +136,22 @@ secrets:
   # When set, this value takes precedence over any live-patched value in the Secret.
   opencodeConfigContent: ""
 
+  # Optional: credentials for claude providerType agent jobs (Claude Code CLI). Set one or both;
+  # the agent provider config's "Auth mode" picks which one a run uses (auto = API key if set,
+  # otherwise the subscription token). Each key is omitted from the Secret when empty.
+  # claudeApiKey: Anthropic API key from the Claude Console (billed per token).
+  claudeApiKey: ""
+  # claudeOauthToken: one-year subscription token printed by `claude setup-token`
+  # (Pro, Max, Team or Enterprise plan). It does not warn before it expires — renew it yearly.
+  claudeOauthToken: ""
+
 # Name of an existing Kubernetes Secret to use instead of creating one.
 # When set, the chart does NOT create a Secret resource and references this name
 # in all volume mounts and env var sources.
 # The referenced Secret must contain keys: agent-api-key, otel-headers.
 # opencode-config-content is optional — only required when using opencode providerType agent templates.
+# claude-api-key and claude-oauth-token are optional — used by claude providerType agent templates
+# (e.g. synced by external-secrets next to opencode-config-content).
 existingSecret: ""
 
 # ── Secret Initialization Hook ───────────────────────────────────────────────
@@ -280,7 +291,7 @@ jobTemplates: []
   # - labels: "kiro,dotnet,dotnet10"
   #   image: "chemsorly/coding-agent:kiro-dotnet10"
   #   imagePullPolicy: Always  # Always (default), IfNotPresent, or Never
-  #   providerType: kiro
+  #   providerType: kiro       # kiro, opencode or claude
   #   maxConcurrent: 2
   #   resources:
   #     requests:

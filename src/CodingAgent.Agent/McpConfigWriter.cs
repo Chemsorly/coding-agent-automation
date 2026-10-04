@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Agent;
@@ -18,6 +19,58 @@ public static class McpConfigWriter
     /// </summary>
     /// <param name="fullPath">The full file path where the MCP config JSON will be written.</param>
     /// <param name="servers">The list of MCP server configurations to write.</param>
+    /// <summary>
+    /// Writes <paramref name="servers"/> in the format <paramref name="providerType"/> reads.
+    /// </summary>
+    public static void WriteConfig(string fullPath, IReadOnlyList<McpServerConfig> servers, AgentProviderType providerType)
+    {
+        if (providerType == AgentProviderType.ClaudeCode)
+            WriteClaudeCodeConfig(fullPath, servers);
+        else
+            WriteConfig(fullPath, servers);
+    }
+
+    /// <summary>
+    /// Writes an <c>--mcp-config</c> file for the Claude Code CLI. The CLI validates each entry and
+    /// skips one with unknown fields, and has no <c>disabled</c> flag, so disabled servers are left
+    /// out and <c>disabled</c> / <c>autoApprove</c> are not written (the CLI runs with all tools allowed).
+    /// </summary>
+    public static void WriteClaudeCodeConfig(string fullPath, IReadOnlyList<McpServerConfig> servers)
+    {
+        ArgumentNullException.ThrowIfNull(fullPath);
+        ArgumentNullException.ThrowIfNull(servers);
+
+        var directory = Path.GetDirectoryName(fullPath);
+        if (directory is not null)
+            Directory.CreateDirectory(directory);
+
+        var serversDict = new Dictionary<string, object>();
+        foreach (var server in servers.Where(s => !s.Disabled))
+        {
+            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
+            {
+                // An entry with a url but no type is read as a stdio server, so type is always written.
+                serversDict[server.Name] = server.Headers.Count > 0
+                    ? new { type = server.Type.ToLowerInvariant(), url = server.Url, headers = server.Headers }
+                    : new { type = server.Type.ToLowerInvariant(), url = server.Url };
+            }
+            else
+            {
+                serversDict[server.Name] = new
+                {
+                    type = "stdio",
+                    command = server.Command,
+                    args = server.Args,
+                    env = server.Env
+                };
+            }
+        }
+
+        var json = JsonSerializer.Serialize(new { mcpServers = serversDict }, PipelineJsonOptions.Default);
+        File.WriteAllText(fullPath, json);
+    }
+
     public static void WriteConfig(string fullPath, IReadOnlyList<McpServerConfig> servers)
     {
         ArgumentNullException.ThrowIfNull(fullPath);

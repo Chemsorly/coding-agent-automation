@@ -372,7 +372,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         TotalCost = run.TotalCost,
         FinalLabel = run.FinalLabel,
         HarnessVersion = Environment.GetEnvironmentVariable("SERVICE_VERSION"),
-        PhaseBreakdown = BuildPhaseBreakdownPayload(run.Metrics.PhaseBreakdown)
+        PhaseBreakdown = BuildPhaseBreakdownPayload(run.Metrics.PhaseBreakdown),
+        RateLimits = run.Metrics.RateLimits.IsEmpty ? null : run.Metrics.RateLimits.Values.ToList()
     };
 
     /// <summary>
@@ -395,7 +396,15 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 SessionCount = kvp.Value.SessionCount,
                 AgentTimeSeconds = kvp.Value.AgentTimeSeconds,
                 Provider = kvp.Value.Provider,
-                Model = kvp.Value.Model
+                Model = kvp.Value.Model,
+                InputTokens = kvp.Value.InputTokens,
+                OutputTokens = kvp.Value.OutputTokens,
+                ReasoningTokens = kvp.Value.ReasoningTokens,
+                CacheReadTokens = kvp.Value.CacheReadTokens,
+                CacheWriteTokens = kvp.Value.CacheWriteTokens,
+                Turns = kvp.Value.Turns,
+                WebSearchRequests = kvp.Value.WebSearchRequests,
+                BillingMode = kvp.Value.BillingMode
             });
     }
 

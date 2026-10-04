@@ -99,7 +99,9 @@ The chart deploys:
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
-| `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
+| `secrets.claudeApiKey` | Anthropic API key for claude agents (Secret key `claude-api-key`; optional) |
+| `secrets.claudeOauthToken` | Subscription token from `claude setup-token` for claude agents (Secret key `claude-oauth-token`; optional, one-year lifetime) |
+| `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one. Optional keys `opencode-config-content`, `claude-api-key` and `claude-oauth-token` are read from it too (e.g. synced by external-secrets). |
 | `otel.endpoint` | OTLP collector endpoint |
 | `otel.webServiceName` | `OTEL_SERVICE_NAME` for the web service (default: `coding-agent-web`; legacy alias `otel.orchestratorServiceName` still honored). The web service's service name is hardcoded at compile time via `AddService(serviceName:...)` in `OpenTelemetryRegistration.cs` — it is not configurable via the `OTEL_SERVICE_NAME` env var the way the other processes are. API, Job Controller, and Scheduler read `OTEL_SERVICE_NAME` at startup with fixed-name fallbacks (`coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`). |
 | `otel.apiServiceName` | `OTEL_SERVICE_NAME` for the Pipeline API process (default: `coding-agent-api`). Separates API spans and metrics from the Blazor web process in Tempo and Prometheus. ⚠️ If upgrading from a release where this defaulted to `coding-agent-web`, update any Grafana dashboards or alerts that filter on `service.name="coding-agent-web"` for API traffic. |

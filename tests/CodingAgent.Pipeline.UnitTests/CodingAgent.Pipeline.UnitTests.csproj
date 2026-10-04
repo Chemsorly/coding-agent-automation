@@ -45,6 +45,7 @@
     <ProjectReference Include="..\..\src\CodingAgent.Agent\CodingAgent.Agent.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Agent.KiroCli\CodingAgent.Agent.KiroCli.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Agent.OpenCode\CodingAgent.Agent.OpenCode.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgent.Agent.ClaudeCode\CodingAgent.Agent.ClaudeCode.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api.Client\CodingAgent.Api.Client.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Infrastructure.Common\CodingAgent.Infrastructure.Common.csproj" />

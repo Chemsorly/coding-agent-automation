@@ -25,6 +25,21 @@ public class ChatSteeringWriterTests : IDisposable
         catch { /* best effort */ }
     }
 
+    // ── Claude Code provider ──────────────────────────────────────────────────
+
+    [Fact]
+    public void Write_ClaudeCodeProvider_WritesUserRule_AndNothingInTheWorkspace()
+    {
+        var rulesDir = Path.Combine(_tempDir, "rules");
+        var workspace = Path.Combine(_tempDir, "workspace");
+        Directory.CreateDirectory(workspace);
+
+        ChatSteeringWriter.Write("Use TDD.", workspace, CodingAgent.Pipeline.Interfaces.AgentProviderType.ClaudeCode, rulesDir);
+
+        File.ReadAllText(Path.Combine(rulesDir, "pipeline-project.md")).Should().Contain("Use TDD.").And.Contain("# Project Instructions");
+        Directory.GetFileSystemEntries(workspace).Should().BeEmpty();
+    }
+
     // ── Kiro CLI provider ─────────────────────────────────────────────────────
 
     [Fact]

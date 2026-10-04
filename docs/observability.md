@@ -59,6 +59,12 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `pipeline.run.cost_usd` | Counter | `{usd}` | `run_type`, `phase`, `provider` | LLM cost in USD per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
 | `pipeline.run.agent_sessions` | Counter | `{session}` | `run_type`, `phase`, `provider`, `model` | Agent CLI invocations per run, per phase — recorded **API-side** at terminal status time. Pre-initialized with `model=unknown` for all `run_type × phase × provider` combinations. |
 | `pipeline.run.agent_time` | Counter | `s` | `run_type`, `phase`, `provider` | Agent execution time (seconds) per run, per phase — recorded **API-side** at terminal status time. Pre-initialized for all `run_type × phase × provider` combinations. |
+| `pipeline.run.token_usage` | Counter | `{token}` | `run_type`, `provider`, `token_type` | Tokens per run split by `token_type` (`input`, `output`, `reasoning`, `cache_read`, `cache_write`) — recorded **API-side** at terminal status time from the per-phase breakdown. No `phase` tag, to keep series bounded; per-phase totals stay on `pipeline.run.tokens`. Reported by OpenCode and Claude Code. Pre-initialized for all `run_type × provider × token_type` combinations. |
+| `pipeline.run.billing_cost_usd` | Counter | `{usd}` | `run_type`, `provider`, `billing` | Provider-reported cost per run split by how it is paid for: `billing=api` is billed per token, `billing=subscription` is the CLI's estimate under a flat Claude plan (not a bill), `unknown` otherwise — recorded **API-side**. Pre-initialized for all combinations. |
+| `pipeline.run.agent_turns` | Counter | `{turn}` | `run_type`, `provider` | Agent turns (model round trips) per run (Claude Code) — recorded **API-side**. Pre-initialized. |
+| `pipeline.run.web_search_requests` | Counter | `{request}` | `run_type`, `provider` | Web searches the model made per run (Claude Code) — recorded **API-side**. Pre-initialized. |
+| `pipeline.run.rate_limit_events` | Counter | `{event}` | `provider`, `window`, `status` | Subscription rate-limit readings per run: the latest reading per window the agent saw (Claude Code `rate_limit_event`). `window`: `five_hour`, `seven_day`, `seven_day_opus`, `seven_day_sonnet`, `overage`, `other`. `status`: `allowed`, `allowed_warning`, `rejected`, `other`. Pre-initialized for `provider=claude`. |
+| `pipeline.run.rate_limit_utilization` | Histogram | `1` | `provider`, `window`, `status` | Fraction (0–1) of the subscription window used, as last seen in a run — recorded **API-side** when the CLI reports a utilization. Buckets: 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 1.0. |
 | `pipeline.run.quality_gate.results` | Counter | `{evaluation}` | `run_type`, `gate`, `result`, `infrastructure_failure` | Quality gate evaluation outcomes — recorded **API-side** in `ReportQualityGateResult` when the agent reports a gate result. `gate`: `compilation`, `tests`, `external_ci`. `result`: `pass`, `fail`. `infrastructure_failure`: `true`, `false`. Pre-initialized for all combinations (excluding `infrastructure_failure=true` for `compilation`). |
 | `pipeline.run.ci.not_started_retriggers` | Counter | `{retrigger}` | `run_type` | CI re-trigger commits (empty push to restart CI that never started) — recorded **API-side** in `ReportPipelineRunEvent` each time the agent re-pushes an empty commit. Pre-initialized for all run types. |
 | `pipeline.run.ci.wait` | Histogram | `s` | `run_type`, `stage`, `result` | Time from push to CI conclusion — recorded **API-side** in `ReportPipelineRunEvent` when CI polling concludes. `stage`: `pre_pr`, `post_pr`. `result`: `pass`, `fail`. Buckets: 60, 300, 600, 900, 1800, 3600, 7200, 14400. Not pre-initialized (histograms cannot be pre-initialized). |
@@ -95,7 +101,10 @@ Deduplication: both instruments are emitted at most once per PR per leader insta
 | `step` | PipelineStep enum name (e.g., `Created`, `GeneratingCode`, `RunningQualityGates`) | Pipeline step name in PascalCase — only present on `pipeline.run.step.duration`. Matches `PipelineStep` C# enum member names. |
 | `result` | `created` / `failed` (for `pipeline.run.sub_issues`); `pushed` / `none` (for `pipeline.run.brain_updates`) | Sub-issue creation or brain update result — only present on the respective counters. |
 | `phase` | `analysis`, `analysis_review`, `codegen`, `review`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | Normalized pipeline phase for LLM usage counters. Per-reviewer names (e.g. `review_correctness`) collapse into `review`. |
-| `provider` | `kiro`, `opencode`, `unknown` | Agent provider for LLM usage counters. |
+| `provider` | `kiro`, `opencode`, `claude`, `unknown` | Agent provider for LLM usage counters. Values outside the set are recorded as `unknown`. |
+| `token_type` | `input`, `output`, `reasoning`, `cache_read`, `cache_write` | Token category — only present on `pipeline.run.token_usage`. `output` excludes `reasoning`. |
+| `billing` | `api`, `subscription`, `unknown` | How the LLM calls were paid for — only present on `pipeline.run.billing_cost_usd`. |
+| `window` / `status` | see `pipeline.run.rate_limit_events` | Subscription rate-limit window and state — only present on the `pipeline.run.rate_limit_*` metrics. |
 | `model` | provider-specific model name (e.g. `claude-sonnet-4-5`) | Model name for `pipeline.run.agent_sessions`. Value `unknown` is used in pre-initialization and when the provider doesn't report a model. |
 | `result` | `success`, `failure` | Poll cycle outcome (for loop metrics) |
 | `decision` | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` | Dispatch decision reason |
@@ -138,7 +147,8 @@ All counters with closed tag sets are pre-initialized to `0` at API process star
 - `workdistribution.workitems_terminated` is pre-initialized with **24 series**: 3 statuses × (1 none + 7 failure_reasons).
 - `pipeline.run.sub_issues` is pre-initialized with **2 series**: `result=created`, `result=failed`.
 - `pipeline.run.brain_updates` is pre-initialized with **2 series**: `result=pushed`, `result=none`.
-- `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_sessions`, and `pipeline.run.agent_time` are pre-initialized with **135 series each** (5 run_types × 9 phases × 3 providers). `model` is excluded from pre-init (unbounded cardinality).
+- `pipeline.run.tokens`, `pipeline.run.cost_usd`, `pipeline.run.agent_sessions`, and `pipeline.run.agent_time` are pre-initialized with **180 series each** (5 run_types × 9 phases × 4 providers). `model` is excluded from pre-init (unbounded cardinality).
+- `pipeline.run.token_usage` is pre-initialized with **100 series** (5 run_types × 4 providers × 5 token types), `pipeline.run.billing_cost_usd` with **60** (× 3 billing modes), `pipeline.run.agent_turns` and `pipeline.run.web_search_requests` with **20 each**, and `pipeline.run.rate_limit_events` with **15** (`provider=claude` × 5 windows × 3 statuses).
 
 ### Prompt Cache and Per-Phase Token Data
 
@@ -151,7 +161,9 @@ Each `PipelineRun` accumulates token and cost data beyond the simple totals. Thi
 | `CacheReadTokens` | Tokens served from the upstream LLM's prompt cache across all agent invocations in this run |
 | `CacheWriteTokens` | Tokens written into the prompt cache across all agent invocations in this run |
 
-**Provider support:** Cache token fields are populated only for **OpenCode** agents. KiroCli agents always report 0 for both fields (the KiroCli provider does not expose cache token breakdowns).
+**Provider support:** Cache token fields are populated for **OpenCode** and **Claude Code** agents. KiroCli agents always report 0 for both fields (the KiroCli provider does not expose cache token breakdowns).
+
+**Claude Code usage:** the provider reads the `result` event of `claude -p --output-format stream-json` and reports, per call, input / output / reasoning / cache tokens, the CLI's cost estimate (`total_cost_usd`), turns, API time, web searches, a per-model breakdown and subscription rate-limit readings (`rate_limit_event`). A resumed session reports the whole conversation's totals, so the provider subtracts what it saw at the end of the previous call. The per-model breakdown and rate-limit readings are logged per call (`Claude Code model usage` / `Claude Code rate limit` log lines); the totals feed the counters above. With a subscription token the cost is an estimate, not a bill — `pipeline.run.billing_cost_usd` separates the two.
 
 #### Per-Phase Breakdown
 
@@ -209,14 +221,17 @@ Every agent CLI invocation creates a child span under the current `ExecutePipeli
 | Span name | `invoke_agent {phase}` (e.g. `invoke_agent analysis`) |
 |-----------|------------------------------------------------------|
 | `gen_ai.operation.name` | `invoke_agent` |
-| `gen_ai.provider.name` | `kiro` or `opencode` |
+| `gen_ai.provider.name` | `kiro`, `opencode` or `claude` |
 | `gen_ai.request.model` | model name if configured, omitted otherwise |
 | `pipeline.phase` | normalized phase tag (same as metric `phase` tag) |
 | `agent.session.resumed` | `true` if `UseResume=true` or `ResumeSessionId` is set |
 | `agent.exit_code` | integer exit code from the CLI process |
-| `gen_ai.usage.input_tokens` | input tokens (OpenCode only; Kiro always omitted) |
-| `gen_ai.usage.output_tokens` | output tokens (OpenCode only; Kiro always omitted) |
-| `gen_ai.usage.total_tokens` | total tokens when > 0 (OpenCode only; Kiro always omitted) |
+| `gen_ai.usage.input_tokens` | input tokens (OpenCode and Claude Code; Kiro always omitted) |
+| `gen_ai.usage.output_tokens` | output tokens (OpenCode and Claude Code; Kiro always omitted) |
+| `gen_ai.usage.total_tokens` | total tokens when > 0 (OpenCode and Claude Code; Kiro always omitted) |
+| `gen_ai.usage.reasoning_tokens` / `gen_ai.usage.cache_read_input_tokens` / `gen_ai.usage.cache_creation_input_tokens` | when > 0 |
+| `agent.cost_usd` | provider-reported cost when known |
+| `agent.billing` / `agent.turns` / `agent.api_duration_s` / `agent.web_search_requests` / `agent.error_category` | Claude Code usage details (`agent.error_category` only on provider-side failures) |
 
 Stall events are recorded as span events:
 

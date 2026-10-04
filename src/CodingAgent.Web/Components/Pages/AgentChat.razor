@@ -342,11 +342,14 @@
     // Transient fields set by ResolvePodLaunchProfileAsync for use in LaunchChatPod
     private string? _resolvedPodModel;
     private string? _resolvedPodEffort;
+    // Claude Code credential mode from the agent provider config, sent with every chat prompt.
+    private string? _resolvedAuthMode;
 
     private async Task ResolvePodLaunchProfileAsync()
     {
         _resolvedPodModel = null;
         _resolvedPodEffort = null;
+        _resolvedAuthMode = null;
         // Reset to safe default so stale state from a previous session never leaks into this one.
         // Mirrors the _resolvedPodModel = null / _resolvedPodEffort = null pattern above.
         _resolvedMcpConfigPath = "/home/ubuntu/.kiro/settings/mcp.json";
@@ -363,6 +366,7 @@
 
             _resolvedPodModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
             _resolvedPodEffort = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Effort);
+            _resolvedAuthMode = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.AuthMode);
             _resolvedModel = _resolvedPodModel ?? "auto";
 
             if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
@@ -385,6 +389,7 @@
                 _resolvedMcpConfigPath = agentConfig?.ProviderType?.ToLowerInvariant() switch
                 {
                     "opencode" => "/home/ubuntu/.opencode/mcp.json",
+                    "claudecode" => AgentDefaults.ClaudeMcpConfigPath,
                     _ => "/home/ubuntu/.kiro/settings/mcp.json"
                 };
             }
@@ -514,7 +519,8 @@
             ChatWindowId: _chatWindowId,
             ResolvedProfile: _resolvedProfile,
             SelectedProject: _selectedProject,
-            ResolvedMcpConfigPath: _resolvedMcpConfigPath
+            ResolvedMcpConfigPath: _resolvedMcpConfigPath,
+            ResolvedAuthMode: _resolvedAuthMode
         ));
 
         if (HubConnection.State == HubConnectionState.Connected)

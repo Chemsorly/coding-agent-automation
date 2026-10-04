@@ -2,7 +2,7 @@ using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Pipeline.Interfaces;
 
-public enum AgentProviderType { KiroCli, OpenCode }
+public enum AgentProviderType { KiroCli, OpenCode, ClaudeCode }
 
 public interface IAgentProvider : IAsyncDisposable
 {

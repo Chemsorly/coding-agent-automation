@@ -46,6 +46,12 @@ public static class PipelineRunExtensions
     /// </summary>
     public static void AccumulateTokenUsage(this PipelineRun run, AgentResult? result, string? phase = null)
     {
+        if (result?.UsageDetails is { RateLimits.Count: > 0 } details)
+        {
+            foreach (var observation in details.RateLimits)
+                run.Metrics.RateLimits[observation.Window] = observation;
+        }
+
         if (result?.Usage is null) return;
         run.TotalTokens += result.Usage.TotalTokens;
         run.CacheReadTokens += result.Usage.CacheReadTokens;
@@ -57,16 +63,28 @@ public static class PipelineRunExtensions
         if (phase is not null)
         {
             run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
-                new PhaseUsage(result.Usage.TotalTokens, result.Cost),
-                (_, existing) => new PhaseUsage(
-                    existing.Tokens + result.Usage.TotalTokens,
-                    existing.Cost is null && result.Cost is null ? null : (existing.Cost ?? 0m) + (result.Cost ?? 0m),
-                    existing.SessionCount,
-                    existing.AgentTimeSeconds,
-                    existing.Provider,
-                    existing.Model));
+                AddUsage(new PhaseUsage(0, null), result.Usage, result.Cost, result.UsageDetails),
+                (_, existing) => AddUsage(existing, result.Usage, result.Cost, result.UsageDetails));
         }
     }
+
+    /// <summary>
+    /// Returns <paramref name="phase"/> with one invocation's tokens, cost and usage details added.
+    /// </summary>
+    private static PhaseUsage AddUsage(PhaseUsage phase, TokenUsage usage, decimal? cost, AgentUsageDetails? details) =>
+        phase with
+        {
+            Tokens = phase.Tokens + usage.TotalTokens,
+            Cost = phase.Cost is null && cost is null ? null : (phase.Cost ?? 0m) + (cost ?? 0m),
+            InputTokens = phase.InputTokens + usage.InputTokens,
+            OutputTokens = phase.OutputTokens + usage.OutputTokens,
+            ReasoningTokens = phase.ReasoningTokens + usage.ReasoningTokens,
+            CacheReadTokens = phase.CacheReadTokens + usage.CacheReadTokens,
+            CacheWriteTokens = phase.CacheWriteTokens + usage.CacheWriteTokens,
+            Turns = phase.Turns + (details?.Turns ?? 0),
+            WebSearchRequests = phase.WebSearchRequests + (details?.WebSearchRequests ?? 0),
+            BillingMode = phase.BillingMode ?? details?.BillingMode
+        };
 
     /// <summary>
     /// Accumulates token usage from a <see cref="TokenUsage"/> object directly into the pipeline run totals.
@@ -85,9 +103,8 @@ public static class PipelineRunExtensions
         if (phase is not null)
         {
             run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
-                new PhaseUsage(usage.TotalTokens, null),
-                (_, existing) => new PhaseUsage(existing.Tokens + usage.TotalTokens, existing.Cost,
-                    existing.SessionCount, existing.AgentTimeSeconds, existing.Provider, existing.Model));
+                AddUsage(new PhaseUsage(0, null), usage, cost: null, details: null),
+                (_, existing) => AddUsage(existing, usage, cost: null, details: null));
         }
     }
 
@@ -106,13 +123,13 @@ public static class PipelineRunExtensions
 
         run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
             new PhaseUsage(0, null, 1, elapsedSeconds, provider, model),
-            (_, existing) => new PhaseUsage(
-                existing.Tokens,
-                existing.Cost,
-                existing.SessionCount + 1,
-                existing.AgentTimeSeconds + elapsedSeconds,
+            (_, existing) => existing with
+            {
+                SessionCount = existing.SessionCount + 1,
+                AgentTimeSeconds = existing.AgentTimeSeconds + elapsedSeconds,
                 // Prefer first non-null provider/model seen (they should all be the same per phase in practice)
-                existing.Provider ?? provider,
-                existing.Model ?? model));
+                Provider = existing.Provider ?? provider,
+                Model = existing.Model ?? model
+            });
     }
 }

@@ -53,6 +53,9 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>Chat effort override injected via AGENT_CHAT_EFFORT env var.</summary>
     internal string? _chatEffort;
 
+    /// <summary>True when the pod runs the Claude Code CLI (AGENT_PROVIDER_TYPE=claude).</summary>
+    internal bool _isClaudeCodeAgent;
+
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -114,6 +117,10 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             ?? "";
         _chatModel = runtimeOptions?.ChatModel ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
         _chatEffort = runtimeOptions?.ChatEffort ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
+        // Claude Code takes model and effort as flags on every call, not from a settings file.
+        _isClaudeCodeAgent = AgentChatModeRegistration.ResolveChatProviderType(
+            runtimeOptions?.AgentProviderType ?? Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType))
+            == AgentProviderType.ClaudeCode;
 
         // Compose the coordinator. It takes ownership of the initial hub manager.
         // afterSuccessfulReconnect is null — chat pods no longer need a drain step
@@ -158,7 +165,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
 
         // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
-        if (_isChatMode)
+        if (_isChatMode && !_isClaudeCodeAgent)
         {
             var model = _chatModel;
             var effort = _chatEffort;

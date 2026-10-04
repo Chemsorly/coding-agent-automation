@@ -144,4 +144,61 @@ public class AccumulateTokenUsageTests
         run.CacheReadTokens.Should().Be(500);
         run.CacheWriteTokens.Should().Be(200);
     }
+
+    [Fact]
+    public void AccumulateTokenUsage_WithUsageDetails_AccumulatesThePhaseBreakdownDetail()
+    {
+        var run = CreateRun();
+        var details = new AgentUsageDetails
+        {
+            BillingMode = AgentBillingModes.Subscription,
+            Turns = 4,
+            WebSearchRequests = 1,
+            RateLimits = [new AgentRateLimitObservation { Provider = "claude", Window = "five_hour", Status = "allowed", Utilization = 0.2 }]
+        };
+        var usage = new TokenUsage { InputTokens = 10, OutputTokens = 20, ReasoningTokens = 5, CacheReadTokens = 100, CacheWriteTokens = 7 };
+
+        run.AccumulateTokenUsage(new AgentResult { ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.5m, UsageDetails = details }, "codegen");
+        run.AccumulateTokenUsage(new AgentResult
+        {
+            ExitCode = 0, OutputLines = [], Usage = usage, Cost = 0.25m,
+            UsageDetails = details with
+            {
+                RateLimits = [new AgentRateLimitObservation { Provider = "claude", Window = "five_hour", Status = "allowed_warning", Utilization = 0.9 }]
+            }
+        }, "codegen");
+        run.AccumulateAgentSession("codegen", 12.5, "claude", "claude-opus-5-5");
+
+        var phase = run.Metrics.PhaseBreakdown["codegen"];
+        phase.Tokens.Should().Be(70);
+        phase.Cost.Should().Be(0.75m);
+        phase.InputTokens.Should().Be(20);
+        phase.OutputTokens.Should().Be(40);
+        phase.ReasoningTokens.Should().Be(10);
+        phase.CacheReadTokens.Should().Be(200);
+        phase.CacheWriteTokens.Should().Be(14);
+        phase.Turns.Should().Be(8);
+        phase.WebSearchRequests.Should().Be(2);
+        phase.BillingMode.Should().Be(AgentBillingModes.Subscription);
+        phase.SessionCount.Should().Be(1);
+        phase.Provider.Should().Be("claude");
+        run.Metrics.RateLimits["five_hour"].Status.Should().Be("allowed_warning", "the latest reading per window wins");
+    }
+
+    [Fact]
+    public void AccumulateAgentSession_ThenTokenUsage_KeepsBothSides()
+    {
+        var run = CreateRun();
+
+        run.AccumulateAgentSession("analysis", 3, "kiro", "auto");
+        run.AccumulateTokenUsage(new TokenUsage { InputTokens = 1, OutputTokens = 2 }, "analysis");
+
+        var phase = run.Metrics.PhaseBreakdown["analysis"];
+        phase.SessionCount.Should().Be(1);
+        phase.AgentTimeSeconds.Should().Be(3);
+        phase.Provider.Should().Be("kiro");
+        phase.Tokens.Should().Be(3);
+        phase.InputTokens.Should().Be(1);
+        phase.Cost.Should().BeNull();
+    }
 }

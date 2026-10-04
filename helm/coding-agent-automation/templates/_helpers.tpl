@@ -188,6 +188,8 @@ Usage (inside an env: list, indented to 12):
       fieldPath: metadata.namespace
 - name: WorkDistribution__OpencodeConfigSecretName
   value: {{ include "coding-agent-automation.secretName" . | quote }}
+- name: WorkDistribution__ClaudeAuthSecretName
+  value: {{ include "coding-agent-automation.secretName" . | quote }}
 - name: WorkDistribution__JobTemplatesPath
   value: "/app/config/job-templates.yaml"
 {{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* env vars
@@ -232,6 +234,7 @@ WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.sec
 WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
 WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
 WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
+WorkDistribution__ClaudeAuthSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
 WorkDistribution__JobTemplatesPath: "/app/config/job-templates.yaml"
 {{- /* TODO [WARNING]: WorkDistribution__Dispatch__IntervalSeconds and the other Dispatch__* keys
      below are written into the API ConfigMap but the WorkItemDispatchService that consumed them was

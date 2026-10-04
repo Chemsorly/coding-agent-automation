@@ -119,6 +119,26 @@ internal static class AgentStallMonitor
             sessionSpan?.SetTag("gen_ai.usage.output_tokens", result.Usage.OutputTokens);
             if (result.Usage.TotalTokens > 0)
                 sessionSpan?.SetTag("gen_ai.usage.total_tokens", result.Usage.TotalTokens);
+            if (result.Usage.ReasoningTokens > 0)
+                sessionSpan?.SetTag("gen_ai.usage.reasoning_tokens", result.Usage.ReasoningTokens);
+            if (result.Usage.CacheReadTokens > 0)
+                sessionSpan?.SetTag("gen_ai.usage.cache_read_input_tokens", result.Usage.CacheReadTokens);
+            if (result.Usage.CacheWriteTokens > 0)
+                sessionSpan?.SetTag("gen_ai.usage.cache_creation_input_tokens", result.Usage.CacheWriteTokens);
+        }
+
+        if (result.Cost is { } cost)
+            sessionSpan?.SetTag("agent.cost_usd", (double)cost);
+
+        if (result.UsageDetails is { } details)
+        {
+            sessionSpan?.SetTag("agent.billing", details.BillingMode);
+            sessionSpan?.SetTag("agent.turns", details.Turns);
+            sessionSpan?.SetTag("agent.api_duration_s", details.ApiDurationSeconds);
+            if (details.WebSearchRequests > 0)
+                sessionSpan?.SetTag("agent.web_search_requests", details.WebSearchRequests);
+            if (result.ErrorCategory != AgentErrorCategory.None)
+                sessionSpan?.SetTag("agent.error_category", result.ErrorCategory.ToString());
         }
 
         // Accumulate session timing and count into the run's phase breakdown when a phase is known
@@ -176,6 +196,7 @@ internal static class AgentStallMonitor
         {
             AgentProviderType.KiroCli => PipelineTelemetry.RunProviders.Kiro,
             AgentProviderType.OpenCode => PipelineTelemetry.RunProviders.OpenCode,
+            AgentProviderType.ClaudeCode => PipelineTelemetry.RunProviders.Claude,
             _ => PipelineTelemetry.RunProviders.Unknown
         };
 

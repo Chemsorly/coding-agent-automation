@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Agent.ClaudeCode;
 using CodingAgent.Agent.OpenCode;
 using CodingAgent.Infrastructure;
 using CodingAgent.Pipeline;
@@ -27,7 +28,11 @@ public sealed class ChatJobExecutor
     private readonly System.Net.Http.IHttpClientFactory _httpClientFactory;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Func<Task> _signalAgentReady;
-    private readonly bool _isOpenCodeProvider;
+    private readonly AgentProviderType _providerType;
+    private readonly Func<ChatPromptMessage, IAgentProvider> _claudeCodeProviderFactory;
+    private readonly string? _claudeRulesDirectory;
+    private readonly Lock _claudeChatProviderLock = new();
+    private IAgentProvider? _claudeChatProvider;
     private readonly bool _isChatMode;
     private readonly TimeSpan _chatTaskCompletionGracePeriod;
     private readonly Serilog.ILogger _logger;
@@ -50,7 +55,17 @@ public sealed class ChatJobExecutor
         _httpClientFactory = deps.HttpClientFactory;
         _hostApplicationLifetime = deps.HostApplicationLifetime;
         _signalAgentReady = deps.SignalAgentReady;
-        _isOpenCodeProvider = deps.IsOpenCodeProvider;
+        _providerType = deps.ProviderType
+            ?? (deps.IsOpenCodeProvider ? AgentProviderType.OpenCode : AgentProviderType.KiroCli);
+        _claudeCodeProviderFactory = deps.ClaudeCodeProviderFactory
+            ?? (message => new ClaudeCodeAgentProvider(
+                deps.Logger,
+                deps.ChatModel,
+                deps.ClaudeCliPath ?? AgentDefaults.ClaudeCliPath,
+                AgentEffortLevelExtensions.ParseEffort(deps.ChatEffort),
+                message.AgentAuthMode,
+                message.McpConfigPath));
+        _claudeRulesDirectory = deps.ClaudeRulesDirectory;
         _isChatMode = deps.IsChatMode;
         _chatTaskCompletionGracePeriod = deps.ChatTaskCompletionGracePeriod;
         _logger = deps.Logger;
@@ -146,7 +161,7 @@ public sealed class ChatJobExecutor
 
             if (!message.UseResume && message.McpServers is { Count: > 0 })
             {
-                McpConfigWriter.WriteConfig(message.McpConfigPath, message.McpServers);
+                McpConfigWriter.WriteConfig(message.McpConfigPath, message.McpServers, _providerType);
                 await outputBatcher.AddLineAsync(
                     $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}",
                     chatToken);
@@ -157,7 +172,7 @@ public sealed class ChatJobExecutor
             // (and .kiro/steering/ loading). Only written on first prompt (UseResume = false).
             if (!message.UseResume && !string.IsNullOrEmpty(message.ProjectSteeringContent))
             {
-                ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _isOpenCodeProvider);
+                ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _providerType, _claudeRulesDirectory);
                 await outputBatcher.AddLineAsync("📋 Wrote project steering to workspace", chatToken);
             }
 
@@ -166,14 +181,12 @@ public sealed class ChatJobExecutor
                 await outputBatcher.AddLineAsync($"🔐 Loaded {message.ProjectSecrets.Count} project secret(s) for process injection", chatToken);
             }
 
-            if (_isOpenCodeProvider)
+            return _providerType switch
             {
-                return await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatToken);
-            }
-            else
-            {
-                return await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatToken);
-            }
+                AgentProviderType.OpenCode => await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatToken),
+                AgentProviderType.ClaudeCode => await ExecuteChatViaClaudeCodeAsync(message, chatWorkspace, outputBatcher, chatToken),
+                _ => await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatToken)
+            };
         }
         catch (OperationCanceledException)
         {
@@ -241,6 +254,56 @@ public sealed class ChatJobExecutor
             : null;
 
         return (exitCode, error);
+    }
+
+    /// <summary>
+    /// Runs a chat prompt on the Claude Code CLI. The provider instance lives as long as the chat
+    /// conversation, because it remembers the session to resume: the first prompt (no
+    /// <c>UseResume</c>) starts a new provider, follow-ups reuse it. No warm-up is needed.
+    /// Project secrets reach the CLI process per call, as with Kiro CLI.
+    /// </summary>
+    private async Task<(int exitCode, string? error)> ExecuteChatViaClaudeCodeAsync(
+        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
+    {
+        var provider = await GetClaudeChatProviderAsync(message);
+
+        var result = await provider.ExecuteAsync(
+            new AgentRequest
+            {
+                Prompt = message.Prompt,
+                WorkspacePath = chatWorkspace,
+                UseResume = message.UseResume,
+                EnvironmentVariables = message.ProjectSecrets,
+                Timeout = PipelineConstants.DefaultAgentTimeout
+            },
+            ct,
+            onOutputLine: async line => await outputBatcher.AddLineAsync(line, ct));
+
+        string? error = result.ExitCode != ExitCodes.Success
+            ? string.Join("\n", result.OutputLines.TakeLast(3))
+            : null;
+
+        return (result.ExitCode, error);
+    }
+
+    private async Task<IAgentProvider> GetClaudeChatProviderAsync(ChatPromptMessage message)
+    {
+        IAgentProvider? previous = null;
+        IAgentProvider provider;
+        lock (_claudeChatProviderLock)
+        {
+            if (!message.UseResume || _claudeChatProvider is null)
+            {
+                previous = _claudeChatProvider;
+                _claudeChatProvider = _claudeCodeProviderFactory(message);
+            }
+            provider = _claudeChatProvider;
+        }
+
+        if (previous is not null)
+            await previous.DisposeAsync();
+
+        return provider;
     }
 
     private async Task<(int exitCode, string? error)> ExecuteChatViaKiroCliAsync(

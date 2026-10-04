@@ -5,6 +5,7 @@ using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -404,6 +405,47 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                         new KeyValuePair<string, object?>("phase", phase),
                         new KeyValuePair<string, object?>("provider", provider));
                 }
+            }
+        }
+
+        EmitUsageDetailPreInitCounters(runTypes);
+    }
+
+    /// <summary>
+    /// Pre-initializes the phase-less usage detail counters: 5 run_types × 4 providers × 5 token types
+    /// (token_usage), × 3 billing modes (billing_cost_usd), turns and web searches per run_type × provider,
+    /// and rate-limit readings per window × status for the claude provider (the only one that reports them).
+    /// </summary>
+    private static void EmitUsageDetailPreInitCounters(string[] runTypes)
+    {
+        foreach (var runType in runTypes)
+        {
+            foreach (var provider in PipelineTelemetry.RunProviders.All)
+            {
+                var runTypeTag = new KeyValuePair<string, object?>("run_type", runType);
+                var providerTag = new KeyValuePair<string, object?>("provider", provider);
+
+                foreach (var tokenType in PipelineTelemetry.TokenTypes.All)
+                    PipelineTelemetry.RunTokenUsage.Add(0, runTypeTag, providerTag,
+                        new KeyValuePair<string, object?>("token_type", tokenType));
+
+                foreach (var billing in AgentBillingModes.All)
+                    PipelineTelemetry.RunBillingCostUsd.Add(0, runTypeTag, providerTag,
+                        new KeyValuePair<string, object?>("billing", billing));
+
+                PipelineTelemetry.RunAgentTurns.Add(0, runTypeTag, providerTag);
+                PipelineTelemetry.RunWebSearchRequests.Add(0, runTypeTag, providerTag);
+            }
+        }
+
+        foreach (var window in PipelineTelemetry.RateLimitTags.Windows)
+        {
+            foreach (var status in PipelineTelemetry.RateLimitTags.Statuses)
+            {
+                PipelineTelemetry.RunRateLimitEvents.Add(0,
+                    new KeyValuePair<string, object?>("provider", PipelineTelemetry.RunProviders.Claude),
+                    new KeyValuePair<string, object?>("window", window),
+                    new KeyValuePair<string, object?>("status", status));
             }
         }
     }
