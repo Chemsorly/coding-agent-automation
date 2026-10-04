@@ -43,20 +43,28 @@
                 <h3>@(_editingProvider != null ? "Edit" : "Add") Agent Provider</h3>
                 <div class="form-group">
                     <label>Provider Type</label>
-                    <select @bind="_form.ProviderType">
+                    <select @bind="_form.ProviderType" @bind:after="OnProviderTypeChanged">
                         <option value="KiroCli">KiroCli</option>
                         <option value="OpenCode">OpenCode</option>
+                        <option value="@ProviderTypes.ClaudeCode">@ProviderTypes.ClaudeCode</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>Display Name</label>
-                    <input type="text" @bind="_form.DisplayName" placeholder="@(_form.ProviderType == "OpenCode" ? "OpenCode Agent" : "Kiro CLI Agent")" />
+                    <input type="text" @bind="_form.DisplayName" placeholder="@DisplayNamePlaceholder" />
                 </div>
                 @if (_form.ProviderType == "KiroCli")
                 {
                     <div class="form-group">
                         <label>Executable Path</label>
                         <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" /> @* TODO(#1775): Clarify if this placeholder should reference AgentDefaults.KiroCliPath (/home/ubuntu/...) or remain /root/... for a different container context *@
+                    </div>
+                }
+                else if (IsClaudeCode)
+                {
+                    <div class="form-group">
+                        <label>Executable Path</label>
+                        <input type="text" @bind="_form.ExecutablePath" placeholder="@AgentDefaults.ClaudeCliPath" />
                     </div>
                 }
                 else
@@ -85,6 +93,18 @@
                                     <option value="@m.ModelId">@m.ModelId — @m.Description (@(m.RateMultiplier)x)</option>
                                 }
                             </select>
+                        }
+                        else if (IsClaudeCode)
+                        {
+                            @* A datalist offers the known models and still accepts any other model ID. *@
+                            <input type="text" @bind="_form.Model" list="claude-code-models" placeholder="auto" />
+                            <datalist id="claude-code-models">
+                                <option value="auto">auto — Use CLI default</option>
+                                @foreach (var m in ClaudeCodeModels.All)
+                                {
+                                    <option value="@m.ModelId">@m.Description</option>
+                                }
+                            </datalist>
                         }
                         else
                         {
@@ -116,6 +136,10 @@
                         {
                             @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
                         }
+                        else if (IsClaudeCode)
+                        {
+                            @:Pick a full model ID to pin a version (e.g. <code>claude-opus-5-5</code>, <code>claude-opus-4-8</code>), an alias such as <code>opus</code> for the latest of a family, or type any other model ID. <code>auto</code> uses the CLI default.
+                        }
                         else if (IsKubernetesMode)
                         {
                             @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~@(_modelFetchTimeoutSeconds)s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
@@ -126,7 +150,7 @@
                         }
                     </span>
                 </div>
-                @if (_form.ProviderType == "KiroCli")
+                @if (_form.ProviderType == "KiroCli" || IsClaudeCode)
                 {
                     <div class="form-group">
                         <label>Effort</label>
@@ -139,6 +163,18 @@
                             <option value="max">max — Maximum depth</option>
                         </select>
                         <span class="form-hint">Controls how much reasoning the model applies. Higher effort = deeper analysis but slower and more expensive.</span>
+                    </div>
+                }
+                @if (IsClaudeCode)
+                {
+                    <div class="form-group">
+                        <label>Auth Mode</label>
+                        <select @bind="_form.AuthMode">
+                            <option value="@ClaudeCodeAuthModes.Auto">auto — API key if configured, otherwise subscription token</option>
+                            <option value="@ClaudeCodeAuthModes.ApiKey">API key — billed per token</option>
+                            <option value="@ClaudeCodeAuthModes.Subscription">Subscription token — Claude plan, from claude setup-token</option>
+                        </select>
+                        <span class="form-hint">Which credential from the agent Secret the CLI uses: <code>claude-api-key</code> or <code>claude-oauth-token</code>. Only that one reaches the CLI.</span>
                     </div>
                 }
                 @if (IsKubernetesMode && _form.ProviderType == "KiroCli")
@@ -171,6 +207,23 @@
                         <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
                     </ul>
                     <p class="help-tip">💡 Auth tokens are stored in <code>~/.local/share/kiro-cli/</code> and persist across runs when using a Docker volume.</p>
+                }
+                else if (IsClaudeCode)
+                {
+                    <h4><Icon Name="bot" /> Claude Code Setup</h4>
+                    <p>The agent provider runs the Claude Code CLI headless (<code>claude -p</code>) to generate code. The CLI is bundled with the <code>claude-*</code> Docker images.</p>
+                    <p class="help-heading">Credentials (agent Secret, e.g. via external-secrets):</p>
+                    <ul>
+                        <li><code>claude-api-key</code> — Anthropic API key from the Claude Console, billed per token</li>
+                        <li><code>claude-oauth-token</code> — one-year subscription token from <code>claude setup-token</code> (Pro, Max, Team or Enterprise). Renew it before it expires; the CLI gives no warning</li>
+                    </ul>
+                    <p class="help-heading">Fields:</p>
+                    <ul>
+                        <li><strong>Executable Path</strong> — full path to the claude binary (default <code>@AgentDefaults.ClaudeCliPath</code>)</li>
+                        <li><strong>Model</strong> — full model ID to pin a version, an alias for the latest of a family, or <code>auto</code></li>
+                        <li><strong>Auth Mode</strong> — which of the two credentials the CLI uses</li>
+                    </ul>
+                    <p class="help-tip">💡 The CLI also loads the repository's own <code>CLAUDE.md</code>, <code>.claude/</code> settings, hooks and <code>.mcp.json</code>. Pipeline steering goes to <code>~/.claude/rules/</code>, outside the repository.</p>
                 }
                 else
                 {
@@ -270,7 +323,8 @@
             BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
             AgentName = p.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
             Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"),
-            Effort = p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto")
+            Effort = p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"),
+            AuthMode = ClaudeCodeAuthModes.Normalize(p.Settings.GetValueOrDefault(ProviderSettingKeys.AuthMode))
         };
         _availableModels.Clear();
         _showForm = true;
@@ -292,35 +346,13 @@
             return;
         }
 
-        // NOTE: The legacy "timeout" key (ProviderSettingKeys.Timeout) in an agent provider's Settings
-        // dictionary is intentionally dropped when the operator opens and saves this form. The Timeout
-        // field was removed from the agent provider form in #3149 because no code reads it at dispatch
-        // time (per-call timeouts come from PipelineConfiguration.AgentTimeout). Existing DB rows that
-        // still have Settings["timeout"] are self-healing: the key is dropped on next save.
-        var settings = new Dictionary<string, string>
-        {
-            [ProviderSettingKeys.Model] = model
-        };
-
-        if (_form.ProviderType == "KiroCli")
-        {
-            settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
-            settings[ProviderSettingKeys.AgentName] = _form.AgentName;
-            var effort = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
-            settings[ProviderSettingKeys.Effort] = effort;
-        }
-        else
-        {
-            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
-        }
-
         var config = new ProviderConfig
         {
             Id = _editingProvider?.Id ?? Guid.NewGuid().ToString(),
             Kind = ProviderKind.Agent,
             ProviderType = _form.ProviderType,
             DisplayName = _form.DisplayName,
-            Settings = settings
+            Settings = BuildSettings(model)
         };
 
         try
@@ -343,6 +375,41 @@
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
         }
+    }
+
+    /// <summary>Builds the provider config's settings for the selected provider type.</summary>
+    private Dictionary<string, string> BuildSettings(string model)
+    {
+        // NOTE: The legacy "timeout" key (ProviderSettingKeys.Timeout) in an agent provider's Settings
+        // dictionary is intentionally dropped when the operator opens and saves this form. The Timeout
+        // field was removed from the agent provider form in #3149 because no code reads it at dispatch
+        // time (per-call timeouts come from PipelineConfiguration.AgentTimeout). Existing DB rows that
+        // still have Settings["timeout"] are self-healing: the key is dropped on next save.
+        var settings = new Dictionary<string, string>
+        {
+            [ProviderSettingKeys.Model] = model
+        };
+        var effort = string.IsNullOrWhiteSpace(_form.Effort) ? "auto" : _form.Effort.Trim();
+
+        if (_form.ProviderType == "KiroCli")
+        {
+            settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
+            settings[ProviderSettingKeys.AgentName] = _form.AgentName;
+            settings[ProviderSettingKeys.Effort] = effort;
+        }
+        else if (IsClaudeCode)
+        {
+            settings[ProviderSettingKeys.ExecutablePath] = string.IsNullOrWhiteSpace(_form.ExecutablePath)
+                ? AgentDefaults.ClaudeCliPath : _form.ExecutablePath.Trim();
+            settings[ProviderSettingKeys.Effort] = effort;
+            settings[ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Normalize(_form.AuthMode);
+        }
+        else
+        {
+            settings[ProviderSettingKeys.BaseUrl] = string.IsNullOrWhiteSpace(_form.BaseUrl) ? AgentDefaults.OpenCodeBaseUrl : _form.BaseUrl.Trim();
+        }
+
+        return settings;
     }
 
     private async Task FetchModels()
@@ -409,6 +476,29 @@
         if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
     }
 
+    private bool IsClaudeCode => _form.ProviderType == ProviderTypes.ClaudeCode;
+
+    private string DisplayNamePlaceholder => _form.ProviderType switch
+    {
+        "OpenCode" => "OpenCode Agent",
+        ProviderTypes.ClaudeCode => "Claude Code Agent",
+        _ => "Kiro CLI Agent"
+    };
+
+    /// <summary>
+    /// Swaps the executable path to the new type's default when it still holds the other type's
+    /// default (or nothing), so switching types does not keep kiro-cli's path for Claude Code.
+    /// </summary>
+    private void OnProviderTypeChanged()
+    {
+        var path = _form.ExecutablePath?.Trim();
+        var isDefaultPath = string.IsNullOrEmpty(path) || path == AgentDefaults.KiroCliPath || path == AgentDefaults.ClaudeCliPath;
+        if (!isDefaultPath)
+            return;
+
+        _form.ExecutablePath = _form.ProviderType == ProviderTypes.ClaudeCode ? AgentDefaults.ClaudeCliPath : AgentDefaults.KiroCliPath;
+    }
+
     private class AgentProviderForm
     {
         public string ProviderType { get; set; } = "KiroCli";
@@ -418,6 +508,7 @@
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";
         public string Effort { get; set; } = "auto";
+        public string AuthMode { get; set; } = ClaudeCodeAuthModes.Auto;
     }
 
     public async ValueTask DisposeAsync()

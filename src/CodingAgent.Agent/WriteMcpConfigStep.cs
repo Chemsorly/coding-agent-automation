@@ -33,7 +33,7 @@ internal sealed class WriteMcpConfigStep : IPipelineStep
         try
         {
             var mcpConfigPath = context.AgentProvider.McpConfigPath;
-            McpConfigWriter.WriteConfig(mcpConfigPath, _job.McpServers);
+            McpConfigWriter.WriteConfig(mcpConfigPath, _job.McpServers, context.AgentProvider.ProviderType);
             context.Callbacks.EmitOutputLine($"🔌 Wrote MCP config with {_job.McpServers.Count} server(s) to {mcpConfigPath}");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

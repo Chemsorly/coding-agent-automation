@@ -330,7 +330,7 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`, `coding-agent-worker`). For the web service, configure via `otel.webServiceName` in `values.yaml` (legacy alias `otel.orchestratorServiceName` still honored). For agent pods, `JobSpecBuilder` sets this to `coding-agent-worker` unconditionally. Other processes use fixed names set in their own deployment templates. |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`, `coding-agent-worker`). For the web service, configure via `otel.webServiceName` in `values.yaml`. For agent pods, `JobSpecBuilder` sets this to `coding-agent-worker` unconditionally. Other processes use fixed names set in their own deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers
@@ -341,8 +341,11 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. An agent started by hand needs the same derived key. |
-| `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` or `OpenCode`. When absent or empty, defaults to `KiroCli`. |
+| `AGENT_PROVIDER_TYPE` | Agent backend of a chat pod: the job template's `providerType` (`kiro`, `opencode`, `claude`); `KiroCli`, `OpenCode` and `ClaudeCode` are accepted too. When absent or empty, defaults to Kiro CLI. |
 | `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/root/.local/bin/kiro-cli`) |
+| `CLAUDE_CLI_PATH` | Override path for the Claude Code CLI executable (default: `/home/ubuntu/.local/bin/claude`) |
+| `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; stripped from every other child process. |
+| `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`. |
 | `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
@@ -400,8 +403,24 @@ Repository providers can include custom markdown steering content that is writte
 Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
 - `.kiro/steering/pipeline-repo.md` for Kiro agents (repository-level steering)
 - `AGENTS.md` for OpenCode agents
+- `~/.claude/rules/pipeline-repo.md` for Claude Code agents — a user-level rule the CLI loads in every session, outside the workspace, so it is never committed and does not touch the repository's own `CLAUDE.md` or `.claude/rules/`
 
-Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents.
+Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents and `~/.claude/rules/pipeline-project.md` for Claude Code agents.
+
+Claude Code also loads what the repository itself provides — `CLAUDE.md`, `.claude/rules/`, `.claude/settings.json` (including hooks) and `.mcp.json` — because the workspace is its working directory.
+
+## Claude Code Agent Provider
+
+Agent provider configs of type `ClaudeCode` run the Claude Code CLI headless (`claude -p --output-format stream-json`), one process per call, with the prompt on stdin.
+
+| Setting | Description |
+|---------|-------------|
+| Executable Path | Path to the `claude` binary (default `/home/ubuntu/.local/bin/claude`) |
+| Model | Full model ID to pin a version (e.g. `claude-opus-5-5`, `claude-opus-4-8`), an alias for the latest of a family (`opus`, `sonnet`, `haiku`, `fable`), or `auto` for the CLI default. The CLI cannot list models, so the form suggests a fixed list and accepts any other ID. |
+| Effort | `low`, `medium`, `high`, `xhigh`, `max` or `auto` — passed as `--effort` |
+| Auth Mode | `auto` (API key if configured, else subscription token), `apiKey`, or `subscription`. Exactly one credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order. |
+
+Credentials live in the agent Secret (`claude-api-key`, `claude-oauth-token`; see [Deployment](deployment.md)). The subscription token comes from `claude setup-token`, is valid for one year, needs a Pro, Max, Team or Enterprise plan, and expires without warning — renew it before then. The CLI runs with `--dangerously-skip-permissions`, the same trust level as Kiro's `--trust-all-tools`; the agent pod is the sandbox. MCP servers from the agent profile are written to `~/.claude/pipeline-mcp.json` and passed with `--mcp-config`; a repository's `.mcp.json` servers load as well.
 
 ## Runtime System Packages
 

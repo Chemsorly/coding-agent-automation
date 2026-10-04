@@ -9,8 +9,9 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgent.Agent;
 
 /// <summary>
-/// Writes pipeline-managed steering files to the workspace before the agent starts.
-/// Branches on agent provider type: Kiro CLI gets .kiro/steering/ files, OpenCode gets AGENTS.md.
+/// Writes pipeline-managed steering files before the agent starts.
+/// Branches on agent provider type: Kiro CLI gets .kiro/steering/ files, OpenCode gets AGENTS.md,
+/// Claude Code gets user-level rules in ~/.claude/rules/ (outside the workspace).
 /// </summary>
 internal sealed class WriteSteeringStep : IPipelineStep
 {
@@ -24,18 +25,25 @@ internal sealed class WriteSteeringStep : IPipelineStep
 
     private readonly JobAssignmentMessage _job;
     private readonly ILogger _logger;
+    private readonly string _claudeRulesDirectory;
 
     public string StepName => "WriteSteering";
 
-    public WriteSteeringStep(JobAssignmentMessage job, ILogger? logger = null)
+    public WriteSteeringStep(JobAssignmentMessage job, ILogger? logger = null, string? claudeRulesDirectory = null)
     {
         _job = job;
         _logger = logger ?? Log.Logger;
+        _claudeRulesDirectory = claudeRulesDirectory ?? ClaudeSteeringFiles.DefaultRulesDirectory;
     }
 
     public Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(_job.ProjectSteeringContent) && string.IsNullOrEmpty(_job.RepoSteeringContent))
+        var providerType = context.AgentProvider.ProviderType;
+
+        // Claude Code steering lives outside the workspace, so stale files from an earlier job are
+        // removed even when this job has no steering.
+        if (string.IsNullOrEmpty(_job.ProjectSteeringContent) && string.IsNullOrEmpty(_job.RepoSteeringContent)
+            && providerType != AgentProviderType.ClaudeCode)
         {
             _logger.Debug("Pipeline {RunId} no steering content configured, skipping", context.Run.RunId);
             return Task.FromResult(StepResult.Continue);
@@ -45,10 +53,18 @@ internal sealed class WriteSteeringStep : IPipelineStep
         {
             var workspacePath = context.Run.WorkspacePath!;
 
-            if (context.AgentProvider.ProviderType == AgentProviderType.KiroCli)
-                WriteKiroSteeringFiles(workspacePath, context);
-            else
-                WriteOpenCodeSteeringFile(workspacePath, context);
+            switch (providerType)
+            {
+                case AgentProviderType.KiroCli:
+                    WriteKiroSteeringFiles(workspacePath, context);
+                    break;
+                case AgentProviderType.ClaudeCode:
+                    WriteClaudeSteeringFiles(context);
+                    break;
+                default:
+                    WriteOpenCodeSteeringFile(workspacePath, context);
+                    break;
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -81,6 +97,13 @@ internal sealed class WriteSteeringStep : IPipelineStep
         }
 
         context.Callbacks.EmitOutputLine($"📋 Wrote pipeline steering ({string.Join("+", written)}) to .kiro/steering/");
+    }
+
+    private void WriteClaudeSteeringFiles(PipelineStepContext context)
+    {
+        var written = ClaudeSteeringFiles.Write(_claudeRulesDirectory, _job.ProjectSteeringContent, _job.RepoSteeringContent);
+        if (written.Count > 0)
+            context.Callbacks.EmitOutputLine($"📋 Wrote pipeline steering ({string.Join("+", written)}) to {_claudeRulesDirectory}");
     }
 
     private void WriteOpenCodeSteeringFile(string workspacePath, PipelineStepContext context)

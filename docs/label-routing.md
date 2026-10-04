@@ -39,6 +39,11 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 | `opencode-dotnet10` | `opencode, dotnet, dotnet10` | `dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile` | .NET 10 |
 | `opencode-python312` | `opencode, python, python312` | `dockerfiles/opencode/agent-opencode-python312.Dockerfile` | Python 3.12 |
 | `opencode-java21` | `opencode, java, java21` | `dockerfiles/opencode/agent-opencode-java21.Dockerfile` | Java 21 |
+| `claude-dotnet10` | `claude, dotnet, dotnet10` | `dockerfiles/claude/agent-claude-dotnet10.Dockerfile` | .NET 10 |
+| `claude-python312` | `claude, python, python312` | `dockerfiles/claude/agent-claude-python312.Dockerfile` | Python 3.12 |
+| `claude-java21` | `claude, java, java21` | `dockerfiles/claude/agent-claude-java21.Dockerfile` | Java 21 |
+
+Claude images run the Claude Code CLI. Their job templates use `providerType: claude`, and their agent profile points to an agent provider config of type `ClaudeCode` (model, effort, auth mode). They need no credential PVC: the API key and/or subscription token come from the agent Secret — see [Deployment](deployment.md).
 
 ## Agent Profiles
 

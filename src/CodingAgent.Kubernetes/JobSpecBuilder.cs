@@ -15,6 +15,12 @@ public static class JobSpecBuilder
     /// <summary>Name of the agent container in every Job pod.</summary>
     public const string AgentContainerName = "agent";
 
+    /// <summary>Secret key of the Anthropic API key for claude providerType pods.</summary>
+    public const string ClaudeApiKeySecretKey = "claude-api-key";
+
+    /// <summary>Secret key of the subscription token (<c>claude setup-token</c>) for claude providerType pods.</summary>
+    public const string ClaudeOAuthTokenSecretKey = "claude-oauth-token";
+
     private static readonly JsonSerializerOptions K8sDeserializerOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -47,6 +53,13 @@ public static class JobSpecBuilder
         public required string AgentServiceAccountName { get; init; }
         public required string Namespace { get; init; }
         public string? OpencodeConfigSecretName { get; init; }
+
+        /// <summary>
+        /// Secret with the Claude Code credentials, injected into claude providerType pods only.
+        /// See <see cref="ClaudeApiKeySecretKey"/> and <see cref="ClaudeOAuthTokenSecretKey"/>.
+        /// </summary>
+        public string? ClaudeAuthSecretName { get; init; }
+
         public Dictionary<string, string>? ProjectSecrets { get; init; }
 
         /// <summary>
@@ -324,8 +337,27 @@ public static class JobSpecBuilder
             });
         }
 
+        // Claude agents: both credentials are optional Secret keys (the agent provider config picks
+        // which one is used). They arrive under pipeline-owned names, not ANTHROPIC_API_KEY /
+        // CLAUDE_CODE_OAUTH_TOKEN, so only the claude process receives them; the agent strips them from
+        // every other child process. Same etcd exposure as opencode-config-content above.
+        if (IsClaudeAgent(template.ProviderType) && !string.IsNullOrEmpty(ctx.ClaudeAuthSecretName))
+        {
+            envVars.Add(SecretEnvVar(AgentDefaults.EnvClaudeApiKey, ctx.ClaudeAuthSecretName, ClaudeApiKeySecretKey));
+            envVars.Add(SecretEnvVar(AgentDefaults.EnvClaudeOAuthToken, ctx.ClaudeAuthSecretName, ClaudeOAuthTokenSecretKey));
+        }
+
         return envVars;
     }
+
+    private static V1EnvVar SecretEnvVar(string name, string secretName, string key) => new()
+    {
+        Name = name,
+        ValueFrom = new V1EnvVarSource
+        {
+            SecretKeyRef = new V1SecretKeySelector { Name = secretName, Key = key, Optional = true }
+        }
+    };
 
     /// <summary>
     /// Builds the volume mounts and volumes for the agent container. The master
@@ -402,4 +434,7 @@ public static class JobSpecBuilder
 
     private static bool IsOpencodeAgent(string providerType) =>
         string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsClaudeAgent(string providerType) =>
+        string.Equals(providerType, AgentDefaults.ClaudeTemplateProviderType, StringComparison.OrdinalIgnoreCase);
 }

@@ -134,7 +134,7 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 ## Features
 
 - **Multi-agent architecture** — Multiple agent containers run in parallel, picking jobs from a shared queue
-- **Multi-stack support** — Label-based routing dispatches jobs to the right agent and backend (dotnet, python, java × Kiro CLI, OpenCode) with stack-specific quality gates
+- **Multi-stack support** — Label-based routing dispatches jobs to the right agent and backend (dotnet, python, java × Kiro CLI, OpenCode, Claude Code) with stack-specific quality gates
 - **PR review pipeline** — Automated code review for pull requests, triggered by labeling PRs with `agent:next`
 - **Epic decomposition** — Two-phase workflow that breaks epics into implementation-ready sub-issues with human approval
 - **Multi-agent code review** — Specialized review agents (Correctness, Security, etc.) run in parallel with inline PR comments

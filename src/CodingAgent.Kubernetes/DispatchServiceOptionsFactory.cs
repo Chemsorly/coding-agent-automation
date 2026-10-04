@@ -30,6 +30,7 @@ public static class DispatchServiceOptionsFactory
             ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
             ?? "default";
         options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+        options.ClaudeAuthSecretName = configuration.GetValue<string>("WorkDistribution:ClaudeAuthSecretName") ?? "";
 
         // Populate the master key value so DispatchLifecycleService can pre-compute per-job credentials
         // (HMAC-SHA256(masterKey, jobName)) stored in per-job K8s Secrets (Spec 043 Req 8a).

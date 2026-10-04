@@ -25,6 +25,18 @@ public static class AgentDefaults
     /// <summary>Default filesystem path to the Kiro CLI executable inside agent containers.</summary>
     public const string KiroCliPath = "/home/ubuntu/.local/bin/kiro-cli";
 
+    /// <summary>Default filesystem path to the Claude Code CLI executable inside agent containers.</summary>
+    public const string ClaudeCliPath = "/home/ubuntu/.local/bin/claude";
+
+    /// <summary>
+    /// Default MCP config file for Claude Code, outside the workspace so secrets never reach a commit.
+    /// Passed to the CLI with <c>--mcp-config</c>.
+    /// </summary>
+    public const string ClaudeMcpConfigPath = "/home/ubuntu/.claude/pipeline-mcp.json";
+
+    /// <summary>Provider type value of a claude job template (<c>jobTemplates[].providerType</c>).</summary>
+    public const string ClaudeTemplateProviderType = "claude";
+
     /// <summary>Default base URL for the OpenCode agent HTTP API.</summary>
     public const string OpenCodeBaseUrl = "http://127.0.0.1:4096";
 
@@ -50,11 +62,27 @@ public static class AgentDefaults
     /// <summary>Serilog log level override.</summary>
     public const string EnvLogLevel = "LOG_LEVEL";
 
-    /// <summary>Agent provider type (e.g., "OpenCode", "KiroCli").</summary>
+    /// <summary>Agent provider type of a chat pod: the job template's providerType ("kiro", "opencode", "claude").</summary>
     public const string EnvAgentProviderType = "AGENT_PROVIDER_TYPE";
 
     /// <summary>Override path for the Kiro CLI executable.</summary>
     public const string EnvKiroCliPath = "KIRO_CLI_PATH";
+
+    /// <summary>Override path for the Claude Code CLI executable.</summary>
+    public const string EnvClaudeCliPath = "CLAUDE_CLI_PATH";
+
+    /// <summary>
+    /// Anthropic API key for the Claude Code CLI, injected into claude agent pods from the chart
+    /// Secret's <c>claude-api-key</c>. Deliberately not named ANTHROPIC_API_KEY: the agent hands it
+    /// only to the claude process, so quality gates and other child processes never see it.
+    /// </summary>
+    public const string EnvClaudeApiKey = "AGENT_CLAUDE_API_KEY";
+
+    /// <summary>
+    /// Subscription token (<c>claude setup-token</c>) for the Claude Code CLI, injected from the chart
+    /// Secret's <c>claude-oauth-token</c>. Handed to the claude process as CLAUDE_CODE_OAUTH_TOKEN.
+    /// </summary>
+    public const string EnvClaudeOAuthToken = "AGENT_CLAUDE_OAUTH_TOKEN";
 
     /// <summary>Override base URL for the OpenCode agent API.</summary>
     public const string EnvOpenCodeBaseUrl = "OPENCODE_BASE_URL";

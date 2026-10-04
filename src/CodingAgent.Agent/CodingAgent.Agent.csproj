@@ -34,6 +34,7 @@
     <ProjectReference Include="..\KiroCliLib\KiroCliLib.csproj" />
     <ProjectReference Include="..\CodingAgent.Agent.KiroCli\CodingAgent.Agent.KiroCli.csproj" />
     <ProjectReference Include="..\CodingAgent.Agent.OpenCode\CodingAgent.Agent.OpenCode.csproj" />
+    <ProjectReference Include="..\CodingAgent.Agent.ClaudeCode\CodingAgent.Agent.ClaudeCode.csproj" />
   </ItemGroup>
 
 </Project>
