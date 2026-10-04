@@ -53,6 +53,8 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 
 > **Upgrading to the release with sign-in (Spec 049):** every page of the web UI now requires a signed-in user. Serve the UI at the root of its own host (`web.ingress`, or `kubectl port-forward` for the local admin) before you upgrade; path-prefix proxies such as the Rancher service proxy stop working. Read the generated admin password as shown in [Authentication](authentication.md#local-admin-password), then configure OIDC and role bindings.
 
+> **Upgrading from v0.4.8 or older:** releases after v0.4.10 replace the database migrations with one baseline. Upgrade to v0.4.9 or v0.4.10 first so the Pipeline API applies the original migrations; a database that stopped before them makes the newer API refuse to start, with a message that says so.
+
 ```bash
 # 1. Install the chart
 helm install coding-agent ./helm/coding-agent-automation \
