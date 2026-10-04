@@ -330,6 +330,19 @@ public static class WorkItemDispatchEndpoints
         // - Note: this lock only protects concurrent calls to THIS endpoint. DispatchWorkItem
         //   (collection-level) and WorkItemDispatchLoop (Scheduler background loop) do NOT acquire
         //   this lock. Cross-path correctness is provided by the CAS in ExecuteDispatchLifecycleAsync.
+        // TODO (review): The advisory lock key is constructed as $"dispatch-selector:{normalizedSelector}"
+        // where normalizedSelector derives from agentSelector (a database column set by callers).
+        // Verify that JobTemplateStore.NormalizeLabels strips characters that are significant to the
+        // distributed lock backend's key namespace (e.g. colons, wildcards). A crafted selector such as
+        // "dotnet:*" could collide with or interfere with unrelated lock keys, causing lock starvation
+        // for unrelated selectors (denial-of-service, not privilege escalation). (SecurityReviewer WARNING)
+        // TODO (issue #3243): The four "TODO (review):" comments in this file and the one in
+        // ReconciliationLoop.cs may violate SonarQube S1135, which flags any "TODO" in production
+        // code regardless of suffix. The project convention is to use NOTE for non-actionable
+        // observations or to file an issue and reference it. If S1135 is enabled as a blocking rule,
+        // these will appear as new issues in the Sonar gate. Convert to NOTE (issue #NNNN): once a
+        // tracking issue exists for each, or suppress individually if the finding is intentional.
+        // (DotNetSpecialist WARNING)
         var (lockHandle, lockEarlyReturn) = await TryEnterSelectorDispatchAsync(lockProvider, normalizedSelector, db, id, ct);
         if (lockEarlyReturn is not null)
             return lockEarlyReturn;
@@ -715,6 +728,11 @@ public static class WorkItemDispatchEndpoints
     /// <c>(lockHandle, null)</c> on success (item is Pending, lock held);
     /// <c>(null, earlyReturn)</c> on lock timeout (503) or post-lock non-Pending (200/deferred).
     /// </returns>
+    // TODO (review): Add direct unit tests for TryEnterSelectorDispatchAsync covering:
+    // - lock-timeout path (TimeoutException → 503 + RecordDispatchAttempt("transient","lock_timeout"))
+    // - post-lock non-Pending path (status changed between fast-check and lock → 200/deferred)
+    // Currently only covered indirectly via integration-level DispatchPendingWorkItem tests.
+    // (TestQualityReviewer WARNING)
     internal static async Task<(IAsyncDisposable? lockHandle, IResult? earlyReturn)> TryEnterSelectorDispatchAsync(
         IDistributedLockProvider lockProvider,
         string normalizedSelector,
@@ -729,6 +747,9 @@ public static class WorkItemDispatchEndpoints
         // Fix: wrap the post-lock query in a try/finally and call acquiredLock.DisposeAsync() in
         // the finally block on the exceptional path, or restructure using await using from the
         // point of assignment. See review finding: DotNetSpecialist @ line 737.
+        // TODO (review): Wrap the post-lock FirstOrDefaultAsync in a try/finally and dispose
+        // acquiredLock on the exceptional path to prevent advisory lock leaks on transient DB errors.
+        // (DotNetSpecialist WARNING)
         IAsyncDisposable acquiredLock;
         try
         {
@@ -822,6 +843,12 @@ public static class WorkItemDispatchEndpoints
     /// or <paramref name="rawResult"/> unchanged (for all other cases), plus a <see cref="DispatchInterpretOutcome"/>
     /// discriminator that allows callers to branch without reference-equality checks.
     /// </returns>
+    // TODO (review): Add direct unit tests for InterpretDispatchResult covering:
+    // - 503 PVC/K8s disambiguation branch (!AvailablePvcs.Any() && isKiroAgent → PvcExhausted503 vs K8sError503)
+    // - 409 rewrite path (rewriteConcurrencyLimitAsDeferred=true → ConcurrencyLimitRewritten + 200/deferred)
+    // - 409 pass-through path (rewriteConcurrencyLimitAsDeferred=false → PassThrough + 409 unchanged)
+    // Currently no direct assertions; an isKiroAgent flip would produce silently wrong telemetry.
+    // (TestQualityReviewer WARNING)
     internal static (IResult Result, DispatchInterpretOutcome Outcome) InterpretDispatchResult(
         IResult rawResult,
         PvcAvailabilityResult pvcResult,
@@ -1348,43 +1375,4 @@ public sealed class LabelSwapRequest
 public sealed class LastProgressRequest
 {
     public required DateTimeOffset Timestamp { get; init; }
-}
-
-/// <summary>
-/// Discriminator returned by <see cref="WorkItemDispatchEndpoints.InterpretDispatchResult"/> to
-/// allow callers to branch on the interpretation outcome without reference-equality checks on
-/// <see cref="IResult"/> objects.
-/// </summary>
-// NOTE (issue #3243): DispatchInterpretOutcome was changed from internal to public unnecessarily.
-// InterpretDispatchResult (the only method that returns it) remains internal static, and the
-// only external consumer (CodingAgent.Pipeline.UnitTests) already has access via InternalsVisibleTo.
-// Making the enum public widens the assembly's public API surface without functional benefit and
-// is inconsistent with its paired internal method.
-// TODO: Revert to internal to match InterpretDispatchResult's visibility.
-// See review findings: Correctness @ line 1357, DotNetSpecialist @ line 1358.
-public enum DispatchInterpretOutcome
-{
-    /// <summary>
-    /// The raw result was returned unchanged (success, 409 pass-through on sync path, or any
-    /// other non-rewritten status code).
-    /// </summary>
-    PassThrough,
-
-    /// <summary>
-    /// A 409 result was rewritten to <c>200 DispatchPendingResponse(false, "concurrency_limit")</c>
-    /// on the pending-dispatch path (<c>rewriteConcurrencyLimitAsDeferred=true</c>).
-    /// </summary>
-    ConcurrencyLimitRewritten,
-
-    /// <summary>
-    /// A 503 result where the PVC pool was empty and the agent is a kiro agent —
-    /// RecordDispatchAttempt("transient", "pvc_unavailable") was emitted.
-    /// </summary>
-    PvcExhausted503,
-
-    /// <summary>
-    /// A 503 result where PVCs were available or the agent is not a kiro agent —
-    /// RecordDispatchAttempt("transient", "k8s_error") was emitted.
-    /// </summary>
-    K8sError503
 }
