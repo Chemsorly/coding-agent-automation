@@ -472,6 +472,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     /// <inheritdoc />
     public void HandleStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata)
     {
+        // Store the branch in the DB as soon as the agent reports it, so housekeeping's
+        // active-branch guard skips it while the run is active (issue #3109). Done before the
+        // in-memory lookup: the replica holding the agent's connection may not hold the run.
+        if (metadata is not null && metadata.TryGetValue("BranchName", out var branchName)
+            && !string.IsNullOrEmpty(branchName))
+            _ = _facade.RecordBranchNameAsync(jobId, branchName, CancellationToken.None);
+
         var run = _facade.GetRun(jobId);
         if (run is not null)
         {
@@ -512,13 +519,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // If captured inside the if-block only, a subsequent null-metadata call would leave
             // previousSubIssuesAttempted=0 while run.DecompositionSubIssuesAttempted is already >0,
             // causing the once-per-run guard to fire again and double-emit the counters.
-            // TODO: [WARNING] previousSubIssuesCreated is declared for symmetry / future use but is
-            // not currently read. The guard only needs previousSubIssuesAttempted to enforce
-            // once-per-run semantics. Remove or use previousSubIssuesCreated if a finer guard
-            // (e.g. re-emit when created count increases) is ever needed. See review findings
-            // [WARNING] DotNetSpecialist L516.
             int previousSubIssuesAttempted = run.DecompositionSubIssuesAttempted;
-            int previousSubIssuesCreated = run.DecompositionSubIssuesCreated;
             if (metadata is { Count: > 0 })
             {
                 StepMetadataApplier.Apply(run, metadata);
