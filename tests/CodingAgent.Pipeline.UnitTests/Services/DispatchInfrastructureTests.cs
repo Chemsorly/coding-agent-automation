@@ -25,11 +25,9 @@ public class DispatchInfrastructureTests
     private DispatchInfrastructure CreateInfrastructure()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
-            _mockConfigStore.Object,
-            new Mock<ILogger>().Object);
+            _mockConfigStore.Object);
 
         return new DispatchInfrastructure(
             _mockTokenVending.Object,
@@ -44,8 +42,8 @@ public class DispatchInfrastructureTests
     public void Constructor_NullTokenVending_Throws()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<ILogger>().Object);
+            new QualityGateResolver(), new ReviewerResolver(),
+            _mockConfigStore.Object);
 
         var act = () => new DispatchInfrastructure(
             null!, _mockProviderFactory.Object, _mockLabelService.Object, resolution);
@@ -57,8 +55,8 @@ public class DispatchInfrastructureTests
     public void Constructor_NullProviderFactory_Throws()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<ILogger>().Object);
+            new QualityGateResolver(), new ReviewerResolver(),
+            _mockConfigStore.Object);
 
         var act = () => new DispatchInfrastructure(
             _mockTokenVending.Object, null!, _mockLabelService.Object, resolution);
@@ -70,8 +68,8 @@ public class DispatchInfrastructureTests
     public void Constructor_NullLabelService_Throws()
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<ILogger>().Object);
+            new QualityGateResolver(), new ReviewerResolver(),
+            _mockConfigStore.Object);
 
         var act = () => new DispatchInfrastructure(
             _mockTokenVending.Object, _mockProviderFactory.Object, null!, resolution);
@@ -183,8 +181,8 @@ public class DispatchInfrastructureStalenessTests
     private DispatchInfrastructure CreateInfrastructure(bool includeWorkItemClient = false)
     {
         var resolution = new DispatchResolutionService(
-            new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<Serilog.ILogger>().Object);
+            new QualityGateResolver(), new ReviewerResolver(),
+            _mockConfigStore.Object);
 
         return new DispatchInfrastructure(
             _mockTokenVending.Object,

@@ -68,22 +68,6 @@ public static partial class WorkDistributionRegistration
     }
 
     /// <summary>
-    /// Configures OpenTelemetry tracing and metrics for work distribution dependencies.
-    /// Call after AddOpenTelemetry() in the pipeline.
-    /// </summary>
-    public static IServiceCollection AddWorkDistributionTelemetry(
-        this IServiceCollection services,
-        IConfiguration configuration)
-    {
-        // Marker method — PostgreSQL is always required (Program.cs fast-fail).
-        // OTel instrumentation is added to the existing OpenTelemetry builder in Program.cs
-        // via the tracing/metrics builder callbacks. This method is a hook for any future
-        // work-distribution-specific instrumentation setup.
-        return services;
-    }
-
-    /// <summary>
-    /// <summary>
     /// Wires SignalR Redis backplane when SignalR:Redis:ConnectionString is configured.
     /// Without Redis, uses default in-memory transport (single replica only).
     /// The Redis backplane is for the SignalR hub used by the web UI, not for work distribution.
