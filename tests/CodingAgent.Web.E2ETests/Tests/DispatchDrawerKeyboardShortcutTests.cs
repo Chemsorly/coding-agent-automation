@@ -54,15 +54,18 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
     /// </summary>
     private async Task FocusIssueListAsync()
     {
-        // FocusAsync directly sets focus to the .agent-history-list element (tabindex="0") without
-        // dispatching a synthetic click that would land on a child issue-row div and move focus away
-        // from the list container. ClickAsync is unreliable here because the click coordinates land
-        // on a child element, leaving the @onkeydown handler on .agent-history-list unreachable.
-        // The 500ms wait allows the Blazor Server SignalR circuit to settle after focus before
-        // keyboard events are sent.
+        // We need browser focus on the .agent-history-list div (tabindex="0"), which owns
+        // @onkeydown. ClickAsync at the default center coordinates lands on a child issue-row,
+        // not the container. Clicking at position (1,1) targets the container's top-left corner
+        // before any child rows, reliably placing focus on the list div itself.
+        // We then wait until document.activeElement confirms the container has focus before
+        // sending keyboard events — a deterministic check that avoids fixed-sleep races.
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 10_000 });
-        await Page.FocusAsync(".agent-history-list");
-        await Page.WaitForTimeoutAsync(500);
+        await Page.ClickAsync(".agent-history-list", new() { Position = new Microsoft.Playwright.Position { X = 1, Y = 1 } });
+        await Page.WaitForFunctionAsync(
+            "() => document.activeElement?.classList.contains('agent-history-list')",
+            null,
+            new PageWaitForFunctionOptions { Timeout = 5_000 });
     }
 
     // ── Scenario 1: Arrow key navigation ────────────────────────────────────────
@@ -512,8 +515,11 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
 
         // Focus the list
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
-        await Page.FocusAsync(".agent-history-list");
-        await Page.WaitForTimeoutAsync(500);
+        await Page.ClickAsync(".agent-history-list", new() { Position = new Microsoft.Playwright.Position { X = 1, Y = 1 } });
+        await Page.WaitForFunctionAsync(
+            "() => document.activeElement?.classList.contains('agent-history-list')",
+            null,
+            new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // ArrowDown to highlight PR #200 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
@@ -592,10 +598,11 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
 
         // Focus the list
         await Page.WaitForSelectorAsync(".agent-history-list", new() { Timeout = 5_000 });
-        await Page.FocusAsync(".agent-history-list");
-        // Allow Blazor Server's SignalR circuit to settle after focus so the @onkeydown
-        // handler is registered before we send keyboard events.
-        await Page.WaitForTimeoutAsync(500);
+        await Page.ClickAsync(".agent-history-list", new() { Position = new Microsoft.Playwright.Position { X = 1, Y = 1 } });
+        await Page.WaitForFunctionAsync(
+            "() => document.activeElement?.classList.contains('agent-history-list')",
+            null,
+            new PageWaitForFunctionOptions { Timeout = 5_000 });
 
         // ArrowDown to highlight epic #300 (index 0)
         await Page.Keyboard.PressAsync("ArrowDown");
