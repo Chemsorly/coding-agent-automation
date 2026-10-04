@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Reflection;
 using AwesomeAssertions;
@@ -3000,6 +3001,38 @@ public sealed class ExtractedHelperIsolationTests
 
         outcome.Should().Be(DispatchInterpretOutcome.PassThrough,
             "a success result must produce PassThrough so the caller emits RecordDispatchAttempt(\"dispatched\",\"none\")");
+    }
+
+    // TODO [WARNING]: ApplyDispatchOutcomeSwitch is tested only for the unknown-outcome (_) arm.
+    // None of the four known arms (ConcurrencyLimitRewritten, PvcExhausted503, K8sError503, PassThrough)
+    // are exercised through ApplyDispatchOutcomeSwitch directly. If the arm bodies were swapped
+    // (e.g. ConcurrencyLimitRewritten returned DispatchSuccessFallThrough() instead of interpretedResult),
+    // no current test would catch it. Add direct tests for each known arm to lock in the arm-body mapping.
+    // (issue #3309 review finding: TestQualityReviewer)
+
+    // TODO [WARNING]: No test for ApplyDispatchOutcomeSwitch with PvcExhausted503 verifies that
+    // WorkDistributionTelemetry.PvcPoolExhaustions is incremented by EmitPvcExhaustionAndReturn.
+    // The pre-existing InterpretDispatchResult_503Input_PvcExhausted_* tests do not assert telemetry
+    // emission either. Add a test for ApplyDispatchOutcomeSwitch(PvcExhausted503, ...) that asserts
+    // the counter is incremented, to lock in this behavior after the local-function-to-static-method refactor.
+    // (issue #3309 review finding: TestQualityReviewer)
+
+    /// <summary>
+    /// Characterization: an out-of-range <see cref="DispatchInterpretOutcome"/> cast must cause
+    /// <see cref="DispatchWorkItemService.ApplyDispatchOutcomeSwitch"/> to throw
+    /// <see cref="UnreachableException"/> rather than silently delegating to the success path
+    /// (issue #3309: Replace Catch-All with Exhaustive Switch).
+    /// </summary>
+    [Fact]
+    public void ApplyDispatchOutcomeSwitch_UnknownOutcome_ThrowsUnreachableException()
+    {
+        var interpretedResult = TypedResults.Ok(Guid.NewGuid());
+        var unknownOutcome = (DispatchInterpretOutcome)99;
+
+        var act = () => DispatchWorkItemService.ApplyDispatchOutcomeSwitch(unknownOutcome, interpretedResult);
+
+        act.Should().ThrowExactly<UnreachableException>(
+            "an unrecognised DispatchInterpretOutcome must throw UnreachableException rather than silently returning a success response");
     }
 }
 
