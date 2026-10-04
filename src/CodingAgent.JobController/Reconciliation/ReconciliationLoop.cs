@@ -443,16 +443,11 @@ public sealed class ReconciliationLoop
 
             _log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
             // Emit Reconcile.OrphanCleanup per job actually deleted (not per idle cycle iteration).
-            // TODO: The span is currently closed before SafeDeleteJobAsync runs (using block ends before the await).
-            // The span therefore records ~0 duration and cannot reflect a deletion failure.
-            // Fix: move SafeDeleteJobAsync inside the using block, or switch to `using var` statement form.
-            using (var orphanActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.OrphanCleanup"))
-            {
-                orphanActivity?.SetTag("job_name", jobName);
-                orphanActivity?.SetTag("orphan_reason", orphanReason);
-                if (workItemId.HasValue)
-                    orphanActivity?.SetTag("work_item_id", workItemId.Value);
-            }
+            using var orphanActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.OrphanCleanup");
+            orphanActivity?.SetTag("job_name", jobName);
+            orphanActivity?.SetTag("orphan_reason", orphanReason);
+            if (workItemId.HasValue)
+                orphanActivity?.SetTag("work_item_id", workItemId.Value);
             await SafeDeleteJobAsync(jobName, ct);
         }
     }
@@ -609,22 +604,18 @@ public sealed class ReconciliationLoop
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
+            {
                 var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
                 // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
                 // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
                 // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
-                // TODO: The span is currently closed before HandleJobCompletedAsync runs (using block ends
-                // after the two SetTag calls). The span records ~0 duration and cannot reflect a failure in
-                // HandleJobCompletedAsync. Fix: switch to `using var jobFailedActivity = ...` statement form
-                // so the span stays active until the end of the case arm (including HandleJobCompletedAsync).
-                using (var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed"))
-                {
-                    jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
-                    jobFailedActivity?.SetTag("failure_reason", failureReason);
-                }
+                using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
+                jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
+                jobFailedActivity?.SetTag("failure_reason", failureReason);
                 if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
+            }
                 // Active/Unknown/Pending — no action needed
         }
     }
