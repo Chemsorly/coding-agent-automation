@@ -453,4 +453,38 @@ public class StaleBranchCleanerTests
     // TODO: No span-emission tests exist for Housekeeping.BranchDelete (added in issue #2977).
     // Add tests to verify: (1) Housekeeping.BranchDelete is emitted with branch_name and issue_id
     // tags when a stale branch is deleted; (2) no span is emitted when no branches qualify for deletion.
+
+    // ── Case-insensitivity regression (issue #3366) ───────────────────────────
+
+    /// <summary>
+    /// A branch whose linked issue bears a mixed-case active label (e.g. "Agent:In-Progress" as
+    /// GitHub may preserve it from creation time) must not be deleted.
+    /// Before the fix: HousekeepingActiveLabels used StringComparer.Ordinal, so the mixed-case
+    /// value was not found and the service incorrectly called DeleteBranchAsync. After the fix:
+    /// OrdinalIgnoreCase detects the active label and deletion is skipped.
+    /// </summary>
+    [Fact]
+    public async Task RunIfDueAsync_MixedCaseActiveLabel_BranchNotDeleted()
+    {
+        var cleaner = Create();
+        var agentBranch = $"{PipelineConstants.BranchPrefix}42-fix-login";
+
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ListAgentBranchesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)[agentBranch]);
+
+        var issues = new Mock<IIssueProvider>();
+        // "Agent:In-Progress" — same value as AgentLabels.InProgress but with different casing,
+        // simulating a label name preserved from creation time by the issue tracker.
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", "Agent:In-Progress"));
+
+        await RunAsync(cleaner, repo, issues, agentDonePrs: Array.Empty<PullRequestSummary>());
+
+        repo.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "mixed-case Agent:In-Progress must be treated as active — must not delete branch");
+        // TODO: Also verify GetIssueAsync was called exactly once to pin the test to the intended code path;
+        // a future guard that short-circuits before the issue fetch would let this test pass vacuously
+        // (i.e. add: issues.Verify(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()), Times.Once)).
+    }
 }
