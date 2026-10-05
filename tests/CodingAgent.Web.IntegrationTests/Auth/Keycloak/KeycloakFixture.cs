@@ -205,7 +205,9 @@ public sealed partial class OidcFlowDriver : IDisposable
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["username"] = username, ["password"] = password, ["credentialId"] = "",
+                ["username"] = username,
+                ["password"] = password,
+                ["credentialId"] = "",
             }),
         });
         if (submit.StatusCode != HttpStatusCode.Found && submit.StatusCode != HttpStatusCode.Redirect)
