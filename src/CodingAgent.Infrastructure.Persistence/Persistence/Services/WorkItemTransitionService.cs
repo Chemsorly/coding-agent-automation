@@ -317,8 +317,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
         const int MaxRetries = 3;
 
         // Validate desiredStatus upfront (no retry needed for invalid input)
-        if (desiredStatus is not (WorkItemStatus.Running or WorkItemStatus.Succeeded
-            or WorkItemStatus.Failed or WorkItemStatus.Cancelled))
+        if (!IsRecoverableTargetStatus(desiredStatus))
         {
             return false;
         }
@@ -337,14 +336,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             if (item.Status == desiredStatus)
                 return true;
 
-            // Only recover from Failed state
-            if (item.Status != WorkItemStatus.Failed)
-                return false;
-
-            // Only recover race-induced failures (delivery timeouts, reconciliation-loop timeouts),
-            // not legitimate agent errors. Both InfrastructureFailure and Timeout represent
-            // "server gave up waiting, but agent may still succeed" — recovery semantics are identical.
-            if (item.FailureReason is not (FailureReason.InfrastructureFailure or FailureReason.Timeout))
+            if (!IsRaceInducedFailure(item))
                 return false;
 
             // Perform the recovery transition
@@ -381,6 +373,22 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after exhausting all retries",
             workItemId, desiredStatus);
         return false;
+    }
+
+    private static bool IsRecoverableTargetStatus(WorkItemStatus desiredStatus)
+        => desiredStatus is WorkItemStatus.Running or WorkItemStatus.Succeeded
+            or WorkItemStatus.Failed or WorkItemStatus.Cancelled;
+
+    private static bool IsRaceInducedFailure(WorkItemEntity item)
+    {
+        // Only recover from Failed state
+        if (item.Status != WorkItemStatus.Failed)
+            return false;
+
+        // Only recover race-induced failures (delivery timeouts, reconciliation-loop timeouts),
+        // not legitimate agent errors. Both InfrastructureFailure and Timeout represent
+        // "server gave up waiting, but agent may still succeed" — recovery semantics are identical.
+        return item.FailureReason is FailureReason.InfrastructureFailure or FailureReason.Timeout;
     }
 
     /// <summary>

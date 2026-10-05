@@ -312,7 +312,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         finally
         {
             // TODO: [WARNING] If PipelineCleanup.RunAsync throws, the exception propagates to the outer
-            // catch (Exception ex) in ExecuteAsync which calls instrumentation.Activity?.RecordError(ex, ct),
+            // general exception handler in ExecuteAsync, which records the error on the instrumentation activity,
             // setting Error on ExecutePipeline due to a cleanup failure rather than a pipeline-logic failure.
             // This is pre-existing behaviour (not introduced by this diff), but should be noted: a cleanup
             // failure can misrepresent a successful pipeline run as errored in traces.

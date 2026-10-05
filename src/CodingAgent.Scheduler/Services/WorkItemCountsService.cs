@@ -83,7 +83,7 @@ public sealed class WorkItemCountsService : BackgroundService
             // when the API returns null (no Pending items) or on the error path.
             WorkDistributionTelemetry.UpdateOldestPendingAge(response.OldestPendingCreatedAt);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _logger.Warning(ex, "WorkItemCountsService: failed to fetch counts — resetting to empty");

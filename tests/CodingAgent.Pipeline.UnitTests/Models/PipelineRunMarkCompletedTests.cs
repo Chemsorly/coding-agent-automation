@@ -1,4 +1,3 @@
-using System.Threading;
 using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
 
@@ -81,16 +80,12 @@ public class PipelineRunMarkCompletedTests
     }
 
     [Fact]
-    public void MarkCompleted_CalledTwice_DoesNotChangeTimestamp()
+    public async Task MarkCompleted_CalledTwice_DoesNotChangeTimestamp()
     {
-        // Thread.Sleep(1) advances the clock so the second call would produce a
-        // measurably later DateTimeOffset.UtcNow if the guard were absent.
+        // Wait until the system clock has visibly advanced past the first timestamp, so the
+        // second call would produce a measurably later DateTimeOffset.UtcNow if the guard were
+        // absent (a fixed short sleep may land on the same tick given coarse timer resolution).
         // The equality assertion on the frozen first value is what proves idempotency.
-        // TODO [WARNING] (TestQualityReviewer): Thread.Sleep(1) may not advance the system clock by even one tick on some
-        // platforms (Windows default timer resolution is 15.6 ms; Linux sub-millisecond precision still risks same-tick
-        // collisions). If both UtcNow calls land on the same tick, this test passes even without the idempotency guard,
-        // making it a false positive. The explicit-timestamp overload test above is the deterministic proof.
-        // Consider increasing to Thread.Sleep(50) or injecting a fake clock to eliminate the fragility.
         var run = CreateRun();
 
         run.MarkCompleted();
@@ -99,7 +94,11 @@ public class PipelineRunMarkCompletedTests
         var firstCompletedAt = run.CompletedAt;
 #pragma warning restore CS0618
 
-        Thread.Sleep(1);
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (DateTimeOffset.UtcNow <= firstCompletedAtOffset && DateTimeOffset.UtcNow < deadline)
+            await Task.Delay(1);
+        DateTimeOffset.UtcNow.Should().BeAfter(firstCompletedAtOffset!.Value,
+            "the clock must advance for this test to detect a missing idempotency guard");
         run.MarkCompleted();
 
 #pragma warning disable CS0618

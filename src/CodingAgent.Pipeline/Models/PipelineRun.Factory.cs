@@ -30,7 +30,7 @@ public sealed partial class PipelineRun
     public static PipelineRun CreateDecomposition(PipelineRunCreationParams p)
     {
         if (p.RunType != PipelineRunType.DecompositionAnalysis && p.RunType != PipelineRunType.Decomposition)
-            throw new ArgumentOutOfRangeException(nameof(p.RunType), p.RunType, "Must be DecompositionAnalysis or Decomposition.");
+            throw new ArgumentOutOfRangeException(nameof(p), p.RunType, "RunType must be DecompositionAnalysis or Decomposition.");
         return CreateCore(p);
     }
 

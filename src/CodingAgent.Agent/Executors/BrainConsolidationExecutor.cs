@@ -116,9 +116,10 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                     return await AdversarialReviewHelper.ExecuteReviewAsync(
                         agentProvider,
                         workspacePath,
-                        ConsolidationPromptBuilder.BuildBrainConsolidationReviewPrompt(),
-                        ConsolidationPromptBuilder.BuildBrainConsolidationRefinementPrompt(),
-                        AgentWorkspacePaths.BrainConsolidationReviewFilePath,
+                        new AdversarialReviewPrompts(
+                            ConsolidationPromptBuilder.BuildBrainConsolidationReviewPrompt(),
+                            ConsolidationPromptBuilder.BuildBrainConsolidationRefinementPrompt(),
+                            AgentWorkspacePaths.BrainConsolidationReviewFilePath),
                         new AdversarialReviewConfig
                         {
                             Enabled = job.PipelineConfiguration.BrainConsolidationReviewEnabled,

@@ -48,11 +48,14 @@ public sealed class DependencyChecker : IDependencyChecker
         return CheckAsync(
             issueIdentifier,
             issueBody,
-            issueProvider,
-            defaultProviderId,
-            new Dictionary<string, IIssueProvider>(),
-            new Dictionary<string, string>(),
-            wrappedCaches,
+            new DependencyRoutingContext
+            {
+                DefaultProvider = issueProvider,
+                DefaultProviderId = defaultProviderId,
+                AllProviders = new Dictionary<string, IIssueProvider>(),
+                ProviderUrlPrefixes = new Dictionary<string, string>(),
+                StateCaches = wrappedCaches
+            },
             ct);
     }
 
@@ -60,18 +63,18 @@ public sealed class DependencyChecker : IDependencyChecker
     public async Task<DependencyCheckResult> CheckAsync(
         IssueIdentifier issueIdentifier,
         string? issueBody,
-        IIssueProvider defaultProvider,
-        string defaultProviderId,
-        IReadOnlyDictionary<string, IIssueProvider> allProviders,
-        IReadOnlyDictionary<string, string> providerUrlPrefixes,
-        Dictionary<string, Dictionary<int, bool>> stateCaches,
+        DependencyRoutingContext routing,
         CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentNullException.ThrowIfNull(routing);
+        var defaultProvider = routing.DefaultProvider;
+        var defaultProviderId = routing.DefaultProviderId;
+        var stateCaches = routing.StateCaches;
         ArgumentNullException.ThrowIfNull(defaultProvider);
         ArgumentNullException.ThrowIfNull(defaultProviderId);
-        ArgumentNullException.ThrowIfNull(allProviders);
-        ArgumentNullException.ThrowIfNull(providerUrlPrefixes);
+        ArgumentNullException.ThrowIfNull(routing.AllProviders);
+        ArgumentNullException.ThrowIfNull(routing.ProviderUrlPrefixes);
         ArgumentNullException.ThrowIfNull(stateCaches);
 
         if (string.IsNullOrEmpty(issueBody))
@@ -107,7 +110,7 @@ public sealed class DependencyChecker : IDependencyChecker
 
                 case UrlRef(var url):
                 {
-                    var isClosed = await ResolveUrlDepAsync(url, issueIdentifier, allProviders, providerUrlPrefixes, stateCaches, ct);
+                    var isClosed = await ResolveUrlDepAsync(url, issueIdentifier, routing, ct);
                     if (!isClosed)
                         blockedByUrls.Add(url);
                     break;
@@ -135,7 +138,7 @@ public sealed class DependencyChecker : IDependencyChecker
 
     /// <summary>
     /// Resolves the state of a URL-based cross-tracker dependency reference.
-    /// Matches the URL against <paramref name="providerUrlPrefixes"/> to find the correct provider,
+    /// Matches the URL against <see cref="DependencyRoutingContext.ProviderUrlPrefixes"/> to find the correct provider,
     /// then calls <see cref="IIssueProvider.IsIssueClosedAsync"/> on that provider.
     /// If no matching provider prefix is found, logs a warning and treats the dependency as
     /// unresolved (returns false, blocking dispatch).
@@ -143,14 +146,15 @@ public sealed class DependencyChecker : IDependencyChecker
     private async Task<bool> ResolveUrlDepAsync(
         string url,
         string issueIdentifier,
-        IReadOnlyDictionary<string, IIssueProvider> allProviders,
-        IReadOnlyDictionary<string, string> providerUrlPrefixes,
-        Dictionary<string, Dictionary<int, bool>> stateCaches,
+        DependencyRoutingContext routing,
         CancellationToken ct)
     {
+        var allProviders = routing.AllProviders;
+        var stateCaches = routing.StateCaches;
+
         // Find the provider whose URL prefix matches the dependency URL.
         string? matchedProviderId = null;
-        foreach (var (providerId, prefix) in providerUrlPrefixes)
+        foreach (var (providerId, prefix) in routing.ProviderUrlPrefixes)
         {
             // TODO: StartsWith without a path-separator boundary check means a prefix like
             // "https://github.com/acme/api" also matches

@@ -180,15 +180,16 @@ $"""
         sb.AppendLine("5. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
         sb.AppendLine();
 
-        AppendFindingsOutputFormat(
-            sb,
-            AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
-            RefactoringCategories.Structural,
-            "Concrete code snippet or line reference proving the issue",
-            "\"code-reading:File.cs:L42\", \"grep:catch (Exception ex)\", \"tool:dotnet-build:CA1502\"",
-            "Second file/location that corroborates (duplication partner, drift boundary, etc.)",
-            "What goes wrong because of this — be specific",
-            "Brief approach, not full implementation");
+        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
+        {
+            OutputPath = AgentWorkspacePaths.RefactoringStructuralFindingsFilePath,
+            Categories = RefactoringCategories.Structural,
+            EvidenceHint = "Concrete code snippet or line reference proving the issue",
+            EvidenceSourcesExample = "\"code-reading:File.cs:L42\", \"grep:catch (Exception ex)\", \"tool:dotnet-build:CA1502\"",
+            CrossReferenceHint = "Second file/location that corroborates (duplication partner, drift boundary, etc.)",
+            ImpactHint = "What goes wrong because of this — be specific",
+            SuggestedFixHint = "Brief approach, not full implementation"
+        });
 
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
@@ -275,15 +276,16 @@ $"""
         sb.AppendLine("3. Check inline comments that reference specific behavior — verify the behavior still exists");
         sb.AppendLine();
 
-        AppendFindingsOutputFormat(
-            sb,
-            AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
-            RefactoringCategories.Correctness,
-            "The exact code snippet or comment text proving the issue",
-            "\"grep:TODO\", \"tool:dotnet-build:IDE0051\", \"usage-search:FooService.Bar:0-callers\"",
-            "For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.",
-            "What goes wrong or what cognitive cost this imposes",
-            "Brief approach");
+        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
+        {
+            OutputPath = AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath,
+            Categories = RefactoringCategories.Correctness,
+            EvidenceHint = "The exact code snippet or comment text proving the issue",
+            EvidenceSourcesExample = "\"grep:TODO\", \"tool:dotnet-build:IDE0051\", \"usage-search:FooService.Bar:0-callers\"",
+            CrossReferenceHint = "For dead code: proof of zero callers. For bugs: the code path that triggers it. For stale docs: the actual behavior vs documented behavior.",
+            ImpactHint = "What goes wrong or what cognitive cost this imposes",
+            SuggestedFixHint = "Brief approach"
+        });
 
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
@@ -358,15 +360,16 @@ $"""
         sb.AppendLine("   it may be a candidate for polymorphism (but check `intentionalPatterns` first).");
         sb.AppendLine();
 
-        AppendFindingsOutputFormat(
-            sb,
-            AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
-            RefactoringCategories.Design,
-            "The specific naming deviation or primitive usage with concrete examples",
-            "\"grep:string repositoryUrl\", \"usage-search:repositoryUrl:5-signatures\"",
-            "For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.",
-            "Cognitive cost, confusion risk, or bug risk from the inconsistency",
-            "Brief approach — rename to X, introduce value type Y, extract constant Z");
+        AppendFindingsOutputFormat(sb, new FindingsOutputSpec
+        {
+            OutputPath = AgentWorkspacePaths.RefactoringDesignFindingsFilePath,
+            Categories = RefactoringCategories.Design,
+            EvidenceHint = "The specific naming deviation or primitive usage with concrete examples",
+            EvidenceSourcesExample = "\"grep:string repositoryUrl\", \"usage-search:repositoryUrl:5-signatures\"",
+            CrossReferenceHint = "For naming: the convention rule violated + examples of correct naming elsewhere. For primitives: multiple locations using the same raw type for the same concept.",
+            ImpactHint = "Cognitive cost, confusion risk, or bug risk from the inconsistency",
+            SuggestedFixHint = "Brief approach — rename to X, introduce value type Y, extract constant Z"
+        });
 
         sb.AppendLine("## Quality Bar");
         sb.AppendLine();
@@ -383,36 +386,42 @@ $"""
     }
 
     /// <summary>
+    /// The per-agent texts of the findings output format written by <see cref="AppendFindingsOutputFormat"/>.
+    /// </summary>
+    private sealed record FindingsOutputSpec
+    {
+        public required string OutputPath { get; init; }
+        public required IReadOnlyList<string> Categories { get; init; }
+        public required string EvidenceHint { get; init; }
+        public required string EvidenceSourcesExample { get; init; }
+        public required string CrossReferenceHint { get; init; }
+        public required string ImpactHint { get; init; }
+        public required string SuggestedFixHint { get; init; }
+    }
+
+    /// <summary>
     /// Appends the findings output format shared by the three Phase 1 agents: a JSON object with the
     /// findings and the areas the agent did not check.
     /// </summary>
-    private static void AppendFindingsOutputFormat(
-        StringBuilder sb,
-        string outputPath,
-        IReadOnlyList<string> categories,
-        string evidenceHint,
-        string evidenceSourcesExample,
-        string crossReferenceHint,
-        string impactHint,
-        string suggestedFixHint)
+    private static void AppendFindingsOutputFormat(StringBuilder sb, FindingsOutputSpec spec)
     {
         sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
-        sb.AppendLine($"Write findings to `{outputPath}` as a JSON object:");
+        sb.AppendLine($"Write findings to `{spec.OutputPath}` as a JSON object:");
         sb.AppendLine();
         sb.AppendLine(JsonCodeFence);
         sb.AppendLine("{");
         sb.AppendLine("  \"findings\": [");
         sb.AppendLine("    {");
         sb.AppendLine("      \"title\": \"Short descriptive title\",");
-        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(categories)}\",");
+        sb.AppendLine($"      \"category\": \"{RefactoringCategories.ToSchemaList(spec.Categories)}\",");
         sb.AppendLine("      \"affectedFiles\": [\"src/path/to/File.cs\"],");
-        sb.AppendLine($"      \"evidence\": \"{evidenceHint}\",");
-        sb.AppendLine($"      \"evidenceSources\": [{evidenceSourcesExample}],");
-        sb.AppendLine($"      \"crossReference\": \"{crossReferenceHint}\",");
+        sb.AppendLine($"      \"evidence\": \"{spec.EvidenceHint}\",");
+        sb.AppendLine($"      \"evidenceSources\": [{spec.EvidenceSourcesExample}],");
+        sb.AppendLine($"      \"crossReference\": \"{spec.CrossReferenceHint}\",");
         sb.AppendLine("      \"scopeQuery\": \"When the finding is one instance of a repeated pattern: the search that lists every instance, e.g. git grep -n 'pattern' -- src\",");
-        sb.AppendLine($"      \"impact\": \"{impactHint}\",");
-        sb.AppendLine($"      \"suggestedFix\": \"{suggestedFixHint}\"");
+        sb.AppendLine($"      \"impact\": \"{spec.ImpactHint}\",");
+        sb.AppendLine($"      \"suggestedFix\": \"{spec.SuggestedFixHint}\"");
         sb.AppendLine("    }");
         sb.AppendLine("  ],");
         sb.AppendLine("  \"notChecked\": [\"Files or areas you skipped, and why\"]");

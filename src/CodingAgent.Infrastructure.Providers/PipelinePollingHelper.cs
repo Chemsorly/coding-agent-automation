@@ -5,6 +5,14 @@ using Serilog;
 namespace CodingAgent.Infrastructure;
 
 /// <summary>
+/// Timing and logging settings for <see cref="PipelinePollingHelper.PollUntilCompleteAsync"/>.
+/// </summary>
+/// <param name="PollInterval">Delay between consecutive status checks.</param>
+/// <param name="Timeout">Maximum total wall-clock time before the timeout fallback fires.</param>
+/// <param name="LogPrefix">Provider label used in log messages, e.g. "CI" or "GitLab CI".</param>
+internal sealed record PipelinePollingSettings(TimeSpan PollInterval, TimeSpan Timeout, string LogPrefix);
+
+/// <summary>
 /// Shared helper that encapsulates the CI-pipeline poll loop and failed-job log-enrichment
 /// logic used by both <see cref="GitHub.GitHubActionsPipelineProvider"/> and
 /// <see cref="GitLab.GitLabCiPipelineProvider"/>.
@@ -27,27 +35,25 @@ internal static class PipelinePollingHelper
     /// <param name="getRunStatusAsync">Provider-specific status fetch.</param>
     /// <param name="enrichFailedJobsAsync">Provider-specific log-enrichment for failed jobs.</param>
     /// <param name="isTerminalState">Predicate that returns true when the run has completed.</param>
-    /// <param name="pollInterval">Delay between consecutive status checks.</param>
-    /// <param name="timeout">Maximum total wall-clock time before the timeout fallback fires.</param>
-    /// <param name="logPrefix">Provider label used in log messages, e.g. "CI" or "GitLab CI".</param>
+    /// <param name="settings">Poll interval, overall timeout and log prefix.</param>
     /// <param name="ct">Caller cancellation token; cancellation always propagates.</param>
     /// <param name="logger">Serilog logger for poll progress and completion messages.</param>
     internal static async Task<PipelineRunStatus> PollUntilCompleteAsync(
         Func<CancellationToken, Task<PipelineRunStatus>> getRunStatusAsync,
         Func<PipelineRunStatus, CancellationToken, Task<PipelineRunStatus>> enrichFailedJobsAsync,
         Func<PipelineRunStatus, bool> isTerminalState,
-        TimeSpan pollInterval,
-        TimeSpan timeout,
-        string logPrefix,
+        PipelinePollingSettings settings,
         CancellationToken ct,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(getRunStatusAsync);
         ArgumentNullException.ThrowIfNull(enrichFailedJobsAsync);
         ArgumentNullException.ThrowIfNull(isTerminalState);
-        ArgumentNullException.ThrowIfNull(logPrefix);
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(settings.LogPrefix);
         ArgumentNullException.ThrowIfNull(logger);
 
+        var (pollInterval, timeout, logPrefix) = settings;
         var pollCount = 0;
         PipelineRunStatus? lastStatus = null;
 

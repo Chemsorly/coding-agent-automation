@@ -179,7 +179,10 @@ public sealed partial class AgentHub
                     // best-effort fallback for now; revisit when a connection-scoped token is threaded
                     // through the hub method signature.
                     ct: CancellationToken.None,
-                    identifier: issueIdentifier);
+                    options: new LabelSwapOptions
+                    {
+                        Identifier = issueIdentifier
+                    });
 
                 _logger.Information(
                     "RequestLabelChange fallback: label swap completed for issue {IssueIdentifier} (job {JobId})",

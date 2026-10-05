@@ -128,8 +128,8 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     public async Task CheckDrawerDependenciesAsync(
         PipelineJobTemplate template,
-        Action? onProgress = null,
-        CancellationToken cancellationToken = default)
+        Action? onProgress,
+        CancellationToken cancellationToken)
     {
         var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
         if (providerConfig == null) return;
@@ -259,8 +259,11 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                         addLabel: (label, ct) => issueProvider.AddLabelAsync(issue.Identifier, label, ct),
                         newLabel: AgentLabels.Next,
                         ct: CancellationToken.None,
-                        expectedCurrentLabel: blockingLabel,
-                        identifier: issue.Identifier);
+                        options: new LabelSwapOptions
+                        {
+                            ExpectedCurrentLabel = blockingLabel,
+                            Identifier = issue.Identifier
+                        });
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

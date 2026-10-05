@@ -45,13 +45,9 @@ public class AssignmentEnricher
     private readonly IHarnessSuggestionStore? _harnessSuggestions;
     private readonly ILogger _logger;
 
-    /// <param name="runHistory">
-    /// The run history consolidation assignments read their last successful run and, for harness suggestions,
-    /// the run feedback from. When null, consolidation assignments go out without them.
-    /// </param>
-    /// <param name="harnessSuggestions">
-    /// The stored harness suggestions: a harness suggestion run gets the feedback collected since they were
-    /// generated. When null (or none are stored yet), it gets the newest feedback.
+    /// <param name="consolidationContext">
+    /// Where consolidation assignments read their run context from (see <see cref="ConsolidationRunContextSources"/>).
+    /// When null, consolidation assignments go out without it.
     /// </param>
     public AssignmentEnricher(
         DispatchInfrastructure infra,
@@ -60,8 +56,7 @@ public class AssignmentEnricher
         IProjectStore projectStore,
         ConsolidationTemplateResolver consolidationTemplateResolver,
         ILogger logger,
-        IPipelineRunHistoryService? runHistory = null,
-        IHarnessSuggestionStore? harnessSuggestions = null)
+        ConsolidationRunContextSources? consolidationContext = null)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(agentProfileStore);
@@ -75,8 +70,8 @@ public class AssignmentEnricher
         _consolidationPreparer = consolidationPreparer;
         _projectStore = projectStore;
         _consolidationTemplateResolver = consolidationTemplateResolver;
-        _runHistory = runHistory;
-        _harnessSuggestions = harnessSuggestions;
+        _runHistory = consolidationContext?.RunHistory;
+        _harnessSuggestions = consolidationContext?.HarnessSuggestions;
         _logger = logger;
     }
 
@@ -158,8 +153,9 @@ public class AssignmentEnricher
     /// <exception cref="Exception">
     /// Propagates any exception thrown by <see cref="EnrichCoreAsync"/> that is not an
     /// <see cref="OperationCanceledException"/>. Transient failures (DB timeout, network error)
-    /// are logged at <c>Error</c> level and re-thrown so the caller can return HTTP 503,
-    /// allowing the agent to retry rather than proceeding with an invalid job spec.
+    /// are recorded at <c>Error</c> level (issue identifier only — the caller logs the exception) and
+    /// re-thrown so the caller can return HTTP 503, allowing the agent to retry rather than proceeding
+    /// with an invalid job spec.
     /// </exception>
     public virtual async Task<JobDistributionRequest?> EnrichAsync(
         JobDistributionRequest identity,
@@ -175,7 +171,9 @@ public class AssignmentEnricher
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.Error(ex,
+            // Records which issue failed; the exception itself is logged once, by the GetAssignment endpoint
+            // that handles it.
+            _logger.Error(
                 "AssignmentEnricher: failed to enrich assignment for WorkItem with IssueIdentifier {IssueIdentifier}; returning 503 so agent can retry",
                 identity.IssueIdentifier);
             throw;
@@ -495,25 +493,34 @@ public class AssignmentEnricher
         // resolve the owning project via ConsolidationTemplateResolver (delegates the
         // ownership-resolution loop that was previously reimplemented inline here — issue #2914).
         if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
-        {
-            // Use the injected resolver, or create one from the store if the enricher was
-            // constructed via the protected test-only constructor (which sets both to null).
-            var resolver = _consolidationTemplateResolver
-                ?? (store is not null ? new ConsolidationTemplateResolver(store) : null);
+            return await InjectConsolidationOwnerSecretsAsync(message, request.ConsolidationTemplateId, store, ct);
 
-            if (resolver is not null && store is not null)
-            {
-                var (_, _, projectId) = await resolver
-                    .ResolveTemplateWithProjectAsync(new TemplateId(request.ConsolidationTemplateId), ct);
+        return message;
+    }
 
-                if (projectId is not null)
-                {
-                    var owningProject = await store.GetProjectByIdAsync(projectId, ct);
-                    if (owningProject?.Secrets is { Count: > 0 })
-                        return message with { ProjectSecrets = owningProject.Secrets };
-                }
-            }
-        }
+    private async Task<JobAssignmentMessage> InjectConsolidationOwnerSecretsAsync(
+        JobAssignmentMessage message,
+        string consolidationTemplateId,
+        IProjectStore? store,
+        CancellationToken ct)
+    {
+        // Use the injected resolver, or create one from the store if the enricher was
+        // constructed via the protected test-only constructor (which sets both to null).
+        var resolver = _consolidationTemplateResolver
+            ?? (store is not null ? new ConsolidationTemplateResolver(store) : null);
+
+        if (resolver is null || store is null)
+            return message;
+
+        var (_, _, projectId) = await resolver
+            .ResolveTemplateWithProjectAsync(new TemplateId(consolidationTemplateId), ct);
+
+        if (projectId is null)
+            return message;
+
+        var owningProject = await store.GetProjectByIdAsync(projectId, ct);
+        if (owningProject?.Secrets is { Count: > 0 })
+            return message with { ProjectSecrets = owningProject.Secrets };
 
         return message;
     }
@@ -542,3 +549,18 @@ public class AssignmentEnricher
                 "for a Consolidation task type without supplying a real preparer.");
     }
 }
+
+/// <summary>
+/// Where <see cref="AssignmentEnricher"/> reads a consolidation assignment's run context from.
+/// </summary>
+/// <param name="RunHistory">
+/// The run history consolidation assignments read their last successful run and, for harness suggestions,
+/// the run feedback from. When null, consolidation assignments go out without them.
+/// </param>
+/// <param name="HarnessSuggestions">
+/// The stored harness suggestions: a harness suggestion run gets the feedback collected since they were
+/// generated. When null (or none are stored yet), it gets the newest feedback.
+/// </param>
+public sealed record ConsolidationRunContextSources(
+    IPipelineRunHistoryService? RunHistory = null,
+    IHarnessSuggestionStore? HarnessSuggestions = null);

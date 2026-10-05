@@ -173,12 +173,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
         var callCount = 0;
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
-            .Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
@@ -239,12 +234,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
         var callCount = 0;
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
-            .Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;
@@ -289,12 +279,7 @@ public sealed class PipelineLoopServiceTransientResilienceTests : IAsyncDisposab
     {
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
-            .Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Throws(new InvalidOperationException("genuine bug — must not be retried"));
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);

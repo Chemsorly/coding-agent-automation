@@ -1685,8 +1685,17 @@ public class PullRequestFinalizationServiceTests
 
         var orchestrator = new PullRequestOrchestrator(_logger.Object);
 
-        await orchestrator.FinalizePullRequestAsync(run, isDraft: false, repoProvider.Object,
-            issue: null, issueComments: null, config, CancellationToken.None);
+        await orchestrator.FinalizePullRequestAsync(
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = repoProvider.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = config
+            },
+            CancellationToken.None);
 
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
         // Must NOT have been called with markReady=true
@@ -1720,8 +1729,17 @@ public class PullRequestFinalizationServiceTests
 
         var orchestrator = new PullRequestOrchestrator(_logger.Object);
 
-        await orchestrator.FinalizePullRequestAsync(run, isDraft: true, repoProvider.Object,
-            issue: null, issueComments: null, config, CancellationToken.None);
+        await orchestrator.FinalizePullRequestAsync(
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = true,
+                RepoProvider = repoProvider.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = config
+            },
+            CancellationToken.None);
 
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)false, It.IsAny<CancellationToken>()), Times.Once);
         // Must NOT have been called with markReady=null or true
@@ -1907,8 +1925,17 @@ public class PullRequestFinalizationServiceTests
 
         var orchestrator = new PullRequestOrchestrator(_logger.Object);
 
-        await orchestrator.CreatePullRequestAsync(run, isDraft: false, repoProvider.Object,
-            issue: null, issueComments: null, config, CancellationToken.None,
+        await orchestrator.CreatePullRequestAsync(
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = repoProvider.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = config
+            },
+            CancellationToken.None,
             isRework: true);
 
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);

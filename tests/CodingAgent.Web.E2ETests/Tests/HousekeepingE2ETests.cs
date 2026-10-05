@@ -112,14 +112,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // Act
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 1,
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 1,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: agent:next was added to issue 101
@@ -157,14 +162,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // Act
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 1,
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 1,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: no label changes for issue 102 (wont-do blocks rework)
@@ -198,14 +208,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // Act
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 1,   // limit = 1
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 1,   // limit = 1
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: exactly one update triggered (concurrency slot full after first)
@@ -233,14 +248,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // Act — high limit so the non-draft PR gets a slot
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 10,
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 10,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: draft PR 204 was NOT updated; normal PR 205 was
@@ -309,14 +329,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // Act
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 10,
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 10,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: PR 207 (active run on its branch) was skipped; PR 206 was updated
@@ -342,14 +367,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // First call — PR 208 should be triggered
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 1,
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 1,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         Assert.Single(Fixture.RepositoryProvider.BranchUpdateCalls);
@@ -366,14 +396,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
         // call so only the in-flight guard fires.
         svc.TriggerCooldown = TimeSpan.FromHours(1);
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 1,
-            branchCleanupEnabled: false,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 1,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: still only 1 update call total — in-flight suppression prevented re-trigger
@@ -427,14 +462,19 @@ public sealed class HousekeepingE2ETests : HeadlessE2ETestBase
 
         // Act — branchCleanupEnabled = true, cleanupIntervalMinutes = 0 (always due)
         await svc.ExecuteAsync(
-            Fixture.RepositoryProvider, "repo-e2e",
-            Fixture.IssueProvider, "issue-e2e",
-            agentDonePrs,
-            wasInputTruncated: false,
-            effectiveConcurrencyLimit: 1,
-            branchCleanupEnabled: true,
-            cleanupIntervalMinutes: 0,
-            triggerCooldownMinutes: 1,
+            new HousekeepingRequest
+            {
+                RepoProvider = Fixture.RepositoryProvider,
+                RepoProviderId = "repo-e2e",
+                IssueProvider = Fixture.IssueProvider,
+                IssueProviderId = "issue-e2e",
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = 1,
+                BranchCleanupEnabled = true,
+                CleanupIntervalMinutes = 0,
+                TriggerCooldownMinutes = 1
+            },
             ct);
 
         // Assert: only the stale branches were deleted

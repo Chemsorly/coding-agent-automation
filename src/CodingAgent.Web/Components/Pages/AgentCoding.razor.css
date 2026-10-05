@@ -87,8 +87,10 @@
     opacity: 0.7;
 }
 
+/* Fixed deep shades (the cockpit light-theme --error/--success) rather than theme tokens: the
+   brighter dark-theme values would drop white badge text below the 4.5:1 WCAG AA ratio. */
 .drawer-badge-blocked {
-    background: var(--danger, #ef4444);
+    background: #C81E1E;
     color: white;
     font-size: 0.7rem;
     padding: 1px 6px;
@@ -96,7 +98,7 @@
 }
 
 .drawer-badge-ready {
-    background: var(--success, #22c55e);
+    background: #137A3A;
     color: white;
     font-size: 0.7rem;
     padding: 1px 6px;

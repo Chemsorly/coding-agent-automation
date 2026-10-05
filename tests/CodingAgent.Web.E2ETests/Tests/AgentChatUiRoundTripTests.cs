@@ -438,6 +438,8 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
                 () => Fixture.K8sClient.ChatJobs.TryGetValue(jobName, out var j) &&
                       j.Status?.Conditions?.Any(c => c.Type == "Complete" && c.Status == "True") == true,
                 timeout: TimeSpan.FromSeconds(15));
+
+            Assert.True(fakeAgent.CancelChatReceived.Task.IsCompletedSuccessfully);
         }
     }
 }

@@ -348,9 +348,11 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             await AgentJobKeySecret.CreateForJobAsync(
                 _jobClient, _options.Namespace, jobName, jobUid, _options.AgentApiKeyValue, cancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.Error(ex, "ChatJobDispatcher: failed to create the agent key Secret for chat Job {JobName} — deleting the Job", jobName);
+            // The exception is rethrown below and logged where it is handled (the request pipeline for the
+            // chat dispatch endpoint); this only records which Job is being rolled back.
+            _logger.Error("ChatJobDispatcher: failed to create the agent key Secret for chat Job {JobName} — deleting the Job", jobName);
             try
             {
                 await _jobClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
