@@ -4,6 +4,9 @@ using CodingAgent.Pipeline.LeaderElection;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgent.Web.TestUtilities;
+using Serilog;
+using StackExchange.Redis;
 
 namespace CodingAgent.Orchestration.UnitTests.Registry;
 
@@ -18,6 +21,9 @@ public sealed class RunServiceCleanupServiceTests
 {
     private readonly Mock<IRedisStore> _store = new();
     private readonly Mock<ILogger> _logger = new();
+
+    private readonly FakeRedisStore _fakeStore = new();
+    private readonly Mock<ILeaderElectionService> _leaderMock = new();
 
     private CodingAgent.Orchestration.RunServiceCleanupService CreateService(
         ILeaderElectionService? leaderElection = null)
@@ -87,6 +93,40 @@ public sealed class RunServiceCleanupServiceTests
         _store.Verify(s => s.SetRemoveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task SweepAsync_AfterSweep_LiveRunAddedBetweenSweeps_NotRemovedOnSecondSweep()
+    {
+        // First sweep removes expired run. A run added between sweeps must survive.
+        await _fakeStore.SetAddAsync("runs:active", "run-old-expired");
+
+        var sut = CreateServiceWithFakeStore();
+        await sut.SweepAsync(CancellationToken.None);
+
+        // New live run added after first sweep
+        await _fakeStore.SetAddAsync("runs:active", "run-new-live");
+        await _fakeStore.HashSetAsync("run:run-new-live",
+            [new HashEntry("runId", "run-new-live")]);
+
+        await sut.SweepAsync(CancellationToken.None);
+
+        var active = await _fakeStore.SetMembersAsync("runs:active");
+        Assert.DoesNotContain("run-old-expired", active);
+        Assert.Contains("run-new-live", active);
+    }
+
+    [Fact]
+    public async Task SweepAsync_CancelledToken_ThrowsOperationCancelledException()
+    {
+        // Arrange: put something in runs:active so the foreach body is entered
+        await _fakeStore.SetAddAsync("runs:active", "run-1");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => CreateServiceWithFakeStore().SweepAsync(cts.Token));
+    }
+
     // ── Leader gate ──────────────────────────────────────────────────────
 
     [Fact]
@@ -130,6 +170,29 @@ public sealed class RunServiceCleanupServiceTests
         await svc.SweepAsync(CancellationToken.None);
 
         _store.Verify(s => s.SetMembersAsync("runs:active", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_LeadershipLostBetweenSweeps_SecondSweepSkipped()
+    {
+        await _fakeStore.SetAddAsync("runs:active", "run-a");
+
+        _leaderMock.SetupSequence(l => l.IsLeader)
+            .Returns(true)   // first sweep: leader
+            .Returns(false); // second sweep: no longer leader
+
+        var sut = CreateServiceWithFakeStore(_leaderMock.Object);
+
+        // First sweep (leader): removes run-a
+        await sut.SweepAsync(CancellationToken.None);
+        Assert.DoesNotContain("run-a", await _fakeStore.SetMembersAsync("runs:active"));
+
+        // Expired run added AFTER first sweep — second sweep must not touch it
+        await _fakeStore.SetAddAsync("runs:active", "run-b");
+
+        // Second sweep (not leader): skips
+        await sut.SweepAsync(CancellationToken.None);
+        Assert.Contains("run-b", await _fakeStore.SetMembersAsync("runs:active"));
     }
 
     // ── Cancellation ─────────────────────────────────────────────────────
@@ -185,4 +248,9 @@ public sealed class RunServiceCleanupServiceTests
         _store.Verify(s => s.SetMembersAsync("runs:active", It.IsAny<CancellationToken>()), Times.AtLeastOnce(),
             "ExecuteAsync timer loop must call SweepAsync on each tick");
     }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private RunServiceCleanupService CreateServiceWithFakeStore(ILeaderElectionService? leaderElection = null)
+        => new(_fakeStore, Log.Logger, leaderElection);
 }

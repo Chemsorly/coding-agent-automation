@@ -1,12 +1,11 @@
 using AwesomeAssertions;
 using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace CodingAgent.Web.UnitTests.Dispatch;
+namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
 /// Unit tests for <see cref="LabelSwapService"/> (#1868).
@@ -130,6 +129,22 @@ public sealed class LabelSwapServiceTests
         _mockLabelService.Verify(
             l => l.SwapLabelStrictAsync(Provider, Identifier, AgentLabels.InProgress, Kind, It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    [Fact]
+    public async Task SwapLabelWithRetryAsync_OnFailure_DoesNotThrow_WithMaxAttempts1()
+    {
+        var labelService = new Mock<ILabelService>();
+        labelService.Setup(l => l.SwapLabelStrictAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(),
+            It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider error"));
+
+        var sut = new LabelSwapService(labelService.Object, NullLogger<LabelSwapService>.Instance, maxAttempts: 1);
+
+        // Should not throw — failure is swallowed after max retries
+        var act = () => sut.SwapLabelWithRetryAsync(WorkItemId, Provider, Identifier, LabelTargetKind.Issue, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     // ── Constructor guard tests ─────────────────────────────────────────────

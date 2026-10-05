@@ -2,7 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Models;
 
-namespace CodingAgent.Pipeline.UnitTests.Services;
+namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
 /// Tests for JobAssignmentMessageFactory.BuildJobAssignmentMessage.
@@ -50,6 +50,35 @@ public sealed class JobAssignmentMessageFactoryTests
     {
         var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), MinimalRequest());
         msg.RepoProviderConfigId.Should().Be("github-repo");
+    }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_MapsAllRequiredFields()
+    {
+        var workItemId = Guid.NewGuid();
+        var request = CreateRequest("owner/repo#11", "provider-11") with
+        {
+            AgentProviderConfigId = "agent-config-1",
+            BrainProviderConfigId = "brain-1",
+            PipelineProviderConfigId = "pipeline-1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#11", Title = "Test", Description = "Desc", Labels = ["bug"] },
+            RunType = PipelineRunType.Review,
+            ProjectId = new Guid("22220000-0000-0000-0000-000000000001"),
+            ProjectName = "My Project"
+        };
+
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(workItemId, request);
+
+        message.JobId.Should().Be(workItemId.ToString());
+        message.IssueIdentifier.Should().Be("owner/repo#11");
+        message.IssueDetail.Title.Should().Be("Test");
+        message.AgentProviderConfigId.Should().Be("agent-config-1");
+        message.BrainProviderConfigId.Should().Be("brain-1");
+        message.PipelineProviderConfigId.Should().Be("pipeline-1");
+        message.RunType.Should().Be(PipelineRunType.Review);
+        message.ProjectId.Should().Be(new Guid("22220000-0000-0000-0000-000000000001").ToString());
+        message.ProjectName.Should().Be("My Project");
+        message.InitiatedBy.Should().Be("pipeline-loop");
     }
 
     // ── Null defaults ─────────────────────────────────────────────────────
@@ -122,6 +151,23 @@ public sealed class JobAssignmentMessageFactoryTests
         // AgentProviderConfigId not set — should fall back to RepoProviderConfigId
         var msg = JobAssignmentMessageFactory.BuildJobAssignmentMessage(Guid.NewGuid(), req);
         msg.AgentProviderConfigId.Should().Be("github-repo");
+    }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_NullOptionals_DefaultsToEmptyCollections()
+    {
+        var workItemId = Guid.NewGuid();
+        var request = CreateRequest("owner/repo#12", "provider-12");
+
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(workItemId, request);
+
+        message.IssueDetail.Should().NotBeNull();
+        message.ParsedIssue.Should().NotBeNull();
+        message.IssueComments.Should().BeEmpty();
+        message.ProviderConfigs.Should().BeEmpty();
+        message.QualityGateConfigs.Should().BeEmpty();
+        message.McpServers.Should().BeEmpty();
+        message.ReviewerConfigs.Should().BeEmpty();
     }
 
     // ── Provided values are used ──────────────────────────────────────────
@@ -216,4 +262,52 @@ public sealed class JobAssignmentMessageFactoryTests
         msg.ConsolidationLastSuccessfulRunUtc.Should().Be(lastSuccess);
         msg.ConsolidationFeedbackDataJson.Should().Be("[{\"outcome\":\"Failure\"}]");
     }
+
+    // ── Consolidation fields ────────────────────────────────────────
+
+    [Fact]
+    public void BuildJobAssignmentMessage_MapsConsolidationFields()
+    {
+        var workItemId = Guid.NewGuid();
+        var request = CreateRequest("run-123", "consolidation") with
+        {
+            TaskType = WorkItemTaskType.Consolidation,
+            ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateId = "template-42"
+        };
+
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(workItemId, request);
+
+        message.TaskType.Should().Be(WorkItemTaskType.Consolidation);
+        message.ConsolidationRunType.Should().Be(ConsolidationRunType.RefactoringDetection);
+        message.ConsolidationTemplateId.Should().Be("template-42");
+    }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_NonConsolidation_ConsolidationFieldsAreDefault()
+    {
+        var workItemId = Guid.NewGuid();
+        var request = CreateRequest("owner/repo#14", "provider-14");
+
+        var message = JobAssignmentMessageFactory.BuildJobAssignmentMessage(workItemId, request);
+
+        message.TaskType.Should().Be(WorkItemTaskType.Implementation);
+        message.ConsolidationRunType.Should().BeNull();
+        message.ConsolidationTemplateId.Should().BeNull();
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static JobDistributionRequest CreateRequest(string issueId, string providerId) => new()
+    {
+        IssueIdentifier = issueId,
+        IssueProviderConfigId = providerId,
+        RepoProviderConfigId = "repo-provider-1",
+        InitiatedBy = "pipeline-loop",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "kiro,linux",
+        TimeoutSeconds = 1800,
+        ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
+        RunType = PipelineRunType.Implementation
+    };
 }

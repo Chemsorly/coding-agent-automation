@@ -5,7 +5,7 @@ using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
-namespace CodingAgent.Pipeline.UnitTests.Services;
+namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
 /// Tests for KubernetesWorkDistributor.
@@ -200,6 +200,38 @@ public sealed class KubernetesWorkDistributorTests
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
+    [Fact]
+    public async Task DistributeAsync_CallsApiClientCreateAsync()
+    {
+        // Non-Consolidation task types call CreateAsync (Pending enqueue path).
+        var request = CreateRequest("owner/repo#1", "provider-1");
+        _client
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Guid.NewGuid());
+
+        await _sut.DistributeAsync(request, CancellationToken.None);
+
+        _client.Verify(
+            c => c.CreateAsync(
+                It.Is<JobDistributionRequest>(r => r.IssueIdentifier == request.IssueIdentifier),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WhenApiThrows_ReturnsFailureResult()
+    {
+        _client
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Pipeline API unreachable"));
+
+        var request = CreateRequest("owner/repo#3", "provider-3");
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Pipeline API unreachable");
+    }
+
     // ── CancelJobAsync ────────────────────────────────────────────────────
 
     [Fact]
@@ -239,10 +271,42 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     [Fact]
+    public async Task CancelJobAsync_ValidGuid_CallsPostStatusCancelled()
+    {
+        var workItemId = Guid.NewGuid();
+        _client
+            .Setup(c => c.PostStatusAsync(workItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var result = await _sut.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().BeTrue();
+        _client.Verify(c => c.PostStatusAsync(
+            workItemId,
+            It.Is<WorkItemStatusUpdate>(u => u.Status == "Cancelled"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task CancelJobAsync_InvalidGuid_ReturnsFalse()
     {
-        var result = await _sut.CancelJobAsync(new JobId("not-a-guid"), CancellationToken.None);
+        var result = await _sut.CancelJobAsync("not-a-guid", CancellationToken.None);
         result.Should().BeFalse();
+        _client.Verify(c => c.PostStatusAsync(
+            It.IsAny<Guid>(), It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CancelJobAsync_GenericException_ReturnsFalse()
+    {
+        var workItemId = Guid.NewGuid();
+        _client
+            .Setup(c => c.PostStatusAsync(workItemId, It.IsAny<WorkItemStatusUpdate>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("Request timed out"));
+
+        var result = await _sut.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().BeFalse("generic exceptions must also be swallowed and return false");
     }
 
     // ── GetJobStatusAsync ─────────────────────────────────────────────────
@@ -280,7 +344,22 @@ public sealed class KubernetesWorkDistributorTests
     [Fact]
     public async Task GetJobStatusAsync_InvalidGuid_ReturnsUnknown()
     {
-        var result = await _sut.GetJobStatusAsync(new JobId("bad-guid"), CancellationToken.None);
+        var status = await _sut.GetJobStatusAsync("invalid", CancellationToken.None);
+        status.Should().Be(JobDistributionStatus.Unknown);
+        _client.Verify(c => c.GetStatusAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task GetJobStatusAsync_UnknownEnumValue_ReturnsUnknown()
+    {
+        // Simulate an API returning an enum value not in our switch (future-proofing)
+        var workItemId = Guid.NewGuid();
+        _client
+            .Setup(c => c.GetStatusAsync(workItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((WorkItemStatus)999);
+
+        var result = await _sut.GetJobStatusAsync(workItemId.ToString(), CancellationToken.None);
+
         result.Should().Be(JobDistributionStatus.Unknown);
     }
 
@@ -313,22 +392,6 @@ public sealed class KubernetesWorkDistributorTests
     // ── GetActiveIssueIdentifiersAsync ────────────────────────────────────
 
     [Fact]
-    public async Task GetActiveIssueIdentifiersAsync_MapsToHashSet()
-    {
-        _client.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<(string IssueIdentifier, string IssueProviderConfigId)>
-            {
-                ("GH-1", "github"),
-                ("GH-2", "github")
-            } as IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>);
-
-        var result = await _sut.GetActiveIssueIdentifiersAsync(CancellationToken.None);
-
-        result.Should().HaveCount(2);
-        result.Should().Contain((new IssueIdentifier("GH-1"), new ProviderConfigId("github")));
-    }
-
-    [Fact]
     public async Task GetActiveIssueIdentifiersAsync_WhenEmpty_ReturnsEmptyHashSet()
     {
         _client.Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
@@ -338,4 +401,36 @@ public sealed class KubernetesWorkDistributorTests
 
         result.Should().BeEmpty();
     }
+
+    [Fact]
+    public async Task GetActiveIssueIdentifiersAsync_ReturnsApiPairs()
+    {
+        _client
+            .Setup(c => c.GetActiveIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync([("active-1", "p1"), ("active-2", "p2")]);
+
+        var result = await _sut.GetActiveIssueIdentifiersAsync(CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain(("active-1", "p1"));
+        result.Should().Contain(("active-2", "p2"));
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    private static JobDistributionRequest CreateRequest(
+        string issueId,
+        string providerId,
+        WorkItemTaskType taskType = WorkItemTaskType.Implementation) => new()
+        {
+            IssueIdentifier = issueId,
+            IssueProviderConfigId = providerId,
+            RepoProviderConfigId = "repo-provider-1",
+            InitiatedBy = "pipeline-loop",
+            TaskType = taskType,
+            AgentSelector = "kiro,linux",
+            TimeoutSeconds = 1800,
+            ProjectId = new Guid("11110000-0000-0000-0000-000000000001"),
+            RunType = PipelineRunType.Implementation
+        };
 }
