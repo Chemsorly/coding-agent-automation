@@ -185,6 +185,56 @@ public class WaitForCiSpanTests : IDisposable
     // block or the tag assignment would go undetected. Add tests that configure the pipeline provider to
     // throw and assert pipeline.ci_status == "error" on the resulting span.
 
+    // ── pre-PR CI error path: pipeline.ci_infra_retries tag parity ───────────
+
+    // TODO: [WARNING] The catch block in RunExternalCiPollAsync is also reached when GetRunStatusAsync
+    // throws during the appear-wait loop (not only when WaitForCompletionAsync throws). There is no test
+    // covering that path, so a regression where SetTag("pipeline.ci_infra_retries", ...) is accidentally
+    // placed only inside the WaitForCompletionAsync-specific branch would go undetected. Consider adding
+    // a test that configures GetRunStatusAsync to throw and asserts pipeline.ci_infra_retries is still
+    // set on the resulting WaitForCi span.
+
+    [Fact]
+    public async Task PrePrCiPath_WhenPollThrows_WaitForCiSpan_HasCiInfraRetriesTag()
+    {
+        // Arrange: CI runs appear but WaitForCompletion throws, which propagates through
+        // PollAndHandleInfraRetryAsync and is caught by RunExternalCiPollAsync's catch block.
+        var (run, context) = BuildPrePrContext();
+        // TODO: [WARNING] This test pre-seeds run.InfrastructureRetryCount = 2 before the call, which
+        // means it validates that the catch block reads from run.InfrastructureRetryCount, but does not
+        // validate that PollAndHandleInfraRetryAsync correctly mutates the count before the throw. A
+        // regression in the increment logic inside PollAndHandleInfraRetryAsync could go undetected
+        // because the count is already set here. Consider an additional test that leaves
+        // InfrastructureRetryCount at 0 and verifies it reflects actual retry mutations.
+        run.InfrastructureRetryCount = 2;
+
+        // GetRunStatusAsync returns Running so runs "appear" and WaitForCiRunsToAppearAsync succeeds.
+        _pipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Running }]
+            });
+
+        // WaitForCompletionAsync throws — this propagates to RunExternalCiPollAsync's catch block.
+        _pipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("transient CI infrastructure failure"));
+
+        // Act: AppendExternalCiIfNeededAsync catches the rethrow and converts it to a gate result.
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Assert: the WaitForCi span must carry pipeline.ci_infra_retries, matching the post-PR path.
+        var span = _activities.FirstOrDefault(a => a.DisplayName == "WaitForCi"
+            && Equals(a.GetTagItem("pipeline.run_id"), run.RunId));
+        span.Should().NotBeNull("AppendExternalCiIfNeededAsync must emit a WaitForCi span even when polling throws");
+        span!.GetTagItem("pipeline.ci_infra_retries").Should().Be(2,
+            "pipeline.ci_infra_retries must be set on the pre-PR error span to match the post-PR path (issue #3346)");
+        span.GetTagItem("pipeline.ci_status").Should().Be("error");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private (PipelineRun run, QualityGateContext context) BuildPrePrContext()
