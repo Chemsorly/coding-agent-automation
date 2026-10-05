@@ -7,6 +7,7 @@ using CodingAgent.Pipeline.Models;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Server;
+using System.Text;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -63,6 +64,40 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
                 .WithHeader("Content-Type", "application/json")
                 .WithBody("{}"));
 
+    private void StubPutNoContent(string path)
+    {
+        _server.Given(Request.Create().WithPath(path).UsingPut())
+            .RespondWith(Response.Create().WithStatusCode(204));
+    }
+
+    private static (IPipelineApiConfigClient Client, StubHandler Handler) CreateWithStubHandler()
+    {
+        var handler = new StubHandler();
+        var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new PipelineApiConfigClient(http);
+        return (client, handler);
+    }
+
+    private static HttpResponseMessage JsonResponse(object value, HttpStatusCode status = HttpStatusCode.OK)
+    {
+        var json = JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
+        return new HttpResponseMessage(status)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private static HttpResponseMessage Empty(HttpStatusCode status = HttpStatusCode.OK)
+        => new(status) { Content = new StringContent("") };
+
+    private static ProviderConfig MakeProviderConfig() => new()
+    {
+        Id = "p1",
+        Kind = ProviderKind.Issue,
+        DisplayName = "Test",
+        ProviderType = "GitHub"
+    };
+
     // ── GetPipelineConfigAsync ─────────────────────────────────────────────────
 
     [Fact]
@@ -87,6 +122,20 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         _server.LogEntries.Should().Contain(e =>
             e.RequestMessage!.Method == "GET" &&
             e.RequestMessage.Path == "/api/config/pipeline");
+    }
+
+    [Fact]
+    public async Task GetPipelineConfigAsync_NullApiResponse_ThrowsInvalidOperationException()
+    {
+        // API returns literal JSON null — null-guard must throw
+        _server.Given(Request.Create().WithPath("/api/config/pipeline").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        await _client.Invoking(c => c.GetPipelineConfigAsync())
+            .Should().ThrowAsync<InvalidOperationException>();
     }
 
     // ── SavePipelineConfigAsync ────────────────────────────────────────────────
@@ -164,6 +213,21 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         result.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task GetProviderConfigsWithSecretsAsync_IncludesSecretsTrueInQueryString()
+    {
+        _server.Given(Request.Create().WithPath("/api/config/provider-configs").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("[]"));
+
+        await _client.GetProviderConfigsWithSecretsAsync(ProviderKind.Agent);
+
+        var queryString = _server.LogEntries[0].RequestMessage!.RawQuery;
+        queryString.Should().Contain("includeSecrets=True");
+    }
+
     // ── SaveProviderConfigAsync ────────────────────────────────────────────────
 
     [Fact]
@@ -195,6 +259,18 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         _server.LogEntries.Should().Contain(e =>
             e.RequestMessage!.Method == "DELETE" &&
             e.RequestMessage.Path!.Contains("my-provider-id"));
+    }
+
+    [Fact]
+    public async Task DeleteProviderConfigAsync_SendsDeleteWithEscapedId()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => Empty();
+
+        await client.DeleteProviderConfigAsync("my id/with slash", ProviderKind.Issue);
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Delete);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Contain("my%20id%2Fwith%20slash");
     }
 
     // ── GetAgentProfilesAsync ──────────────────────────────────────────────────
@@ -307,6 +383,18 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         result!.Id.Should().Be("proj-abc");
     }
 
+    [Fact]
+    public async Task GetProjectByIdAsync_EncodesIdInPath()
+    {
+        var project = new PipelineProject { Id = "id/with/slash", Name = "Encoded" };
+        // HttpClient encodes "/" as "%2F". WireMock matches the decoded path "/api/config/projects/id/with/slash"
+        StubGet("/api/config/projects/id/with/slash", project);
+
+        var result = await _client.GetProjectByIdAsync("id/with/slash");
+
+        result.Should().NotBeNull();
+    }
+
     // ── GetAllTemplatesAsync ───────────────────────────────────────────────────
 
     [Fact]
@@ -363,6 +451,21 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         var result = await _client.GetKeyValueAsync("my-key");
 
         result.Should().Be("hello-world");
+    }
+
+    [Fact]
+    public async Task GetKeyValueAsync_EncodesKeyInPath()
+    {
+        // HttpClient encodes spaces as %20, WireMock matches the decoded path
+        _server.Given(Request.Create().WithPath("/api/config/key-value/has space").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("\"ok\""));
+
+        var result = await _client.GetKeyValueAsync("has space");
+
+        result.Should().Be("ok");
     }
 
     // ── HasEnabledTemplatesAsync ───────────────────────────────────────────────
@@ -427,6 +530,36 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         error.Should().NotBeNullOrEmpty();
     }
 
+    [Fact]
+    public async Task GetModelsAsync_NullApiResponse_ReturnsEmptyList()
+    {
+        _server.Given(Request.Create().WithPath("/api/config/models").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var (result, error) = await _client.GetModelsAsync();
+
+        result.Should().BeEmpty();
+        error.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetModelsAsync_OnFailure_ReturnsErrorString()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        {
+            Content = new StringContent("service down")
+        };
+
+        var (result, error) = await client.GetModelsAsync();
+
+        result.Should().BeEmpty();
+        error.Should().Be("service down");
+    }
+
     // ── ExportConfigAsync ──────────────────────────────────────────────────────
 
     [Fact]
@@ -472,6 +605,18 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         _server.LogEntries.Should().Contain(e =>
             e.RequestMessage!.Method == "DELETE" &&
             e.RequestMessage.Path!.Contains("ap1"));
+    }
+
+    [Fact]
+    public async Task DeleteAgentProfileAsync_EncodesIdInPath()
+    {
+        // WireMock matches decoded paths; %2F becomes /
+        _server.Given(Request.Create().WithPath("/api/config/agent-profiles/id/slash").UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        await _client.DeleteAgentProfileAsync("id/slash");
+
+        _server.LogEntries.Should().HaveCount(1);
     }
 
     // ── ResetReviewerConfigsToDefaultAsync ────────────────────────────────────
@@ -535,5 +680,198 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
         _server.LogEntries.Should().Contain(e =>
             e.RequestMessage!.Method == "DELETE" &&
             e.RequestMessage.Path == "/api/config/key-value/old-key");
+    }
+
+    // ── UpdatePipelineConfigAsync ──────────────
+
+    [Fact]
+    public async Task UpdatePipelineConfigAsync_FetchesThenSaves()
+    {
+        var original = new PipelineConfiguration { WorkspaceBaseDirectory = "/old" };
+        StubGet("/api/config/pipeline", original);
+        StubPutNoContent("/api/config/pipeline");
+
+        await _client.UpdatePipelineConfigAsync(c => c with { WorkspaceBaseDirectory = "/new" });
+
+        // GET then PUT
+        _server.LogEntries.Should().HaveCount(2);
+    }
+
+    // ── Templates ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetAllTemplatesAsync_NullResponse_ReturnsEmpty()
+    {
+        _server.Given(Request.Create().WithPath("/api/config/templates").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _client.GetAllTemplatesAsync();
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DeleteTemplateAsync_EncodesProjectAndTemplateIdInPath()
+    {
+        // WireMock matches decoded paths
+        _server.Given(Request.Create()
+                .WithPath("/api/config/projects/proj/1/templates/tmpl/1")
+                .UsingDelete())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        await _client.DeleteTemplateAsync("proj/1", "tmpl/1");
+
+        _server.LogEntries.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task GetTemplatesForProjectAsync_EncodesProjectId()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse(new List<PipelineJobTemplate>());
+
+        await client.GetTemplatesForProjectAsync("my project");
+
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("my%20project");
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_UsesPost()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => Empty();
+
+        await client.MoveTemplateAsync("src", "dst", "tmpl-1");
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/config/templates/move");
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_RefusedByTheApi_ThrowsWithTheApiReason()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse("The repository is already used by the enabled template \"Api\".", HttpStatusCode.BadRequest);
+        var template = new PipelineJobTemplate { Id = "t1", Name = "Web", IssueProviderId = "ip", RepoProviderId = "rp" };
+
+        var act = () => client.SaveTemplateAsync("proj-1", template);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("The repository is already used by the enabled template \"Api\".");
+    }
+
+    [Fact]
+    public async Task MoveTemplateAsync_UnknownTargetProject_ThrowsWithTheApiReason()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse("Project dst does not exist.", HttpStatusCode.NotFound);
+
+        var act = () => client.MoveTemplateAsync("src", "dst", "tmpl-1");
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("Project dst does not exist.");
+    }
+
+    [Fact]
+    public async Task SaveTemplateAsync_ServerError_StillThrowsHttpRequestException()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => Empty(HttpStatusCode.InternalServerError);
+        var template = new PipelineJobTemplate { Id = "t1", Name = "Web", IssueProviderId = "ip", RepoProviderId = "rp" };
+
+        var act = () => client.SaveTemplateAsync("proj-1", template);
+
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    // ── GetQualityGateConfigsAsync / GetReviewerConfigsAsync ─────────────
+
+    [Fact]
+    public async Task GetQualityGateConfigsAsync_NullResponse_ReturnsEmpty()
+    {
+        _server.Given(Request.Create().WithPath("/api/config/quality-gate-configs").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _client.GetQualityGateConfigsAsync();
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task GetReviewerConfigsAsync_NullResponse_ReturnsEmpty()
+    {
+        _server.Given(Request.Create().WithPath("/api/config/reviewer-configs").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _client.GetReviewerConfigsAsync();
+
+        result.Should().BeEmpty();
+    }
+
+    // ── Quality gate configs ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteQualityGateConfigAsync_UsesDelete()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => Empty();
+
+        await client.DeleteQualityGateConfigAsync("qg-1");
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Delete);
+    }
+
+    // ── Projects ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DeleteProjectAsync_UsesDeleteWithEscapedId()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => Empty();
+
+        await client.DeleteProjectAsync("project/1");
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Delete);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Contain("project%2F1");
+    }
+
+    // ── Export / Import ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ImportConfigAsync_UsesMultipartPost()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => Empty();
+
+        using var stream = new MemoryStream([0x7B, 0x7D]);
+        await client.ImportConfigAsync(stream, "config.json");
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/config/import");
+        handler.LastRequest.Content.Should().BeOfType<MultipartFormDataContent>();
+    }
+
+    // ── Stub handler ──────────────────────────────────────────────────────
+
+    internal sealed class StubHandler : HttpMessageHandler
+    {
+        public Func<HttpRequestMessage, HttpResponseMessage>? Respond { get; set; }
+        public HttpRequestMessage? LastRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            var response = Respond?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.OK);
+            return Task.FromResult(response);
+        }
     }
 }
