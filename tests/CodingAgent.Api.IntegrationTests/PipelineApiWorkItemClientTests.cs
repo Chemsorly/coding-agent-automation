@@ -683,6 +683,23 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         result!.HasAgentErrorSince.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task GetStalenessAsync_EncodesQueryParams()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse(new WorkItemStalenessResult
+        {
+            HasAgentErrorSince = false,
+            LastSuccessfulCompletion = null
+        });
+
+        await client.GetStalenessAsync("GH-1", "github", DateTimeOffset.UtcNow);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery
+            .Should().Contain("issueIdentifier=GH-1")
+            .And.Contain("issueProviderConfigId=github");
+    }
+
     // ── PostLabelSwapAsync ─────────────────────────────────────────────────────
 
     [Fact]

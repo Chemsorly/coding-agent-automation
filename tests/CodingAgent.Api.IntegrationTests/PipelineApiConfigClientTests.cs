@@ -197,6 +197,19 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task GetProviderConfigsAsync_ReturnsConfigs()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse(new List<ProviderConfig> { MakeProviderConfig() });
+
+        var result = await client.GetProviderConfigsAsync(ProviderKind.Issue);
+
+        result.Should().HaveCount(1);
+        handler.LastRequest!.RequestUri!.PathAndQuery
+            .Should().Contain("kind=Issue").And.Contain("includeSecrets=False");
+    }
+
+    [Fact]
     public async Task GetProviderConfigsAsync_NullResponse_ReturnsEmptyList()
     {
         _server.Given(Request.Create()
