@@ -1072,15 +1072,9 @@ public sealed class WorkItemEndpointTests
 
     // ── LabelSwap ─────────────────────────────────────────────────────────────────
 
-    // TODO [WARNING]: PostLabelSwap is missing characterization tests for the WorkItemPayload.TryDeserialize
-    // branch introduced in Issue #2776. The existing test below seeds a non-Review (Dispatched/Implementation)
-    // work item, so isReview=false and the TryDeserialize branch is never entered. Add tests for:
-    //   1. Review-type work item with a PascalCase payload — verifies providerConfigIdValue resolves
-    //      to RepoProviderConfigId (the silent no-op regression this fix addressed).
-    //   2. Review-type work item with a malformed payload — verifies graceful fallback to IssueProviderConfigId
-    //      rather than an error (mirrors the malformed-payload tests added for the other three call sites).
-    // Without these tests, reverting PostLabelSwap back to PipelineJsonOptions.Default would not be caught.
-    // (Issue #2776)
+    // The tests below seed non-Review work items, so the review branch that reads RepoProviderConfigId
+    // from the payload is never entered. PostLabelSwapPayloadTests covers it (PascalCase, camelCase and
+    // malformed payloads).
     [Fact]
     public async Task PostLabelSwap_Returns200_WhenWorkItemExists()
     {
