@@ -4,6 +4,8 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Infrastructure.UnitTests;
 
@@ -1060,11 +1062,10 @@ public class ValidateAsyncStallReportingTests
 /// (<c>CleanWorkspacePrologue</c>) that <see cref="QualityGateValidator.ValidateAsync"/> runs,
 /// with and without a <c>reportEvent</c> delegate.
 /// The happy-path tests pre-create the TestResults directory so <c>Directory.Exists</c>
-/// returns true and the deletion lines execute. The exception-path tests use <c>chmod 000</c>
-/// on a subdirectory (Linux only) so <c>Directory.Delete</c> throws and the catch block runs.
-/// Root ignores directory permissions, so when the tests run as root the delete succeeds and
-/// the catch block is not reached.
-/// The catch blocks log a Warning and continue; the gate result is not affected.
+/// returns true and the deletion lines execute. The exception-path tests use
+/// <see cref="ThrowingDeleteValidator"/>, which overrides the <c>DeleteDirectoryRecursive</c> hook
+/// to throw, so the catch block runs on every OS and whether or not the tests run as root.
+/// The catch block logs a Warning and continues; the gate result is not affected.
 /// </summary>
 public class QualityGateValidatorCleanupExceptionTests
 {
@@ -1146,27 +1147,40 @@ public class QualityGateValidatorCleanupExceptionTests
     /// <summary>
     /// ValidateAsync must complete successfully when the TestResults directory cleanup
     /// throws (the exception is caught and logged at Warning level, not propagated).
-    /// On Linux: chmod 000 on a TestResults subdirectory prevents recursive deletion.
     /// </summary>
-    [SkipOnWindowsFact]
-    public async Task ValidateAsync_WhenTestResultsCleanupThrows_CompletesSuccessfully()
+    [Fact]
+    public Task ValidateAsync_WhenTestResultsCleanupThrows_CompletesSuccessfully()
+        => AssertTestResultsCleanupFailureIsSwallowedAsync(
+            new IOException("Simulated TestResults delete failure"), withReportEvent: false);
+
+    /// <summary>
+    /// ValidateAsync with a reportEvent delegate must complete successfully when the
+    /// TestResults directory cleanup throws.
+    /// </summary>
+    [Fact]
+    public Task ValidateAsync_WithReportEvent_WhenTestResultsCleanupThrows_CompletesSuccessfully()
+        => AssertTestResultsCleanupFailureIsSwallowedAsync(
+            new UnauthorizedAccessException("Simulated TestResults delete failure"), withReportEvent: true);
+
+    /// <summary>
+    /// Runs ValidateAsync on a workspace whose TestResults delete throws <paramref name="deleteException"/>
+    /// and asserts that the cleanup prologue's catch block handled it: ValidateAsync completes,
+    /// the exception is logged as a Warning, and the gate result still passes.
+    /// </summary>
+    private static async Task AssertTestResultsCleanupFailureIsSwallowedAsync(Exception deleteException, bool withReportEvent)
     {
         var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-except-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempWorkspace);
         var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
         try
         {
-            // Create TestResults with a subdirectory that cannot be deleted (chmod 000)
+            // Pre-create TestResults so Directory.Exists returns true and the prologue calls the delete hook
             Directory.CreateDirectory(testResultsDir);
-            var subDir = Path.Combine(testResultsDir, "protected");
-            Directory.CreateDirectory(subDir);
 
-            // Make the subdir non-traversable so Directory.Delete(testResultsRoot, true) throws
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                $"000 \"{subDir}\"")
-            { UseShellExecute = false })!.WaitForExit();
-
-            var validator = new NoOpProcessValidator();
+            var sink = new CapturingSink();
+            var logger = new Serilog.LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(sink).CreateLogger();
+            var validator = new ThrowingDeleteValidator(deleteException, logger);
+            var reportedEvents = new List<PipelineRunEventReport>();
+            Action<PipelineRunEventReport>? reportEvent = withReportEvent ? reportedEvents.Add : null;
             var qgc = new QualityGateConfiguration
             {
                 DisplayName = "Test",
@@ -1176,67 +1190,19 @@ public class QualityGateValidatorCleanupExceptionTests
             };
 
             // Must not throw even though cleanup throws — exception is swallowed
-            var act = async () => await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
-            await act.Should().NotThrowAsync(
-                "a Directory.Delete exception in the cleanup prologue must be caught and not propagated");
+            var act = () => validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportEvent);
+            var report = (await act.Should().NotThrowAsync(
+                "a delete exception in the cleanup prologue must be caught and not propagated")).Subject;
+
+            validator.DeleteAttempts.Should().Equal([testResultsDir],
+                "the prologue must delete TestResults through the hook, otherwise the catch block is not exercised");
+            sink.Events.Should().ContainSingle(
+                e => e.Level == LogEventLevel.Warning && e.Exception == deleteException,
+                "the catch block must log the delete failure as a Warning");
+            report.AllPassed.Should().BeTrue("a failed TestResults cleanup must not affect the gate result");
         }
         finally
         {
-            // Restore permissions so cleanup can succeed
-            try
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                    $"-R 755 \"{testResultsDir}\"")
-                { UseShellExecute = false })!.WaitForExit();
-            }
-            catch { }
-            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
-        }
-    }
-
-    /// <summary>
-    /// ValidateAsync with a reportEvent delegate must complete successfully when the
-    /// TestResults directory cleanup throws.
-    /// </summary>
-    [SkipOnWindowsFact]
-    public async Task ValidateAsync_WithReportEvent_WhenTestResultsCleanupThrows_CompletesSuccessfully()
-    {
-        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-sside-ex-{Guid.NewGuid():N}");
-        Directory.CreateDirectory(tempWorkspace);
-        var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
-        try
-        {
-            Directory.CreateDirectory(testResultsDir);
-            var subDir = Path.Combine(testResultsDir, "protected");
-            Directory.CreateDirectory(subDir);
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                $"000 \"{subDir}\"")
-            { UseShellExecute = false })!.WaitForExit();
-
-            var reportedEvents = new List<PipelineRunEventReport>();
-            var validator = new NoOpProcessValidator();
-            var qgc = new QualityGateConfiguration
-            {
-                DisplayName = "Test",
-                TestCommand = "dotnet",
-                TestArguments = ["test"],
-                ProcessTimeoutSeconds = 30
-            };
-
-            var act = async () => await validator.ValidateAsync(
-                tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportedEvents.Add);
-            await act.Should().NotThrowAsync(
-                "a Directory.Delete exception in the cleanup prologue must be caught");
-        }
-        finally
-        {
-            try
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
-                    $"-R 755 \"{testResultsDir}\"")
-                { UseShellExecute = false })!.WaitForExit();
-            }
-            catch { }
             try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
         }
     }
@@ -1245,12 +1211,37 @@ public class QualityGateValidatorCleanupExceptionTests
     /// A no-op <see cref="QualityGateValidator"/> that never actually executes a process,
     /// used to exercise the cleanup prologue without needing real build/test tools.
     /// </summary>
-    private sealed class NoOpProcessValidator : QualityGateValidator
+    private class NoOpProcessValidator : QualityGateValidator
     {
-        public NoOpProcessValidator() : base(Serilog.Log.Logger) { }
+        public NoOpProcessValidator() : this(Serilog.Log.Logger) { }
+
+        public NoOpProcessValidator(Serilog.ILogger logger) : base(logger) { }
 
         private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
             string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
             => Task.FromResult((0, "Passed: 1\nTest summary: total: 1; failed: 0; succeeded: 1; skipped: 0; duration: 0.0s", ""));
+    }
+
+    /// <summary>
+    /// A <see cref="NoOpProcessValidator"/> whose TestResults delete throws the given exception,
+    /// so the cleanup prologue's catch block runs. File permissions cannot force the delete
+    /// to fail when the tests run as root, as CI's build-and-test container does.
+    /// </summary>
+    private sealed class ThrowingDeleteValidator(Exception deleteException, Serilog.ILogger logger)
+        : NoOpProcessValidator(logger)
+    {
+        public List<string> DeleteAttempts { get; } = [];
+
+        private protected override void DeleteDirectoryRecursive(string path)
+        {
+            DeleteAttempts.Add(path);
+            throw deleteException;
+        }
+    }
+
+    private sealed class CapturingSink : ILogEventSink
+    {
+        public List<LogEvent> Events { get; } = [];
+        public void Emit(LogEvent logEvent) => Events.Add(logEvent);
     }
 }
