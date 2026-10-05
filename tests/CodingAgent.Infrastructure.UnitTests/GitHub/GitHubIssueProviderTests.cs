@@ -792,6 +792,40 @@ public class GitHubIssueProviderTests
         result.Items.Should().HaveCount(5);
     }
 
+    // ── ListClosedIssuesAsync pagination guards ──────────────────────────────────────
+
+    // TODO: Add a test verifying that a non-null `since` value is correctly propagated to the
+    // RepositoryIssueRequest.Since field inside ListClosedIssuesAsync. All three guard tests below
+    // pass since=null, so the Since assignment (the only behavioural difference from the open path)
+    // is not currently exercised. [WARNING — TestQualityReviewer]
+
+    // TODO: Add a test for ListClosedIssuesAsync that verifies the HasMore-with-PR-filtering edge
+    // case: raw count > pageSize but filtered count < pageSize (mirrors
+    // ListOpenIssuesAsync_HasMore_TrueWhenRawCountExceedsPageSizeDespitePrFiltering). Without it,
+    // a regression in EnumerateIssuesAsync that broke only the closed path would go undetected.
+    // [WARNING — TestQualityReviewer]
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_InvalidPage_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => _provider.ListClosedIssuesAsync(0, 10, null, null, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_InvalidPageSize_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => _provider.ListClosedIssuesAsync(1, 0, null, null, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task ListClosedIssuesAsync_PageSizeExceedsMax_ThrowsArgumentOutOfRangeException()
+    {
+        var act = () => _provider.ListClosedIssuesAsync(1, 101, null, null, CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels,
         ItemState state = ItemState.Open)
     {
