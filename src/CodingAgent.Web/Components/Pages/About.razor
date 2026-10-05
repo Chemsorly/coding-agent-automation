@@ -170,13 +170,14 @@
         var avg = durations.Count > 0
             ? TimeSpan.FromSeconds(durations.Average(d => d.TotalSeconds))
             : (TimeSpan?)null;
-        _avgDuration = avg.HasValue
-            ? (avg.Value.TotalHours >= 24
-                ? $"{(int)avg.Value.TotalDays}d {avg.Value:hh\\:mm\\:ss}"
-                : avg.Value.ToString(@"hh\:mm\:ss"))
-            : "—";
+        _avgDuration = avg.HasValue ? FormatDuration(avg.Value) : "—";
 
         var lastEntry = history.Count > 0 ? history[0].StartedAtOffset : default;
         _lastRun = lastEntry == default ? "—" : lastEntry.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
     }
+
+    private static string FormatDuration(TimeSpan duration) =>
+        duration.TotalHours >= 24
+            ? $"{(int)duration.TotalDays}d {duration:hh\\:mm\\:ss}"
+            : duration.ToString(@"hh\:mm\:ss");
 }

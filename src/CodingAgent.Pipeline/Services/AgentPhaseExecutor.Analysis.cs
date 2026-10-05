@@ -110,9 +110,10 @@ public partial class AgentPhaseExecutor
         run.AnalysisContent = existingAnalysis;
         run.AnalysisSkipped = true;
         context.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
-        await AgentStallMonitor.MonitorAsync(context.AgentProvider,
+        await AgentStallMonitor.MonitorAsync(
+            new AgentMonitorContext(context.AgentProvider, run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger),
             () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
-            run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger, ct);
+            ct);
         context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
     }
 
@@ -195,9 +196,10 @@ public partial class AgentPhaseExecutor
         var run = context.Run;
         var config = context.Config;
 
-        await AgentStallMonitor.MonitorAsync(context.AgentProvider,
+        await AgentStallMonitor.MonitorAsync(
+            new AgentMonitorContext(context.AgentProvider, run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger),
             () => context.AgentProvider.EnsureSessionAsync(run.WorkspacePath!, ct),
-            run, config, "Session warm-up", context.Callbacks.NotifyChange, _logger, ct);
+            ct);
 
         var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
 
@@ -224,7 +226,7 @@ public partial class AgentPhaseExecutor
         Activity.Current?.SetTag("pipeline.prompt_length_chars", analysisPrompt.Length);
 
         var analysisResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            context.AgentProvider,
+            new AgentMonitorContext(context.AgentProvider, run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger),
             new AgentRequest
             {
                 Prompt = analysisPrompt,
@@ -236,7 +238,7 @@ public partial class AgentPhaseExecutor
                     : null,
                 EnvironmentVariables = context.InjectedSecrets
             },
-            run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
+            ct,
             line => context.Callbacks.EmitOutputLine(line),
             reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
             phase: "analysis");
@@ -316,9 +318,10 @@ public partial class AgentPhaseExecutor
         var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
             context.AgentProvider,
             run.WorkspacePath!,
-            reviewPrompt,
-            refinementPrompt,
-            AgentWorkspacePaths.AnalysisReviewFilePath,
+            new AdversarialReviewPrompts(
+                reviewPrompt,
+                refinementPrompt,
+                AgentWorkspacePaths.AnalysisReviewFilePath),
             reviewConfig,
             line => context.Callbacks.EmitOutputLine(line),
             _logger,

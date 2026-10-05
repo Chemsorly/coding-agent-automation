@@ -257,64 +257,32 @@ public sealed class AgentOrphanRecoveryService(
     /// </summary>
     private static PipelineRun CreateRestoredPipelineRun(string agentId, ActiveJobState activeJob, RunIdentity identity)
     {
-        return identity.RunType switch
+        return PipelineRun.CreateForRunType(new PipelineRunCreationParams
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
-            {
-                RunId = activeJob.RunId,
-                IssueIdentifier = identity.IssueIdentifier,
-                IssueTitle = activeJob.IssueTitle,
-                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
-                IssueProviderConfigId = identity.IssueProviderConfigId,
-                RepoProviderConfigId = identity.RepoProviderConfigId,
-                RunType = PipelineRunType.Review,
-                StartedAt = activeJob.StartedAt,
-                InitiatedBy = activeJob.InitiatedBy,
-                AgentId = agentId,
-                AgentProviderConfigId = activeJob.AgentProviderConfigId,
-                BrainProviderConfigId = identity.BrainProviderConfigId,
-                ReviewPrBranchName = string.Empty,
-                ReviewPrTargetBranch = string.Empty
-                // NOTE: ActiveJobState carries no ReviewPrUrl, ReviewPrBranchName, or ReviewPrTargetBranch.
-                // On re-registration, a restored review run will be missing:
-                //   - ReviewPrUrl: used by RunPage.razor to render the "PR under review" chip.
-                //   - ReviewPrBranchName / ReviewPrTargetBranch: used for git operations during the pipeline.
-                // These cannot be recovered from ActiveJobState alone without fetching the original
-                // WorkItem payload or adding more MessagePack keys (out of scope for issue #3095).
-                // Impact: the "PR under review" chip will not render on the Run page for a restored review run.
-                // TODO: open a follow-up issue to track this gap (issue #3095 is being closed by this fix;
-                // this limitation needs its own tracking ticket so it is not lost).
-            }),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
-            {
-                RunId = activeJob.RunId,
-                IssueIdentifier = identity.IssueIdentifier,
-                IssueTitle = activeJob.IssueTitle,
-                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
-                IssueProviderConfigId = identity.IssueProviderConfigId,
-                RepoProviderConfigId = identity.RepoProviderConfigId,
-                RunType = identity.RunType,
-                StartedAt = activeJob.StartedAt,
-                InitiatedBy = activeJob.InitiatedBy,
-                AgentId = agentId,
-                AgentProviderConfigId = activeJob.AgentProviderConfigId,
-                BrainProviderConfigId = identity.BrainProviderConfigId
-            }),
-            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
-            {
-                RunId = activeJob.RunId,
-                IssueIdentifier = identity.IssueIdentifier,
-                IssueTitle = activeJob.IssueTitle,
-                IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
-                IssueProviderConfigId = identity.IssueProviderConfigId,
-                RepoProviderConfigId = identity.RepoProviderConfigId,
-                StartedAt = activeJob.StartedAt,
-                InitiatedBy = activeJob.InitiatedBy,
-                AgentId = agentId,
-                AgentProviderConfigId = activeJob.AgentProviderConfigId,
-                BrainProviderConfigId = identity.BrainProviderConfigId
-            })
-        };
+            RunId = activeJob.RunId,
+            IssueIdentifier = identity.IssueIdentifier,
+            IssueTitle = activeJob.IssueTitle,
+            IssueUrl = HttpUrlOrNull(activeJob.IssueUrl),
+            IssueProviderConfigId = identity.IssueProviderConfigId,
+            RepoProviderConfigId = identity.RepoProviderConfigId,
+            RunType = identity.RunType,
+            StartedAt = activeJob.StartedAt,
+            InitiatedBy = activeJob.InitiatedBy,
+            AgentId = agentId,
+            AgentProviderConfigId = activeJob.AgentProviderConfigId,
+            BrainProviderConfigId = identity.BrainProviderConfigId,
+            // NOTE: ActiveJobState carries no ReviewPrUrl, ReviewPrBranchName, or ReviewPrTargetBranch.
+            // On re-registration, a restored review run will be missing:
+            //   - ReviewPrUrl: used by RunPage.razor to render the "PR under review" chip.
+            //   - ReviewPrBranchName / ReviewPrTargetBranch: used for git operations during the pipeline.
+            // These cannot be recovered from ActiveJobState alone without fetching the original
+            // WorkItem payload or adding more MessagePack keys (out of scope for issue #3095).
+            // Impact: the "PR under review" chip will not render on the Run page for a restored review run.
+            // TODO: open a follow-up issue to track this gap (issue #3095 is being closed by this fix;
+            // this limitation needs its own tracking ticket so it is not lost).
+            ReviewPrBranchName = string.Empty,
+            ReviewPrTargetBranch = string.Empty
+        });
     }
 
     /// <summary>
@@ -416,40 +384,45 @@ public sealed class AgentOrphanRecoveryService(
         // Agent tracking: always run when the run belongs to this agent.
         // This covers: first pickup (AgentId just set above), pod replacement (AgentId just updated),
         // and same-agent reconnect (AgentId already matched, tracking still needed if entry lost state).
-        var trackedEntry = _facade.GetByAgentId(agentId);
-        if (trackedEntry is not null)
-        {
-            bool shouldTransition;
-            lock (trackedEntry.SyncRoot)
-            {
-                if (trackedEntry.ActiveJobId is null)
-                {
-                    trackedEntry.ActiveJobId = activeJob.RunId;
-                    _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "LinkAgentToExistingRun");
-                    // Transition to Busy only when we actually wrote the ActiveJobId.
-                    // The decision is captured inside the lock so a concurrent disconnect handler
-                    // that clears ActiveJobId after lock release cannot cause a spurious Busy
-                    // transition.
-                    shouldTransition = true;
-                }
-                else
-                {
-                    // ActiveJobId already set (same-agent reconnect or DrainService race).
-                    // Only transition to Busy if the active job matches the run being linked.
-                    // If DrainService assigned a different run between GetByAgentId and lock
-                    // acquisition, trackedEntry.ActiveJobId != activeJob.RunId and we skip the
-                    // transition to avoid clobbering the DrainService assignment.
-                    shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
-                }
-            }
-            if (shouldTransition)
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-        }
+        TrackLinkedActiveJob(agentId, activeJob);
 
         _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
             agentId, activeJob.RunId);
 
         return agentChanged && string.IsNullOrEmpty(previousAgentId) ? existingRun : null;
+    }
+
+    private void TrackLinkedActiveJob(AgentId agentId, ActiveJobState activeJob)
+    {
+        var trackedEntry = _facade.GetByAgentId(agentId);
+        if (trackedEntry is null)
+            return;
+
+        bool shouldTransition;
+        lock (trackedEntry.SyncRoot)
+        {
+            if (trackedEntry.ActiveJobId is null)
+            {
+                trackedEntry.ActiveJobId = activeJob.RunId;
+                _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "LinkAgentToExistingRun");
+                // Transition to Busy only when we actually wrote the ActiveJobId.
+                // The decision is captured inside the lock so a concurrent disconnect handler
+                // that clears ActiveJobId after lock release cannot cause a spurious Busy
+                // transition.
+                shouldTransition = true;
+            }
+            else
+            {
+                // ActiveJobId already set (same-agent reconnect or DrainService race).
+                // Only transition to Busy if the active job matches the run being linked.
+                // If DrainService assigned a different run between GetByAgentId and lock
+                // acquisition, trackedEntry.ActiveJobId != activeJob.RunId and we skip the
+                // transition to avoid clobbering the DrainService assignment.
+                shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
+            }
+        }
+        if (shouldTransition)
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
     }
 
     // TODO: [WARNING] The acceptance criterion says "DetectAndRestoreOrphans delegates each of its
@@ -785,21 +758,7 @@ public sealed class AgentOrphanRecoveryService(
             RunType = runType,
         };
 
-        var run = runType switch
-        {
-            PipelineRunType.Review => PipelineRun.CreateReview(creationParams),
-            PipelineRunType.DecompositionAnalysis => PipelineRun.CreateDecomposition(creationParams),
-            // TODO: [WARNING] This arm is currently unreachable: ToDefaultRunType() maps
-            // WorkItemTaskType.Decomposition → PipelineRunType.DecompositionAnalysis, never
-            // PipelineRunType.Decomposition. Consequently a Phase-2 decomposition run whose Redis
-            // hash expires mid-execution is always reconstructed as Phase 1 (DecompositionAnalysis).
-            // Whether that is correct behaviour is a product decision, but it is undocumented and
-            // the arm creates a misleading signal. Consider either removing the arm (and documenting
-            // the Phase-2 → Phase-1 fallback explicitly) or introducing a WorkItemTaskType for Phase 2
-            // that maps here.
-            PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(creationParams),
-            _ => PipelineRun.CreateImplementation(creationParams),
-        };
+        var run = PipelineRun.CreateForRunType(creationParams);
         run.ProjectId = record.ProjectId?.ToString();
         return run;
     }

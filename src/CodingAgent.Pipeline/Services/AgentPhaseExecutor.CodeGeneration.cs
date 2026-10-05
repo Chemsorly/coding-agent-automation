@@ -35,7 +35,7 @@ public partial class AgentPhaseExecutor
 
             AgentResult agentResult;
             agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                context.AgentProvider,
+                new AgentMonitorContext(context.AgentProvider, run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger),
                 new AgentRequest
                 {
                     Prompt = prompt,
@@ -47,7 +47,7 @@ public partial class AgentPhaseExecutor
                         : null,
                     EnvironmentVariables = context.InjectedSecrets
                 },
-                run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
+                ct,
                 line => context.Callbacks.EmitOutputLine(line),
                 reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "codegen");

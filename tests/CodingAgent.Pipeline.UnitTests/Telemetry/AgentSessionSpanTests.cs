@@ -51,8 +51,7 @@ public class AgentSessionSpanTests : IDisposable
         var provider = CreateMockProvider(AgentProviderType.ClaudeCode, model: "claude-opus-5-5", result: agentResult);
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), CreateRun(), CreateConfig(),
-            "Codegen agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            new AgentMonitorContext(provider.Object, CreateRun(), CreateConfig(), "Codegen agent", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None,
             phase: uniquePhase);
 
         var span = SpanFor(uniquePhase);
@@ -81,8 +80,7 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "Review agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            new AgentMonitorContext(provider.Object, run, config, "Review agent", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None,
             phase: uniquePhase);
 
         var span = SpanFor(uniquePhase);
@@ -112,8 +110,7 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "Code generation", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            new AgentMonitorContext(provider.Object, run, config, "Code generation", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None,
             phase: uniquePhase);
 
         var span = SpanFor(uniquePhase);
@@ -135,8 +132,7 @@ public class AgentSessionSpanTests : IDisposable
         };
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, request, run, config,
-            "QGC retry agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            new AgentMonitorContext(provider.Object, run, config, "QGC retry agent", null, Serilog.Log.Logger), request, CancellationToken.None,
             phase: uniquePhase);
 
         var span = SpanFor(uniquePhase);
@@ -154,8 +150,7 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "Code generation", onChange: null, Serilog.Log.Logger, CancellationToken.None);
+            new AgentMonitorContext(provider.Object, run, config, "Code generation", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None);
 
         _stoppedActivities.Should().Contain(a => a.OperationName == "invoke_agent codegen"
             && (string?)a.GetTagItem("pipeline.phase") == "codegen");
@@ -170,8 +165,7 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "Analysis agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            new AgentMonitorContext(provider.Object, run, config, "Analysis agent", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None,
             phase: uniquePhase);
 
         run.Metrics.PhaseBreakdown.Should().ContainKey(uniquePhase);
@@ -193,11 +187,9 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "QGC retry", onChange: null, Serilog.Log.Logger, CancellationToken.None, phase: uniquePhase);
+            new AgentMonitorContext(provider.Object, run, config, "QGC retry", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None, phase: uniquePhase);
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "QGC retry", onChange: null, Serilog.Log.Logger, CancellationToken.None, phase: uniquePhase);
+            new AgentMonitorContext(provider.Object, run, config, "QGC retry", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None, phase: uniquePhase);
 
         run.Metrics.PhaseBreakdown[uniquePhase].SessionCount.Should().Be(2);
     }
@@ -210,8 +202,7 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "Code generation", onChange: null, Serilog.Log.Logger, CancellationToken.None);
+            new AgentMonitorContext(provider.Object, run, config, "Code generation", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None);
 
         run.Metrics.PhaseBreakdown.Should().BeEmpty("no phase= was specified so no session is accumulated");
     }
@@ -225,8 +216,7 @@ public class AgentSessionSpanTests : IDisposable
         var config = CreateConfig();
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            provider.Object, CreateRequest(), run, config,
-            "Reflection", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            new AgentMonitorContext(provider.Object, run, config, "Reflection", null, Serilog.Log.Logger), CreateRequest(), CancellationToken.None,
             phase: uniquePhase);
 
         var span = SpanFor(uniquePhase);

@@ -76,46 +76,7 @@ public static class SchedulerServiceCollectionExtensions
             .AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         // ── Store shims (moved to Api.Client.Stores in Spec 047) ─────────────
-        var ttlSeconds = config.GetValue<int?>("PipelineLoop:ConfigCacheTtlSeconds");
-
-        services.AddSingleton<ApiPipelineConfigStore>(sp =>
-        {
-            var store = new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
-            return store;
-        });
-        services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<ApiPipelineConfigStore>());
-
-        services.AddSingleton<ApiProviderConfigStore>(sp =>
-        {
-            var store = new ApiProviderConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
-            return store;
-        });
-        services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<ApiProviderConfigStore>());
-
-        services.AddSingleton<ApiProjectStore>(sp =>
-        {
-            var store = new ApiProjectStore(sp.GetRequiredService<IPipelineApiConfigClient>());
-            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
-            return store;
-        });
-        services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<ApiProjectStore>());
-
-        services.AddSingleton<ApiConfigurationStore>(sp =>
-        {
-            var store = new ApiConfigurationStore(
-                sp.GetRequiredService<IPipelineApiConfigClient>(),
-                sp.GetRequiredService<ApiPipelineConfigStore>(),
-                sp.GetRequiredService<ApiProviderConfigStore>(),
-                sp.GetRequiredService<ApiProjectStore>());
-            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
-            return store;
-        });
-        services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
-        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
-        services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
-        services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+        AddApiStoreShims(services, config);
 
         // ── Redis (optional) ──────────────────────────────────────────────────
         var redisCs = config.GetValue<string>("SignalR:Redis:ConnectionString")
@@ -128,29 +89,7 @@ public static class SchedulerServiceCollectionExtensions
         }
 
         // ── Leader election (Scheduler-specific K8s lease) ───────────────────
-        services.AddSingleton<IKubernetes>(_ =>
-        {
-            try
-            {
-                var inCluster = KubernetesClientConfiguration.IsInCluster();
-                var k8sConfig = inCluster
-                    ? KubernetesClientConfiguration.InClusterConfig()
-                    : KubernetesClientConfiguration.BuildDefaultConfig();
-                if (string.IsNullOrEmpty(k8sConfig.Host) || k8sConfig.Host == "http://localhost:8080")
-                {
-                    Log.Warning("Scheduler: Kubernetes client host is empty or localhost — K8s unavailable.");
-                    return null!;
-                }
-                Log.Information("Scheduler: Kubernetes client configured ({Source})",
-                    inCluster ? "in-cluster" : "kubeconfig");
-                return new k8s.Kubernetes(k8sConfig);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Scheduler: Kubernetes client unavailable — leader election inactive");
-                return null!;
-            }
-        });
+        services.AddSingleton<IKubernetes>(_ => CreateKubernetesClient());
 
         services.AddOptions<LeaderElectionOptions>()
             .Configure<IConfiguration>((opts, cfg) =>
@@ -390,5 +329,73 @@ public static class SchedulerServiceCollectionExtensions
         }
 
         return services;
+    }
+
+    private static void AddApiStoreShims(IServiceCollection services, IConfiguration config)
+    {
+        var ttlSeconds = config.GetValue<int?>("PipelineLoop:ConfigCacheTtlSeconds");
+
+        services.AddSingleton<ApiPipelineConfigStore>(sp =>
+        {
+            var store = new ApiPipelineConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
+            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
+            return store;
+        });
+        services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<ApiPipelineConfigStore>());
+
+        services.AddSingleton<ApiProviderConfigStore>(sp =>
+        {
+            var store = new ApiProviderConfigStore(sp.GetRequiredService<IPipelineApiConfigClient>());
+            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
+            return store;
+        });
+        services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<ApiProviderConfigStore>());
+
+        services.AddSingleton<ApiProjectStore>(sp =>
+        {
+            var store = new ApiProjectStore(sp.GetRequiredService<IPipelineApiConfigClient>());
+            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
+            return store;
+        });
+        services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<ApiProjectStore>());
+
+        services.AddSingleton<ApiConfigurationStore>(sp =>
+        {
+            var store = new ApiConfigurationStore(
+                sp.GetRequiredService<IPipelineApiConfigClient>(),
+                sp.GetRequiredService<ApiPipelineConfigStore>(),
+                sp.GetRequiredService<ApiProviderConfigStore>(),
+                sp.GetRequiredService<ApiProjectStore>());
+            if (ttlSeconds is >= 0) store.CacheTtlSeconds = ttlSeconds.Value;
+            return store;
+        });
+        services.AddSingleton<IConfigurationStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+        services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+        services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
+    }
+
+    private static k8s.Kubernetes CreateKubernetesClient()
+    {
+        try
+        {
+            var inCluster = KubernetesClientConfiguration.IsInCluster();
+            var k8sConfig = inCluster
+                ? KubernetesClientConfiguration.InClusterConfig()
+                : KubernetesClientConfiguration.BuildDefaultConfig();
+            if (string.IsNullOrEmpty(k8sConfig.Host) || k8sConfig.Host == "http://localhost:8080")
+            {
+                Log.Warning("Scheduler: Kubernetes client host is empty or localhost — K8s unavailable.");
+                return null!;
+            }
+            Log.Information("Scheduler: Kubernetes client configured ({Source})",
+                inCluster ? "in-cluster" : "kubeconfig");
+            return new k8s.Kubernetes(k8sConfig);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Scheduler: Kubernetes client unavailable — leader election inactive");
+            return null!;
+        }
     }
 }

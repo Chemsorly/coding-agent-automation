@@ -123,7 +123,7 @@
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
-    private CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _cts = new();
     private bool _showForm;
     private bool _showDeleteConfirm;
     private string? _deletingProviderId;
@@ -295,7 +295,7 @@
             _validationMessage = null;
             await OnSaved.InvokeAsync(config);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _validationMessage = $"Failed to save: {ex.Message}";
@@ -353,7 +353,7 @@
             _validationMessage = $"{credMsg} — {repos.Count} repositories found";
             _validationSuccess = true;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _validationMessage = $"Failed to fetch repositories: {ex.Message}";
@@ -459,7 +459,7 @@
             _validationMessage = null;
             await OnSaved.InvokeAsync(config);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _validationMessage = $"Failed to save: {ex.Message}";

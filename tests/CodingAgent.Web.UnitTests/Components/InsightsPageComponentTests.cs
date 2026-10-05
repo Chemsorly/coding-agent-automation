@@ -27,9 +27,7 @@ public class InsightsPageComponentTests : BunitContext
     }
 
     private void Returns(params PipelineRunSummary[] runs) =>
-        _history.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        _history.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runs.ToList(), Page = 1, PageSize = 500, HasMore = false });
 
     private static PipelineRunSummary Run(PipelineStep finalStep, IReadOnlyList<GateOutcome>? gates = null, long tokens = 0, DateTimeOffset? startedAt = null) => new()
@@ -58,7 +56,8 @@ public class InsightsPageComponentTests : BunitContext
         Render<Insights>();
 
         _history.Verify(c => c.GetRunHistoryAsync(
-            1, 500, false, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.Is<RunHistoryQuery>(q => q.Page == 1 && q.PageSize == 500 && !q.FeedbackOnly && !q.IncludeActive),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -161,11 +160,9 @@ public class InsightsPageComponentTests : BunitContext
     {
         DateTimeOffset? capturedSince = DateTimeOffset.MaxValue; // sentinel — must be overwritten
         _history
-            .Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
-            .Callback<int, int, bool, bool, PipelineStep?, string?, DateTimeOffset?, PipelineRunType?, CancellationToken>(
-                (_, _, _, _, _, _, since, _, _) => capturedSince = since)
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<RunHistoryQuery, CancellationToken>(
+                (query, _) => capturedSince = query.Since)
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [Run(PipelineStep.Completed)], Page = 1, PageSize = 500, HasMore = false });
 
         var cut = Render<Insights>();
@@ -199,11 +196,9 @@ public class InsightsPageComponentTests : BunitContext
     {
         DateTimeOffset? capturedSince = DateTimeOffset.MaxValue; // sentinel
         _history
-            .Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
-            .Callback<int, int, bool, bool, PipelineStep?, string?, DateTimeOffset?, PipelineRunType?, CancellationToken>(
-                (_, _, _, _, _, _, since, _, _) => capturedSince = since)
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .Callback<RunHistoryQuery, CancellationToken>(
+                (query, _) => capturedSince = query.Since)
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [Run(PipelineStep.Completed)], Page = 1, PageSize = 500, HasMore = false });
 
         var cut = Render<Insights>();
@@ -222,9 +217,7 @@ public class InsightsPageComponentTests : BunitContext
     {
         // HasMore=true → "results may be partial" must be shown.
         _history
-            .Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = [Run(PipelineStep.Completed)],
@@ -241,9 +234,7 @@ public class InsightsPageComponentTests : BunitContext
 
         // HasMore=false → no truncation note.
         _history
-            .Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = [Run(PipelineStep.Completed)],

@@ -58,26 +58,21 @@ public static class PipelineRunEndpoints
     /// Returns paginated run history, optionally merged with in-flight active runs from
     /// IOrchestratorRunService. includeActive=true is used by the monitoring page so it can
     /// show dispatched/running jobs that haven't reached a terminal state yet.
+    /// The query-string keys (page, pageSize, feedbackOnly, includeActive, finalStep, projectId, since,
+    /// runType) bind to the <see cref="RunHistoryQuery"/> properties via <c>[AsParameters]</c>.
     /// </summary>
     internal static async Task<IResult> GetRunHistory(
         IPipelineRunHistoryService history,
         IOrchestratorRunService runService,
         IDbContextFactory<PipelineDbContext> dbFactory,
-        int page = 1,
-        int pageSize = 50,
-        bool feedbackOnly = false,
-        bool includeActive = false,
-        PipelineStep? finalStep = null,
-        string? projectId = null,
-        DateTimeOffset? since = null,
-        PipelineRunType? runType = null,
+        [AsParameters] RunHistoryQuery query,
         CancellationToken ct = default)
     {
-        var result = await history.GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, since, runType, ct);
+        var result = await history.GetRunHistoryAsync(query, ct);
 
         // Skip the in-flight merge when an outcome filter is set: active runs are non-terminal, so they
         // never match a Completed/Failed/Cancelled tab and merging them in would violate the filter.
-        if (!includeActive || feedbackOnly || finalStep is not null)
+        if (!query.IncludeActive || query.FeedbackOnly || query.FinalStep is not null)
             return TypedResults.Ok(result);
 
         // Merge in-flight runs from IOrchestratorRunService that are not yet in history.
@@ -131,8 +126,8 @@ public static class PipelineRunEndpoints
             .Where(r => !pendingIds.Contains(r.RunId) || r.RunType == PipelineRunType.Consolidation)
             .Where(r => !activeRunIds.Contains(r.RunId))        // not already in history page
             .Select(r => r.ToSummary())
-            .Where(s => string.IsNullOrEmpty(projectId) || s.ProjectId == projectId)  // honor the project scope
-            .Where(s => runType == null || s.RunType == runType)                       // honor the runType scope
+            .Where(s => string.IsNullOrEmpty(query.ProjectId) || s.ProjectId == query.ProjectId)  // honor the project scope
+            .Where(s => query.RunType == null || s.RunType == query.RunType)                 // honor the runType scope
             .ToList();
 
         if (inFlightSummaries.Count == 0)

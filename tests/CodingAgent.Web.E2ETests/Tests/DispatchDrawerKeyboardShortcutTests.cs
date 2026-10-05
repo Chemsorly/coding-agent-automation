@@ -167,6 +167,9 @@ public sealed class DispatchDrawerKeyboardShortcutTests : E2ETestBase
             "() => document.querySelector('[data-testid=\"issue-row-11\"]')?.classList.contains('drawer-item-highlighted')",
             null,
             new PageWaitForFunctionOptions { Timeout = 5_000 });
+
+        // The highlight never leaves the list: exactly one row carries it.
+        Assert.Equal(1, await Page.Locator(".drawer-item-highlighted").CountAsync());
     }
 
     // ── Scenario 2: Enter dispatches once ───────────────────────────────────────

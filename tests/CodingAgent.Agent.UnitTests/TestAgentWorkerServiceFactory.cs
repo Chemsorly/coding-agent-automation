@@ -36,7 +36,7 @@ internal static class TestAgentWorkerServiceFactory
 
         var slotManager = new ChatSlotManager();
         var lifecycle = new AgentConnectionLifecycle(
-            hm, hmFactory, slotManager,
+            hm, hmFactory,
             new AgentId("test-agent"),
             lifetime, mockLogger);
 

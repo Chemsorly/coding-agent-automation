@@ -43,7 +43,7 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
         var lifecycle = new AgentConnectionLifecycle(
             TestAgentWorkerServiceFactory.CreateTestHubManager(logger),
             TestAgentWorkerServiceFactory.CreateTestHubManagerFactory(logger),
-            slotManager, new AgentId("test-chat"), lifetime, logger);
+            new AgentId("test-chat"), lifetime, logger);
 
         return new ChatJobExecutor(new ChatJobExecutorDependencies(
             lifecycle, slotManager, new Mock<KiroCliLib.Core.IKiroCliOrchestrator>(MockBehavior.Strict).Object,

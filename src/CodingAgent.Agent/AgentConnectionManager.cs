@@ -73,15 +73,16 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             factory: hubManagerFactory,
             logger: logger,
             lifetime: lifetime,
-            wireHandlers: WireEventHandlers,
-            registerAgent: (mgr, ct) =>
-            {
-                if (_currentRegistration is null)
-                    return Task.CompletedTask;
-                return _signalRPipeline.ExecuteAsync(async token =>
-                    await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, _currentRegistration, token), ct).AsTask();
-            },
-            afterSuccessfulReconnect: null);
+            callbacks: new ReconnectCallbacks(
+                WireHandlers: WireEventHandlers,
+                RegisterAgent: (mgr, ct) =>
+                {
+                    if (_currentRegistration is null)
+                        return Task.CompletedTask;
+                    return _signalRPipeline.ExecuteAsync(async token =>
+                        await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, _currentRegistration, token), ct).AsTask();
+                },
+                AfterSuccessfulReconnect: null));
 
         WireEventHandlers(hubManager);
     }
