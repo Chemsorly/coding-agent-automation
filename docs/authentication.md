@@ -102,7 +102,7 @@ The web host reads the client's scheme from `X-Forwarded-Proto`, so TLS can end 
 
 With a `tls` section on the Ingress, the web host also sends clients that reached the ingress over plain HTTP (`X-Forwarded-Proto: http`) to the same URL over HTTPS, so the login form never posts a password unencrypted. Requests without `X-Forwarded-Proto` (`kubectl port-forward`, probes) are served as they are. When TLS ends in front of the ingress and the ingress itself sees only HTTP, set `web.ingress.httpsRedirect: false`; otherwise every request is redirected. HTTPS responses carry HSTS (`Strict-Transport-Security`), so a browser that once opened the UI over HTTPS keeps using HTTPS.
 
-Every response also carries `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a Content Security Policy with `base-uri`, `form-action`, `frame-ancestors` and `object-src`. The policy does not restrict scripts or styles, because the page shell has inline scripts.
+Every response also carries `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a Content Security Policy with `base-uri`, `form-action`, `frame-ancestors` and `object-src`. The policy does not restrict scripts or styles, because the page shell has inline scripts. `Cross-Origin-Resource-Policy` is `same-origin` everywhere except `/favicon.svg`, which is `cross-origin` so dashboards on other hosts can show it as the service icon.
 
 Running several web replicas requires `signalr.redis.connectionString`: sessions are encrypted with a key ring shared through Redis. The chart refuses `web.replicas > 1` without it.
 
