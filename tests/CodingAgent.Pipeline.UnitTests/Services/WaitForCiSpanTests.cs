@@ -230,6 +230,11 @@ public class WaitForCiSpanTests : IDisposable
         var span = _activities.FirstOrDefault(a => a.DisplayName == "WaitForCi"
             && Equals(a.GetTagItem("pipeline.run_id"), run.RunId));
         span.Should().NotBeNull("AppendExternalCiIfNeededAsync must emit a WaitForCi span even when polling throws");
+        // TODO: [WARNING] Activity.GetTagItem returns object, and the stored type depends on how SetTag
+        // serialises the value (boxed int vs string). If the production code stores the tag as a string
+        // "2" rather than an int 2, the Be(2) assertion below would fail even though the tag is correct.
+        // Verify or document the expected stored type and update the assertion (e.g. Be("2") or cast) to
+        // make the comparison unambiguous and resilient to storage-type changes.
         span!.GetTagItem("pipeline.ci_infra_retries").Should().Be(2,
             "pipeline.ci_infra_retries must be set on the pre-PR error span to match the post-PR path (issue #3346)");
         span.GetTagItem("pipeline.ci_status").Should().Be("error");
