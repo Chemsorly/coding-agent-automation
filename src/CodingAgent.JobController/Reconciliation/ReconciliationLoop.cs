@@ -39,6 +39,26 @@ internal sealed record CanaryViolation : ExecutionAgeResult;
 /// </summary>
 internal sealed record Enforceable(double AgeSeconds) : ExecutionAgeResult;
 
+// ─── Pure timeout-action classifier ──────────────────────────────────────────
+
+/// <summary>
+/// Pure decision returned by <see cref="ReconciliationLoop.ResolveTimeoutAction"/>.
+/// </summary>
+internal enum TimeoutAction
+{
+    /// <summary>
+    /// Skip this item — it is not yet eligible for timeout enforcement.
+    /// Reasons include: non-Running status, non-positive TimeoutSeconds,
+    /// within grace window, canary violation, or execution age below threshold.
+    /// </summary>
+    Skip,
+
+    /// <summary>
+    /// The item has exceeded its configured timeout — mark it Failed.
+    /// </summary>
+    Enforce
+}
+
 // ─── ReconciliationLoop ───────────────────────────────────────────────────────
 
 /// <summary>
@@ -208,19 +228,10 @@ public sealed class ReconciliationLoop
             if (item.TimeoutSeconds <= 0) continue;
 
             var ageResult = ResolveExecutionAge(item);
-            if (ageResult is WithinGrace or CanaryViolation) continue;
 
-            if (ageResult is not Enforceable enforceable) continue;
-
-            // Not timed out yet — skip.
-            // NOTE (issue #3243): The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
-            // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
-            // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
-            // use the same threshold, so the canary invariant provides no protection for items at
-            // exactly that boundary — the item is immediately enforced on the first cycle it is
-            // returned by the query. This is a gap in the canary design that was not present when
-            // the global timeout was always >> 60s. (DotNetSpecialist review finding)
-            if (enforceable.AgeSeconds < item.TimeoutSeconds) continue;
+            // ResolveTimeoutAction is a pure function: it decides Skip vs Enforce from the
+            // already-computed execution age and the per-item threshold. No I/O or dispatch.
+            if (ResolveTimeoutAction(ageResult, item.TimeoutSeconds) == TimeoutAction.Skip) continue;
 
             _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
                 item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", item.TimeoutSeconds);
@@ -532,6 +543,51 @@ public sealed class ReconciliationLoop
         }
 
         return new Enforceable(executionAgeSeconds);
+    }
+
+    /// <summary>
+    /// Pure, side-effect-free function that decides whether to enforce a timeout for a work item,
+    /// given an already-computed <see cref="ExecutionAgeResult"/> and the item's per-item timeout.
+    /// </summary>
+    /// <param name="ageResult">
+    /// The execution-age classification returned by <see cref="ResolveExecutionAge"/>.
+    /// <see cref="WithinGrace"/> and <see cref="CanaryViolation"/> both map to <see cref="TimeoutAction.Skip"/>.
+    /// </param>
+    /// <param name="timeoutSeconds">
+    /// The per-item timeout in seconds (<see cref="ActiveWorkItemDto.TimeoutSeconds"/>).
+    /// Callers must already have validated that this is positive before calling this method.
+    /// </param>
+    /// <returns>
+    /// <see cref="TimeoutAction.Enforce"/> when <paramref name="ageResult"/> is
+    /// <see cref="Enforceable"/> and its age has reached or exceeded <paramref name="timeoutSeconds"/>;
+    /// <see cref="TimeoutAction.Skip"/> in all other cases.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Boundary semantics: the condition is <c>ageSeconds &gt;= timeoutSeconds</c>, so an item at
+    /// exactly the threshold is considered timed out.  This is consistent with the strict-less-than
+    /// guard previously inlined in <c>EnforceTimeoutsAsync</c>:
+    /// <c>if (enforceable.AgeSeconds &lt; item.TimeoutSeconds) continue;</c>
+    /// means "skip when age is strictly less than threshold", i.e. enforce at equality.
+    /// </para>
+    /// <para>
+    /// NOTE (issue #3243): at <c>TimeoutSeconds == 60</c> (the canary minimum), the canary guard
+    /// (<c>executionAgeSeconds &lt; 60</c>) and this boundary (<c>ageSeconds &gt;= 60</c>) share the
+    /// same threshold. An item with an age of exactly 60s was not blocked by the canary guard
+    /// (which returns <see cref="Enforceable"/>) and will immediately be enforced. This is a known
+    /// gap in the canary design when short per-project timeouts equal the canary minimum.
+    /// </para>
+    /// </remarks>
+    internal static TimeoutAction ResolveTimeoutAction(ExecutionAgeResult ageResult, int timeoutSeconds)
+    {
+        if (ageResult is not Enforceable enforceable)
+            return TimeoutAction.Skip;
+
+        // Enforce when age has reached or exceeded the configured threshold.
+        // Strict-less-than means equality (age == timeoutSeconds) triggers enforcement.
+        return enforceable.AgeSeconds >= timeoutSeconds
+            ? TimeoutAction.Enforce
+            : TimeoutAction.Skip;
     }
 
     /// <summary>
