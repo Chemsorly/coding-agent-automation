@@ -270,9 +270,9 @@
         var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
         State.SetProject(id, name);
         try { await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", id); }
-        catch (JSDisconnectedException) { }
-        catch (JSException) { }
-        catch (InvalidOperationException) { }
+        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+        catch (JSException) { /* Browser-side failure is non-fatal here. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
     }
 
     private async Task RefreshAttentionCountAsync()
@@ -301,7 +301,7 @@
     private async void HandleProjectChanged()
     {
         try { await RefreshAttentionCountAsync(); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private void HandleStateChanged() => InvokeAsync(StateHasChanged);
@@ -363,10 +363,10 @@
                 // Signal to Faro that the Blazor circuit connected successfully (ported from MainLayout).
                 await Faro.PushEventAsync("blazor.circuit.connected");
             }
-            catch (JSDisconnectedException) { }
-            catch (JSException) { }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+            catch (JSException) { /* Browser-side failure is non-fatal here. */ }
+            catch (ObjectDisposedException) { /* Already disposed. */ }
+            catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
         }
 
         // Flush any notifications added since the last render to Faro (ported from MainLayout).
@@ -428,7 +428,7 @@
                 break;
         }
         try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private void CloseShortcutHelp()
@@ -441,8 +441,8 @@
     {
         _theme = _theme == "dark" ? "light" : "dark";
         try { await JS.InvokeVoidAsync("setTheme", _theme); }
-        catch (JSException) { }
-        catch (InvalidOperationException) { }
+        catch (JSException) { /* Browser-side failure is non-fatal here. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
     }
 
     public async ValueTask DisposeAsync()
@@ -453,8 +453,8 @@
         // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
         await Faro.PushEventAsync("blazor.circuit.disconnected");
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
-        catch (JSDisconnectedException) { }
-        catch (InvalidOperationException) { }
+        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
         _dotNetRef?.Dispose();
     }
 }
