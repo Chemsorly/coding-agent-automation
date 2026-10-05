@@ -38,7 +38,7 @@ All settings live under `auth` in the Helm values. The chart renders them, witho
 ```yaml
 auth:
   sessionDuration: 12h          # fixed lifetime, no sliding renewal ("<n>h", "<n>m" or a TimeSpan)
-  loginRateLimitPerMinute: 5    # local admin login attempts per client IP
+  loginRateLimitPerMinute: 5    # local admin login attempts per client IP and web pod
 
   admin:
     enabled: true               # local break-glass account "admin", always a global admin
@@ -86,7 +86,7 @@ kubectl get secret <release>-coding-agent-automation-admin -n <namespace> \
 
 To supply your own password, create a Secret and set `auth.admin.existingSecret` (and `existingSecretKey` if the key is not `password`). Disable the local admin with `auth.admin.enabled: false` once OIDC works; at least one login method must stay enabled.
 
-The login form is rate limited per client IP (`auth.loginRateLimitPerMinute`).
+The login form is rate limited per client IP (`auth.loginRateLimitPerMinute`). Each web pod counts on its own, so with `web.replicas: 2` a client gets up to twice the limit per minute.
 
 ## Exposing the UI
 
@@ -99,6 +99,10 @@ https://<web host>/signin-oidc
 ```
 
 The web host reads the client's scheme from `X-Forwarded-Proto`, so TLS can end at the ingress. It does not trust `X-Forwarded-Host`; the ingress must pass the original `Host` header (the default for ingress-nginx and Traefik).
+
+With a `tls` section on the Ingress, the web host also sends clients that reached the ingress over plain HTTP (`X-Forwarded-Proto: http`) to the same URL over HTTPS, so the login form never posts a password unencrypted. Requests without `X-Forwarded-Proto` (`kubectl port-forward`, probes) are served as they are. When TLS ends in front of the ingress and the ingress itself sees only HTTP, set `web.ingress.httpsRedirect: false`; otherwise every request is redirected. HTTPS responses carry HSTS (`Strict-Transport-Security`), so a browser that once opened the UI over HTTPS keeps using HTTPS.
+
+Every response also carries `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Resource-Policy` and a Content Security Policy with `base-uri`, `form-action`, `frame-ancestors` and `object-src`. The policy does not restrict scripts or styles, because the page shell has inline scripts.
 
 Running several web replicas requires `signalr.redis.connectionString`: sessions are encrypted with a key ring shared through Redis. The chart refuses `web.replicas > 1` without it.
 
