@@ -80,8 +80,8 @@ public sealed partial class PipelineRun
             RepoProviderConfigId = p.RepoProviderConfigId,
             StartedAt = now.UtcDateTime,
             StartedAtOffset = now,
-        // LastStepChangeAt is intentionally set independently from `now` — when startedAt is provided,
-        // these will differ (preserves pre-refactor behavior).
+            // LastStepChangeAt is intentionally set independently from `now` — when startedAt is provided,
+            // these will differ (preserves pre-refactor behavior).
             LastStepChangeAt = DateTimeOffset.UtcNow,
             CurrentStep = PipelineStep.Created,
             InitiatedBy = p.InitiatedBy,
