@@ -1,6 +1,11 @@
 using System.Net;
 using AwesomeAssertions;
+using CodingAgent.Web.Auth;
 using CodingAgent.Web.IntegrationTests.Helpers;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.IntegrationTests.Auth.Keycloak;
 
@@ -112,6 +117,25 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         response.StatusCode.Should().Be(HttpStatusCode.Redirect);
         response.Headers.Location!.ToString().Should().Be("/login?error=oidc");
         (await driver.App.GetStringAsync("/login?error=oidc")).Should().Contain("Sign-in with Keycloak failed");
+    }
+
+    /// <summary>
+    /// Keycloak rejects the pushed authorization request of a client it does not know. That
+    /// failure happens while starting the sign-in, before any redirect to Keycloak.
+    /// </summary>
+    [RequiresDockerFact]
+    public async Task UnknownClient_PushedRequestRejected_LandsOnLoginWithError()
+    {
+        if (_fixture.IsDockerUnavailable) return;
+        using var factory = _fixture.Factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            services.Configure<OpenIdConnectOptions>(OidcRegistration.OidcScheme, o => o.ClientId = "unknown-client")));
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = true });
+
+        var response = await client.GetAsync("/auth/oidc?returnUrl=%2Ftest%2Fwhoami");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        response.Headers.Location!.ToString().Should().Be("/login?error=oidc");
+        (await client.GetStringAsync(response.Headers.Location)).Should().Contain("Sign-in with Keycloak failed");
     }
 
     [RequiresDockerFact]
