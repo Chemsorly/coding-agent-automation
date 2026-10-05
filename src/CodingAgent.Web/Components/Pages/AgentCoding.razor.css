@@ -87,22 +87,6 @@
     opacity: 0.7;
 }
 
-.drawer-badge-blocked {
-    background: var(--danger, #ef4444);
-    color: white;
-    font-size: 0.7rem;
-    padding: 1px 6px;
-    border-radius: 3px;
-}
-
-.drawer-badge-ready {
-    background: var(--success, #22c55e);
-    color: white;
-    font-size: 0.7rem;
-    padding: 1px 6px;
-    border-radius: 3px;
-}
-
 /* ═══ Toggle Switch ═══ */
 .toggle-switch {
     position: relative;
