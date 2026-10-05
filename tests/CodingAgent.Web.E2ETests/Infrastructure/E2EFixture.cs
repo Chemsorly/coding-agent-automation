@@ -1,5 +1,6 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Web.E2ETests.Fakes;
+using CodingAgent.Web.TestUtilities;
 using CodingAgent.AgentGateway;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Orchestration.Dispatch;

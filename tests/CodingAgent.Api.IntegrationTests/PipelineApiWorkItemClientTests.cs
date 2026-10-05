@@ -7,6 +7,7 @@ using CodingAgent.Pipeline.Models;
 using WireMock.RequestBuilders;
 using WireMock.ResponseBuilders;
 using WireMock.Server;
+using System.Text;
 
 namespace CodingAgent.Api.IntegrationTests;
 
@@ -59,6 +60,26 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         IssueIdentifier = "owner/repo#5"
     };
 
+    private static (IPipelineApiWorkItemClient Client, StubHandler Handler) CreateWithStubHandler()
+    {
+        var handler = new StubHandler();
+        var http = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new PipelineApiWorkItemClient(http);
+        return (client, handler);
+    }
+
+    private static HttpResponseMessage JsonResponse(object value, HttpStatusCode status = HttpStatusCode.OK)
+    {
+        var json = JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
+        return new HttpResponseMessage(status)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        };
+    }
+
+    private static HttpResponseMessage NullJson(HttpStatusCode status = HttpStatusCode.OK)
+        => new(status) { Content = new StringContent("null", Encoding.UTF8, "application/json") };
+
     // ── GetPendingAsync ────────────────────────────────────────────────────────
 
     [Fact]
@@ -92,6 +113,74 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         var result = await _client.GetPendingAsync();
 
         result.Should().BeEmpty();
+    }
+
+    /// <summary>
+    /// Regression: production crash — orchestrator threw JsonException with
+    /// "missing required properties including: 'timeoutSeconds'" when the API pod
+    /// was still running the pre-deployment binary that did not yet emit the field.
+    /// The HTTP-level client must propagate this as a thrown exception, not silently
+    /// return a list with TimeoutSeconds=0.
+    /// </summary>
+    [Fact]
+    public async Task GetPendingAsync_ResponseMissingTimeoutSeconds_ThrowsJsonException()
+    {
+        // Simulate the old API response: all fields present except timeoutSeconds.
+        const string bodyMissingTimeout = """
+            [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "issueIdentifier": "owner/repo#1",
+                "issueProviderConfigId": "github",
+                "taskType": 0,
+                "createdAt": "2026-08-29T12:00:00+00:00",
+                "agentSelector": "kiro",
+                "retryCount": 0
+            }]
+            """;
+
+        _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(bodyMissingTimeout));
+
+        var act = () => _client.GetPendingAsync();
+
+        await act.Should().ThrowAsync<JsonException>(
+            "timeoutSeconds is required on PendingWorkItemDto; a response without it must throw, " +
+            "not silently default to 0 (which would produce an invalid activeDeadlineSeconds=60 on K8s Jobs)");
+    }
+
+    [Fact]
+    public async Task GetPendingAsync_TimeoutSecondsNonZero_DeserializesCorrectValue()
+    {
+        // Regression: previous tests only asserted count, never asserting the TimeoutSeconds value.
+        // A bug in the mapping (e.g., always emitting 0 from the API) would have been invisible.
+        const string body = """
+            [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "issueIdentifier": "owner/repo#1",
+                "issueProviderConfigId": "github",
+                "taskType": 0,
+                "createdAt": "2026-08-29T12:00:00+00:00",
+                "agentSelector": "kiro",
+                "retryCount": 0,
+                "timeoutSeconds": 7200
+            }]
+            """;
+
+        _server.Given(Request.Create().WithPath("/api/work-items/pending").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(body));
+
+        var result = await _client.GetPendingAsync();
+
+        result.Should().HaveCount(1);
+        result[0].TimeoutSeconds.Should().Be(7200,
+            "the TimeoutSeconds value from the API response must round-trip to the client " +
+            "so the Job Controller can compute the correct activeDeadlineSeconds on the K8s Job");
     }
 
     // ── ClaimAsync ─────────────────────────────────────────────────────────────
@@ -465,6 +554,19 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
             e.RequestMessage.Path == $"/api/work-items/{workItemId}/requeue");
     }
 
+    [Fact]
+    public async Task RequeueAsync_Conflict_DoesNotThrow()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/requeue").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        // 409 means item is already Pending/Running/terminal — the requeue intent is satisfied.
+        await _client.RequeueAsync(workItemId); // must not throw
+
+        _server.LogEntries.Should().HaveCount(1, "the request was sent and the 409 was received");
+    }
+
     // ── GetActiveAsync ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -534,6 +636,20 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         result.Should().BeFalse();
     }
 
+    [Fact]
+    public async Task IsIssueDistributedAsync_NullResponse_ReturnsFalse()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/is-distributed").UsingGet())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("null"));
+
+        var result = await _client.IsIssueDistributedAsync("owner/repo#1", "provider-1");
+
+        result.Should().BeFalse("null response falls back to false via null-coalescing");
+    }
+
     // ── GetStalenessAsync ──────────────────────────────────────────────────────
 
     [Fact]
@@ -565,6 +681,23 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
 
         result.Should().NotBeNull();
         result!.HasAgentErrorSince.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task GetStalenessAsync_EncodesQueryParams()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse(new WorkItemStalenessResult
+        {
+            HasAgentErrorSince = false,
+            LastSuccessfulCompletion = null
+        });
+
+        await client.GetStalenessAsync("GH-1", "github", DateTimeOffset.UtcNow);
+
+        handler.LastRequest!.RequestUri!.PathAndQuery
+            .Should().Contain("issueIdentifier=GH-1")
+            .And.Contain("issueProviderConfigId=github");
     }
 
     // ── PostLabelSwapAsync ─────────────────────────────────────────────────────
@@ -604,5 +737,241 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         _server.LogEntries.Should().Contain(e =>
             e.RequestMessage!.Method == "POST" &&
             e.RequestMessage.Path == $"/api/work-items/{workItemId}/last-progress");
+    }
+
+    // ── SetPriorityAsync ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SetPriorityAsync_Success_DoesNotThrow()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/priority").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(200));
+
+        var act = () => _client.SetPriorityAsync(workItemId, 500);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task SetPriorityAsync_Conflict_ThrowsHttpRequestException()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/priority").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var act = () => _client.SetPriorityAsync(workItemId, 100);
+        await act.Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task SetPriorityAsync_BadRequest_ThrowsHttpRequestException()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/priority").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(400));
+
+        var act = () => _client.SetPriorityAsync(workItemId, -1);
+        await act.Should().ThrowAsync<HttpRequestException>();
+        // TODO: The three SetPriorityAsync tests do not verify the request body serialisation.
+        // WireMock stubs match on path only, so they would pass even if the body were empty or
+        // malformed. Add a test that inspects the recorded request body to confirm it contains
+        // {"priorityWeight": <value>} so regressions in payload serialisation are caught.
+    }
+
+    // ── DispatchPendingAsync ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedTrue_ReturnsDispatched()
+    {
+        // Issue #2976: 200 with dispatched:true (not 200 with no body) is the success response.
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":true,"reason":"none"}"""));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.Dispatched,
+            "200 OK with dispatched:true must return Dispatched so the poller continues to the next item");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_ConcurrencyLimit_ReturnsPermanentRejection()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"concurrency_limit"}"""));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.PermanentRejection,
+            "200 with dispatched:false must return PermanentRejection (stop selector this cycle)");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_NotPending_ReturnsPermanentRejection()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"not_pending"}"""));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.PermanentRejection,
+            "200 with dispatched:false (not_pending) must return PermanentRejection");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_200WithDispatchedFalse_NoTemplate_ReturnsPermanentRejection()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody("""{"dispatched":false,"reason":"no_template"}"""));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.PermanentRejection,
+            "200 with dispatched:false (no_template) must return PermanentRejection");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_409_ThrowsHttpRequestException()
+    {
+        // Issue #2976: 409 is no longer an expected response from this endpoint.
+        // The client must surface it as an exception (via EnsureSuccessStatusCode).
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(409));
+
+        var act = () => _client.DispatchPendingAsync(workItemId);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "409 is no longer an expected response; it must surface as an exception");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_ServiceUnavailable_ReturnsTransient()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(503));
+
+        var result = await _client.DispatchPendingAsync(workItemId);
+
+        result.Should().Be(DispatchPendingResult.Transient,
+            "503 Service Unavailable must return Transient so the Scheduler poller retries next cycle");
+    }
+
+    [Fact]
+    public async Task DispatchPendingAsync_UnexpectedStatus_ThrowsHttpRequestException()
+    {
+        var workItemId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(500));
+
+        var act = () => _client.DispatchPendingAsync(workItemId);
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "unexpected status codes (e.g. 500 Internal Server Error) must throw, not be silently swallowed");
+    }
+
+    // ── DispatchAsync ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchAsync_Success_ReturnsWorkItemId()
+    {
+        var expectedId = Guid.NewGuid();
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(JsonSerializer.Serialize(expectedId)));
+
+        var result = await _client.DispatchAsync(new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("owner/repo#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            RunId = Guid.NewGuid().ToString()
+        });
+
+        result.Should().Be(expectedId, "DispatchAsync must return the WorkItemId from the response body");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_ServerError_ThrowsHttpRequestException()
+    {
+        _server.Given(Request.Create().WithPath("/api/work-items/dispatch").UsingPost())
+            .RespondWith(Response.Create().WithStatusCode(503));
+
+        var act = () => _client.DispatchAsync(new JobDistributionRequest
+        {
+            IssueIdentifier = new IssueIdentifier("owner/repo#1"),
+            IssueProviderConfigId = "prov-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 3600,
+            RunId = Guid.NewGuid().ToString()
+        });
+
+        await act.Should().ThrowAsync<HttpRequestException>(
+            "503 from the dispatch endpoint must propagate as HttpRequestException via EnsureSuccessStatusCode");
+    }
+
+    // ── GetActiveDecompositionCountAsync ──────────────────────────────────
+
+    [Fact]
+    public async Task GetActiveDecompositionCountAsync_ReturnsCount()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse(new { count = 3 });
+
+        var result = await client.GetActiveDecompositionCountAsync();
+
+        result.Should().Be(3);
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be("/api/work-items/active-decomposition-count");
+    }
+
+    [Fact]
+    public async Task GetActiveDecompositionCountAsync_WhenNull_ReturnsZero()
+    {
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => NullJson();
+
+        var result = await client.GetActiveDecompositionCountAsync();
+
+        result.Should().Be(0, "null deserialization result must fall back to 0");
+    }
+
+    // ── Stub ──────────────────────────────────────────────────────────────
+
+    internal sealed class StubHandler : HttpMessageHandler
+    {
+        public Func<HttpRequestMessage, HttpResponseMessage>? Respond { get; set; }
+        public HttpRequestMessage? LastRequest { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(Respond?.Invoke(request) ?? new HttpResponseMessage(HttpStatusCode.OK));
+        }
     }
 }

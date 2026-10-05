@@ -63,7 +63,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<WebUiHostMa
     public string? SchedulerBaseUrl { get; set; }
 
     // Shared fake instances — accessible by tests for seeding and assertions
-    public Fakes.InMemoryConfigurationStore ConfigStore { get; } = new();
+    public InMemoryConfigurationStore ConfigStore { get; } = new(FakeProviderFactory.ExtraProviderConfigs);
     public FakeProviderFactory FakeProviders { get; } = new();
 
     /// <summary>Pipeline API config client backed by <see cref="ConfigStore"/>.</summary>

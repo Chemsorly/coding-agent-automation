@@ -1,10 +1,15 @@
+using AwesomeAssertions;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
-public class DrawerStateServiceTests
+public class DrawerStateServiceTests : IDisposable
 {
+    private readonly DrawerStateService<string> _sut = CreateStringDrawer();
+
+    public void Dispose() => _sut.Dispose();
+
     private static PipelineJobTemplate MakeTemplate(string id = "t-1", string name = "Test") =>
         new() { Id = id, Name = name, IssueProviderId = "ip-1", RepoProviderId = "rp-1" };
 
@@ -32,6 +37,19 @@ public class DrawerStateServiceTests
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (p, t) => Task.FromResult<(bool, string?, string?)>((true, null, "Dispatched")),
+            closeOnDispatch);
+    }
+
+    private static DrawerStateService<string> CreateStringDrawer(
+        Func<PipelineJobTemplate, Task<string?>>? loadItems = null,
+        Func<PipelineJobTemplate, Task<string?>>? loadLabels = null,
+        Func<string, PipelineJobTemplate, Task<(bool, string?, string?)>>? dispatch = null,
+        bool closeOnDispatch = false)
+    {
+        return new DrawerStateService<string>(
+            loadItems ?? (_ => Task.FromResult<string?>(null)),
+            loadLabels ?? (_ => Task.FromResult<string?>(null)),
+            dispatch ?? ((_, _) => Task.FromResult<(bool, string?, string?)>((true, null, "dispatched"))),
             closeOnDispatch);
     }
 
@@ -404,5 +422,85 @@ public class DrawerStateServiceTests
 
         Assert.Null(error);
         Assert.False(drawer.IsOpen);
+    }
+
+    // ── Initial state ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void InitialState_IsClosedAndEmpty()
+    {
+        _sut.IsOpen.Should().BeFalse();
+        _sut.Template.Should().BeNull();
+        _sut.Items.Should().BeEmpty();
+        _sut.Labels.Should().BeEmpty();
+        _sut.IsDispatching.Should().BeFalse();
+        _sut.Page.Should().Be(1);
+        _sut.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public void InitialState_CancellationToken_IsValid()
+    {
+        // CTS pre-created at construction — token must be usable before first open
+        _sut.CancellationToken.Should().NotBe(CancellationToken.None);
+    }
+
+    // ── Open ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task OpenAsync_ResetsCancellationToken()
+    {
+        var tokenBefore = _sut.CancellationToken;
+        await _sut.OpenAsync(MakeTemplate(), null);
+        var tokenAfter = _sut.CancellationToken;
+
+        // A new CTS was created — the token itself is different
+        tokenBefore.Should().NotBe(tokenAfter);
+    }
+
+    // ── Close ─────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Close_ClearsItems()
+    {
+        await _sut.OpenAsync(MakeTemplate(), null);
+        _sut.Items.Add("item-1");
+        _sut.Close();
+
+        _sut.Items.Should().BeEmpty();
+        _sut.Page.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Close_ClearsSelectedLabels()
+    {
+        await _sut.OpenAsync(MakeTemplate(), null);
+        _sut.ToggleLabel("kiro");
+        _sut.Close();
+
+        _sut.SelectedLabels.Should().BeEmpty();
+    }
+
+    // ── Dispatch ──────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DispatchAsync_IsDispatchingFalseEvenOnException()
+    {
+        using var sut = CreateStringDrawer(dispatch: (_, _) => throw new InvalidOperationException("dispatch failed"));
+        await sut.OpenAsync(MakeTemplate(), null);
+
+        var act = () => sut.DispatchAsync("item", null);
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        sut.IsDispatching.Should().BeFalse();
+    }
+
+    // ── Label management ──────────────────────────────────────────────────
+
+    [Fact]
+    public void ToggleLabel_MultipleLabels()
+    {
+        _sut.ToggleLabel("kiro");
+        _sut.ToggleLabel("dotnet");
+        _sut.SelectedLabels.Should().HaveCount(2);
     }
 }
