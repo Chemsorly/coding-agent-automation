@@ -465,8 +465,11 @@ internal sealed partial class DispatchScheduler
     {
         var hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
         var hasPrs = HasEligible(request.PollableTemplates, request.PrQueues, t => t.ReviewEnabled);
-        var hasDecomp = HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled)
-            && activeDecompositionCount < request.Config.MaxConcurrentDecompositions;
+        var hasDecompItems = HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled);
+        var concurrencyResult = _eligibilityEvaluator.EvaluateConcurrencyLimit(
+            activeCount: activeDecompositionCount,
+            maxAllowed: request.Config.MaxConcurrentDecompositions);
+        var hasDecomp = hasDecompItems && concurrencyResult.IsEligible;
         return (hasIssues, hasPrs, hasDecomp);
     }
 

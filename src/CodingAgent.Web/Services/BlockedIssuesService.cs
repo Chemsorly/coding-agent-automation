@@ -1,6 +1,7 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 
 namespace CodingAgent.Web.Services;
@@ -57,6 +58,7 @@ public sealed class BlockedIssuesService
     private readonly IPipelineApiConfigClient _config;
     private readonly IProviderFactory _providerFactory;
     private readonly IDependencyChecker _dependencyChecker;
+    private static readonly DispatchEligibilityEvaluator _eligibilityEvaluator = new();
 
     public BlockedIssuesService(
         IPipelineApiConfigClient config,
@@ -218,10 +220,12 @@ public sealed class BlockedIssuesService
     {
         var check = await _dependencyChecker.CheckAsync(
             issue.Identifier, issue.Description ?? string.Empty, provider, stateCache, ct);
+        // Delegate label filter to the shared evaluator using NotReadyLabels.
         // Override IsReady=false when the issue carries a lifecycle label that precludes
         // dispatch readiness, regardless of what the dependency checker returned.
-        var isReady = check.IsReady
-            && (issue.Labels is null || !issue.Labels.Any(l => NotReadyLabels.Contains(l)));
+        var labelResult = _eligibilityEvaluator.EvaluateLabelFilter(
+            issue.Labels ?? Array.Empty<string>(), NotReadyLabels);
+        var isReady = check.IsReady && labelResult.IsEligible;
         return new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors, check.BlockedByUrls);
     }
 }

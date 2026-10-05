@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Threading.RateLimiting;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
+using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using Serilog;
@@ -44,6 +45,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
     private readonly ILogger _logger;
     private readonly TimeSpan _interval;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    private static readonly DispatchEligibilityEvaluator _eligibilityEvaluator = new();
 
     public WorkItemDispatchLoop(
         IPipelineApiWorkItemClient workItemClient,
@@ -137,7 +139,12 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             if (ct.IsCancellationRequested)
                 break;
 
-            if (stoppedSelectors.Contains(item.AgentSelector))
+            // TODO: [WARNING] This uses an explicit Verdict enum comparison instead of the idiomatic
+            // !result.IsEligible pattern used at every other call site. Refactor to:
+            //   if (!_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stoppedSelectors).IsEligible)
+            // to be consistent and avoid implicitly assuming SelectorBlocked is the only non-eligible verdict.
+            if (_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stoppedSelectors).Verdict
+                    == EligibilityVerdict.SelectorBlocked)
             {
                 _logger.Debug(
                     "WorkItemDispatchLoop: skipping {WorkItemId} — selector {AgentSelector} is stopped for this cycle",
