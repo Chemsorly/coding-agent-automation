@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Moq;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgent.Web.UnitTests.Services;
+namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Unit tests for <see cref="PostgresPipelineRunHistoryService"/>.
@@ -838,6 +838,213 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         result.Items.Should().NotContain(s => s.InitiatedBy == ConsolidationConstants.InitiatedBy);
     }
 
+    [Fact]
+    public async Task GetRunHistoryAsync_PageSize1_HasMore_True()
+    {
+        // 3 items, pageSize=1 → HasMore must be true
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#20", "Run A"));
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#21", "Run B"));
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#22", "Run C"));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 1, feedbackOnly: false);
+
+        result.Items.Should().HaveCount(1);
+        result.HasMore.Should().BeTrue("there are more items beyond the first page");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_PageSize10_HasMore_False()
+    {
+        // 2 items, pageSize=10 → HasMore must be false
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#30", "Run X"));
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#31", "Run Y"));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10, feedbackOnly: false);
+
+        result.Items.Should().HaveCount(2);
+        result.HasMore.Should().BeFalse("all items fit on the first page");
+    }
+
+    // ── feedbackOnly=false passthrough ────────────────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithFeedbackOnly_False_ReturnsNormalItems()
+    {
+        // feedbackOnly=false must return all non-consolidation items via the normal paged path.
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#1", "Run one"));
+            db.PipelineRuns.Add(CreateRunEntity(Guid.NewGuid(), "owner/repo#2", "Run two"));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10, feedbackOnly: false);
+
+        result.Items.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithFeedbackOnly_InvalidPage_ThrowsArgumentOutOfRangeException()
+    {
+        // page=0 is below the minimum of 1 and must throw immediately.
+        var act = async () => await _sut.GetRunHistoryAsync(page: 0, pageSize: 10, feedbackOnly: false);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithFeedbackOnly_EmptyTable_FeedbackOnlyTrue_ThrowsInvalidOperationException()
+    {
+        // The feedbackOnly=true path uses FromSqlRaw (Postgres JSONB ? operator), which is
+        // not supported by the InMemory EF provider. This test documents the known constraint:
+        // feedbackOnly queries require a real Postgres provider and will throw in unit-test context.
+        var act = async () => await _sut.GetRunHistoryAsync(page: 1, pageSize: 10, feedbackOnly: true);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*wasn't handled by provider code*");
+    }
+
+    // ── DeserializeSummary fallback: RunType preservation ────────────────────
+
+    [Fact]
+    public async Task DeserializeSummary_FallbackPath_PreservesImplementationRunType()
+    {
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithNullSummary(Guid.NewGuid(), "repo#10", PipelineRunType.Implementation));
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().HaveCount(1);
+        history[0].RunType.Should().Be(PipelineRunType.Implementation,
+            "RunType must be reconstructed from the entity column when SummaryJson is null");
+    }
+
+    [Fact]
+    public async Task DeserializeSummary_FallbackPath_PreservesReviewRunType()
+    {
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithNullSummary(Guid.NewGuid(), "repo#11", PipelineRunType.Review));
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().HaveCount(1);
+        history[0].RunType.Should().Be(PipelineRunType.Review);
+    }
+
+    [Fact]
+    public async Task DeserializeSummary_FallbackPath_PreservesDecompositionRunType()
+    {
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithNullSummary(Guid.NewGuid(), "repo#12", PipelineRunType.Decomposition));
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().HaveCount(1);
+        history[0].RunType.Should().Be(PipelineRunType.Decomposition);
+    }
+
+    // ── GetRunHistoryAsync with runType filter (new overload) ─────────────────
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_Consolidation_ReturnsOnlyConsolidationRuns()
+    {
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#100", PipelineRunType.Implementation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#101", PipelineRunType.Consolidation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#102", PipelineRunType.Consolidation));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null, since: null,
+            runType: PipelineRunType.Consolidation);
+
+        result.Items.Should().HaveCount(2, "only Consolidation runs should be returned");
+        result.Items.Should().AllSatisfy(s => s.RunType.Should().Be(PipelineRunType.Consolidation));
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_NullRunType_ReturnsAllRunTypes()
+    {
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#110", PipelineRunType.Implementation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#111", PipelineRunType.Consolidation));
+            db.SaveChanges();
+        }
+
+        // runType=null → all run types; since is set to force the filter path (not the no-filter fast path)
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null,
+            since: DateTimeOffset.UtcNow.AddDays(-1),
+            runType: null);
+
+        result.Items.Should().HaveCount(2, "null runType must return all run types");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_NoFiltersSet_FallsBackToUnfilteredPath()
+    {
+        // When all optional filters are null (no-filter fast path), return all rows.
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#120", PipelineRunType.Implementation));
+            db.PipelineRuns.Add(CreateRunEntityWithRunType(Guid.NewGuid(), "repo#121", PipelineRunType.Review));
+            db.SaveChanges();
+        }
+
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null, since: null,
+            runType: null);
+
+        result.Items.Should().HaveCount(2, "all-null filters must fall through to the unfiltered path");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_InvalidPage_ThrowsArgumentOutOfRangeException()
+    {
+        var act = async () => await _sut.GetRunHistoryAsync(
+            page: 0, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null, since: null,
+            runType: PipelineRunType.Consolidation);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_WithRunType_Consolidation_EmptyTable_ReturnsEmpty()
+    {
+        var result = await _sut.GetRunHistoryAsync(
+            page: 1, pageSize: 10, feedbackOnly: false,
+            finalStep: null, projectId: null,
+            since: DateTimeOffset.UtcNow.AddDays(-1),
+            runType: PipelineRunType.Consolidation);
+
+        result.Items.Should().BeEmpty();
+        result.HasMore.Should().BeFalse();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateCompletedRun(
@@ -863,6 +1070,48 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         run.MarkCompleted();
         return run;
     }
+
+    private static PipelineRunEntity CreateRunEntityWithRunType(Guid runId, string issueIdentifier, PipelineRunType runType) =>
+        new()
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = "Run title",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = DateTimeOffset.UtcNow,
+            RunType = runType,
+            IssueProviderConfigId = null,
+            SummaryJson = null
+        };
+
+    private static PipelineRunEntity CreateRunEntity(Guid runId, string issueIdentifier, string title) =>
+        new()
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = title,
+            FinalStep = PipelineStep.Completed,
+            StartedAt = DateTimeOffset.UtcNow,
+            RunType = PipelineRunType.Implementation,
+            IssueProviderConfigId = null,
+            SummaryJson = null
+        };
+
+    private static PipelineRunEntity CreateRunEntityWithNullSummary(
+        Guid runId,
+        string issueIdentifier,
+        PipelineRunType runType) =>
+        new()
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = "Fallback title",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = DateTimeOffset.UtcNow,
+            RunType = runType,
+            IssueProviderConfigId = null,
+            SummaryJson = null
+        };
 
     // ── Test Infrastructure ─────────────────────────────────────────────
 
