@@ -195,9 +195,10 @@ public sealed class HarnessSuggestionExecutor : ConsolidationExecutorBase
             {
                 var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
                     agentProvider, workspacePath,
-                    ConsolidationPromptBuilder.BuildHarnessSuggestionsReviewPrompt(),
-                    ConsolidationPromptBuilder.BuildHarnessSuggestionsRefinementPrompt(),
-                    AgentWorkspacePaths.HarnessSuggestionsReviewFilePath,
+                    new AdversarialReviewPrompts(
+                        ConsolidationPromptBuilder.BuildHarnessSuggestionsReviewPrompt(),
+                        ConsolidationPromptBuilder.BuildHarnessSuggestionsRefinementPrompt(),
+                        AgentWorkspacePaths.HarnessSuggestionsReviewFilePath),
                     new AdversarialReviewConfig
                     {
                         Enabled = job.PipelineConfiguration.HarnessSuggestionsReviewEnabled,

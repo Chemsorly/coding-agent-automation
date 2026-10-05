@@ -7,12 +7,63 @@ using System.Diagnostics.Metrics;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
+/// Optional settings for <see cref="AgentLabelOperations.SwapAsync"/>.
+/// </summary>
+public sealed record LabelSwapOptions
+{
+    /// <summary>
+    /// The label the caller expects is currently set.
+    /// When provided, the <see cref="LabelStateMachine"/> validates the transition
+    /// and logs a warning if invalid. Does NOT block execution (fail-open).
+    /// </summary>
+    public string? ExpectedCurrentLabel { get; init; }
+
+    /// <summary>Issue/PR identifier for log context.</summary>
+    public string? Identifier { get; init; }
+
+    /// <summary>
+    /// Logger to use for this invocation. When null, falls back to the static logger of
+    /// <see cref="AgentLabelOperations"/>. Intended for unit-test injection only —
+    /// production callers should leave this unset.
+    /// </summary>
+    public ILogger? Logger { get; init; }
+
+    /// <summary>
+    /// When true, re-throws the exception after all retry attempts for a label are exhausted,
+    /// aborting the loop. When false (default), logs a warning and continues to the next label.
+    /// Set to true for strict callers (e.g. <c>SwapLabelStrictAsync</c>) that expect failure
+    /// propagation. Best-effort callers should leave this as false.
+    /// </summary>
+    public bool ThrowOnRemoveExhaustion { get; init; }
+
+    /// <summary>
+    /// Counter to increment when remove-phase retries are exhausted on the
+    /// <see cref="ThrowOnRemoveExhaustion"/>=false path. When null, falls back to
+    /// <see cref="PipelineTelemetry.LabelSwapRemoveExhausted"/>. Intended for unit-test
+    /// injection only — production callers should leave this unset.
+    /// </summary>
+    public Counter<long>? ExhaustionCounter { get; init; }
+
+    /// <summary>
+    /// The labels currently present on the issue or PR.
+    /// When provided, the remove phase only attempts to remove labels that are actually
+    /// present — eliminating the DELETE 404s that occur when all <see cref="AgentLabels.SwapTargets"/>
+    /// entries are removed unconditionally. When null (default), falls back to the original
+    /// behavior: attempt removal of every label in <see cref="AgentLabels.SwapTargets"/> except
+    /// the new label. The fallback guarantees correctness when the caller cannot supply current
+    /// label state (Requirement #2).
+    /// </summary>
+    public IReadOnlyList<string>? CurrentLabels { get; init; }
+}
+
+/// <summary>
 /// Shared helper that encapsulates the label-swap loop: iterate <see cref="AgentLabels.SwapTargets"/>,
 /// skip the target label, remove each, then add the target.
 /// </summary>
 public static class AgentLabelOperations
 {
     private static readonly ILogger Logger = Log.ForContext(typeof(AgentLabelOperations));
+    private static readonly LabelSwapOptions DefaultSwapOptions = new();
 
     /// <summary>Adds <paramref name="newLabel"/> first, then removes all other agent labels.
     /// Add-first ordering ensures the target label is present even if the process is
@@ -21,52 +72,25 @@ public static class AgentLabelOperations
     /// <param name="addLabel">Delegate to add a label.</param>
     /// <param name="newLabel">The target label to apply.</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <param name="expectedCurrentLabel">
-    /// Optional: the label the caller expects is currently set.
-    /// When provided, the <see cref="LabelStateMachine"/> validates the transition
-    /// and logs a warning if invalid. Does NOT block execution (fail-open).
-    /// </param>
-    /// <param name="identifier">Optional: issue/PR identifier for log context.</param>
-    /// <param name="logger">
-    /// Optional: logger to use for this invocation. When null, falls back to the
-    /// static <see cref="Logger"/> field. Intended for unit-test injection only —
-    /// production callers should omit this parameter.
-    /// </param>
-    /// <param name="throwOnRemoveExhaustion">
-    /// When true, re-throws the exception after all retry attempts for a label are exhausted,
-    /// aborting the loop. When false (default), logs a warning and continues to the next label.
-    /// Set to true for strict callers (e.g. <c>SwapLabelStrictAsync</c>) that expect failure
-    /// propagation. Best-effort callers should leave this as false.
-    /// </param>
-    /// <param name="exhaustionCounter">
-    /// Optional: counter to increment when remove-phase retries are exhausted on the
-    /// <c>throwOnRemoveExhaustion=false</c> path. When null, falls back to
-    /// <see cref="PipelineTelemetry.LabelSwapRemoveExhausted"/>. Intended for unit-test
-    /// injection only — production callers should omit this parameter.
-    /// </param>
-    /// <param name="currentLabels">
-    /// Optional: the labels currently present on the issue or PR.
-    /// When provided, the remove phase only attempts to remove labels that are actually
-    /// present — eliminating the DELETE 404s that occur when all <see cref="AgentLabels.SwapTargets"/>
-    /// entries are removed unconditionally. When null (default), falls back to the original
-    /// behavior: attempt removal of every label in <see cref="AgentLabels.SwapTargets"/> except
-    /// <paramref name="newLabel"/>. The fallback guarantees correctness when the caller
-    /// cannot supply current label state (Requirement #2).
+    /// <param name="options">
+    /// Optional settings: expected current label (transition validation), identifier for log
+    /// context, current labels (skip absent ones), strict remove-exhaustion behaviour, and
+    /// test-injection logger/counter. Null uses the defaults of <see cref="LabelSwapOptions"/>.
     /// </param>
     public static async Task SwapAsync(
         Func<string, CancellationToken, Task> removeLabel,
         Func<string, CancellationToken, Task> addLabel,
         string newLabel,
         CancellationToken ct,
-        string? expectedCurrentLabel = null,
-        string? identifier = null,
-        ILogger? logger = null,
-        bool throwOnRemoveExhaustion = false,
-        Counter<long>? exhaustionCounter = null,
-        IReadOnlyList<string>? currentLabels = null)
+        LabelSwapOptions? options = null)
     {
-        var effectiveLogger = logger ?? Logger;
-        var effectiveExhaustionCounter = exhaustionCounter ?? PipelineTelemetry.LabelSwapRemoveExhausted;
+        options ??= DefaultSwapOptions;
+        var expectedCurrentLabel = options.ExpectedCurrentLabel;
+        var identifier = options.Identifier;
+        var currentLabels = options.CurrentLabels;
+        var throwOnRemoveExhaustion = options.ThrowOnRemoveExhaustion;
+        var effectiveLogger = options.Logger ?? Logger;
+        var effectiveExhaustionCounter = options.ExhaustionCounter ?? PipelineTelemetry.LabelSwapRemoveExhausted;
 
         // Validate the transition if the caller provides context about the current state.
         // This is observational only — invalid transitions log a warning but never block.

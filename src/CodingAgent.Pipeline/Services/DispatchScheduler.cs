@@ -233,8 +233,9 @@ internal sealed partial class DispatchScheduler
         // Floor pass: if Issues were present but never dispatched in the priority loop,
         // spend the reserved floor slots exclusively for Issues.
         var floorResult = await RunFloorPassAsync(
-            request, floorEnabled, issueDispatchedThisCycle, issueFloor,
-            totalBudget, processedCount, failedCount, activeDecompositionCount,
+            request,
+            new FloorPassBudget(floorEnabled, issueDispatchedThisCycle, issueFloor,
+                totalBudget, processedCount, failedCount, activeDecompositionCount),
             templateProjectLookup, trackingReportIssue, cycleStateCaches,
             stoppingToken, ct);
         remaining -= floorResult.Consumed;
@@ -314,25 +315,34 @@ internal sealed partial class DispatchScheduler
     }
 
     /// <summary>
+    /// The cycle budget state handed from the priority loop to <see cref="RunFloorPassAsync"/>
+    /// (groups its parameters for S107).
+    /// </summary>
+    private readonly record struct FloorPassBudget(
+        bool FloorEnabled,
+        bool IssueDispatchedThisCycle,
+        int IssueFloor,
+        int TotalBudget,
+        int ProcessedCount,
+        int FailedCount,
+        int ActiveDecompositionCount);
+
+    /// <summary>
     /// Runs the issue floor pass after the priority loop. If issues were present but never dispatched
-    /// in the priority loop, dispatches up to <paramref name="issueFloor"/> additional issue items to
-    /// ensure the minimum allocation guarantee is met.
+    /// in the priority loop, dispatches up to <see cref="FloorPassBudget.IssueFloor"/> additional issue
+    /// items to ensure the minimum allocation guarantee is met.
     /// </summary>
     private async Task<(int Consumed, int Processed, int Failed)> RunFloorPassAsync(
         DispatchRoundRobinRequest request,
-        bool floorEnabled,
-        bool issueDispatchedThisCycle,
-        int issueFloor,
-        int totalBudget,
-        int processedCount,
-        int failedCount,
-        int activeDecompositionCount,
+        FloorPassBudget budget,
         Dictionary<string, PipelineProject> templateProjectLookup,
         Action<string?> trackingReportIssue,
         Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
+        var (floorEnabled, issueDispatchedThisCycle, issueFloor, totalBudget,
+            processedCount, failedCount, activeDecompositionCount) = budget;
         if (!floorEnabled || issueDispatchedThisCycle || ct.IsCancellationRequested)
             return (0, 0, 0);
 

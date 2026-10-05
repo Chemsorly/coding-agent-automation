@@ -513,7 +513,7 @@ internal class CodeReviewOrchestrator
             var prompt = PromptBuilder.BuildAcceptanceCriteriaPrompt(config.AcceptanceCriteriaPrompt);
 
             var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                context.AgentProvider,
+                new AgentMonitorContext(context.AgentProvider, run, config, "Acceptance criteria compliance", context.Callbacks.NotifyChange, _logger),
                 new AgentRequest
                 {
                     Prompt = prompt,
@@ -521,8 +521,7 @@ internal class CodeReviewOrchestrator
                     Timeout = config.AgentTimeout,
                     UseResume = false
                 },
-                run, config, "Acceptance criteria compliance",
-                context.Callbacks.NotifyChange, _logger, ct,
+                ct,
                 line => context.Callbacks.EmitOutputLine($"[AcceptanceCriteria] {line}"),
                 reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "code_review");
@@ -600,7 +599,7 @@ internal class CodeReviewOrchestrator
         activity?.SetTag("pipeline.prompt_length_chars", reviewPrompt.Length);
 
         var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            context.AgentProvider,
+            new AgentMonitorContext(context.AgentProvider, run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger),
             new AgentRequest
             {
                 Prompt = reviewPrompt,
@@ -611,7 +610,7 @@ internal class CodeReviewOrchestrator
                     ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
                     : null
             },
-            run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
+            ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"),
             reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
             phase: "code_review");

@@ -6,6 +6,24 @@ using CodingAgent.Pipeline.Telemetry;
 namespace CodingAgent.Pipeline.Services;
 
 /// <summary>
+/// The agent, run and phase being monitored by <see cref="AgentStallMonitor"/>, plus the
+/// sinks the monitor reports stall messages to.
+/// </summary>
+/// <param name="AgentProvider">Agent whose health is polled and which is killed on a hard stall.</param>
+/// <param name="Run">Run that receives stall messages in its chat history.</param>
+/// <param name="Config">Provides the stall poll/warning intervals and the kill timeout (<c>AgentTimeout</c>).</param>
+/// <param name="PhaseDescription">Human-readable phase name used in stall messages.</param>
+/// <param name="OnChange">Invoked after a stall message is added to the run; may be null.</param>
+/// <param name="Logger">Logger for stall warnings and errors.</param>
+internal sealed record AgentMonitorContext(
+    IAgentProvider AgentProvider,
+    PipelineRun Run,
+    PipelineConfiguration Config,
+    string PhaseDescription,
+    Action? OnChange,
+    Serilog.ILogger Logger);
+
+/// <summary>
 /// Reusable stall detection for agent interactions. Wraps an <see cref="IAgentProvider.ExecuteAsync"/>
 /// call with a background monitor that polls health status, logs silence warnings with phase context,
 /// detects process death, and forcefully kills unresponsive agents after a hard timeout.
@@ -16,41 +34,42 @@ internal static class AgentStallMonitor
     /// <summary>
     /// Executes an agent request with background stall monitoring and per-session span.
     /// </summary>
+    /// <param name="monitor">The agent, run, configuration, phase description and stall sinks to monitor with.</param>
+    /// <param name="request">The agent request to execute.</param>
+    /// <param name="ct">Cancellation token for the agent call.</param>
+    /// <param name="onOutputLine">Receives agent output lines; may be null.</param>
     /// <param name="reportStallEvent">
     /// Reports a stall to the API as <c>(phase, kind)</c> when the agent is killed for silence or its
     /// process dies; the API records <c>pipeline.run.agent_stalls</c> (issue #2979). Null skips reporting.
     /// </param>
     /// <param name="phase">
     /// Phase key (e.g. "analysis", "codegen", "review_correctness"). When non-null, a session entry is
-    /// added to <paramref name="run"/>.<see cref="RunMetrics.PhaseBreakdown"/> under this key.
+    /// added to the monitored run's <see cref="RunMetrics.PhaseBreakdown"/> under this key.
     /// The span's <c>pipeline.phase</c> attribute and the reported stall phase use its
     /// <see cref="PipelineTelemetry.NormalizeRunPhase"/> value, or, when null, the phase derived from
-    /// <paramref name="phaseDescription"/>. The key itself is kept on the span as <c>pipeline.phase_key</c>.
+    /// <see cref="AgentMonitorContext.PhaseDescription"/>. The key itself is kept on the span as <c>pipeline.phase_key</c>.
     /// </param>
     /// <param name="timeProvider">
     /// Time source used for all clock reads and delays. Defaults to <see cref="TimeProvider.System"/>.
     /// Pass a fake/controllable provider in tests to eliminate wall-clock dependency.
     /// </param>
     public static async Task<AgentResult> ExecuteWithMonitoringAsync(
-        IAgentProvider agentProvider,
+        AgentMonitorContext monitor,
         AgentRequest request,
-        PipelineRun run,
-        PipelineConfiguration config,
-        string phaseDescription,
-        Action? onChange,
-        Serilog.ILogger logger,
         CancellationToken ct,
         Action<string>? onOutputLine = null,
         Action<string, string>? reportStallEvent = null,
         TimeProvider? timeProvider = null,
         string? phase = null)
     {
+        var agentProvider = monitor.AgentProvider;
+        var run = monitor.Run;
         timeProvider ??= TimeProvider.System;
         var startTime = timeProvider.GetUtcNow();
         var providerName = GetProviderName(agentProvider);
         var phaseTag = phase is not null
             ? PipelineTelemetry.NormalizeRunPhase(phase)
-            : PipelineTelemetry.NormalizePhaseDescription(phaseDescription);
+            : PipelineTelemetry.NormalizePhaseDescription(monitor.PhaseDescription);
         var model = agentProvider.Model;
 
         // Session span: one per agent CLI invocation, following GenAI semantic conventions
@@ -71,8 +90,8 @@ internal static class AgentStallMonitor
         }
 
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription, phaseTag, onChange, logger,
-            stallCts.Token, reportStallEvent, timeProvider, sessionSpan);
+        var monitorTask = RunMonitorLoopAsync(
+            new MonitorLoopState(monitor, phaseTag, reportStallEvent, timeProvider, sessionSpan), stallCts.Token);
 
         AgentResult result;
         try
@@ -149,27 +168,27 @@ internal static class AgentStallMonitor
     /// Monitors an arbitrary async agent call (e.g., <see cref="IAgentProvider.EnsureSessionAsync"/>)
     /// that does not return an <see cref="AgentResult"/>.
     /// </summary>
+    /// <param name="monitor">The agent, run, configuration, phase description and stall sinks to monitor with.</param>
+    /// <param name="agentCall">The agent call to monitor.</param>
+    /// <param name="ct">Cancellation token; cancelling it stops the monitor.</param>
+    /// <param name="reportStallEvent">Reports a stall to the API as <c>(phase, kind)</c>; null skips reporting.</param>
     /// <param name="timeProvider">
     /// Time source used for all clock reads and delays. Defaults to <see cref="TimeProvider.System"/>.
     /// Pass a fake/controllable provider in tests to eliminate wall-clock dependency.
     /// </param>
     public static async Task MonitorAsync(
-        IAgentProvider agentProvider,
+        AgentMonitorContext monitor,
         Func<Task> agentCall,
-        PipelineRun run,
-        PipelineConfiguration config,
-        string phaseDescription,
-        Action? onChange,
-        Serilog.ILogger logger,
         CancellationToken ct,
         Action<string, string>? reportStallEvent = null,
         TimeProvider? timeProvider = null)
     {
         timeProvider ??= TimeProvider.System;
         using var stallCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var monitorTask = RunMonitorLoopAsync(agentProvider, run, config, phaseDescription,
-            PipelineTelemetry.NormalizePhaseDescription(phaseDescription), onChange, logger,
-            stallCts.Token, reportStallEvent, timeProvider, null);
+        var monitorTask = RunMonitorLoopAsync(
+            new MonitorLoopState(monitor, PipelineTelemetry.NormalizePhaseDescription(monitor.PhaseDescription),
+                reportStallEvent, timeProvider, null),
+            stallCts.Token);
 
         try
         {
@@ -195,20 +214,25 @@ internal static class AgentStallMonitor
             _ => PipelineTelemetry.RunProviders.Unknown
         };
 
-    private static Task RunMonitorLoopAsync(
-        IAgentProvider agentProvider,
-        PipelineRun run,
-        PipelineConfiguration config,
-        string phaseDescription,
-        string phaseTag,
-        Action? onChange,
-        Serilog.ILogger logger,
-        CancellationToken stallToken,
-        Action<string, string>? reportStallEvent,
-        TimeProvider timeProvider,
-        Activity? sessionSpan)
+    /// <summary>
+    /// Per-invocation state shared by the monitor loop and its stall handlers.
+    /// </summary>
+    private sealed record MonitorLoopState(
+        AgentMonitorContext Monitor,
+        string PhaseTag,
+        Action<string, string>? ReportStallEvent,
+        TimeProvider TimeProvider,
+        Activity? SessionSpan)
     {
-        var killTimeout = config.AgentTimeout;
+        /// <summary>Reports a stall of the given kind for this phase, when a reporter is wired.</summary>
+        public void ReportStall(string kind) => ReportStallEvent?.Invoke(PhaseTag, kind);
+    }
+
+    private static Task RunMonitorLoopAsync(MonitorLoopState state, CancellationToken stallToken)
+    {
+        var monitor = state.Monitor;
+        var timeProvider = state.TimeProvider;
+        var killTimeout = monitor.Config.AgentTimeout;
 
         return Task.Run(async () =>
         {
@@ -218,24 +242,20 @@ internal static class AgentStallMonitor
 
                 while (!stallToken.IsCancellationRequested)
                 {
-                    await Task.Delay(config.StallPollInterval, timeProvider, stallToken);
+                    await Task.Delay(monitor.Config.StallPollInterval, timeProvider, stallToken);
 
-                    if (!TryGetHealth(agentProvider, run, logger, out var health))
+                    if (!TryGetHealth(monitor, out var health))
                         continue;
 
-                    if (HandleProcessDeath(health!, run, phaseDescription, onChange, logger,
-                            () => reportStallEvent?.Invoke(phaseTag, PipelineTelemetry.AgentStallKinds.ProcessDeath),
-                            timeProvider, sessionSpan))
+                    if (HandleProcessDeath(health!, state))
                         break;
 
-                    var silence = ComputeSilence(health!, run, timeProvider);
+                    var silence = ComputeSilence(health!, monitor.Run, timeProvider);
 
-                    if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger,
-                            () => reportStallEvent?.Invoke(phaseTag, PipelineTelemetry.AgentStallKinds.StallKill),
-                            sessionSpan))
+                    if (await HandleKillTimeoutAsync(silence, killTimeout, state))
                         break;
 
-                    HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime, timeProvider, sessionSpan);
+                    HandleSilenceWarning(health!, silence, state, ref lastWarnTime);
                 }
             }
             catch (OperationCanceledException) { /* Expected on cancellation. */ }
@@ -247,18 +267,16 @@ internal static class AgentStallMonitor
     /// Calls <see cref="IAgentProvider.GetHealthStatus"/> safely.
     /// Returns false (and logs) when the call throws, allowing the monitor loop to continue.
     /// </summary>
-    private static bool TryGetHealth(
-        IAgentProvider agentProvider, PipelineRun run,
-        Serilog.ILogger logger, out AgentHealthStatus? health)
+    private static bool TryGetHealth(AgentMonitorContext monitor, out AgentHealthStatus? health)
     {
         try
         {
-            health = agentProvider.GetHealthStatus();
+            health = monitor.AgentProvider.GetHealthStatus();
             return true;
         }
         catch (Exception ex)
         {
-            logger.Warning(ex, "Pipeline {RunId} GetHealthStatus() call failed, continuing to poll", run.RunId);
+            monitor.Logger.Warning(ex, "Pipeline {RunId} GetHealthStatus() call failed, continuing to poll", monitor.Run.RunId);
             health = null;
             return false;
         }
@@ -268,21 +286,20 @@ internal static class AgentStallMonitor
     /// Checks whether the agent process has died.
     /// Logs an error and notifies when true; returns true to break the monitor loop.
     /// </summary>
-    private static bool HandleProcessDeath(
-        AgentHealthStatus health, PipelineRun run,
-        string phaseDescription, Action? onChange, Serilog.ILogger logger,
-        Action reportStall, TimeProvider timeProvider, Activity? sessionSpan)
+    private static bool HandleProcessDeath(AgentHealthStatus health, MonitorLoopState state)
     {
         if (health.IsProcessAlive == false)
         {
-            var errorMsg = $"{phaseDescription} — agent process is no longer alive (PID {health.ProcessId}). " +
-                           $"Total elapsed: {(timeProvider.GetUtcNow() - run.StartedAtOffset):hh\\:mm\\:ss}.";
-            logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
+            var monitor = state.Monitor;
+            var run = monitor.Run;
+            var errorMsg = $"{monitor.PhaseDescription} — agent process is no longer alive (PID {health.ProcessId}). " +
+                           $"Total elapsed: {(state.TimeProvider.GetUtcNow() - run.StartedAtOffset):hh\\:mm\\:ss}.";
+            monitor.Logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
             run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
-            onChange?.Invoke();
-            reportStall();
+            monitor.OnChange?.Invoke();
+            state.ReportStall(PipelineTelemetry.AgentStallKinds.ProcessDeath);
 
-            sessionSpan?.AddEvent(new ActivityEvent("agent.process_death",
+            state.SessionSpan?.AddEvent(new ActivityEvent("agent.process_death",
                 tags: new ActivityTagsCollection { { "pid", health.ProcessId } }));
             return true;
         }
@@ -303,31 +320,29 @@ internal static class AgentStallMonitor
     /// Handles the hard-kill case when silence exceeds the kill timeout.
     /// Logs, notifies, kills the agent, and returns true to break the monitor loop.
     /// </summary>
-    private static async Task<bool> HandleKillTimeoutAsync(
-        TimeSpan silence, TimeSpan killTimeout,
-        PipelineRun run, IAgentProvider agentProvider,
-        string phaseDescription, Action? onChange, Serilog.ILogger logger,
-        Action reportStall, Activity? sessionSpan)
+    private static async Task<bool> HandleKillTimeoutAsync(TimeSpan silence, TimeSpan killTimeout, MonitorLoopState state)
     {
         if (silence < killTimeout)
             return false;
 
-        var killMsg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m (kill timeout {killTimeout.TotalMinutes:F0}m). " +
+        var monitor = state.Monitor;
+        var run = monitor.Run;
+        var killMsg = $"{monitor.PhaseDescription} — no output for {silence.TotalMinutes:F0}m (kill timeout {killTimeout.TotalMinutes:F0}m). " +
                       $"Forcefully terminating agent process.";
-        logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, killMsg);
+        monitor.Logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, killMsg);
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = killMsg });
-        onChange?.Invoke();
-        reportStall();
+        monitor.OnChange?.Invoke();
+        state.ReportStall(PipelineTelemetry.AgentStallKinds.StallKill);
 
-        sessionSpan?.AddEvent(new ActivityEvent("agent.stall_kill",
+        state.SessionSpan?.AddEvent(new ActivityEvent("agent.stall_kill",
             tags: new ActivityTagsCollection
             {
                 { "silence_minutes", (long)silence.TotalMinutes },
                 { "kill_timeout_minutes", (long)killTimeout.TotalMinutes }
             }));
 
-        try { await agentProvider.KillAsync(); }
-        catch (Exception ex) { logger.Warning(ex, "Pipeline {RunId} KillAsync() failed", run.RunId); }
+        try { await monitor.AgentProvider.KillAsync(); }
+        catch (Exception ex) { monitor.Logger.Warning(ex, "Pipeline {RunId} KillAsync() failed", run.RunId); }
         return true;
     }
 
@@ -335,13 +350,14 @@ internal static class AgentStallMonitor
     /// Emits a silence warning when the silence threshold is met and sufficient time has
     /// passed since the last warning. Updates <paramref name="lastWarnTime"/> on emit.
     /// </summary>
-    private static void HandleSilenceWarning( // NOSONAR S107 — ref param prevents grouping; all args are distinct domain concepts
+    private static void HandleSilenceWarning(
         AgentHealthStatus health, TimeSpan silence,
-        PipelineConfiguration config, PipelineRun run,
-        string phaseDescription, Action? onChange,
-        Serilog.ILogger logger, ref DateTime lastWarnTime,
-        TimeProvider timeProvider, Activity? sessionSpan)
+        MonitorLoopState state, ref DateTime lastWarnTime)
     {
+        var monitor = state.Monitor;
+        var config = monitor.Config;
+        var run = monitor.Run;
+        var timeProvider = state.TimeProvider;
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var timeSinceLastWarn = now - lastWarnTime;
         if (silence < config.StallWarningInterval || timeSinceLastWarn < config.StallWarningInterval)
@@ -351,15 +367,15 @@ internal static class AgentStallMonitor
         var statusDetail = health.SessionStatus is not null ? $" Session status: {health.SessionStatus}." : "";
         var statusMsg = health.SessionStatusMessage is not null ? $" Detail: {health.SessionStatusMessage}" : "";
         var sessionsSummary = health.AllSessionsSummary is not null ? $" Sessions: [{health.AllSessionsSummary}]" : "";
-        var msg = $"{phaseDescription} — no output for {silence.TotalMinutes:F0}m. " +
+        var msg = $"{monitor.PhaseDescription} — no output for {silence.TotalMinutes:F0}m. " +
                   $"Agent call still in progress. " +
                   $"Total elapsed: {elapsed:hh\\:mm\\:ss}. Timeout: {config.AgentTimeout:hh\\:mm\\:ss}." +
                   statusDetail + statusMsg + sessionsSummary;
-        logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
+        monitor.Logger.Warning("Pipeline {RunId} {StallMessage}", run.RunId, msg);
         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = msg });
-        onChange?.Invoke();
+        monitor.OnChange?.Invoke();
 
-        sessionSpan?.AddEvent(new ActivityEvent("agent.stall_warning",
+        state.SessionSpan?.AddEvent(new ActivityEvent("agent.stall_warning",
             tags: new ActivityTagsCollection { { "silence_minutes", (long)silence.TotalMinutes } }));
         lastWarnTime = now;
     }

@@ -41,11 +41,7 @@ internal sealed class TemplatePoller
             Action notifyChange,
             CancellationToken ct)
     {
-        var issueQueues = new Dictionary<string, List<IssueSummary>>();
-        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var decompositionQueues = new Dictionary<string, List<EpicCandidate>>();
-        var agentDonePrQueues = new Dictionary<string, List<PullRequestSummary>>();
-        var agentDonePrTruncated = new Dictionary<string, bool>();
+        var queues = new PollQueues();
 
         for (int i = 0; i < pollableTemplates.Count; i++)
         {
@@ -62,7 +58,7 @@ internal sealed class TemplatePoller
 
             try
             {
-                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated, ct);
+                await PollSingleTemplateAsync(template, maxPagesToFetch, templateStatuses, queues, ct);
             }
             catch (OperationCanceledException)
             {
@@ -70,19 +66,35 @@ internal sealed class TemplatePoller
             }
             catch (RateLimitExceededException ex)
             {
-                HandleRateLimitException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+                HandleRateLimitException(template, ex, templateStatuses, queues);
             }
             catch (Exception ex) when (IsAuthError(ex))
             {
-                await HandleAuthErrorExceptionAsync(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+                await HandleAuthErrorExceptionAsync(template, ex, templateStatuses, queues);
             }
             catch (Exception ex)
             {
-                HandleGenericPollException(template, ex, templateStatuses, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+                HandleGenericPollException(template, ex, templateStatuses, queues);
             }
         }
 
-        return (issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+        return (queues.IssueQueues, queues.PrQueues, queues.DecompositionQueues, queues.AgentDonePrQueues, queues.AgentDonePrTruncated);
+    }
+
+    /// <summary>
+    /// The per-template queues filled by one <see cref="PollTemplateQueuesAsync"/> pass, keyed by template ID.
+    /// </summary>
+    private sealed class PollQueues
+    {
+        public Dictionary<string, List<IssueSummary>> IssueQueues { get; } = new();
+        public Dictionary<string, List<PullRequestSummary>> PrQueues { get; } = new();
+        public Dictionary<string, List<EpicCandidate>> DecompositionQueues { get; } = new();
+        public Dictionary<string, List<PullRequestSummary>> AgentDonePrQueues { get; } = new();
+        public Dictionary<string, bool> AgentDonePrTruncated { get; } = new();
+
+        /// <summary>Clears every queue entry for <paramref name="templateId"/>.</summary>
+        public void ClearForTemplate(string templateId) =>
+            ClearQueuesForTemplate(templateId, IssueQueues, PrQueues, DecompositionQueues, AgentDonePrQueues, AgentDonePrTruncated);
     }
 
     /// <summary>
@@ -93,24 +105,20 @@ internal sealed class TemplatePoller
         PipelineJobTemplate template,
         int maxPagesToFetch,
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
-        Dictionary<string, List<IssueSummary>> issueQueues,
-        Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<EpicCandidate>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
-        Dictionary<string, bool> agentDonePrTruncated,
+        PollQueues queues,
         CancellationToken ct)
     {
-        await PollIssueQueueAsync(template, maxPagesToFetch, templateStatuses, issueQueues, ct);
-        await PollPrQueueAsync(template, maxPagesToFetch, prQueues, ct);
-        await PollDecompositionQueueAsync(template, maxPagesToFetch, decompositionQueues, ct);
-        await PollAgentDonePrQueueAsync(template, maxPagesToFetch, agentDonePrQueues, agentDonePrTruncated, ct);
+        await PollIssueQueueAsync(template, maxPagesToFetch, templateStatuses, queues.IssueQueues, ct);
+        await PollPrQueueAsync(template, maxPagesToFetch, queues.PrQueues, ct);
+        await PollDecompositionQueueAsync(template, maxPagesToFetch, queues.DecompositionQueues, ct);
+        await PollAgentDonePrQueueAsync(template, maxPagesToFetch, queues.AgentDonePrQueues, queues.AgentDonePrTruncated, ct);
 
         // Success — update status (agentDonePrQueues not counted as dispatchable work)
-        var issueCount = issueQueues[template.Id].Count;
+        var issueCount = queues.IssueQueues[template.Id].Count;
         // prQueues[template.Id] may be absent when ReviewEnabled=false or when PR polling failed
         // and intentionally omitted the key (fail-open for BuildPrEligibilityMap). Use 0 in those cases.
-        var prCount = prQueues.TryGetValue(template.Id, out var prList) ? prList.Count : 0;
-        var decompCount = decompositionQueues[template.Id].Count;
+        var prCount = queues.PrQueues.TryGetValue(template.Id, out var prList) ? prList.Count : 0;
+        var decompCount = queues.DecompositionQueues[template.Id].Count;
         templateStatuses[template.Id] = new ConfigStatusSnapshot
         {
             LastPollTime = DateTimeOffset.UtcNow,
@@ -322,11 +330,7 @@ internal sealed class TemplatePoller
         PipelineJobTemplate template,
         RateLimitExceededException ex,
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
-        Dictionary<string, List<IssueSummary>> issueQueues,
-        Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<EpicCandidate>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
-        Dictionary<string, bool> agentDonePrTruncated)
+        PollQueues queues)
     {
         _logger.Warning(ex, "Template '{TemplateName}' rate limited until {ResetAt}", template.Name, ex.ResetAt);
         var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
@@ -336,7 +340,7 @@ internal sealed class TemplatePoller
             RateLimitResetAt = ex.ResetAt,
             IsCurrentlyPolling = false
         };
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+        queues.ClearForTemplate(template.Id);
     }
 
     /// <summary>Handles an auth error exception: evicts cached provider, updates status, clears queues.</summary>
@@ -344,11 +348,7 @@ internal sealed class TemplatePoller
         PipelineJobTemplate template,
         Exception ex,
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
-        Dictionary<string, List<IssueSummary>> issueQueues,
-        Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<EpicCandidate>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
-        Dictionary<string, bool> agentDonePrTruncated)
+        PollQueues queues)
     {
         _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
         await _cacheManager.EvictOnAuthErrorAsync(template.IssueProviderId);
@@ -361,7 +361,7 @@ internal sealed class TemplatePoller
             IsCurrentlyPolling = false
         };
         PipelineTelemetry.LoopBackoffEvents.Add(1);
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+        queues.ClearForTemplate(template.Id);
     }
 
     /// <summary>Handles a generic poll exception: updates failure status, clears queues.</summary>
@@ -369,11 +369,7 @@ internal sealed class TemplatePoller
         PipelineJobTemplate template,
         Exception ex,
         ConcurrentDictionary<string, ConfigStatusSnapshot> templateStatuses,
-        Dictionary<string, List<IssueSummary>> issueQueues,
-        Dictionary<string, List<PullRequestSummary>> prQueues,
-        Dictionary<string, List<EpicCandidate>> decompositionQueues,
-        Dictionary<string, List<PullRequestSummary>> agentDonePrQueues,
-        Dictionary<string, bool> agentDonePrTruncated)
+        PollQueues queues)
     {
         _logger.Warning(ex, "Template '{TemplateName}' poll failed: {Error}", template.Name, ex.Message);
         var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
@@ -385,7 +381,7 @@ internal sealed class TemplatePoller
             IsCurrentlyPolling = false
         };
         PipelineTelemetry.LoopBackoffEvents.Add(1);
-        ClearQueuesForTemplate(template.Id, issueQueues, prQueues, decompositionQueues, agentDonePrQueues, agentDonePrTruncated);
+        queues.ClearForTemplate(template.Id);
     }
 
     /// <summary>

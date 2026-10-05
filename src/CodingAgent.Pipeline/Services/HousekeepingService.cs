@@ -139,23 +139,18 @@ public sealed class HousekeepingService : IHousekeepingService
     }
 
     /// <inheritdoc />
-    public async Task ExecuteAsync(
-        IRepositoryProvider repoProvider,
-        string repoProviderId,
-        IIssueProvider issueProvider,
-        string issueProviderId,
-        IReadOnlyList<PullRequestSummary> agentDonePrs,
-        bool wasInputTruncated,
-        int effectiveConcurrencyLimit,
-        bool branchCleanupEnabled,
-        int cleanupIntervalMinutes,
-        int triggerCooldownMinutes,
-        CancellationToken ct)
+    public async Task ExecuteAsync(HousekeepingRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var repoProvider = request.RepoProvider;
+        var repoProviderId = request.RepoProviderId;
+        var issueProvider = request.IssueProvider;
+        var agentDonePrs = request.AgentDonePrs;
+        var wasInputTruncated = request.WasInputTruncated;
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(issueProvider);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
+        ArgumentNullException.ThrowIfNull(request.IssueProviderId);
         ArgumentNullException.ThrowIfNull(agentDonePrs);
 
         // Capture locally so concurrent calls don't interfere at downstream await points.
@@ -163,9 +158,9 @@ public sealed class HousekeepingService : IHousekeepingService
         // observable after the call (existing tests set svc.TriggerCooldown before calling
         // ExecuteAsync; the combined assignment below ensures the property reflects the
         // per-call value while triggerCooldown governs all reads within this call).
-        var triggerCooldown = TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, triggerCooldownMinutes));
+        var triggerCooldown = TriggerCooldown = TimeSpan.FromMinutes(Math.Max(1, request.TriggerCooldownMinutes));
 
-        var limit = Math.Max(1, effectiveConcurrencyLimit);
+        var limit = Math.Max(1, request.EffectiveConcurrencyLimit);
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", repoProviderId);
 
         // Capture UtcNow once for the entire tick so all steps in this call share a consistent
@@ -233,16 +228,50 @@ public sealed class HousekeepingService : IHousekeepingService
         var sorted = OrderCandidates(agentDonePrs, repoProviderId, triggerCooldown, now);
 
         // ── Step 6a: Handle Conflicted PRs — swap linked issue to agent:next ─
-        await _issueReworkService.TriggerConflictReworkAsync(sorted, mergeabilityMap, activeRunBranches,
-            activeRunBranchesUnavailable, repoProvider, issueProvider, issueProviderId, repoTag, ct);
+        await _issueReworkService.TriggerConflictReworkAsync(
+            new ConflictReworkRequest
+            {
+                Sorted = sorted,
+                MergeabilityMap = mergeabilityMap,
+                ActiveRunBranches = activeRunBranches,
+                ActiveRunBranchesUnavailable = activeRunBranchesUnavailable,
+                RepoProvider = repoProvider,
+                IssueProvider = issueProvider,
+                IssueProviderId = request.IssueProviderId,
+                RepoTag = repoTag
+            },
+            ct);
 
         // ── Step 6b: Select and trigger eligible branch updates ───────────────
-        await SelectAndTriggerBranchUpdatesAsync(sorted, inFlight, mergeabilityMap,
-            activeRunBranches, activeRunBranchesUnavailable, repoProvider, repoProviderId, repoTag, limit, triggerCooldown, now, ct);
+        await SelectAndTriggerBranchUpdatesAsync(new BranchUpdateSweep
+        {
+            Sorted = sorted,
+            InFlight = inFlight,
+            MergeabilityMap = mergeabilityMap,
+            ActiveRunBranches = activeRunBranches,
+            ActiveRunBranchesUnavailable = activeRunBranchesUnavailable,
+            RepoProvider = repoProvider,
+            RepoProviderId = repoProviderId,
+            RepoTag = repoTag,
+            Limit = limit,
+            TriggerCooldown = triggerCooldown,
+            Now = now
+        });
 
         // ── Step 7: Stale branch cleanup ──────────────────────────────────────
-        await _staleBranchCleaner.RunIfDueAsync(repoProvider, issueProvider, agentDonePrs,
-            wasInputTruncated, repoProviderId, repoTag, branchCleanupEnabled, cleanupIntervalMinutes, ct);
+        await _staleBranchCleaner.RunIfDueAsync(
+            new StaleBranchCleanupRequest
+            {
+                RepoProvider = repoProvider,
+                IssueProvider = issueProvider,
+                AgentDonePrs = agentDonePrs,
+                WasInputTruncated = wasInputTruncated,
+                RepoProviderId = repoProviderId,
+                RepoTag = repoTag,
+                Enabled = request.BranchCleanupEnabled,
+                CleanupIntervalMinutes = request.CleanupIntervalMinutes
+            },
+            ct);
     }
 
     // ── Step 1 ────────────────────────────────────────────────────────────────
@@ -588,8 +617,27 @@ public sealed class HousekeepingService : IHousekeepingService
     // ── Step 6b ───────────────────────────────────────────────────────────────
 
     /// <summary>
+    /// Inputs for <see cref="SelectAndTriggerBranchUpdatesAsync"/>: the ordered candidates and their
+    /// mergeability, the active-run exclusions, the per-repo in-flight set, and the budget for this tick.
+    /// </summary>
+    private sealed record BranchUpdateSweep
+    {
+        public required IReadOnlyList<PullRequestSummary> Sorted { get; init; }
+        public required HashSet<int> InFlight { get; init; }
+        public required IReadOnlyDictionary<int, PrMergeabilityStatus> MergeabilityMap { get; init; }
+        public required IReadOnlySet<string> ActiveRunBranches { get; init; }
+        public required bool ActiveRunBranchesUnavailable { get; init; }
+        public required IRepositoryProvider RepoProvider { get; init; }
+        public required string RepoProviderId { get; init; }
+        public required KeyValuePair<string, object?> RepoTag { get; init; }
+        public required int Limit { get; init; }
+        public required TimeSpan TriggerCooldown { get; init; }
+        public required DateTimeOffset Now { get; init; }
+    }
+
+    /// <summary>
     /// Iterates the sorted candidate list and triggers server-side branch updates for eligible
-    /// Behind PRs, up to <paramref name="limit"/> concurrent in-flight slots.
+    /// Behind PRs, up to <see cref="BranchUpdateSweep.Limit"/> concurrent in-flight slots.
     /// </summary>
     /// <remarks>
     /// Skip guards (in evaluation order):
@@ -602,24 +650,19 @@ public sealed class HousekeepingService : IHousekeepingService
     ///   <item>Not Behind — skip</item>
     ///   <item>Within trigger cooldown — skip</item>
     /// </list>
-    /// Mutates <paramref name="inFlight"/> and <c>_lastTriggeredAt</c>
+    /// Mutates <see cref="BranchUpdateSweep.InFlight"/> and <c>_lastTriggeredAt</c>
     /// in-place for each PR that passes all guards.
     /// </remarks>
-    private async Task SelectAndTriggerBranchUpdatesAsync(
-        IReadOnlyList<PullRequestSummary> sorted,
-        HashSet<int> inFlight,
-        IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
-        IReadOnlySet<string> activeRunBranches,
-        bool activeRunBranchesUnavailable,
-        IRepositoryProvider repoProvider,
-        string repoProviderId,
-        KeyValuePair<string, object?> repoTag,
-        int limit,
-        TimeSpan triggerCooldown,
-        DateTimeOffset now,
-        CancellationToken ct)
+    private async Task SelectAndTriggerBranchUpdatesAsync(BranchUpdateSweep sweep)
     {
-        foreach (var pr in sorted)
+        var inFlight = sweep.InFlight;
+        var limit = sweep.Limit;
+        var repoTag = sweep.RepoTag;
+        var repoProviderId = sweep.RepoProviderId;
+        var triggerCooldown = sweep.TriggerCooldown;
+        var now = sweep.Now;
+
+        foreach (var pr in sweep.Sorted)
         {
             if (inFlight.Count >= limit)
             {
@@ -637,12 +680,12 @@ public sealed class HousekeepingService : IHousekeepingService
             // Conservative fallback: if active-run branch data was unavailable (Step 4 threw),
             // skip ALL branch updates this cycle — we cannot confirm which branches are safe.
             // Not counted in the skipped counter — covered by the Step 4 Warning log.
-            if (activeRunBranchesUnavailable)
+            if (sweep.ActiveRunBranchesUnavailable)
             {
                 continue;
             }
 
-            if (activeRunBranches.Contains(pr.BranchName))
+            if (sweep.ActiveRunBranches.Contains(pr.BranchName))
             {
                 PipelineTelemetry.HousekeepingSkipped.Add(1, repoTag,
                     new KeyValuePair<string, object?>("skip_reason", PipelineTelemetry.HousekeepingSkipReasons.ActiveRun));
@@ -656,7 +699,7 @@ public sealed class HousekeepingService : IHousekeepingService
                 continue;
             }
 
-            var mergeability = mergeabilityMap[pr.Number];
+            var mergeability = sweep.MergeabilityMap[pr.Number];
             if (mergeability != PrMergeabilityStatus.Behind)
             {
                 // Not-behind PRs are a content filter — excluded from the skipped counter.
@@ -681,7 +724,7 @@ public sealed class HousekeepingService : IHousekeepingService
             _lastTriggeredAt[(repoProviderId, pr.Number)] = now;
             inFlight.Add(pr.Number);
             PipelineTelemetry.HousekeepingTriggered.Add(1, repoTag);
-            await FireAndForget(UpdateAsync(repoProvider, repoProviderId, pr.Number, repoTag));
+            await FireAndForget(UpdateAsync(sweep.RepoProvider, repoProviderId, pr.Number, repoTag));
         }
     }
 

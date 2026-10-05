@@ -567,12 +567,19 @@ public sealed partial class PipelineLoopService
                 template.HousekeepingConcurrencyLimit ?? snapshot.Config.HousekeepingConcurrencyLimit);
 
             await housekeepingService.ExecuteAsync(
-                repoProvider, template.RepoProviderId,
-                issueProvider, template.IssueProviderId,
-                donePrs, wasTruncated, limit,
-                template.HousekeepingBranchCleanupEnabled,
-                snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
-                snapshot.Config.HousekeepingTriggerCooldownMinutes,
+                new HousekeepingRequest
+                {
+                    RepoProvider = repoProvider,
+                    RepoProviderId = template.RepoProviderId,
+                    IssueProvider = issueProvider,
+                    IssueProviderId = template.IssueProviderId,
+                    AgentDonePrs = donePrs,
+                    WasInputTruncated = wasTruncated,
+                    EffectiveConcurrencyLimit = limit,
+                    BranchCleanupEnabled = template.HousekeepingBranchCleanupEnabled,
+                    CleanupIntervalMinutes = snapshot.Config.HousekeepingBranchCleanupIntervalMinutes,
+                    TriggerCooldownMinutes = snapshot.Config.HousekeepingTriggerCooldownMinutes
+                },
                 ct);
         }
     }
@@ -598,9 +605,13 @@ public sealed partial class PipelineLoopService
             return after > before;
         });
 
-        var pollResult = templatePollFailures == 0 ? "success"
-            : snapshot.PollableTemplates.Count > 0 && templatePollFailures >= snapshot.PollableTemplates.Count ? "failure"
-            : "partial_failure";
+        string pollResult;
+        if (templatePollFailures == 0)
+            pollResult = "success";
+        else if (snapshot.PollableTemplates.Count > 0 && templatePollFailures >= snapshot.PollableTemplates.Count)
+            pollResult = "failure";
+        else
+            pollResult = "partial_failure";
 
         PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", pollResult));
         if (totalItemsFound > 0)

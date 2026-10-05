@@ -597,12 +597,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Housekeeping mock — must never be invoked because the _stopRequested guard fires first.
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
-            .Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Synchronization gates for the BlockingDispatchOrchestrationService:
@@ -649,12 +644,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Assert: housekeeping mock was never invoked.
         // With HousekeepingEnabled=true and a valid repo provider in cache, absent the guard,
         // RunHousekeepingAsync WOULD have invoked housekeepingMock.ExecuteAsync.
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never,
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Never,
             "RunHousekeepingAsync must not be entered after StopLoop() — " +
             "ExecuteCycleAsync's _stopRequested guard fires before housekeeping is reached");
 
@@ -700,12 +690,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         PipelineLoopService? capturedSvc = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
-            .Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(async () =>
             {
                 // Signal test thread: "housekeeping entered — safe to call StopLoop()"
@@ -771,12 +756,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Assert: housekeeping ran exactly once (stop was set DURING its one-and-only execution).
         // Times.Once is safe here because the loop is blocked inside housekeeping until we release it,
         // preventing a second housekeeping invocation before the stop flag is set.
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once,
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Once,
             "Housekeeping mock must have been called exactly once — stop was requested during its execution");
 
         // Assert: sweep was skipped — second guard in ExecuteCycleAsync fired
@@ -801,12 +781,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Arrange
         var housekeepingMock = new Mock<IHousekeepingService>();
         housekeepingMock
-            .Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+            .Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var workItemClientMock = new Mock<IWorkItemSweepClient>();
@@ -861,12 +836,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         await svc.SweepPendingWorkItemsAsync(new Dictionary<string, HashSet<string>>(), new Dictionary<string, HashSet<string>>(), sweepEnabled: true, CancellationToken.None);
 
         // Assert: housekeeping service was invoked once — normal path is unaffected by the fix
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once,
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Once,
             "RunHousekeepingAsync must invoke the housekeeping service when stop is NOT requested");
 
         // Assert: GetPendingAsync was called once — sweep ran normally

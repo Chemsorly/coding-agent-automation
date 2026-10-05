@@ -36,7 +36,9 @@ public static class PipelineStepRunner
             {
                 result = await step.ExecuteAsync(context, ct);
             }
-            catch (Exception ex)
+            // This is the only layer that knows the failing step's name; PipelineRunExecutionHost converts the
+            // exception into an outcome, so the error is logged here and rethrown unwrapped (OCE must stay OCE).
+            catch (Exception ex) // NOSONAR S2139 — step-scoped log + unwrapped rethrow by design, see above
             {
                 // Activity.Current here is stepActivity (not the parent ExecutePipeline span),
                 // so errors are recorded on the step span, not on the run span.

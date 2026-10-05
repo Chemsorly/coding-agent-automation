@@ -30,7 +30,7 @@ public partial class QualityGateExecutor
             var linkedCt = linkedCts?.Token ?? ct;
 
             callbacks.EmitOutputLine("🏗️ Running quality gates...");
-            var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
+            var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, linkedCt);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: false, linkedCt);
             if (run.CurrentStep.IsQualityGateExitState()) return;
@@ -170,7 +170,7 @@ public partial class QualityGateExecutor
 
         callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-        var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
+        var report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, linkedCt);
         report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
         if (run.CurrentStep.IsQualityGateExitState()) return;
 
@@ -323,15 +323,18 @@ public partial class QualityGateExecutor
         };
 
         await _feedbackService.CollectFeedbackCoreAsync(
-            run,
-            context.AgentProvider,
-            _historyService,
-            cats => FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
-                run, issue, latestReport, cats.HarnessCategories, cats.IssueCategories),
-            FeedbackOutcome.Failure,
-            context.Config.FeedbackTimeoutSeconds,
-            ct,
-            line => context.Callbacks.EmitOutputLine(line));
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = context.AgentProvider,
+                HistoryService = _historyService,
+                PromptFactory = cats => FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
+                    run, issue, latestReport, cats.HarnessCategories, cats.IssueCategories),
+                Outcome = FeedbackOutcome.Failure,
+                FeedbackTimeoutSeconds = context.Config.FeedbackTimeoutSeconds,
+                EmitOutputLine = line => context.Callbacks.EmitOutputLine(line)
+            },
+            ct);
 
         // Log success after the call; run.Feedback is set by CollectFeedbackCoreAsync on the happy path.
         if (run.Feedback is not null)
@@ -432,7 +435,7 @@ public partial class QualityGateExecutor
             if (decision.ShouldBreak) break;
 
             callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-            report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, ct);
+            report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, ct);
 
             report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, ct);
             if (run.CurrentStep.IsQualityGateExitState()) return report;

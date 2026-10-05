@@ -259,8 +259,11 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
                         addLabel: (label, ct) => issueProvider.AddLabelAsync(issue.Identifier, label, ct),
                         newLabel: AgentLabels.Next,
                         ct: CancellationToken.None,
-                        expectedCurrentLabel: blockingLabel,
-                        identifier: issue.Identifier);
+                        options: new LabelSwapOptions
+                        {
+                            ExpectedCurrentLabel = blockingLabel,
+                            Identifier = issue.Identifier
+                        });
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {

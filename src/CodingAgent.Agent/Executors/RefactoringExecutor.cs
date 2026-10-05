@@ -418,9 +418,10 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             return await AdversarialReviewHelper.ExecuteReviewAsync(
                 agentProvider,
                 workspacePath,
-                ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
-                ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
-                AgentWorkspacePaths.RefactoringReviewFilePath,
+                new AdversarialReviewPrompts(
+                    ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
+                    ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
+                    AgentWorkspacePaths.RefactoringReviewFilePath),
                 new AdversarialReviewConfig
                 {
                     Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
