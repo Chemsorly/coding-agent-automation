@@ -3,6 +3,37 @@ namespace CodingAgent.Pipeline.Models;
 public sealed partial class PipelineRun
 {
     /// <summary>
+    /// Single authoritative dispatch: routes <paramref name="p"/> to the correct
+    /// <c>Create*</c> factory method based on <see cref="PipelineRunCreationParams.RunType"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Callers are responsible for setting <see cref="PipelineRunCreationParams.RunType"/> correctly
+    /// before calling this method — it is the dispatch key. This method does NOT override
+    /// <see cref="PipelineRunCreationParams.IssueProviderConfigId"/>; callers that need the
+    /// consolidation sentinel must set it themselves (e.g. <c>FromDistributionRequest</c>).
+    /// </para>
+    /// </remarks>
+    // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(p) before the switch expression.
+    // CreateForRunType is public static and currently accepts null without a clear error — callers
+    // receive a NullReferenceException inside CreateCore instead of an ArgumentNullException at
+    // the entry point. Pattern used throughout the codebase: ArgumentNullException.ThrowIfNull(p).
+    // TODO: [WARNING] CreateForRunType does NOT inject ConsolidationConstants.ProviderConfigId for
+    // Consolidation runs — completion-strategy selection in AgentJobLifecycleService keys on that
+    // sentinel IssueProviderConfigId, not on RunType. Callers that need the sentinel (e.g.
+    // FromDistributionRequest) must set it themselves before calling this method. This means the
+    // shared factory alone cannot route a Consolidation run to ConsolidationJobCompletionStrategy;
+    // correct routing depends on call-site discipline. Consider documenting this contract more
+    // prominently or injecting the sentinel here and removing the caller-side responsibility.
+    public static PipelineRun CreateForRunType(PipelineRunCreationParams p) => p.RunType switch
+    {
+        PipelineRunType.Review => CreateReview(p),
+        PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => CreateDecomposition(p),
+        PipelineRunType.Consolidation => CreateImplementation(p), // p.RunType == Consolidation; CreateCore passes it through
+        _ => CreateImplementation(p)
+    };
+
+    /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
     /// </summary>
     // TODO: Consider adding a RunType guard here (if p.RunType != PipelineRunType.Implementation throw)

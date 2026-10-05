@@ -17,7 +17,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
 
     public KeycloakOidcTests(KeycloakFixture fixture) => _fixture = fixture;
 
-    private OidcFlowDriver Driver() => new(_fixture.Factory);
+    private OidcFlowDriver Driver() => new(_fixture.Factory!);
 
     [RequiresDockerFact]
     public async Task OperatorOfOneProject_LogsIn_WithGroupsAndProjectRole()
