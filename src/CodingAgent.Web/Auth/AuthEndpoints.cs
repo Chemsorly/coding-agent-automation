@@ -26,7 +26,7 @@ internal static class AuthEndpoints
             .AllowAnonymous()
             .RequireRateLimiting(UserAuthenticationRegistration.LoginRateLimitPolicy);
 
-        app.MapGet(OidcEndpoint, ChallengeOidc).AllowAnonymous();
+        app.MapGet(OidcEndpoint, ChallengeOidcAsync).AllowAnonymous();
 
         app.MapPost(LogoutEndpoint, LogoutAsync).AllowAnonymous();
 
@@ -81,14 +81,34 @@ internal static class AuthEndpoints
         return Results.LocalRedirect(returnUrl);
     }
 
-    private static IResult ChallengeOidc(string? returnUrl, IOptions<AuthOptions> options)
+    private static async Task<IResult> ChallengeOidcAsync(
+        HttpContext context,
+        string? returnUrl,
+        IOptions<AuthOptions> options,
+        ILoggerFactory loggerFactory)
     {
-        if (!options.Value.Oidc.Enabled)
+        var provider = options.Value.Oidc;
+        if (!provider.Enabled)
             return Results.NotFound();
 
-        return Results.Challenge(
-            new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) },
-            [OidcRegistration.OidcScheme]);
+        // Challenge here rather than return Results.Challenge, which runs after this method, so a
+        // failure to start the sign-in (discovery or network error, or the provider rejecting the
+        // pushed authorization request) lands on the login page like a callback failure does,
+        // not on an empty 500. Not filtered on OperationCanceledException: a backchannel timeout
+        // is one; only an aborted request has nobody to redirect.
+        try
+        {
+            await context.ChallengeAsync(
+                OidcRegistration.OidcScheme,
+                new AuthenticationProperties { RedirectUri = SafeReturnUrl(returnUrl) });
+            return Results.Empty;
+        }
+        catch (Exception ex) when (!context.RequestAborted.IsCancellationRequested)
+        {
+            loggerFactory.CreateLogger(typeof(AuthEndpoints).FullName!).LogError(ex,
+                "OIDC sign-in with {Provider} could not start", LogSanitizer.SanitizeForLog(provider.Name));
+            return Results.Redirect($"{AuthPaths.Login}?error={LoginErrors.Oidc}");
+        }
     }
 
     private static async Task<IResult> LogoutAsync(HttpContext context, IAntiforgery antiforgery)
