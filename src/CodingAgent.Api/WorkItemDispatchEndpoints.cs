@@ -383,7 +383,7 @@ public static class WorkItemDispatchEndpoints
         // (Correctness, DotNetSpecialist review [WARNING])
         var earlyGateResult = dispatchService.ApplyGates(
             normalizedReqSelector, sanitizedReqSelector, concurrencyBySelector,
-            pvcResult, template, dispatchService.IsKiroAgent(template), "DispatchWorkItem");
+            pvcResult, template, JobTemplateProviderType.IsKiro(template.ProviderType), "DispatchWorkItem");
         if (earlyGateResult is not null)
             return earlyGateResult;
 
@@ -487,7 +487,7 @@ public static class WorkItemDispatchEndpoints
         // If this is intentional, document it; otherwise guard the 503 telemetry in InterpretDispatchResult
         // with the same rewriteConcurrencyLimitAsDeferred flag used for the 409 branch.
         // See review finding: Correctness @ line 616.
-        var (syncResult, _) = DispatchWorkItemService.InterpretDispatchResult(syncDispatchResult, pvcResult, dispatchService.IsKiroAgent(template), rewriteConcurrencyLimitAsDeferred: false);
+        var (syncResult, _) = DispatchWorkItemService.InterpretDispatchResult(syncDispatchResult, pvcResult, JobTemplateProviderType.IsKiro(template.ProviderType), rewriteConcurrencyLimitAsDeferred: false);
         return syncResult;
     }
 

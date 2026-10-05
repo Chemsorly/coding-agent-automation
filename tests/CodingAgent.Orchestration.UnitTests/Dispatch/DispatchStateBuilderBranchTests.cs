@@ -19,7 +19,7 @@ namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 
 /// <summary>
 /// Additional branch coverage tests for <see cref="DispatchStateBuilder"/>.
-/// Covers static helper methods (<c>IsAtConcurrencyLimit</c>, <c>IsKiroAgentWithoutPvc</c>),
+/// Covers static helper methods (<c>IsAtConcurrencyLimit</c>, <c>IsKiroWithoutPvc</c>),
 /// telemetry recording path in <c>BuildStateAsync</c>, and empty-result telemetry.
 /// </summary>
 [Trait("Feature", "DispatchStateBuilder")]
@@ -114,34 +114,34 @@ public class DispatchStateBuilderBranchTests : IDisposable
             .Should().BeFalse("null selector uses empty key, not in map → 0 active");
     }
 
-    // ── IsKiroAgentWithoutPvc — static helper ─────────────────────────────
+    // ── IsKiroWithoutPvc — static helper ─────────────────────────────
 
     [Fact]
-    public void IsKiroAgentWithoutPvc_KiroAgent_NoPvcs_ReturnsTrue()
+    public void IsKiroWithoutPvc_KiroAgent_NoPvcs_ReturnsTrue()
     {
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: true, availablePvcs: new List<string>())
+        DispatchStateBuilder.IsKiroWithoutPvc(isKiroAgent: true, availablePvcs: new List<string>())
             .Should().BeTrue("kiro agent with no PVCs must be blocked");
     }
 
     [Fact]
-    public void IsKiroAgentWithoutPvc_KiroAgent_HasPvc_ReturnsFalse()
+    public void IsKiroWithoutPvc_KiroAgent_HasPvc_ReturnsFalse()
     {
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: true, availablePvcs: new List<string> { "pvc-1" })
+        DispatchStateBuilder.IsKiroWithoutPvc(isKiroAgent: true, availablePvcs: new List<string> { "pvc-1" })
             .Should().BeFalse("kiro agent with available PVC may proceed");
     }
 
     [Fact]
-    public void IsKiroAgentWithoutPvc_NonKiroAgent_NoPvcs_ReturnsFalse()
+    public void IsKiroWithoutPvc_NonKiroAgent_NoPvcs_ReturnsFalse()
     {
         // Non-kiro agents don't need PVCs
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: false, availablePvcs: new List<string>())
+        DispatchStateBuilder.IsKiroWithoutPvc(isKiroAgent: false, availablePvcs: new List<string>())
             .Should().BeFalse("non-kiro agents never require a PVC");
     }
 
     [Fact]
-    public void IsKiroAgentWithoutPvc_NonKiroAgent_HasPvc_ReturnsFalse()
+    public void IsKiroWithoutPvc_NonKiroAgent_HasPvc_ReturnsFalse()
     {
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: false, availablePvcs: new List<string> { "pvc-1" })
+        DispatchStateBuilder.IsKiroWithoutPvc(isKiroAgent: false, availablePvcs: new List<string> { "pvc-1" })
             .Should().BeFalse("non-kiro agent with PVC — still false");
     }
 
