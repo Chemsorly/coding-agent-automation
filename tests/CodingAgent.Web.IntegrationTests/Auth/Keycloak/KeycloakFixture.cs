@@ -4,6 +4,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Auth;
 using CodingAgent.Web.IntegrationTests.Smoke;
+using DotNet.Testcontainers.Builders;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -33,30 +34,59 @@ public sealed class KeycloakFixture : IAsyncLifetime
     // Pinned like every other image in CI; bump deliberately.
     private const string KeycloakImage = "quay.io/keycloak/keycloak:26.3";
 
-    private readonly KeycloakContainer _keycloak = new KeycloakBuilder()
-        .WithImage(KeycloakImage)
-        .WithResourceMapping(
-            new FileInfo(Path.Combine(AppContext.BaseDirectory, "Auth", "Keycloak", $"{Realm}-realm.json")),
-            "/opt/keycloak/data/import/")
-        .WithCommand("--import-realm")
-        .Build();
+    private KeycloakContainer? _keycloak;
 
     public string Issuer { get; private set; } = "";
 
     public OidcWebApplicationFactory Factory { get; private set; } = null!;
 
+    /// <summary>
+    /// True when Docker was available and the Keycloak container started successfully.
+    /// False when Docker is unavailable (agent/CI environments without a Docker socket).
+    /// Tests should call <see cref="SkipIfUnavailable"/> at their start to be skipped rather
+    /// than failed when Docker is not present.
+    /// </summary>
+    public bool DockerAvailable { get; private set; } = true;
+
     public async Task InitializeAsync()
     {
-        await _keycloak.StartAsync();
+        try
+        {
+            _keycloak = new KeycloakBuilder()
+                .WithImage(KeycloakImage)
+                .WithResourceMapping(
+                    new FileInfo(Path.Combine(AppContext.BaseDirectory, "Auth", "Keycloak", $"{Realm}-realm.json")),
+                    "/opt/keycloak/data/import/")
+                .WithCommand("--import-realm")
+                .Build();
+            await _keycloak.StartAsync();
+        }
+        catch (DockerUnavailableException)
+        {
+            DockerAvailable = false;
+            return;
+        }
+
         Issuer = new Uri(new Uri(_keycloak.GetBaseAddress()), $"realms/{Realm}").ToString();
         Factory = new OidcWebApplicationFactory(Issuer);
+    }
+
+    /// <summary>
+    /// Skips the calling test when Docker is unavailable. Call this as the first line in each
+    /// test that requires the Keycloak container.
+    /// </summary>
+    public void SkipIfUnavailable()
+    {
+        if (!DockerAvailable)
+            Skip.If(true, "Docker is not available in this environment; Keycloak container cannot be started.");
     }
 
     public async Task DisposeAsync()
     {
         if (Factory is not null)
             await Factory.DisposeAsync();
-        await _keycloak.DisposeAsync();
+        if (_keycloak is not null)
+            await _keycloak.DisposeAsync();
     }
 }
 

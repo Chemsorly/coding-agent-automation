@@ -165,11 +165,7 @@ public partial class QualityGateExecutor
         }
         catch
         {
-            // TODO: [WARNING] pipeline.ci_infra_retries is not set here, unlike the post-PR path in
-            // CiPollingCoordinator.WaitForPostPrCiAsync. If the poll throws after some infra retries,
-            // the WaitForCi span will be missing the retry count, making it inconsistent with the
-            // documented schema and the post-PR path behaviour. Add:
-            //   ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
+            ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
             ciSpan?.SetTag("pipeline.ci_status", "error");
             throw;
         }

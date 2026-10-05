@@ -3,7 +3,6 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
-
   <!-- Suppress NuGet audit warnings for transitive vulnerabilities we cannot control.
        Scriban.Signed 7.2.0 is pulled in by WireMock.Net 2.11.0 (latest available);
        no patched Scriban version exists yet. These are moderate-severity template injection
@@ -12,7 +11,6 @@
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6q7j-xr26-3h2c" />
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-q6rr-fm2g-g5x8" />
   </ItemGroup>
-
   <!-- Source packages -->
   <ItemGroup>
     <PackageVersion Include="LibGit2Sharp" Version="0.32.0" />
@@ -58,9 +56,9 @@
     <PackageVersion Include="Serilog.Formatting.Compact" Version="3.0.0" />
     <PackageVersion Include="Serilog.Enrichers.Span" Version="3.1.0" />
     <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
+    <PackageVersion Include="Xunit.SkippableFact" Version="1.4.13" />
     <PackageVersion Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
-
   <!-- Test packages -->
   <ItemGroup>
     <!-- Pin AngleSharp to 1.5.2 to resolve GHSA-pgww-w46g-26qg (moderate severity

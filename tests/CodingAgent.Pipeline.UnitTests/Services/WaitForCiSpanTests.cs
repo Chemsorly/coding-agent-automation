@@ -129,6 +129,48 @@ public class WaitForCiSpanTests : IDisposable
         ciStatus.Should().NotBe("passed");
     }
 
+    [Fact]
+    public async Task PrePrCiPath_OnException_WaitForCiSpan_HasErrorStatus()
+    {
+        var (run, context) = BuildPrePrContext();
+        SetupCiThrows(new Exception("CI poll exploded"));
+
+        // AppendExternalCiIfNeededAsync catches non-OCE exceptions and converts them to a gate result —
+        // it does not rethrow. The catch block in RunExternalCiPollAsync still fires and sets span tags
+        // before the outer handler absorbs the exception.
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Filter by run_id to avoid picking up WaitForCi spans emitted by other tests running in parallel.
+        var span = _activities.First(a => a.DisplayName == "WaitForCi"
+            && Equals(a.GetTagItem("pipeline.run_id"), run.RunId));
+        span.GetTagItem("pipeline.ci_status").Should().Be("error",
+            "the pre-PR WaitForCi catch block must set pipeline.ci_status = \"error\" when PollAndHandleInfraRetryAsync throws");
+        // TODO: [WARNING] The zero-retry (default) path does not assert that pipeline.ci_infra_retries == 0.
+        // A bug that always emits a constant non-zero value would go undetected here. Add:
+        //   span.GetTagItem("pipeline.ci_infra_retries").Should().Be(0);
+    }
+
+    [Fact]
+    public async Task PrePrCiPath_OnException_WaitForCiSpan_HasInfraRetryCount()
+    {
+        var (run, context) = BuildPrePrContext();
+
+        // Simulate 2 infra retries having occurred before the exception by setting the count on the run
+        // object via a mock callback. The catch block reads run.InfrastructureRetryCount at throw time.
+        const int expectedRetries = 2;
+        SetupCiThrows(new Exception("CI poll exploded"), infraRetriesBeforeThrow: expectedRetries, run);
+
+        await _executor.AppendExternalCiIfNeededAsync(
+            context, PassingReport, allowEmptyCommit: false, CancellationToken.None);
+
+        // Filter by run_id to avoid picking up WaitForCi spans emitted by other tests running in parallel.
+        var span = _activities.First(a => a.DisplayName == "WaitForCi"
+            && Equals(a.GetTagItem("pipeline.run_id"), run.RunId));
+        span.GetTagItem("pipeline.ci_infra_retries").Should().Be(expectedRetries,
+            "the pre-PR WaitForCi catch block must set pipeline.ci_infra_retries from run.InfrastructureRetryCount");
+    }
+
     // ── Post-PR CI path (CiPollingCoordinator.WaitForPostPrCiAsync) ───────────
 
     [Fact]
@@ -178,12 +220,6 @@ public class WaitForCiSpanTests : IDisposable
     // TODO: [WARNING] No test covers the post-PR CI failure path (CiPollingCoordinator.WaitForPostPrCiAsync
     // with a failing CI result). If pipeline.ci_status is silently wrong on a post-PR CI failure, no test
     // would catch it. Add: PostPrCiPath_CiFails_WaitForCiSpan_HasNonPassedStatus using SetupCiFail().
-
-    // TODO: [WARNING] Neither the pre-PR nor the post-PR WaitForCi tests cover the exception/throw path.
-    // The catch blocks in QualityGateExecutor.ExternalCi.cs and CiPollingCoordinator set
-    // pipeline.ci_status = "error" and rethrow. No test verifies this, so accidentally removing the catch
-    // block or the tag assignment would go undetected. Add tests that configure the pipeline provider to
-    // throw and assert pipeline.ci_status == "error" on the resulting span.
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -327,5 +363,42 @@ public class WaitForCiSpanTests : IDisposable
                 State = PipelineRunState.Failed,
                 Jobs = [new() { Name = "build", State = PipelineRunState.Failed }]
             });
+    }
+
+    /// <summary>
+    /// Configures WaitForCompletionAsync to throw <paramref name="exception"/>.
+    /// When <paramref name="infraRetriesBeforeThrow"/> is greater than zero, the mock uses a
+    /// callback to set <see cref="PipelineRun.InfrastructureRetryCount"/> on <paramref name="run"/>
+    /// before throwing, simulating infrastructure retries that incremented the counter before the
+    /// final exception.
+    /// </summary>
+    private void SetupCiThrows(Exception exception, int infraRetriesBeforeThrow = 0, PipelineRun? run = null)
+    {
+        _pipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = [new() { Name = "build", State = PipelineRunState.Running }]
+            });
+
+        if (infraRetriesBeforeThrow > 0 && run != null)
+        {
+            // TODO: [WARNING] The lambda inside Callback() implicitly assumes run is non-null, but the
+            // parameter is typed PipelineRun?. The outer guard prevents the null path today, but a future
+            // caller that passes infraRetriesBeforeThrow > 0 with run == null would get a NullReferenceException
+            // at test execution time rather than compile time. Consider adding a null-guard inside the lambda or
+            // making run non-nullable when infraRetriesBeforeThrow > 0 is required.
+            _pipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                .Callback(() => run.InfrastructureRetryCount = infraRetriesBeforeThrow)
+                .ThrowsAsync(exception);
+        }
+        else
+        {
+            _pipelineProvider.Setup(p => p.WaitForCompletionAsync(
+                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(exception);
+        }
     }
 }
