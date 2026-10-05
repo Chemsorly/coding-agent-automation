@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -175,11 +176,10 @@ public sealed partial class TokenVendingService : ITokenVendingService
         // never acquired. However, this correctness depends on the structural placement of a single
         // await line relative to the try boundary. If a future refactor moves WaitAsync inside the try
         // block without adding an `acquired` guard, sem.Release() will be called on an un-acquired
-        // semaphore, throwing SemaphoreFullException and defeating Fix A. The standard guard pattern:
-        //   bool acquired = false;
-        //   try { await sem.WaitAsync(ct); acquired = true; ... }
-        //   finally { if (acquired) sem.Release(); }
-        // would make the intent explicit and survive such a refactor. (.NET Specialist warning)
+        // semaphore, throwing SemaphoreFullException and defeating Fix A. The standard guard pattern
+        // (an `acquired` flag set right after WaitAsync inside the try, with the finally block only
+        // releasing when the flag is set) would make the intent explicit and survive such a
+        // refactor. (.NET Specialist warning)
         await sem.WaitAsync(ct);
         try
         {
@@ -194,8 +194,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
             }
 
             // Mint a fresh token from GitHub.
-            var (token, expiresAt) = await MintTokenFromGitHubAsync(
-                installationId, apiUrl, clientId, privateKeyBase64, repoName, readOnly, includeIssuePermission, ct);
+            var (token, expiresAt) = await MintTokenFromGitHubAsync(cacheKey, clientId, privateKeyBase64, ct);
 
             // Store in cache. If mint threw, we never reach here, so no faulted entry is stored.
             _tokenCache[cacheKey] = new TokenCacheEntry(token, expiresAt);
@@ -236,17 +235,13 @@ public sealed partial class TokenVendingService : ITokenVendingService
             // fresh entry. Prefer the value-aware overload
             // _tokenCache.TryRemove(new KeyValuePair<TokenCacheKey, TokenCacheEntry>(key, entry))
             // so removal only fires if the expired snapshot is still current.
-            if (_tokenCache.TryGetValue(key, out var entry) && entry.ExpiresAt <= now)
+            // Once the expired entry is removed, also remove and dispose the semaphore so the
+            // dictionary does not grow monotonically and the IDisposable resource is properly released.
+            if (_tokenCache.TryGetValue(key, out var entry) && entry.ExpiresAt <= now
+                && _tokenCache.TryRemove(key, out _)
+                && _mintSemaphores.TryRemove(key, out var removedSem))
             {
-                if (_tokenCache.TryRemove(key, out _))
-                {
-                    // Remove and dispose the semaphore so the dictionary does not grow monotonically
-                    // and the IDisposable resource is properly released.
-                    if (_mintSemaphores.TryRemove(key, out var removedSem))
-                    {
-                        removedSem.Dispose();
-                    }
-                }
+                removedSem.Dispose();
             }
         }
     }
@@ -256,16 +251,20 @@ public sealed partial class TokenVendingService : ITokenVendingService
     /// Separated from <see cref="GenerateAgentTokenAsync"/> to keep the caching logic clear.
     /// Telemetry and error recording live here.
     /// </summary>
+    /// <param name="scope">
+    /// The token scope (installation, repository, permission set and GitHub host) — the same
+    /// tuple that keys the token cache.
+    /// </param>
+    /// <param name="clientId">GitHub App client ID used as the JWT issuer.</param>
+    /// <param name="privateKeyBase64">Base64-encoded GitHub App private key used to sign the JWT.</param>
+    /// <param name="ct">Cancellation token.</param>
     private async Task<(string Token, DateTimeOffset ExpiresAt)> MintTokenFromGitHubAsync(
-        long installationId,
-        string apiUrl,
+        TokenCacheKey scope,
         string clientId,
         string privateKeyBase64,
-        string? repoName,
-        bool readOnly,
-        bool includeIssuePermission,
         CancellationToken ct)
     {
+        var installationId = scope.InstallationId;
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("TokenVending.GenerateToken");
 
         try
@@ -276,24 +275,16 @@ public sealed partial class TokenVendingService : ITokenVendingService
             // Build the scoped token request body
             var requestBody = new TokenRequestBody
             {
-                Permissions = readOnly
-                    ? new TokenPermissions { Contents = "read" }
-                    : new TokenPermissions
-                    {
-                        Contents = "write",
-                        PullRequests = "write",
-                        Actions = "read",
-                        Issues = includeIssuePermission ? "write" : null
-                    }
+                Permissions = BuildPermissions(scope.ReadOnly, scope.IncludeIssuePermission)
             };
 
-            if (!string.IsNullOrWhiteSpace(repoName))
+            if (!string.IsNullOrWhiteSpace(scope.RepoName))
             {
-                requestBody.Repositories = [repoName];
+                requestBody.Repositories = [scope.RepoName];
             }
 
             var requestJson = JsonSerializer.Serialize(requestBody, TokenRequestJsonContext.Default.TokenRequestBody);
-            var requestUrl = $"{apiUrl}/app/installations/{installationId}/access_tokens";
+            var requestUrl = $"{scope.ApiUrl}/app/installations/{installationId}/access_tokens";
 
             using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", jwt);
@@ -332,7 +323,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
                 throw new InvalidOperationException("Failed to deserialize token response");
             }
 
-            var expiresAt = DateTimeOffset.Parse(tokenResponse.ExpiresAt);
+            var expiresAt = DateTimeOffset.Parse(tokenResponse.ExpiresAt, CultureInfo.InvariantCulture);
 
             _logger.Information(
                 "Generated scoped agent token for installation {InstallationId}, expires at {ExpiresAt}",
@@ -531,6 +522,27 @@ public sealed partial class TokenVendingService : ITokenVendingService
     private static string GenerateJwt(string clientId, string privateKeyBase64)
     {
         return CodingAgent.Pipeline.GitHub.GitHubJwtGenerator.GenerateFromBase64(clientId, privateKeyBase64);
+    }
+
+    /// <summary>
+    /// Builds the permission set for the token request: <c>contents: read</c> only for read-only
+    /// tokens; otherwise <c>contents: write</c>, <c>pull_requests: write</c>, <c>actions: read</c>,
+    /// plus <c>issues: write</c> when <paramref name="includeIssuePermission"/> is true.
+    /// </summary>
+    private static TokenPermissions BuildPermissions(bool readOnly, bool includeIssuePermission)
+    {
+        if (readOnly)
+        {
+            return new TokenPermissions { Contents = "read" };
+        }
+
+        return new TokenPermissions
+        {
+            Contents = "write",
+            PullRequests = "write",
+            Actions = "read",
+            Issues = includeIssuePermission ? "write" : null
+        };
     }
 
     // ── JSON serialization types for GitHub API ─────────────────────────

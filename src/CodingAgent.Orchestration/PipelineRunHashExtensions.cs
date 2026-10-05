@@ -1,6 +1,7 @@
 #pragma warning disable CS0618 // Obsolete StartedAt used intentionally for round-trip
 
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Pipeline.Models;
 using StackExchange.Redis;
@@ -211,11 +212,11 @@ public static class PipelineRunHashExtensions
             run.CurrentStep = step;
         if (Enum.TryParse<PipelineStep>(d.GetValueOrDefault("highWaterMark"), out var hwm))
             run.HighWaterMark = hwm;
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("startedAtOffset"), out var sao))
+        if (DateTimeOffset.TryParse(d.GetValueOrDefault("startedAtOffset"), CultureInfo.InvariantCulture, out var sao))
             run.ResetStartedAt(sao);
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("lastStepChangeAt"), out var lsca))
+        if (DateTimeOffset.TryParse(d.GetValueOrDefault("lastStepChangeAt"), CultureInfo.InvariantCulture, out var lsca))
             run.LastStepChangeAt = lsca;
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("completedAtOffset"), out var cao))
+        if (DateTimeOffset.TryParse(d.GetValueOrDefault("completedAtOffset"), CultureInfo.InvariantCulture, out var cao))
             run.MarkCompleted(cao);
 
         // Code review counts (Interlocked) — parse each independently

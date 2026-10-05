@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Octokit;
 using CodingAgent.Infrastructure.Git;
@@ -616,8 +617,8 @@ public partial class GitHubRepositoryProvider
                 // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
                 // checked c.User?.Type == AccountType.Bot, which covers GitHub App accounts whose
                 // login does not follow the [bot]-suffix convention. Those accounts now return
-                // IsBot = false. If AccountType.Bot detection is required here, add:
-                //   IsBot = c.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author)
+                // IsBot = false. If AccountType.Bot detection is required here, OR an
+                // AccountType.Bot check on c.User?.Type into the IsBotAuthor result.
                 IsBot = SharedPrOperations.IsBotAuthor(author),
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
@@ -713,7 +714,11 @@ public partial class GitHubRepositoryProvider
     // These capture only the fields we need, avoiding a dependency on Octokit's
     // typed PullRequest model while still benefiting from its SimpleJsonSerializer
     // (PascalCase → ruby_case mapping is automatic via ToRubyCase()).
+    // The property setters are only ever invoked by that serializer via reflection, so each DTO is
+    // annotated with [DynamicallyAccessedMembers(PublicProperties)] to declare the reflection usage
+    // (keeps the setters under trimming and tells analyzers they are not dead code).
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrDetailDto
     {
         public int Number { get; set; }
@@ -738,16 +743,19 @@ public partial class GitHubRepositoryProvider
         public string? State { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrRefDto
     {
         public string? Ref { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrUserDto
     {
         public string? Login { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrLabelDto
     {
         public string? Name { get; set; }
