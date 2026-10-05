@@ -184,11 +184,8 @@ public sealed class WorkItemDispatchLoop : BackgroundService
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // TODO: The `result` tag is never set on the span for cancellation or exception paths —
-            // the `dispatchActivity?.SetTag("result", ...)` line below is skipped when we return here.
-            // The span is therefore emitted without a result tag, making it indistinguishable from a
-            // sampling/null issue. Fix: set dispatchActivity?.SetTag("result", "Cancelled") here (and
-            // "Exception" in the catch below) before returning.
+            // Tag the span here: the result tag below is skipped on this path.
+            dispatchActivity?.SetTag("result", "Cancelled");
             return false;
         }
         catch (Exception ex)
@@ -196,7 +193,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             _logger.Warning(ex,
                 "WorkItemDispatchLoop: unexpected error dispatching {WorkItemId} — aborting cycle",
                 item.Id);
-            // TODO: Same as above — set dispatchActivity?.SetTag("result", "Exception") before returning.
+            dispatchActivity?.SetTag("result", "Exception");
             return false;
         }
 

@@ -375,7 +375,7 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<ApiConfigurationStore>());
     }
 
-    private static IKubernetes CreateKubernetesClient()
+    private static k8s.Kubernetes CreateKubernetesClient()
     {
         try
         {
