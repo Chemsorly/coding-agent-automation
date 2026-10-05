@@ -509,7 +509,7 @@ internal class CodeReviewOrchestrator
                 run, config, "Acceptance criteria compliance",
                 context.Callbacks.NotifyChange, _logger, ct,
                 line => context.Callbacks.EmitOutputLine($"[AcceptanceCriteria] {line}"),
-                stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "code_review");
 
             _logger.Information(
@@ -598,7 +598,7 @@ internal class CodeReviewOrchestrator
             },
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"),
-            stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+            reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
             phase: "code_review");
 
         if (reviewResult.ExitCode != 0)

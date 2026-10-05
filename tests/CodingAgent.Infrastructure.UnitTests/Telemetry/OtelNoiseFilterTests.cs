@@ -8,8 +8,8 @@ using FsCheck.Xunit;
 namespace CodingAgent.Infrastructure.UnitTests.Telemetry;
 
 /// <summary>
-/// Tests for <see cref="OtelNoiseFilter"/> filter predicates, span-name enrichment, and the
-/// <see cref="OtelNoiseSpanDropProcessor"/>.
+/// Tests for <see cref="OtelNoiseFilter"/> filter predicates and the
+/// <see cref="OtelNoiseSpanProcessor"/> (start and end-of-span checks, client span naming).
 /// </summary>
 /// <remarks>
 /// The HttpClient filter tests manipulate the <c>KUBERNETES_SERVICE_HOST</c> environment variable.
@@ -164,53 +164,6 @@ public class OtelNoiseFilterTests : IDisposable
             because: "a null URI should not crash and should default to kept");
     }
 
-    // ── EnrichHttpClientRequest ────────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("GET", "https://api.github.com/repos/owner/repo", "GET api.github.com")]
-    [InlineData("POST", "http://coding-agent-api:8080/api/work-items", "POST coding-agent-api")]
-    [InlineData("PUT", "https://example.com/resource/123", "PUT example.com")]
-    [InlineData("DELETE", "http://service.namespace.svc.cluster.local/endpoint", "DELETE service.namespace.svc.cluster.local")]
-    public void EnrichHttpClientRequest_SetsDisplayNameToMethodAndHost(
-        string method, string url, string expectedDisplayName)
-    {
-        using var activitySource = new ActivitySource("test-source");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        using var activity = activitySource.StartActivity("original-name")!;
-        var request = new System.Net.Http.HttpRequestMessage(
-            new System.Net.Http.HttpMethod(method), url);
-
-        OtelNoiseFilter.EnrichHttpClientRequest(activity, request);
-
-        activity.DisplayName.Should().Be(expectedDisplayName);
-    }
-
-    [Fact]
-    public void EnrichHttpClientRequest_NullUri_DoesNotThrowAndLeavesDisplayNameUnchanged()
-    {
-        using var activitySource = new ActivitySource("test-source-2");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        using var activity = activitySource.StartActivity("original-name")!;
-        var request = new System.Net.Http.HttpRequestMessage();
-        // request.RequestUri is null — method is non-null (HttpMethod.Get)
-
-        var act = () => OtelNoiseFilter.EnrichHttpClientRequest(activity, request);
-        act.Should().NotThrow();
-        activity.DisplayName.Should().Be("original-name");
-    }
-
     // ── ShouldDropSpan ─────────────────────────────────────────────────────────
 
     [Theory]
@@ -267,54 +220,132 @@ public class OtelNoiseFilterTests : IDisposable
             because: $"'{displayName}' does not match the noise pattern and must be kept");
     }
 
-    // ── OtelNoiseSpanDropProcessor wiring ─────────────────────────────────────
+    // ── OtelNoiseSpanProcessor ────────────────────────────────────────────────
 
     [Fact]
-    public void OtelNoiseSpanDropProcessor_OnStart_SuppressesNoiseSpan()
+    public void Processor_OnStart_SuppressesNoiseSpan()
     {
-        using var activitySource = new ActivitySource("test-processor");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
-        };
-        ActivitySource.AddActivityListener(listener);
+        using var activity = StartRecordedActivity("test-processor", "AgentHub/Heartbeat", ActivityKind.Server);
+        activity.Recorded.Should().BeTrue("the span is recorded before the processor runs");
 
-        using var activity = activitySource.StartActivity("AgentHub/Heartbeat")!;
-        var processor = new OtelNoiseSpanDropProcessor();
-
-        // TODO: [WARNING] Add a pre-condition assertion here to make this a proper before/after proof:
-        //   activity.IsAllDataRequested.Should().BeTrue("before processor runs, span should be recording");
-        // Without it, if the listener/sampler config initialised IsAllDataRequested to false, the
-        // processor's suppression effect would be invisible and the test would still pass.
-        // See TestQualityReviewer finding at OtelNoiseFilterTests.cs:706.
-        processor.OnStart(activity);
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: null).OnStart(activity);
 
         activity.IsAllDataRequested.Should().BeFalse("noise span must not request data collection");
-        activity.ActivityTraceFlags.Should().NotHaveFlag(ActivityTraceFlags.Recorded,
-            because: "noise span must not be marked as recorded");
+        activity.Recorded.Should().BeFalse("noise span must not be exported");
     }
 
     [Fact]
-    public void OtelNoiseSpanDropProcessor_OnStart_DoesNotSuppressSignalSpan()
+    public void Processor_OnStart_DoesNotSuppressSignalSpan()
     {
-        using var activitySource = new ActivitySource("test-processor-keep");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
-        };
-        ActivitySource.AddActivityListener(listener);
+        using var activity = StartRecordedActivity("test-processor", "ExecutePipeline", ActivityKind.Internal);
 
-        using var activity = activitySource.StartActivity("ExecutePipeline")!;
-        var processor = new OtelNoiseSpanDropProcessor();
-
-        processor.OnStart(activity);
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: null).OnStart(activity);
 
         activity.IsAllDataRequested.Should().BeTrue("signal span must continue collecting data");
+        activity.Recorded.Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData("/healthz")]
+    [InlineData("/readyz")]
+    [InlineData("/loop/status")]
+    public void Processor_OnEnd_SuppressesProbeServerSpans(string path)
+    {
+        // The instrumentation filter did not drop the span when it started: the end-of-span check must.
+        using var activity = StartRecordedActivity("Microsoft.AspNetCore", $"GET {path}", ActivityKind.Server);
+        activity.SetTag("url.path", path);
+
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: null).OnEnd(activity);
+
+        activity.Recorded.Should().BeFalse($"a finished {path} server span must not be exported");
+    }
+
+    [Theory]
+    [InlineData("/api/work-items/pending")]
+    [InlineData("/healthz/detail")]
+    public void Processor_OnEnd_KeepsOtherServerSpans(string path)
+    {
+        using var activity = StartRecordedActivity("Microsoft.AspNetCore", $"GET {path}", ActivityKind.Server);
+        activity.SetTag("url.path", path);
+
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: null).OnEnd(activity);
+
+        activity.Recorded.Should().BeTrue();
+        activity.DisplayName.Should().Be($"GET {path}", "server span names are left unchanged");
+    }
+
+    [Theory]
+    [InlineData("10.43.0.1")]
+    [InlineData("kubernetes.default.svc")]
+    public void Processor_OnEnd_SuppressesKubernetesApiClientSpans(string host)
+    {
+        using var activity = StartHttpClientActivity("PUT", host);
+
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: "10.43.0.1").OnEnd(activity);
+
+        activity.Recorded.Should().BeFalse($"a call to the Kubernetes API server ({host}) must not be exported");
+    }
+
+    [Theory]
+    [InlineData("GET", "api.github.com", "GET api.github.com")]
+    [InlineData("POST", "coding-agent-api", "POST coding-agent-api")]
+    [InlineData("DELETE", "service.namespace.svc.cluster.local", "DELETE service.namespace.svc.cluster.local")]
+    public void Processor_OnEnd_NamesHttpClientSpansByMethodAndHost(string method, string host, string expectedName)
+    {
+        using var activity = StartHttpClientActivity(method, host);
+
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: "10.43.0.1").OnEnd(activity);
+
+        activity.Recorded.Should().BeTrue();
+        activity.DisplayName.Should().Be(expectedName);
+    }
+
+    [Fact]
+    public void Processor_OnEnd_LeavesClientSpansOfOtherSourcesUnchanged()
+    {
+        using var activity = StartRecordedActivity("Npgsql", "coding_agent", ActivityKind.Client);
+        activity.SetTag("http.request.method", "GET");
+        activity.SetTag("server.address", "postgres");
+
+        new OtelNoiseSpanProcessor(kubernetesServiceHost: null).OnEnd(activity);
+
+        activity.DisplayName.Should().Be("coding_agent");
+    }
+
+    [Fact]
+    public void Processor_OnEnd_LeavesHttpClientSpanWithoutHostUnchanged()
+    {
+        using var activity = StartRecordedActivity("System.Net.Http", "GET", ActivityKind.Client);
+        activity.SetTag("http.request.method", "GET");
+
+        var act = () => new OtelNoiseSpanProcessor(kubernetesServiceHost: null).OnEnd(activity);
+
+        act.Should().NotThrow();
+        activity.DisplayName.Should().Be("GET");
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private static Activity StartHttpClientActivity(string method, string host)
+    {
+        var activity = StartRecordedActivity("System.Net.Http", method, ActivityKind.Client);
+        activity.SetTag("http.request.method", method);
+        activity.SetTag("server.address", host);
+        return activity;
+    }
+
+    private static Activity StartRecordedActivity(string sourceName, string name, ActivityKind kind)
+    {
+        // The source and listener only need to live until the activity has started.
+        using var source = new ActivitySource(sourceName);
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = s => s.Name == sourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
+        };
+        ActivitySource.AddActivityListener(listener);
+        return source.StartActivity(name, kind)!;
+    }
 
     private static Microsoft.AspNetCore.Http.HttpContext BuildHttpContext(string path)
     {

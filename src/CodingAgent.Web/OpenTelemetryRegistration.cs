@@ -20,22 +20,22 @@ internal static class OpenTelemetryRegistration
         this IServiceCollection services,
         string? redisConnectionString)
     {
+        // Same sources as the other hosts and the Serilog OTLP sink, so traces, metrics and logs carry
+        // one service.name, and service.version is the image's git SHA rather than the assembly version.
         services.AddOpenTelemetry()
             .ConfigureResource(r => r.AddService(
-                serviceName: "coding-agent-web",
-                serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
+                serviceName: Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-web",
+                serviceVersion: Environment.GetEnvironmentVariable("SERVICE_VERSION")
+                    ?? typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
             .WithTracing(t =>
             {
                 t.AddAspNetCoreInstrumentation(opts =>
                     opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
                     .AddHttpClientInstrumentation(opts =>
-                    {
-                        opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
-                        opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
-                    })
+                        opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
                     .AddSource(PipelineTelemetry.SourceName)
                     .AddSource("Microsoft.AspNetCore.SignalR.Server")
-                    .AddProcessor(new OtelNoiseSpanDropProcessor())
+                    .AddProcessor(new OtelNoiseSpanProcessor())
                     .AddOtlpExporter();
 
                 // Redis backplane: trace Redis commands

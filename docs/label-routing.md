@@ -29,21 +29,31 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 | **QGC Resolution** | Job's RequiredLabels (from repo) | QGC MatchLabels ∩ job labels ≠ ∅ (ANY match) | Determine which quality gates to run |
 | **Reviewer Resolution** | Job's RequiredLabels (from repo) | Reviewer MatchLabels ∩ job labels ≠ ∅ (ANY match) | Determine which review agents to run |
 
-## Configured Agent Types
+## Agent Images
 
-| Agent Type | Labels | Docker Image | SDK |
-|-----------|--------|--------------|-----|
-| `kiro-dotnet10` | `kiro, dotnet, dotnet10` | `dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile` | .NET 10 |
-| `kiro-python312` | `kiro, python, python312` | `dockerfiles/kiro/agent-kiro-python312.Dockerfile` | Python 3.12 |
-| `kiro-java21` | `kiro, java, java21` | `dockerfiles/kiro/agent-kiro-java21.Dockerfile` | Java 21 |
-| `opencode-dotnet10` | `opencode, dotnet, dotnet10` | `dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile` | .NET 10 |
-| `opencode-python312` | `opencode, python, python312` | `dockerfiles/opencode/agent-opencode-python312.Dockerfile` | Python 3.12 |
-| `opencode-java21` | `opencode, java, java21` | `dockerfiles/opencode/agent-opencode-java21.Dockerfile` | Java 21 |
-| `claude-dotnet10` | `claude, dotnet, dotnet10` | `dockerfiles/claude/agent-claude-dotnet10.Dockerfile` | .NET 10 |
-| `claude-python312` | `claude, python, python312` | `dockerfiles/claude/agent-claude-python312.Dockerfile` | Python 3.12 |
-| `claude-java21` | `claude, java, java21` | `dockerfiles/claude/agent-claude-java21.Dockerfile` | Java 21 |
+Each agent tool has one image, built from `dockerfiles/agent.Dockerfile` with `--target`. Every image carries every supported tech stack: .NET 10 SDK, JDK 21 + Maven, Python 3.12 (pip, venv, uv), Node.js and npm.
 
-Claude images run the Claude Code CLI. Their job templates use `providerType: claude`, and their agent profile points to an agent provider config of type `ClaudeCode` (model, effort, auth mode). They need no credential PVC: the API key and/or subscription token come from the agent Secret — see [Deployment](deployment.md).
+| Image tag | Target | Agent tool | Stacks |
+|-----------|--------|------------|--------|
+| `coding-agent-kiro-latest` | `kiro` | Kiro CLI | .NET 10, Java 21, Python 3.12 |
+| `coding-agent-opencode-latest` | `opencode` | OpenCode | .NET 10, Java 21, Python 3.12 |
+| `coding-agent-claude-latest` | `claude` | Claude Code CLI | .NET 10, Java 21, Python 3.12 |
+
+The image does not route jobs. A job's labels pick an agent profile, and the profile's labels pick the job template, which names the image. Keep one profile and one job template per stack, and point the templates of one agent tool at the same image:
+
+| Job template labels | Image |
+|---------------------|-------|
+| `kiro, dotnet, dotnet10` | `coding-agent-kiro-latest` |
+| `kiro, java, java21` | `coding-agent-kiro-latest` |
+| `kiro, python, python312` | `coding-agent-kiro-latest` |
+
+Each label set keeps its own `maxConcurrent` and resources. Quality gates and reviewers are resolved against the matched profile's labels, so don't give a profile every stack label for convenience: a Java repository matched to `kiro, dotnet, dotnet10, java, java21` would also run the .NET quality gate. For a polyglot repository, add a profile and template with exactly its stacks (for example `kiro, dotnet, dotnet10, python, python312`) on the same image.
+
+The image's default `AGENT_LABELS` lists the agent tool and every stack. Kubernetes Jobs set `AGENT_LABELS` from their job template, so the default applies only to an agent started outside Kubernetes.
+
+The per-stack tags of earlier releases (`coding-agent-kiro-dotnet10-latest`, `coding-agent-claude-java21-latest`, …) are no longer published. Point job templates that still use them at `coding-agent-<tool>-latest`.
+
+The Claude image runs the Claude Code CLI. Its job templates use `providerType: claude`, and their agent profiles point to an agent provider config of type `ClaudeCode` (model, effort, auth mode). It needs no credential PVC: the API key and/or subscription token come from the agent Secret — see [Deployment](deployment.md).
 
 ## Agent Profiles
 

@@ -1749,61 +1749,6 @@ public class LocalPipelineExecutorTests : IDisposable
     // ── SerializedSendAsync ordering (PipelineSignalRReporter) ──────────
 
     [Fact]
-    public async Task TransitionToInternalAsync_SignalRFailure_IncrementsMetricCounter()
-    {
-        using var listener = new MeterListener();
-        var measurements = new List<string>();
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
-            measurements.Add(instrument.Name));
-        listener.Start();
-
-        var run = CreateMinimalRun();
-        await using var connection = CreateDisconnectedHubConnection();
-        await using var batcher = new OutputBatcher();
-        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
-        measurements.Clear();
-
-        await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
-
-        measurements.Should().Contain("agent.signalr.failures");
-    }
-
-    [Fact]
-    public async Task ReportQualityGateResultInternalAsync_SignalRFailure_IncrementsMetricCounter()
-    {
-        using var listener = new MeterListener();
-        var measurements = new List<string>();
-        listener.InstrumentPublished = (instrument, l) =>
-        {
-            if (instrument.Meter.Name == PipelineTelemetry.SourceName)
-                l.EnableMeasurementEvents(instrument);
-        };
-        listener.SetMeasurementEventCallback<long>((instrument, _, _, _) =>
-            measurements.Add(instrument.Name));
-        listener.Start();
-
-        var run = CreateMinimalRun();
-        await using var connection = CreateDisconnectedHubConnection();
-        await using var batcher = new OutputBatcher();
-        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
-        var report = new QualityGateReport
-        {
-            Compilation = new GateResult { GateName = "build", Passed = true },
-            Tests = new GateResult { GateName = "test", Passed = true }
-        };
-        measurements.Clear();
-
-        await reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
-
-        measurements.Should().Contain("agent.signalr.failures");
-    }
-
-    [Fact]
     public async Task SerializedSendAsync_GuaranteesOrdering()
     {
         // Simulate the serialization lock used in ExecuteAsync

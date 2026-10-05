@@ -39,51 +39,11 @@ public class HistogramBucketBoundaryTests
     }
 
     [Fact]
-    public void JobExecutionDuration_HasSecondScaleBucketBoundaries()
-    {
-        var boundaries = WorkDistributionTelemetry.JobExecutionDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull("JobExecutionDuration must have explicit InstrumentAdvice boundaries");
-        // Covers the full range of job execution durations (30s → 6h). Note: the bucket set
-        // previously matched PipelineTelemetry.JobDuration, which was removed in issue #2967;
-        // the replacement is PipelineTelemetry.RunDuration with different buckets. These
-        // workdistribution buckets are intentionally kept at the original values.
-        boundaries.Should().Equal(30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600);
-    }
-
-    [Fact]
     public void TimeoutExecutionAge_HasSecondScaleBucketBoundaries()
     {
         var boundaries = WorkDistributionTelemetry.TimeoutExecutionAge.Advice?.HistogramBucketBoundaries;
         boundaries.Should().NotBeNull("TimeoutExecutionAge must have explicit InstrumentAdvice boundaries");
         boundaries.Should().Equal(30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600);
-    }
-
-    // ── New QGC process-level histograms (issue #2367) ──────────────────────────
-
-    [Fact]
-    public void PostPrCiDuration_HasExpectedBucketBoundaries()
-    {
-        var boundaries = PipelineTelemetry.PostPrCiDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull("PostPrCiDuration must have explicit InstrumentAdvice boundaries");
-        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600);
-    }
-
-    [Fact]
-    public void ExternalCiDuration_HasExpectedBucketBoundaries()
-    {
-        var boundaries = PipelineTelemetry.ExternalCiDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull(
-            "ExternalCiDuration must have explicit InstrumentAdvice boundaries to prevent " +
-            "exponential histogram emission to Grafana Cloud OTLP (issue #2367)");
-        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600);
-    }
-
-    [Fact]
-    public void QgcProcessDuration_HasExpectedBucketBoundaries()
-    {
-        var boundaries = PipelineTelemetry.QgcProcessDuration.Advice?.HistogramBucketBoundaries;
-        boundaries.Should().NotBeNull("QgcProcessDuration must have explicit InstrumentAdvice boundaries (issue #2367)");
-        boundaries.Should().Equal(5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600);
     }
 
     // ── New WorkDistributionTelemetry histograms (issue #2976) ───────────────────────────────

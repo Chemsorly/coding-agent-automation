@@ -1,7 +1,6 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Services;
 using Microsoft.Extensions.DependencyInjection;
-using System.Diagnostics.Metrics;
 
 namespace CodingAgent.Pipeline;
 
@@ -33,7 +32,7 @@ public static class PipelineServicesRegistration
         // IQualityGateValidator is consumed by IQualityGateExecutor (singleton).
         // Register as singleton to avoid captive dependency.
         services.AddSingleton<IQualityGateValidator>(sp =>
-            new QualityGateValidator(logger, sp.GetRequiredService<IMeterFactory>()));
+            new QualityGateValidator(logger));
 
         services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentPhaseExecutor(logger));
 
@@ -47,8 +46,7 @@ public static class PipelineServicesRegistration
             sp.GetRequiredService<CiLogWriter>(),
             sp.GetRequiredService<FeedbackService>(),
             logger,
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            meterFactory: sp.GetRequiredService<IMeterFactory>()));
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         return services;
     }

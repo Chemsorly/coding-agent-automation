@@ -41,6 +41,8 @@ try
         .WithTracing(t => t
             .AddHttpClientInstrumentation()
             .AddSource(PipelineTelemetry.SourceName)
+            // Names outbound HTTP spans "{METHOD} {host}" (and drops the shared noise patterns).
+            .AddProcessor(new OtelNoiseSpanProcessor())
             .AddOtlpExporter());
 
     // ── KiroCliLib ──

@@ -4,7 +4,6 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Services.Steps;
-using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace CodingAgent.Agent;
@@ -151,7 +150,6 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            PipelineTelemetry.AgentSignalRFailures.Add(1);
             _logger.Warning(ex, "Failed to report step transition to {Step}", step);
         }
     }
@@ -179,7 +177,6 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         try { await _connection.SendAsync(HubMethodNames.ReportQualityGateResult, _jobId, report, ct); }
         catch (Exception ex)
         {
-            PipelineTelemetry.AgentSignalRFailures.Add(1);
             _logger.Warning(ex, "Failed to report quality gate result");
         }
     }
@@ -193,7 +190,6 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
         try { await _connection.SendAsync(HubMethodNames.ReportPipelineRunEvent, _jobId, report, ct); }
         catch (Exception ex)
         {
-            PipelineTelemetry.AgentSignalRFailures.Add(1);
             _logger.Warning(ex, "Failed to report pipeline run event (kind={Kind})", report.Kind);
         }
     }

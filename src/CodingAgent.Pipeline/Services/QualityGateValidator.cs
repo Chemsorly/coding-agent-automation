@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services.Parsers;
@@ -18,34 +17,14 @@ namespace CodingAgent.Pipeline.Services;
 public class QualityGateValidator : IQualityGateValidator
 {
     private readonly Serilog.ILogger _logger;
-    private readonly Counter<long> _processTimeouts;
-    private readonly Histogram<double> _processDuration;
 
+    // Attribute names on the QualityGate.Compilation / QualityGate.Tests spans.
     private const string TagGateName = "gate_name";
     private const string TagQgcName = "qgc_name";
-    private const string TagOutcome = "outcome";
 
-    public QualityGateValidator(Serilog.ILogger logger, IMeterFactory? meterFactory = null)
+    public QualityGateValidator(Serilog.ILogger logger)
     {
         _logger = logger;
-        if (meterFactory is not null)
-        {
-            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
-            _processTimeouts = meter.CreateCounter<long>(
-                "quality_gate.process.timeout", "{timeout}", "QGC process timeouts by gate and QGC name");
-            _processDuration = meter.CreateHistogram<double>(
-                "quality_gate.process.duration", "s",
-                "Single process invocation duration (compilation or test command). Distinct from quality_gate.duration which covers the entire retry phase.",
-                advice: new InstrumentAdvice<double>
-                {
-                    HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600]
-                });
-        }
-        else
-        {
-            _processTimeouts = PipelineTelemetry.QgcProcessTimeouts;
-            _processDuration = PipelineTelemetry.QgcProcessDuration;
-        }
     }
 
     /// <summary>
@@ -267,9 +246,7 @@ public class QualityGateValidator : IQualityGateValidator
     }
 
     /// <summary>
-    /// Runs a QGC process command with shared timeout/cancellation/error telemetry.
-    /// Records <c>quality_gate.process.duration</c> on every exit path and
-    /// <c>quality_gate.process.timeout</c> on timeout.
+    /// Runs a QGC process command with shared timeout/cancellation/error handling on the gate span.
     /// Returns <c>(exitCode, stdout, stderr)</c> on success.
     /// Re-throws <see cref="OperationCanceledException"/> and unexpected exceptions unchanged;
     /// converts a process timeout into a <see cref="QgcProcessTimedOutException"/> so callers
@@ -279,21 +256,12 @@ public class QualityGateValidator : IQualityGateValidator
         string command, string arguments, QgcProcessContext ctx, CancellationToken ct)
     {
         var timeout = TimeSpan.FromSeconds(ctx.TimeoutSeconds);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var outcome = "success";
-
-        int exitCode;
-        string stdout, stderr;
         try
         {
-            (exitCode, stdout, stderr) = await RunProcessAsync(command, arguments, ctx.WorkspacePath, ct, timeout);
+            return await RunProcessAsync(command, arguments, ctx.WorkspacePath, ct, timeout);
         }
         catch (TimeoutException ex)
         {
-            outcome = "timeout";
-            _processTimeouts.Add(1,
-                new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
-                new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName));
             ctx.Activity?.SetTag("qgc.timed_out", true);
             ctx.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
 
@@ -301,44 +269,25 @@ public class QualityGateValidator : IQualityGateValidator
             ctx.ReportPipelineRunEvent?.Invoke(new PipelineRunEventReport
             {
                 Kind = PipelineRunEventKind.AgentStall,
-                Stage = PipelineTelemetry.StallPhases.QgcRetryAgent,
+                Stage = PipelineTelemetry.RunPhases.QualityGate,
                 Result = PipelineTelemetry.AgentStallKinds.ProcessTimeout
             });
 
             throw new QgcProcessTimedOutException(ctx.TimeoutSeconds, ex);
         }
-        catch (OperationCanceledException)
-        {
-            outcome = "cancelled";
-            throw;
-        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            outcome = "error";
             ctx.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             ctx.Activity?.AddException(ex);
             throw;
         }
-        finally
-        {
-            sw.Stop();
-            _processDuration.Record(sw.Elapsed.TotalSeconds,
-                new KeyValuePair<string, object?>(TagGateName, ctx.GateName),
-                new KeyValuePair<string, object?>(TagQgcName, ctx.QgcDisplayName),
-                new KeyValuePair<string, object?>(TagOutcome, outcome));
-        }
-
-        return (exitCode, stdout, stderr);
     }
 
     /// <summary>
-    /// Contextual parameters for a single <see cref="RunQgcProcessAsync"/> invocation.
-    /// Groups gate name, QGC display name, workspace path, timeout, and tracing activity
-    /// to keep the method signature within the parameter-count threshold (Sonar S107).
+    /// Contextual parameters for a single <see cref="RunQgcProcessAsync"/> invocation:
+    /// workspace path, timeout, and the gate's tracing activity.
     /// </summary>
     private sealed record QgcProcessContext(
-        string GateName,
-        string QgcDisplayName,
         string WorkspacePath,
         int TimeoutSeconds,
         Activity? Activity)
@@ -347,7 +296,7 @@ public class QualityGateValidator : IQualityGateValidator
         /// Optional delegate to report a <c>process_timeout</c> stall event server-side (issue #2979).
         /// When non-null, called with the normalized phase when <see cref="RunQgcProcessAsync"/> detects
         /// a process timeout, so the API can record <c>pipeline.run.agent_stalls</c> with
-        /// <c>kind=process_timeout</c> instead of only the agent-side <c>quality_gate.process.timeout</c> counter.
+        /// <c>kind=process_timeout</c>.
         /// </summary>
         public Action<PipelineRunEventReport>? ReportPipelineRunEvent { get; init; }
     }
@@ -390,7 +339,7 @@ public class QualityGateValidator : IQualityGateValidator
         {
             (exitCode, stdout, stderr) = await RunQgcProcessAsync(
                 qgc.CompilationCommand, arguments,
-                new QgcProcessContext("compilation", qgc.DisplayName, workspacePath, qgc.ProcessTimeoutSeconds, activity)
+                new QgcProcessContext(workspacePath, qgc.ProcessTimeoutSeconds, activity)
                 {
                     ReportPipelineRunEvent = reportEvent
                 },
@@ -473,7 +422,7 @@ public class QualityGateValidator : IQualityGateValidator
         {
             (exitCode, stdout, stderr) = await RunQgcProcessAsync(
                 qgc.TestCommand, fullArgs,
-                new QgcProcessContext("tests", qgc.DisplayName, workspacePath, qgc.ProcessTimeoutSeconds, activity)
+                new QgcProcessContext(workspacePath, qgc.ProcessTimeoutSeconds, activity)
                 {
                     ReportPipelineRunEvent = reportEvent
                 },

@@ -236,15 +236,10 @@ jobs:
           - { dockerfile: dockerfiles/api.Dockerfile, tag: coding-agent-api }
           - { dockerfile: dockerfiles/jobcontroller.Dockerfile, tag: coding-agent-jobcontroller }
           - { dockerfile: dockerfiles/scheduler.Dockerfile, tag: coding-agent-scheduler }
-          - { dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile, tag: coding-agent-kiro-dotnet10 }
-          - { dockerfile: dockerfiles/kiro/agent-kiro-python312.Dockerfile, tag: coding-agent-kiro-python312 }
-          - { dockerfile: dockerfiles/kiro/agent-kiro-java21.Dockerfile, tag: coding-agent-kiro-java21 }
-          - { dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile, tag: coding-agent-opencode-dotnet10 }
-          - { dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile, tag: coding-agent-opencode-java21 }
-          - { dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile, tag: coding-agent-opencode-python312 }
-          - { dockerfile: dockerfiles/claude/agent-claude-dotnet10.Dockerfile, tag: coding-agent-claude-dotnet10 }
-          - { dockerfile: dockerfiles/claude/agent-claude-python312.Dockerfile, tag: coding-agent-claude-python312 }
-          - { dockerfile: dockerfiles/claude/agent-claude-java21.Dockerfile, tag: coding-agent-claude-java21 }
+          # One image per agent tool, each with every tech stack; the target picks the tool.
+          - { dockerfile: dockerfiles/agent.Dockerfile, target: kiro, tag: coding-agent-kiro }
+          - { dockerfile: dockerfiles/agent.Dockerfile, target: opencode, tag: coding-agent-opencode }
+          - { dockerfile: dockerfiles/agent.Dockerfile, target: claude, tag: coding-agent-claude }
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -277,10 +272,17 @@ jobs:
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/coding-agent:${{ matrix.image.tag }}-latest"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
+          # Agent images share one Dockerfile and pick their stage with --target
+          TARGET_ARGS=""
+          if [ -n "${{ matrix.image.target }}" ]; then
+            TARGET_ARGS="--target ${{ matrix.image.target }}"
+          fi
+
           # Build single-arch image natively
           buildah build \
             --platform ${{ matrix.platform }} \
             -f ${{ matrix.image.dockerfile }} \
+            ${TARGET_ARGS} \
             -t docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }} \
             ${BUILD_ARGS} \
             .
@@ -363,15 +365,9 @@ jobs:
           - { tag: coding-agent-api }
           - { tag: coding-agent-jobcontroller }
           - { tag: coding-agent-scheduler }
-          - { tag: coding-agent-kiro-dotnet10 }
-          - { tag: coding-agent-kiro-python312 }
-          - { tag: coding-agent-kiro-java21 }
-          - { tag: coding-agent-opencode-dotnet10 }
-          - { tag: coding-agent-opencode-java21 }
-          - { tag: coding-agent-opencode-python312 }
-          - { tag: coding-agent-claude-dotnet10 }
-          - { tag: coding-agent-claude-python312 }
-          - { tag: coding-agent-claude-java21 }
+          - { tag: coding-agent-kiro }
+          - { tag: coding-agent-opencode }
+          - { tag: coding-agent-claude }
 
     steps:
       - name: Install cosign
@@ -503,15 +499,9 @@ jobs:
 
           # Update all image tags in values.yaml to version-suffixed (Dependabot-compatible semver)
           sed -i "s/tag: coding-agent-web$/tag: coding-agent-web-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-kiro-dotnet10$/tag: coding-agent-kiro-dotnet10-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-kiro-python312$/tag: coding-agent-kiro-python312-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-kiro-java21$/tag: coding-agent-kiro-java21-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-opencode-dotnet10$/tag: coding-agent-opencode-dotnet10-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-opencode-java21$/tag: coding-agent-opencode-java21-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-opencode-python312$/tag: coding-agent-opencode-python312-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-claude-dotnet10$/tag: coding-agent-claude-dotnet10-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-claude-python312$/tag: coding-agent-claude-python312-${VERSION}/" "${CHART_DIR}/values.yaml"
-          sed -i "s/tag: coding-agent-claude-java21$/tag: coding-agent-claude-java21-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-kiro$/tag: coding-agent-kiro-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-opencode$/tag: coding-agent-opencode-${VERSION}/" "${CHART_DIR}/values.yaml"
+          sed -i "s/tag: coding-agent-claude$/tag: coding-agent-claude-${VERSION}/" "${CHART_DIR}/values.yaml"
 
           # Add auto-generated header
           sed -i '1i # Auto-generated by release workflow — do not edit manually' "${CHART_DIR}/values.yaml"

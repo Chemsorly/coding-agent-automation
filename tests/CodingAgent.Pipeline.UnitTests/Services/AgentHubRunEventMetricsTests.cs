@@ -154,12 +154,12 @@ public sealed class AgentHubPipelineRunEventMetricsTests : IDisposable
 
         counter.Add(1,
             PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation),
-            new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent),
+            new KeyValuePair<string, object?>("phase", PipelineTelemetry.RunPhases.QualityGate),
             new KeyValuePair<string, object?>("kind", PipelineTelemetry.AgentStallKinds.StallKill));
 
         var snapshot = collector.GetMeasurementSnapshot();
         snapshot.Should().HaveCount(1);
-        snapshot[0].Tags["phase"].Should().Be("qgc_retry_agent");
+        snapshot[0].Tags["phase"].Should().Be("quality_gate");
         snapshot[0].Tags["kind"].Should().Be("stall_kill");
     }
 
@@ -173,7 +173,7 @@ public sealed class AgentHubPipelineRunEventMetricsTests : IDisposable
 
         counter.Add(1,
             PipelineTelemetry.RunTypeTag(PipelineRunType.Implementation),
-            new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.CodeGen),
+            new KeyValuePair<string, object?>("phase", PipelineTelemetry.RunPhases.CodeGen),
             new KeyValuePair<string, object?>("kind", PipelineTelemetry.AgentStallKinds.ProcessDeath));
 
         var snapshot = collector.GetMeasurementSnapshot();
@@ -221,7 +221,7 @@ public sealed class AgentHubPipelineRunEventMetricsTests : IDisposable
         var report = new PipelineRunEventReport
         {
             Kind = PipelineRunEventKind.AgentStall,
-            Stage = PipelineTelemetry.StallPhases.Analysis,
+            Stage = PipelineTelemetry.RunPhases.Analysis,
             Result = PipelineTelemetry.AgentStallKinds.ProcessDeath
         };
 
