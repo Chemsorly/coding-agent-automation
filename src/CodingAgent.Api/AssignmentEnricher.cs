@@ -495,25 +495,34 @@ public class AssignmentEnricher
         // resolve the owning project via ConsolidationTemplateResolver (delegates the
         // ownership-resolution loop that was previously reimplemented inline here — issue #2914).
         if (!string.IsNullOrEmpty(request.ConsolidationTemplateId))
-        {
-            // Use the injected resolver, or create one from the store if the enricher was
-            // constructed via the protected test-only constructor (which sets both to null).
-            var resolver = _consolidationTemplateResolver
-                ?? (store is not null ? new ConsolidationTemplateResolver(store) : null);
+            return await InjectConsolidationOwnerSecretsAsync(message, request.ConsolidationTemplateId, store, ct);
 
-            if (resolver is not null && store is not null)
-            {
-                var (_, _, projectId) = await resolver
-                    .ResolveTemplateWithProjectAsync(new TemplateId(request.ConsolidationTemplateId), ct);
+        return message;
+    }
 
-                if (projectId is not null)
-                {
-                    var owningProject = await store.GetProjectByIdAsync(projectId, ct);
-                    if (owningProject?.Secrets is { Count: > 0 })
-                        return message with { ProjectSecrets = owningProject.Secrets };
-                }
-            }
-        }
+    private async Task<JobAssignmentMessage> InjectConsolidationOwnerSecretsAsync(
+        JobAssignmentMessage message,
+        string consolidationTemplateId,
+        IProjectStore? store,
+        CancellationToken ct)
+    {
+        // Use the injected resolver, or create one from the store if the enricher was
+        // constructed via the protected test-only constructor (which sets both to null).
+        var resolver = _consolidationTemplateResolver
+            ?? (store is not null ? new ConsolidationTemplateResolver(store) : null);
+
+        if (resolver is null || store is null)
+            return message;
+
+        var (_, _, projectId) = await resolver
+            .ResolveTemplateWithProjectAsync(new TemplateId(consolidationTemplateId), ct);
+
+        if (projectId is null)
+            return message;
+
+        var owningProject = await store.GetProjectByIdAsync(projectId, ct);
+        if (owningProject?.Secrets is { Count: > 0 })
+            return message with { ProjectSecrets = owningProject.Secrets };
 
         return message;
     }

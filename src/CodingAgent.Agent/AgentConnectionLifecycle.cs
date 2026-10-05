@@ -32,7 +32,6 @@ namespace CodingAgent.Agent;
 public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
     private readonly ConnectionReconnectCoordinator _coordinator;
-    private readonly ChatSlotManager _slotManager;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
@@ -92,7 +91,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _slotManager = slotManager;
         _hostApplicationLifetime = hostApplicationLifetime;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
@@ -166,51 +164,12 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
         // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
         if (_isChatMode && !_isClaudeCodeAgent)
-        {
-            var model = _chatModel;
-            var effort = _chatEffort;
-            if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
-                await KiroCliSettingsApplyFunc(model, effort, stoppingToken);
-        }
+            await ApplyChatModeKiroSettingsAsync(stoppingToken);
 
         WireEventHandlers(manager);
 
-        // Connect to orchestrator — retry on transient failures (e.g. 404 during API startup,
-        // DNS not yet ready, TCP refused). InfiniteRetryPolicy only covers reconnections after
-        // a successful initial connect; initial connect failures need their own retry loop.
-        var connectAttempt = 0;
-        while (true)
-        {
-            try
-            {
-                await manager.StartAsync(stoppingToken);
-                break; // connected successfully
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                connectAttempt++;
-                // Cap at 10 attempts (~5 minutes total with backoff), then give up
-                if (connectAttempt >= 10)
-                {
-                    _logger.Error(ex,
-                        "Agent {AgentId}: hub connect failed after {Attempts} attempts — giving up",
-                        _agentId, connectAttempt);
-                    throw;
-                }
-
-                var delaySecs = Math.Min((int)Math.Pow(2, connectAttempt), 30);
-                _logger.Warning(ex,
-                    "Agent {AgentId}: hub connect attempt {Attempt} failed ({Error}), retrying in {Delay}s",
-                    _agentId, connectAttempt, ex.Message, delaySecs);
-
-                try { await Task.Delay(TimeSpan.FromSeconds(delaySecs), stoppingToken); }
-                catch (OperationCanceledException) { return; }
-            }
-        }
+        if (!await ConnectWithRetryAsync(manager, stoppingToken))
+            return;
 
         // Register with orchestrator
         var registration = BuildRegistrationMessage();
@@ -231,6 +190,60 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         }
 
         // Normal mode: heartbeat loop
+        await RunHeartbeatLoopAsync(stoppingToken);
+    }
+
+    private async Task ApplyChatModeKiroSettingsAsync(CancellationToken stoppingToken)
+    {
+        var model = _chatModel;
+        var effort = _chatEffort;
+        if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
+            await KiroCliSettingsApplyFunc(model, effort, stoppingToken);
+    }
+
+    /// <returns><c>false</c> when <paramref name="stoppingToken"/> is cancelled before the connection is established.</returns>
+    private async Task<bool> ConnectWithRetryAsync(IHubConnectionManager manager, CancellationToken stoppingToken)
+    {
+        // Connect to orchestrator — retry on transient failures (e.g. 404 during API startup,
+        // DNS not yet ready, TCP refused). InfiniteRetryPolicy only covers reconnections after
+        // a successful initial connect; initial connect failures need their own retry loop.
+        var connectAttempt = 0;
+        while (true)
+        {
+            try
+            {
+                await manager.StartAsync(stoppingToken);
+                return true; // connected successfully
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex)
+            {
+                connectAttempt++;
+                // Cap at 10 attempts (~5 minutes total with backoff), then give up
+                if (connectAttempt >= 10)
+                {
+                    _logger.Error(ex,
+                        "Agent {AgentId}: hub connect failed after {Attempts} attempts — giving up",
+                        _agentId, connectAttempt);
+                    throw;
+                }
+
+                var delaySecs = Math.Min((int)Math.Pow(2, connectAttempt), 30);
+                _logger.Warning(ex,
+                    "Agent {AgentId}: hub connect attempt {Attempt} failed ({Error}), retrying in {Delay}s",
+                    _agentId, connectAttempt, ex.Message, delaySecs);
+
+                try { await Task.Delay(TimeSpan.FromSeconds(delaySecs), stoppingToken); }
+                catch (OperationCanceledException) { return false; }
+            }
+        }
+    }
+
+    private async Task RunHeartbeatLoopAsync(CancellationToken stoppingToken)
+    {
         using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
         {
