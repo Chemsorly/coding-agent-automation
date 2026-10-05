@@ -177,15 +177,8 @@ internal sealed class DispatchWorkItemService
         };
 
     /// <summary>
-    /// Builds a <see cref="PendingWorkItemProjection"/> from the individual fields sourced from
-    /// the anonymous DB projection used in <c>DispatchPendingWorkItem</c>'s fast-path query
-    /// (issue #2988).
-    ///
-    /// <para>
-    /// The anonymous type (<c>new { w.Id, w.AgentSelector, … }</c>) cannot be named as a
-    /// method parameter, so each field is passed explicitly. Use named arguments at the call
-    /// site for legibility.
-    /// </para>
+    /// Builds a <see cref="PendingWorkItemProjection"/> from the <see cref="DispatchQuickCheck"/> row read by
+    /// <c>DispatchPendingWorkItem</c>'s fast-path query (issue #2988).
     ///
     /// <para>
     /// <strong>Profile-fallback note:</strong> <paramref name="normalizedSelector"/> is the
@@ -197,26 +190,19 @@ internal sealed class DispatchWorkItemService
     /// </para>
     /// </summary>
     internal static PendingWorkItemProjection BuildProjectionFromQuickCheck(
-        Guid id,
-        string normalizedSelector,
-        DateTimeOffset createdAt,
-        int timeoutSeconds,
-        WorkItemTaskType taskType,
-        Guid? projectId,
-        string? issueIdentifier,
-        string? issueProviderConfigId,
-        int priorityWeight) =>
+        DispatchQuickCheck quickCheck,
+        string normalizedSelector) =>
         new PendingWorkItemProjection
         {
-            Id = id,
+            Id = quickCheck.Id,
             AgentSelector = normalizedSelector,
-            CreatedAt = createdAt,
-            TimeoutSeconds = timeoutSeconds,
-            TaskType = taskType,
-            ProjectId = projectId,
-            IssueIdentifier = issueIdentifier,
-            IssueProviderConfigId = issueProviderConfigId,
-            PriorityWeight = priorityWeight
+            CreatedAt = quickCheck.CreatedAt,
+            TimeoutSeconds = quickCheck.TimeoutSeconds,
+            TaskType = quickCheck.TaskType,
+            ProjectId = quickCheck.ProjectId,
+            IssueIdentifier = quickCheck.IssueIdentifier,
+            IssueProviderConfigId = quickCheck.IssueProviderConfigId,
+            PriorityWeight = quickCheck.PriorityWeight
         };
 
     // ── Gate block ───────────────────────────────────────────────────────────
@@ -589,20 +575,20 @@ internal sealed class DispatchWorkItemService
     /// <list type="bullet">
     ///   <item>
     ///     Call <see cref="BuildConcurrencySnapshotAsync"/> and pass the result as
-    ///     <paramref name="concurrencyBySelector"/>. The snapshot must be taken while holding
+    ///     <see cref="ResolvedDispatchRequest.ConcurrencyBySelector"/>. The snapshot must be taken while holding
     ///     the advisory lock (on the <c>DispatchPendingWorkItem</c> path) or before entity
     ///     creation (on the <c>DispatchWorkItem</c> path) — the lock ordering cannot be
     ///     replicated inside this method.
     ///   </item>
     ///   <item>
     ///     Call <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> and pass the
-    ///     result as <paramref name="pvcResult"/>. The <c>DispatchPendingWorkItem</c> path
+    ///     result as <see cref="ResolvedDispatchRequest.PvcResult"/>. The <c>DispatchPendingWorkItem</c> path
     ///     also emits <c>WorkDistributionTelemetry.UpdateCredentialPoolMetrics</c> immediately
     ///     after that call — that metric must stay in the handler, not here.
     ///   </item>
     ///   <item>
     ///     Construct <see cref="PendingWorkItemProjection"/> from handler-specific sources
-    ///     (<c>quickCheck.*</c> vs <c>entity.*</c>) and pass it as <paramref name="projection"/>.
+    ///     (<c>quickCheck.*</c> vs <c>entity.*</c>) and pass it as <see cref="ResolvedDispatchRequest.Projection"/>.
     ///   </item>
     ///   <item>
     ///     After this method returns, <c>DispatchPendingWorkItem</c> checks whether the result
@@ -612,47 +598,7 @@ internal sealed class DispatchWorkItemService
     /// </list>
     /// </para>
     /// </summary>
-    /// <param name="db">Caller-owned open <see cref="PipelineDbContext"/>.</param>
-    /// <param name="template">Resolved <see cref="JobTemplate"/> for the selector.</param>
-    /// <param name="projection">
-    /// Pre-constructed <see cref="PendingWorkItemProjection"/>. Each handler builds this from
-    /// its own field sources; construction cannot be unified here.
-    /// </param>
-    /// <param name="normalizedSelector">
-    /// Normalized agent-selector key for the concurrency gate and context.
-    /// </param>
-    /// <param name="sanitizedSelector">
-    /// CRLF-stripped form of the selector for log messages and response bodies.
-    /// </param>
-    /// <param name="concurrencyBySelector">
-    /// Snapshot produced by <see cref="BuildConcurrencySnapshotAsync"/> in the caller.
-    /// </param>
-    /// <param name="pvcResult">
-    /// PVC availability snapshot produced by the caller via
-    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>.
-    /// </param>
-    /// <param name="expectedInitialStatus">
-    /// <see cref="WorkItemStatus.Pending"/> for <c>DispatchPendingWorkItem</c>;
-    /// <see cref="WorkItemStatus.Dispatched"/> for <c>DispatchWorkItem</c>.
-    /// Controls <see cref="DispatchLifecycleContext.ExpectedInitialStatus"/> used by the
-    /// race-condition guard inside <c>HandleOrphanedJobIfRaceDetectedAsync</c>.
-    /// </param>
-    /// <param name="logPrefix">
-    /// Prefix embedded in K8s Job names and log messages:
-    /// <c>"pending-dispatch "</c> for <c>DispatchPendingWorkItem</c>;
-    /// <c>"sync-dispatch "</c> for <c>DispatchWorkItem</c>.
-    /// </param>
-    /// <param name="onDispatchFailure">
-    /// Called with <c>(workItemId, reason)</c> on the 503 path.
-    /// <c>null</c> for <c>DispatchPendingWorkItem</c> (item started as Pending — no orphaned
-    /// Dispatched row exists). <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> for
-    /// <c>DispatchWorkItem</c>.
-    /// </param>
-    /// <param name="onSuccess">
-    /// Factory producing the 200 <see cref="IResult"/> when dispatch succeeds.
-    /// </param>
-    /// <param name="workItemId">Work-item GUID for log messages and the success result.</param>
-    /// <param name="callerName">Short name for log messages (e.g. <c>"DispatchWorkItem"</c>).</param>
+    /// <param name="request">The per-call inputs (see <see cref="ResolvedDispatchRequest"/>).</param>
     /// <param name="lifecycle">
     /// Shared singleton <see cref="DispatchLifecycleService"/>. Passed in to preserve
     /// <c>_pvcSelectLock</c> singleton semantics.
@@ -660,34 +606,20 @@ internal sealed class DispatchWorkItemService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>
     /// A non-null <see cref="IResult"/> from <see cref="ApplyGates"/> if a gate fires;
-    /// the result from <paramref name="onSuccess"/> on dispatch success;
+    /// the result from <see cref="ResolvedDispatchRequest.OnSuccess"/> on dispatch success;
     /// 503 Service Unavailable on lifecycle failure.
     /// </returns>
     internal async Task<IResult> DispatchResolvedWorkItemAsync(
-        PipelineDbContext db,
-        JobTemplate template,
-        PendingWorkItemProjection projection,
-        string normalizedSelector,
-        string sanitizedSelector,
-        // TODO [WARNING]: This parameter should be typed as IReadOnlyDictionary<string, int> to make the
-        // no-mutation contract explicit. The caller's snapshot must remain stable for the lifetime of this
-        // call; FinalizeDispatchAsync mutates a copy inside DispatchLifecycleContext, not this parameter
-        // directly — but the contract is implicit. Changing to IReadOnlyDictionary would catch future
-        // regressions at compile time and surface the intent clearly.
-        // On the DispatchWorkItem path, the early-gate check (earlyGateResult in the handler) uses the same
-        // snapshot; if the lifecycle ever mutated this dictionary, the double-gate assumption would break
-        // silently. (DotNetSpecialist review [WARNING])
-        Dictionary<string, int> concurrencyBySelector,
-        PvcAvailabilityResult pvcResult,
-        WorkItemStatus expectedInitialStatus,
-        string logPrefix,
-        Func<Guid, string, Task>? onDispatchFailure,
-        Func<Guid, IResult> onSuccess,
-        Guid workItemId,
-        string callerName,
+        ResolvedDispatchRequest request,
         DispatchLifecycleService lifecycle,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var template = request.Template;
+        var concurrencyBySelector = request.ConcurrencyBySelector;
+        var pvcResult = request.PvcResult;
+        var callerName = request.CallerName;
+
         // Compute isKiroAgent exactly once via IsKiroAgent — the "kiro" literal lives there only (AC3).
         var isKiroAgent = IsKiroAgent(template);
 
@@ -704,29 +636,29 @@ internal sealed class DispatchWorkItemService
         // capacity CAN appear to grow when this method is reached on the DispatchWorkItem path because
         // the row we just created is not yet reflected in the snapshot. (Correctness review [WARNING])
         var gateResult = ApplyGates(
-            normalizedSelector, sanitizedSelector, concurrencyBySelector,
+            request.NormalizedSelector, request.SanitizedSelector, concurrencyBySelector,
             pvcResult, template, isKiroAgent, callerName);
         if (gateResult is not null)
             return gateResult;
 
         var ctx = new DispatchLifecycleContext(
-            db,
-            projection,
+            request.Db,
+            request.Projection,
             template,
             isKiroAgent,
             pvcResult.AvailablePvcs,
             concurrencyBySelector,
-            logPrefix)
+            request.LogPrefix)
         {
-            ExpectedInitialStatus = expectedInitialStatus
+            ExpectedInitialStatus = request.ExpectedInitialStatus
         };
 
         return await RunDispatchLifecycleAsync(
             ctx,
             lifecycle,
-            onDispatchFailure,
-            onSuccess,
-            workItemId,
+            request.OnDispatchFailure,
+            request.OnSuccess,
+            request.WorkItemId,
             callerName,
             ct);
     }
@@ -783,8 +715,21 @@ internal sealed class DispatchWorkItemService
         // correctness guard. This check avoids unnecessary lock contention for items that
         // are already Dispatched or in a terminal state.
         var quickCheck = await db.WorkItems.AsNoTracking()
-            .Select(w => new { w.Id, w.Status, w.AgentSelector, w.TimeoutSeconds, w.TaskType, w.ProjectId, w.IssueIdentifier, w.IssueProviderConfigId, w.PriorityWeight, w.CreatedAt })
-            .FirstOrDefaultAsync(w => w.Id == id, ct);
+            .Where(w => w.Id == id)
+            .Select(w => new DispatchQuickCheck
+            {
+                Id = w.Id,
+                Status = w.Status,
+                AgentSelector = w.AgentSelector,
+                TimeoutSeconds = w.TimeoutSeconds,
+                TaskType = w.TaskType,
+                ProjectId = w.ProjectId,
+                IssueIdentifier = w.IssueIdentifier,
+                IssueProviderConfigId = w.IssueProviderConfigId,
+                PriorityWeight = w.PriorityWeight,
+                CreatedAt = w.CreatedAt
+            })
+            .FirstOrDefaultAsync(ct);
 
         if (quickCheck is null)
             return TypedResults.NotFound();
@@ -870,16 +815,7 @@ internal sealed class DispatchWorkItemService
         // allow over-dispatch when maxConcurrent is tight. The same gap exists in FinalizeDispatchAsync
         // (see its // TODO: Use effectiveSelector comment). Fix both together when the effectiveSelector
         // propagation is resolved.
-        var projection = BuildProjectionFromQuickCheck(
-            id: id,
-            normalizedSelector: normalizedSelector,
-            createdAt: quickCheck.CreatedAt,
-            timeoutSeconds: quickCheck.TimeoutSeconds,
-            taskType: quickCheck.TaskType,
-            projectId: quickCheck.ProjectId,
-            issueIdentifier: quickCheck.IssueIdentifier,
-            issueProviderConfigId: quickCheck.IssueProviderConfigId,
-            priorityWeight: quickCheck.PriorityWeight);
+        var projection = BuildProjectionFromQuickCheck(quickCheck, normalizedSelector);
 
         // Gate + context construction + lifecycle execution via shared helper (issue #2890).
         // ExpectedInitialStatus is Pending (the default) — this item already exists as Pending;
@@ -890,19 +826,22 @@ internal sealed class DispatchWorkItemService
         // The PvcPoolExhaustions counter is emitted after the call (below) rather than inside the helper —
         // it belongs exclusively to this path and must fire only on the 503/PVC-gate result.
         var dispatchResult = await DispatchResolvedWorkItemAsync(
-            db,
-            template,
-            projection,
-            normalizedSelector: effectiveSelector,
-            sanitizedSelector: sanitizedEffectiveSelector,
-            concurrencyBySelector,
-            pvcResult,
-            expectedInitialStatus: WorkItemStatus.Pending,
-            logPrefix: "pending-dispatch ",
-            onDispatchFailure: null,
-            onSuccess: _ => TypedResults.Ok(id),
-            workItemId: id,
-            callerName: "DispatchPendingWorkItem",
+            new ResolvedDispatchRequest
+            {
+                Db = db,
+                Template = template,
+                Projection = projection,
+                NormalizedSelector = effectiveSelector,
+                SanitizedSelector = sanitizedEffectiveSelector,
+                ConcurrencyBySelector = concurrencyBySelector,
+                PvcResult = pvcResult,
+                ExpectedInitialStatus = WorkItemStatus.Pending,
+                LogPrefix = "pending-dispatch ",
+                OnDispatchFailure = null,
+                OnSuccess = _ => TypedResults.Ok(id),
+                WorkItemId = id,
+                CallerName = "DispatchPendingWorkItem"
+            },
             lifecycle,
             ct);
 
@@ -1144,4 +1083,98 @@ internal sealed class DispatchWorkItemService
         // RecordDispatchAttempt("dispatched","none") and wraps in DispatchPendingResponse(true,"none").
         return (rawResult, DispatchInterpretOutcome.PassThrough);
     }
+}
+
+/// <summary>
+/// The fields <c>DispatchPendingWorkItem</c>'s fast-path query reads before taking the selector lock
+/// (no Payload loaded). See <see cref="DispatchWorkItemService.BuildProjectionFromQuickCheck"/>.
+/// </summary>
+internal sealed record DispatchQuickCheck
+{
+    public required Guid Id { get; init; }
+    public required WorkItemStatus Status { get; init; }
+    public required string AgentSelector { get; init; }
+    public required int TimeoutSeconds { get; init; }
+    public required WorkItemTaskType TaskType { get; init; }
+    public Guid? ProjectId { get; init; }
+    public required string IssueIdentifier { get; init; }
+    public required string IssueProviderConfigId { get; init; }
+    public required int PriorityWeight { get; init; }
+    public required DateTimeOffset CreatedAt { get; init; }
+}
+
+/// <summary>
+/// Per-call inputs of <see cref="DispatchWorkItemService.DispatchResolvedWorkItemAsync"/>. Each dispatch path
+/// (<c>DispatchPendingWorkItem</c>, <c>DispatchWorkItem</c>) builds one from its own sources.
+/// </summary>
+internal sealed record ResolvedDispatchRequest
+{
+    /// <summary>Caller-owned open <see cref="PipelineDbContext"/>.</summary>
+    public required PipelineDbContext Db { get; init; }
+
+    /// <summary>Resolved <see cref="JobTemplate"/> for the selector.</summary>
+    public required JobTemplate Template { get; init; }
+
+    /// <summary>
+    /// Pre-constructed <see cref="PendingWorkItemProjection"/>. Each handler builds this from
+    /// its own field sources; construction cannot be unified in the dispatch helper.
+    /// </summary>
+    public required PendingWorkItemProjection Projection { get; init; }
+
+    /// <summary>Normalized agent-selector key for the concurrency gate and context.</summary>
+    public required string NormalizedSelector { get; init; }
+
+    /// <summary>CRLF-stripped form of the selector for log messages and response bodies.</summary>
+    public required string SanitizedSelector { get; init; }
+
+    /// <summary>
+    /// Snapshot produced by <see cref="DispatchWorkItemService.BuildConcurrencySnapshotAsync"/> in the caller.
+    /// </summary>
+    // TODO [WARNING]: This property should be typed as IReadOnlyDictionary<string, int> to make the
+    // no-mutation contract explicit. The caller's snapshot must remain stable for the lifetime of the
+    // dispatch call; FinalizeDispatchAsync mutates a copy inside DispatchLifecycleContext, not this value
+    // directly — but the contract is implicit. Changing to IReadOnlyDictionary would catch future
+    // regressions at compile time and surface the intent clearly.
+    // On the DispatchWorkItem path, the early-gate check (earlyGateResult in the handler) uses the same
+    // snapshot; if the lifecycle ever mutated this dictionary, the double-gate assumption would break
+    // silently. (DotNetSpecialist review [WARNING])
+    public required Dictionary<string, int> ConcurrencyBySelector { get; init; }
+
+    /// <summary>
+    /// PVC availability snapshot produced by the caller via
+    /// <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/>.
+    /// </summary>
+    public required PvcAvailabilityResult PvcResult { get; init; }
+
+    /// <summary>
+    /// <see cref="WorkItemStatus.Pending"/> for <c>DispatchPendingWorkItem</c>;
+    /// <see cref="WorkItemStatus.Dispatched"/> for <c>DispatchWorkItem</c>.
+    /// Controls <see cref="DispatchLifecycleContext.ExpectedInitialStatus"/> used by the
+    /// race-condition guard inside <c>HandleOrphanedJobIfRaceDetectedAsync</c>.
+    /// </summary>
+    public required WorkItemStatus ExpectedInitialStatus { get; init; }
+
+    /// <summary>
+    /// Prefix embedded in K8s Job names and log messages:
+    /// <c>"pending-dispatch "</c> for <c>DispatchPendingWorkItem</c>;
+    /// <c>"sync-dispatch "</c> for <c>DispatchWorkItem</c>.
+    /// </summary>
+    public required string LogPrefix { get; init; }
+
+    /// <summary>
+    /// Called with <c>(workItemId, reason)</c> on the 503 path.
+    /// <c>null</c> for <c>DispatchPendingWorkItem</c> (item started as Pending — no orphaned
+    /// Dispatched row exists). <c>SafelyCancelOrphanedDispatchedWorkItemAsync</c> for
+    /// <c>DispatchWorkItem</c>.
+    /// </summary>
+    public Func<Guid, string, Task>? OnDispatchFailure { get; init; }
+
+    /// <summary>Factory producing the 200 <see cref="IResult"/> when dispatch succeeds.</summary>
+    public required Func<Guid, IResult> OnSuccess { get; init; }
+
+    /// <summary>Work-item GUID for log messages and the success result.</summary>
+    public required Guid WorkItemId { get; init; }
+
+    /// <summary>Short name for log messages (e.g. <c>"DispatchWorkItem"</c>).</summary>
+    public required string CallerName { get; init; }
 }

@@ -370,7 +370,7 @@
             _showForm = false;
             await OnSaved.InvokeAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
@@ -453,7 +453,7 @@
                 await OnShowStatus.InvokeAsync(($"{models.Count} model(s) loaded.", false));
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to fetch models: {ex.Message}", true));

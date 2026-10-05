@@ -56,14 +56,17 @@ public class IssueReworkServiceTests
         bool activeRunBranchesUnavailable = false)
     {
         return svc.TriggerConflictReworkAsync(
-            sorted,
-            mergeabilityMap,
-            activeRunBranches ?? new HashSet<string>(),
-            activeRunBranchesUnavailable,
-            repo.Object,
-            issues.Object,
-            IssueProviderId,
-            RepoTag,
+            new ConflictReworkRequest
+            {
+                Sorted = sorted,
+                MergeabilityMap = mergeabilityMap,
+                ActiveRunBranches = activeRunBranches ?? new HashSet<string>(),
+                ActiveRunBranchesUnavailable = activeRunBranchesUnavailable,
+                RepoProvider = repo.Object,
+                IssueProvider = issues.Object,
+                IssueProviderId = IssueProviderId,
+                RepoTag = RepoTag
+            },
             CancellationToken.None);
     }
 

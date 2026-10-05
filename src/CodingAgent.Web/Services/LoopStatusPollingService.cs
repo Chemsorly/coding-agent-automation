@@ -66,18 +66,8 @@ public sealed class LoopStatusPollingService : BackgroundService, ILoopStatusSer
 
         using var timer = new PeriodicTimer(_interval);
 
-        while (true)
+        while (await WaitForNextPollAsync(timer, stoppingToken))
         {
-            try
-            {
-                if (!await timer.WaitForNextTickAsync(stoppingToken))
-                    break;
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-
             bool changed;
             try
             {
@@ -101,20 +91,38 @@ public sealed class LoopStatusPollingService : BackgroundService, ILoopStatusSer
             if (!changed)
                 continue;
 
-            // Fire OnChange to each subscriber independently so that a throw from one
-            // subscriber does not skip the remaining ones.
-            var handler = OnChange;
-            if (handler is not null)
+            NotifySubscribers();
+        }
+    }
+
+    // Returns false when the timer is disposed or the wait is cancelled — both end the polling loop.
+    private static async Task<bool> WaitForNextPollAsync(PeriodicTimer timer, CancellationToken stoppingToken)
+    {
+        try
+        {
+            return await timer.WaitForNextTickAsync(stoppingToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+    }
+
+    // Fire OnChange to each subscriber independently so that a throw from one
+    // subscriber does not skip the remaining ones.
+    private void NotifySubscribers()
+    {
+        var handler = OnChange;
+        if (handler is null)
+            return;
+
+        foreach (var subscriber in handler.GetInvocationList())
+        {
+            try { ((Action)subscriber)(); }
+            catch (Exception ex)
             {
-                foreach (var subscriber in handler.GetInvocationList())
-                {
-                    try { ((Action)subscriber)(); }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "LoopStatusPollingService: OnChange subscriber {Method} threw",
-                            subscriber.Method.Name);
-                    }
-                }
+                _logger.Warning(ex, "LoopStatusPollingService: OnChange subscriber {Method} threw",
+                    subscriber.Method.Name);
             }
         }
     }

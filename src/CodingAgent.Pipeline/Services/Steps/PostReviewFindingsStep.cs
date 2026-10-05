@@ -356,39 +356,46 @@ public sealed class PostReviewFindingsStep : IPipelineStep
                 continue;
             }
 
-            // Initial parse
-            var findings = FindingsParser.Parse(agentOutput, agentName);
-            var hasLocationFindings = findings.Any(f => f.FilePath is not null && f.LineNumber > 0);
-
-            // Check if agent has severity markers but no file:line findings → candidate for retry
-            if (!hasLocationFindings && maxRetries > 0)
-            {
-                var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
-                var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
-
-                if (hasMarkers)
-                {
-                    findings = await RetryAgentForStructuredOutputAsync(
-                        context, agentName, agentOutput, maxRetries, ct);
-                }
-            }
-            else if (!hasLocationFindings && maxRetries == 0)
-            {
-                var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
-                var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
-                if (hasMarkers)
-                {
-                    context.Logger.Information(
-                        "Agent '{AgentName}' has {Critical}C/{Warning}W/{Suggestion}S findings but no file:line references — " +
-                        "retries disabled (MaxRetries=0), findings will be body-only",
-                        agentName, severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
-                }
-            }
-
+            var findings = await ParseAgentFindingsWithRetryAsync(context, agentName, agentOutput, maxRetries, ct);
             allFindings.AddRange(findings);
         }
 
         return allFindings;
+    }
+
+    private static async Task<IReadOnlyList<StructuredFinding>> ParseAgentFindingsWithRetryAsync(
+        PipelineStepContext context, string agentName, string agentOutput, int maxRetries, CancellationToken ct)
+    {
+        // Initial parse
+        var findings = FindingsParser.Parse(agentOutput, agentName);
+        var hasLocationFindings = findings.Any(f => f.FilePath is not null && f.LineNumber > 0);
+
+        // Check if agent has severity markers but no file:line findings → candidate for retry
+        if (!hasLocationFindings && maxRetries > 0)
+        {
+            var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
+            var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
+
+            if (hasMarkers)
+            {
+                findings = await RetryAgentForStructuredOutputAsync(
+                    context, agentName, agentOutput, maxRetries, ct);
+            }
+        }
+        else if (!hasLocationFindings && maxRetries == 0)
+        {
+            var severityCounts = SeverityParser.Parse(agentOutput.Split('\n'));
+            var hasMarkers = severityCounts.Critical > 0 || severityCounts.Warning > 0 || severityCounts.Suggestion > 0;
+            if (hasMarkers)
+            {
+                context.Logger.Information(
+                    "Agent '{AgentName}' has {Critical}C/{Warning}W/{Suggestion}S findings but no file:line references — " +
+                    "retries disabled (MaxRetries=0), findings will be body-only",
+                    agentName, severityCounts.Critical, severityCounts.Warning, severityCounts.Suggestion);
+            }
+        }
+
+        return findings;
     }
 
     /// <summary>

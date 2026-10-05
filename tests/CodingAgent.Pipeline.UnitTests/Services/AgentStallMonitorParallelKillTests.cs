@@ -104,9 +104,9 @@ public class AgentStallMonitorParallelKillTests
         // Start monitoring. The safety timeout must outlast the KillAsync wait below.
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var monitorTask = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object),
             new AgentRequest { Prompt = "review prompt", WorkspacePath = "/ws", Timeout = TimeSpan.FromHours(2) },
-            _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object, cts.Token);
+            cts.Token);
 
         // Wait for the agent call to start
         await agentCallStarted.Task;
@@ -187,9 +187,9 @@ public class AgentStallMonitorParallelKillTests
             .Returns(tcs.Task);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Parallel review agent", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Parallel review agent", null, _mockLogger.Object, CancellationToken.None);
+            CancellationToken.None);
 
         // Give the monitor time to run a few poll cycles
         await Task.Delay(200);
@@ -251,9 +251,9 @@ public class AgentStallMonitorParallelKillTests
         _mockAgent.Setup(a => a.KillAsync()).Returns(Task.CompletedTask);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, run, config, "Code review agent 'AcceptanceCriteria'", null, _mockLogger.Object),
             new AgentRequest { Prompt = "review", WorkspacePath = "/ws" },
-            run, config, "Code review agent 'AcceptanceCriteria'", null, _mockLogger.Object, CancellationToken.None);
+            CancellationToken.None);
 
         // The kill should fire almost immediately because:
         // silence = now - run.StartedAt = 90 minutes > killTimeout (60 minutes)

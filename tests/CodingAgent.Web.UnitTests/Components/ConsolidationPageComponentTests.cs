@@ -52,10 +52,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         // GetRunHistoryAsync (IPipelineApiRunHistoryClient) — main history source after #3028
         _mockRunHistoryClient
-            .Setup(s => s.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
-                It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = (runHistory ?? Array.Empty<PipelineRunSummary>()).ToList(),
@@ -165,10 +162,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         // Override AFTER RegisterServices to ensure our specific run is returned
         _mockRunHistoryClient
-            .Setup(s => s.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
-                It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = new List<PipelineRunSummary> { run },
@@ -181,16 +175,12 @@ public class ConsolidationPageComponentTests : BunitContext
         var cut = Render<Consolidation>();
 
         // Verify mock was called (if it wasn't called, history will be empty and the test fails)
-        // TODO [WARNING]: This verify uses It.IsAny<PipelineRunType?>() which does not confirm
-        // that the page passes runType: PipelineRunType.Consolidation specifically. Passing the wrong
-        // runType (or null) would cause the page to fetch all run types and mix in implementation runs,
-        // violating the core requirement. Consider tightening to:
-        //   It.Is<PipelineRunType?>(rt => rt == PipelineRunType.Consolidation)
+        // TODO [WARNING]: This verify uses It.IsAny<RunHistoryQuery>() which does not confirm
+        // that the page passes RunType = PipelineRunType.Consolidation specifically. Passing the wrong
+        // run type (or null) would cause the page to fetch all run types and mix in implementation runs,
+        // violating the core requirement. Consider tightening to a query matcher on RunType
         // to make the assertion meaningful. (TestQualityReviewer review)
-        _mockRunHistoryClient.Verify(s => s.GetRunHistoryAsync(
-            It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-            It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
-            It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce,
+        _mockRunHistoryClient.Verify(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce,
             "GetRunHistoryAsync must be called during page load");
 
         // Assert: the run history table contains the run from the pipeline-run read path

@@ -271,7 +271,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, IChang
             // TODO: [WARNING] Silent gap: when _agentCancellationSender is non-null but run.AgentId is null or empty,
             // neither branch above fires — no Warning is logged and no signal is delivered. An operator sees only the
             // earlier "CTS race" Warning with no indication that the fallback was also skipped. Consider adding an
-            // else branch here: _logger.Warning("Pipeline {RunId} CancelPipelineAsync: no cancellation signal delivered — AgentId is missing", run.RunId);
+            // else branch here that logs a Warning stating no cancellation signal was delivered because AgentId is missing.
         }
         run.MarkCompleted();
         // TODO: [WARNING] Double-emission risk: LocalPipelineExecutor.ExecutePipelineStepsAsync (line ~246) also

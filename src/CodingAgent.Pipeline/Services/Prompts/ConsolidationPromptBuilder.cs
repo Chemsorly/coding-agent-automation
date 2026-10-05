@@ -297,11 +297,12 @@ public static partial class ConsolidationPromptBuilder
     /// </summary>
     public static string BuildRefactoringReviewPrompt()
     {
-        return BuildAdversarialReviewPrompt(
-            "Refactoring Proposals Review",
-            "refactoring proposals",
-            "the proposals file, the analysis report, the sub-agent findings files, and the actual codebase",
-            $"""
+        return BuildAdversarialReviewPrompt(new AdversarialReviewPromptSpec
+        {
+            Title = "Refactoring Proposals Review",
+            SubjectNoun = "refactoring proposals",
+            IntroScope = "the proposals file, the analysis report, the sub-agent findings files, and the actual codebase",
+            InputInstruction = $"""
             Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `{AgentWorkspacePaths.RefactoringAnalysisFilePath}`.
             Also read the sub-agent findings for cross-reference:
             - `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` (Agent A)
@@ -310,7 +311,8 @@ public static partial class ConsolidationPromptBuilder
             - `{AgentWorkspacePaths.RefactoringConventionsFilePath}` (project conventions)
             If `{AgentWorkspacePaths.RefactoringIssueContextFilePath}` exists, read it: it lists the open issues and past proposals the new proposals must not duplicate.
             """,
-            AgentWorkspacePaths.RefactoringReviewFilePath,
+            OutputPath = AgentWorkspacePaths.RefactoringReviewFilePath,
+            EvaluationBullets =
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
                 "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. `hotspot:` is a priority signal and does not corroborate anything. Sources tagged `tool:` that name no compiler, linter, analyzer or MCP tool are mislabeled searches or reads. Single-source proposals should be flagged [WARNING]",
@@ -326,9 +328,10 @@ public static partial class ConsolidationPromptBuilder
                 "**Unverifiable acceptance criteria** — criteria requiring runtime execution, benchmarks, manual testing, or subjective judgment. The review agent can only verify from diff + test results. Flag [WARNING]",
                 "**Implementation-prescriptive acceptance criteria** — criteria that dictate specific file names, class names, or implementation patterns rather than observable post-conditions. These block valid alternative approaches. Flag [WARNING]",
             ],
-            "each proposal",
-            "proposals",
-            "Do NOT modify source files, configuration files, or the proposals file. Only read the input and write the review findings file.");
+            EvaluationSubject = "each proposal",
+            SubjectShortName = "proposals",
+            DoNotModifyClause = "Do NOT modify source files, configuration files, or the proposals file. Only read the input and write the review findings file."
+        });
     }
 
     /// <summary>
@@ -338,12 +341,14 @@ public static partial class ConsolidationPromptBuilder
     /// </summary>
     public static string BuildBrainConsolidationReviewPrompt()
     {
-        return BuildAdversarialReviewPrompt(
-            "Brain Consolidation Review",
-            "brain consolidation changes",
-            "the diff summary file and the actual `.brain/` files in the workspace",
-            $"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace. **Also spot-check the `.brain/` files directly** to verify claims — cross-reference at least 3 changes against the actual file state.",
-            AgentWorkspacePaths.BrainConsolidationReviewFilePath,
+        return BuildAdversarialReviewPrompt(new AdversarialReviewPromptSpec
+        {
+            Title = "Brain Consolidation Review",
+            SubjectNoun = "brain consolidation changes",
+            IntroScope = "the diff summary file and the actual `.brain/` files in the workspace",
+            InputInstruction = $"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace. **Also spot-check the `.brain/` files directly** to verify claims — cross-reference at least 3 changes against the actual file state.",
+            OutputPath = AgentWorkspacePaths.BrainConsolidationReviewFilePath,
+            EvaluationBullets =
             [
                 "Incorrectly removed valuable entries that should have been kept",
                 "Merged entries that lost important information in the process",
@@ -352,9 +357,10 @@ public static partial class ConsolidationPromptBuilder
                 "New contradictions introduced by the consolidation itself",
                 "**Unverifiable claims** — diff entries that are vague, lack quotes, or cannot be confirmed by reading the actual `.brain/` files. Flag [WARNING] if the diff reads like a generic summary rather than a specific changelog",
             ],
-            "the consolidation changes",
-            "consolidation changes",
-            "Do NOT modify source files, configuration files, or the `.brain/` files being reviewed. Only read the input and write the review findings file.");
+            EvaluationSubject = "the consolidation changes",
+            SubjectShortName = "consolidation changes",
+            DoNotModifyClause = "Do NOT modify source files, configuration files, or the `.brain/` files being reviewed. Only read the input and write the review findings file."
+        });
     }
 
     /// <summary>
@@ -364,12 +370,14 @@ public static partial class ConsolidationPromptBuilder
     /// </summary>
     public static string BuildHarnessSuggestionsReviewPrompt()
     {
-        return BuildAdversarialReviewPrompt(
-            "Harness Suggestions Review",
-            "harness improvement suggestions",
-            "the suggestions file and the original feedback data",
-            $"Read the suggestions file at `{AgentWorkspacePaths.HarnessSuggestionsOutputFilePath}` from the workspace.\nAlso read `feedback-data.json` from the workspace root to cross-reference suggestions against actual feedback data.",
-            AgentWorkspacePaths.HarnessSuggestionsReviewFilePath,
+        return BuildAdversarialReviewPrompt(new AdversarialReviewPromptSpec
+        {
+            Title = "Harness Suggestions Review",
+            SubjectNoun = "harness improvement suggestions",
+            IntroScope = "the suggestions file and the original feedback data",
+            InputInstruction = $"Read the suggestions file at `{AgentWorkspacePaths.HarnessSuggestionsOutputFilePath}` from the workspace.\nAlso read `feedback-data.json` from the workspace root to cross-reference suggestions against actual feedback data.",
+            OutputPath = AgentWorkspacePaths.HarnessSuggestionsReviewFilePath,
+            EvaluationBullets =
             [
                 "Suggestions not grounded in specific feedback patterns from the data",
                 "Abstract or non-actionable suggestions that lack specificity",
@@ -377,9 +385,10 @@ public static partial class ConsolidationPromptBuilder
                 "Bundled concerns that should be separate suggestions",
                 "Rationales lacking specific evidence from feedback entries",
             ],
-            "the suggestions",
-            "suggestions",
-            "Do NOT modify source files, configuration files, or the suggestions file being reviewed. Only read the input files and write the review findings file.");
+            EvaluationSubject = "the suggestions",
+            SubjectShortName = "suggestions",
+            DoNotModifyClause = "Do NOT modify source files, configuration files, or the suggestions file being reviewed. Only read the input files and write the review findings file."
+        });
     }
 
     /// <summary>
@@ -441,34 +450,42 @@ public static partial class ConsolidationPromptBuilder
             ]);
     }
 
-    private static string BuildAdversarialReviewPrompt(
-        string title,
-        string subjectNoun,
-        string introScope,
-        string inputInstruction,
-        string outputPath,
-        string[] evaluationBullets,
-        string evaluationSubject,
-        string subjectShortName,
-        string doNotModifyClause)
+    /// <summary>
+    /// The texts that vary between the adversarial review prompts built by
+    /// <see cref="BuildAdversarialReviewPrompt"/>.
+    /// </summary>
+    private sealed record AdversarialReviewPromptSpec
+    {
+        public required string Title { get; init; }
+        public required string SubjectNoun { get; init; }
+        public required string IntroScope { get; init; }
+        public required string InputInstruction { get; init; }
+        public required string OutputPath { get; init; }
+        public required string[] EvaluationBullets { get; init; }
+        public required string EvaluationSubject { get; init; }
+        public required string SubjectShortName { get; init; }
+        public required string DoNotModifyClause { get; init; }
+    }
+
+    private static string BuildAdversarialReviewPrompt(AdversarialReviewPromptSpec spec)
     {
         var sb = new StringBuilder();
 
-        sb.AppendLine($"# {title}");
+        sb.AppendLine($"# {spec.Title}");
         sb.AppendLine();
-        sb.AppendLine($"You are an independent reviewer evaluating {subjectNoun} produced by another agent.");
-        sb.AppendLine($"Your review must be based solely on {introScope} — you have no shared context with the generator.");
+        sb.AppendLine($"You are an independent reviewer evaluating {spec.SubjectNoun} produced by another agent.");
+        sb.AppendLine($"Your review must be based solely on {spec.IntroScope} — you have no shared context with the generator.");
         sb.AppendLine();
 
         sb.AppendLine("## Input");
         sb.AppendLine();
-        sb.AppendLine(inputInstruction);
+        sb.AppendLine(spec.InputInstruction);
         sb.AppendLine();
 
         sb.AppendLine("## Evaluation Guidance");
         sb.AppendLine();
-        sb.AppendLine($"Evaluate {evaluationSubject} holistically. Areas to consider include (but are not limited to):");
-        foreach (var bullet in evaluationBullets)
+        sb.AppendLine($"Evaluate {spec.EvaluationSubject} holistically. Areas to consider include (but are not limited to):");
+        foreach (var bullet in spec.EvaluationBullets)
         {
             sb.AppendLine($"- {bullet}");
         }
@@ -478,7 +495,7 @@ public static partial class ConsolidationPromptBuilder
 
         sb.AppendLine("## Output");
         sb.AppendLine();
-        sb.AppendLine($"Write your findings to `{outputPath}` using the following severity markers:");
+        sb.AppendLine($"Write your findings to `{spec.OutputPath}` using the following severity markers:");
         sb.AppendLine();
         sb.AppendLine("- `[CRITICAL]` — The output is wrong or will cause downstream failures");
         sb.AppendLine("- `[WARNING]` — The output is incomplete but not incorrect");
@@ -489,9 +506,9 @@ public static partial class ConsolidationPromptBuilder
 
         sb.AppendLine("## Important Rules");
         sb.AppendLine();
-        sb.AppendLine($"- If the {subjectShortName} are thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
+        sb.AppendLine($"- If the {spec.SubjectShortName} are thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
         sb.AppendLine("- When stating no issues were found, do NOT echo severity marker syntax. Write \"No issues found\" — not \"No [CRITICAL] issues found\".");
-        sb.AppendLine($"- {doNotModifyClause}");
+        sb.AppendLine($"- {spec.DoNotModifyClause}");
 
         return sb.ToString();
     }
@@ -588,21 +605,8 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("## Past Proposal Outcomes — Learn From History");
         sb.AppendLine();
 
-        if (implemented.Count > 0)
-        {
-            sb.AppendLine("### Implemented (completed by an agent — this alone does not show the team valued them)");
-            foreach (var issue in implemented)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
-            sb.AppendLine();
-        }
-
-        if (rejected.Count > 0)
-        {
-            sb.AppendLine("### Rejected (avoid similar proposals)");
-            foreach (var issue in rejected)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
-            sb.AppendLine();
-        }
+        AppendIssueListSection(sb, "### Implemented (completed by an agent — this alone does not show the team valued them)", implemented);
+        AppendIssueListSection(sb, "### Rejected (avoid similar proposals)", rejected);
 
         if (feedbackLines.Count > 0)
         {
@@ -617,5 +621,16 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("Do NOT re-propose implemented items: check the current code first — the change may already be in place.");
 
         return sb.ToString();
+    }
+
+    private static void AppendIssueListSection(StringBuilder sb, string heading, List<IssueSummary> issues)
+    {
+        if (issues.Count == 0)
+            return;
+
+        sb.AppendLine(heading);
+        foreach (var issue in issues)
+            sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+        sb.AppendLine();
     }
 }

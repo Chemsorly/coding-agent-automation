@@ -277,7 +277,7 @@
             await LoadAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // TODO: [WARNING] LoadAsync is invoked via @bind:after="LoadAsync" on the time-window dropdown, making
@@ -298,7 +298,7 @@
             var now = DateTimeOffset.UtcNow;
             var windowStart = WindowStart(_recentWindowHours, now);
 
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: PageSize, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, since: _recentWindowHours == 0 ? null : windowStart, ct: _cts.Token);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: PageSize, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId, Since: _recentWindowHours == 0 ? null : windowStart), _cts.Token);
             var items = runs.Items.ToList();
 
             // HasMore is now accurate: the server filtered StartedAt >= since before pagination,
@@ -309,7 +309,7 @@
             if (_total > 0)
                 Aggregate(items, now);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load insights: {ex.Message}";

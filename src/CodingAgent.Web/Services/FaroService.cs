@@ -28,7 +28,7 @@ internal sealed class FaroService(IJSRuntime js) : IFaroService
         {
             await js.InvokeVoidAsync("faroApi.pushLog", message, level);
         }
-        catch (Exception ex) when (IsSafeToSwallow(ex)) { }
+        catch (Exception ex) when (IsSafeToSwallow(ex)) { /* Telemetry is best-effort and must never break the page. */ }
     }
 
     public async Task PushErrorAsync(string message, string? stack = null)
@@ -37,7 +37,7 @@ internal sealed class FaroService(IJSRuntime js) : IFaroService
         {
             await js.InvokeVoidAsync("faroApi.pushError", message, stack);
         }
-        catch (Exception ex) when (IsSafeToSwallow(ex)) { }
+        catch (Exception ex) when (IsSafeToSwallow(ex)) { /* Telemetry is best-effort and must never break the page. */ }
     }
 
     public async Task PushEventAsync(string name, IDictionary<string, string>? attributes = null)
@@ -46,7 +46,7 @@ internal sealed class FaroService(IJSRuntime js) : IFaroService
         {
             await js.InvokeVoidAsync("faroApi.pushEvent", name, attributes);
         }
-        catch (Exception ex) when (IsSafeToSwallow(ex)) { }
+        catch (Exception ex) when (IsSafeToSwallow(ex)) { /* Telemetry is best-effort and must never break the page. */ }
     }
 
     /// <summary>

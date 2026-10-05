@@ -88,23 +88,23 @@ public sealed class SchedulerAutoStartExtensionsTests
             .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("simulated API unreachable"));
 
-        // Advance the FakeTimeProvider in a background thread so Task.Delay(delaySec, timeProvider, ct)
-        // resolves immediately rather than blocking real wall-clock time.
+        // Advance the FakeTimeProvider in a background task so Task.Delay(delaySec, timeProvider, ct)
+        // resolves immediately rather than blocking real wall-clock time. The short real-time delay
+        // between advances lets the retry loop observe each advance before the next one.
         using var advanceCts = new CancellationTokenSource();
-        var advanceThread = new Thread(() =>
+        var advanceTask = Task.Run(async () =>
         {
             while (!advanceCts.IsCancellationRequested)
             {
-                Thread.Sleep(1); // NOSONAR S2925 — background thread advancing FakeTimeProvider requires real wall-clock pause
+                await Task.Delay(TimeSpan.FromMilliseconds(1), CancellationToken.None);
                 fakeTimeProvider.Advance(TimeSpan.FromSeconds(300));
             }
-        }) { IsBackground = true };
-        advanceThread.Start();
+        });
 
         var result = await InvokeLoadConfig(mockClient.Object, fakeTimeProvider, CancellationToken.None);
 
-        advanceCts.Cancel();
-        advanceThread.Join(500);
+        await advanceCts.CancelAsync();
+        await advanceTask;
 
         // After budget exhaustion the method must return a default config, not throw
         result.Should().NotBeNull("exhausted retry budget must return a default config, not throw");

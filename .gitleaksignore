@@ -1,3 +1,4 @@
 5a9ea1a999392a2a230ab096573a26eac976a811:tests/CodingAgent.Web.UnitTests/Services/TokenVendingServiceLoggingTests.cs:private-key:118
 5a9ea1a999392a2a230ab096573a26eac976a811:tests/CodingAgent.Web.UnitTests/Services/TokenVendingServiceLoggingTests.cs:private-key:162
 b9a1ddd8b8b790f160aa8de5d9e1783550789850:tests/CodingAgent.Web.E2ETests/Tests/DbModeHappyPathTests.cs:generic-api-key:201
+126e094d64086fe3ad69800365b99b869cf6a14f:dockerfiles/agent.Dockerfile:generic-api-key:120

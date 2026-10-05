@@ -257,9 +257,12 @@ public sealed class LabelService : ILabelService
             (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
             newLabel,
             ct,
-            identifier: issueIdentifier,
-            throwOnRemoveExhaustion: throwOnRemoveExhaustion,
-            currentLabels: currentLabels);
+            new LabelSwapOptions
+            {
+                Identifier = issueIdentifier,
+                ThrowOnRemoveExhaustion = throwOnRemoveExhaustion,
+                CurrentLabels = currentLabels
+            });
     }
 
     /// <summary>
@@ -303,7 +306,10 @@ public sealed class LabelService : ILabelService
             (label, c) => repoProvider.AddPrLabelAsync(prNumber, label, c),
             newLabel,
             ct,
-            identifier: prIdentifier,
-            throwOnRemoveExhaustion: throwOnRemoveExhaustion);
+            new LabelSwapOptions
+            {
+                Identifier = prIdentifier,
+                ThrowOnRemoveExhaustion = throwOnRemoveExhaustion
+            });
     }
 }

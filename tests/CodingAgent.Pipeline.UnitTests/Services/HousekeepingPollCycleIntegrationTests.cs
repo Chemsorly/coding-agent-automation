@@ -49,12 +49,7 @@ public class HousekeepingPollCycleIntegrationTests
         cacheManager.RepoProviders[RepoProviderId] = repoProviderMock.Object;
 
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(s => s.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()))
+        housekeepingMock.Setup(s => s.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var poller = new TemplatePoller(cacheManager, logger);

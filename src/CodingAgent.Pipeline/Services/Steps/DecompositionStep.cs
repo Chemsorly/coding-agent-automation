@@ -92,7 +92,7 @@ public sealed class DecompositionStep : IPipelineStep
         try
         {
             agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                context.AgentProvider,
+                new AgentMonitorContext(context.AgentProvider, run, config, "Decomposition agent", context.Callbacks.NotifyChange, logger),
                 new AgentRequest
                 {
                     Prompt = prompt,
@@ -100,7 +100,7 @@ public sealed class DecompositionStep : IPipelineStep
                     Timeout = config.AgentTimeout,
                     UseResume = true
                 },
-                run, config, "Decomposition agent", context.Callbacks.NotifyChange, logger, ct,
+                ct,
                 line => context.Callbacks.EmitOutputLine(line),
                 reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "decomposition");
