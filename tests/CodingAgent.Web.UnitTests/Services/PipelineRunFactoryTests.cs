@@ -464,4 +464,101 @@ public sealed class PipelineRunFactoryTests
         restored.ConsolidationTemplateId.Should().BeNull();
         restored.ConsolidationResultSummary.Should().BeNull();
     }
+
+    // ── FromDistributionRequest — RunType routing ─────────────────────────
+    // TODO: [WARNING] This routing block is missing a Review RunType test case.
+    // FromDistributionRequest now passes Review-specific fields (ReviewPrBranchName, ReviewPrTargetBranch,
+    // ReviewPrUrl, ReviewPrDescription, ReviewPrAuthor) through to CreateForRunType. A
+    // FromDistributionRequest_Review_ProducesReviewRun test should be added to complement the four
+    // cases present (Implementation, DecompositionAnalysis, Decomposition, Consolidation) and to
+    // verify that Review-specific fields are correctly propagated through the factory.
+
+    [Fact]
+    public void FromDistributionRequest_Implementation_ProducesImplementationRun()
+    {
+        // TODO: [WARNING] This test asserts only run.RunType == Implementation. A regression where
+        // Consolidation falls through to the same branch as Implementation would not be caught here
+        // because RunType is a pass-through in CreateCore. The sentinel injection test below provides
+        // the meaningful Consolidation regression guard. See TestQualityReviewer finding (issue #3344).
+        var request = CreateMinimalRequest("run-impl") with { RunType = PipelineRunType.Implementation };
+
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        run.RunType.Should().Be(PipelineRunType.Implementation);
+    }
+
+    [Fact]
+    public void FromDistributionRequest_DecompositionAnalysis_ProducesDecompositionAnalysisRun()
+    {
+        var request = CreateMinimalRequest("run-decomp-analysis") with { RunType = PipelineRunType.DecompositionAnalysis };
+
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        run.RunType.Should().Be(PipelineRunType.DecompositionAnalysis);
+    }
+
+    [Fact]
+    public void FromDistributionRequest_Decomposition_ProducesDecompositionRun()
+    {
+        var request = CreateMinimalRequest("run-decomp") with { RunType = PipelineRunType.Decomposition };
+
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        run.RunType.Should().Be(PipelineRunType.Decomposition);
+    }
+
+    [Fact]
+    public void FromDistributionRequest_Consolidation_RunTypeIsConsolidation()
+    {
+        // TODO: [WARNING] This test asserts only run.RunType == PipelineRunType.Consolidation, which is
+        // already covered by FromDistributionRequest_Consolidation_HasSentinelProviderConfigId below
+        // (that test asserts both RunType and IssueProviderConfigId). These two tests exercise identical
+        // setup and the first adds no unique coverage. Consider merging them or replacing this test with
+        // a distinct assertion. See TestQualityReviewer finding (issue #3344).
+        // Arrange — simulate a rehydrated consolidation work item (e.g. after API pod restart)
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "consolidation#1",
+            IssueProviderConfigId = "real-provider-id",  // real ID — must be overridden by sentinel
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = InitiatedByConstants.ConsolidationManual,
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "consolidation",
+            TimeoutSeconds = 3600,
+            RunId = "run-consolidation",
+            RunType = PipelineRunType.Consolidation
+        };
+
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        run.RunType.Should().Be(PipelineRunType.Consolidation);
+    }
+
+    [Fact]
+    public void FromDistributionRequest_Consolidation_HasSentinelProviderConfigId()
+    {
+        // Regression test for the bug documented in the TODO comment at FromDistributionRequest:
+        // a consolidation work item rehydrated after an API restart fell through the _ arm and
+        // used the real IssueProviderConfigId instead of the sentinel, silently routing completion
+        // through RegularJobCompletionStrategy instead of ConsolidationJobCompletionStrategy.
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "consolidation#2",
+            IssueProviderConfigId = "real-provider-id",  // real ID passed in the request
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = InitiatedByConstants.ConsolidationManual,
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "consolidation",
+            TimeoutSeconds = 3600,
+            RunId = "run-consolidation-sentinel",
+            RunType = PipelineRunType.Consolidation
+        };
+
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        // IssueProviderConfigId MUST be the sentinel — AgentJobLifecycleService routes to
+        // ConsolidationJobCompletionStrategy based on this value, NOT on RunType.
+        run.IssueProviderConfigId.Should().Be(ConsolidationConstants.ProviderConfigId);
+        run.IssueProviderConfigId.Should().NotBe("real-provider-id");
+    }
 }

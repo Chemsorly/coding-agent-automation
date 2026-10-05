@@ -66,52 +66,24 @@ internal sealed class PipelineExecutionContextBuilder
         var outputBatcher = req.OutputBatcher;
         var onStepChanged = req.OnStepChanged;
         var ct = req.Ct;
-        var run = job.RunType switch
+        var run = PipelineRun.CreateForRunType(new PipelineRunCreationParams
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
-            {
-                RunId = job.JobId,
-                IssueIdentifier = job.IssueIdentifier,
-                IssueTitle = job.IssueDetail.Title,
-                IssueUrl = job.IssueDetail.Url,
-                IssueProviderConfigId = string.Empty,
-                RepoProviderConfigId = job.RepoProviderConfigId,
-                RunType = PipelineRunType.Review,
-                InitiatedBy = job.InitiatedBy,
-                AgentId = _agentId.Value,
-                BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null,
-                ReviewPrBranchName = job.LinkedPullRequest?.BranchName ?? string.Empty,
-                ReviewPrTargetBranch = job.ReviewPrTargetBranch ?? string.Empty,
-                ReviewPrDescription = job.ReviewPrDescription,
-                ReviewPrAuthor = job.ReviewPrAuthor,
-                LinkedIssueContexts = job.LinkedIssueContexts
-            }),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
-            {
-                RunId = job.JobId,
-                IssueIdentifier = job.IssueIdentifier,
-                IssueTitle = job.IssueDetail.Title,
-                IssueUrl = job.IssueDetail.Url,
-                IssueProviderConfigId = string.Empty,
-                RepoProviderConfigId = job.RepoProviderConfigId,
-                RunType = job.RunType,
-                InitiatedBy = job.InitiatedBy,
-                AgentId = _agentId.Value,
-                BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null
-            }),
-            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
-            {
-                RunId = job.JobId,
-                IssueIdentifier = job.IssueIdentifier,
-                IssueTitle = job.IssueDetail.Title,
-                IssueUrl = job.IssueDetail.Url,
-                IssueProviderConfigId = string.Empty,
-                RepoProviderConfigId = job.RepoProviderConfigId,
-                InitiatedBy = job.InitiatedBy,
-                AgentId = _agentId.Value,
-                BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null
-            })
-        };
+            RunId = job.JobId,
+            IssueIdentifier = job.IssueIdentifier,
+            IssueTitle = job.IssueDetail.Title,
+            IssueUrl = job.IssueDetail.Url,
+            IssueProviderConfigId = string.Empty,
+            RepoProviderConfigId = job.RepoProviderConfigId,
+            RunType = job.RunType,
+            InitiatedBy = job.InitiatedBy,
+            AgentId = _agentId.Value,
+            BrainProviderConfigId = brainProvider is not null ? job.BrainProviderConfigId : null,
+            ReviewPrBranchName = job.LinkedPullRequest?.BranchName ?? string.Empty,
+            ReviewPrTargetBranch = job.ReviewPrTargetBranch ?? string.Empty,
+            ReviewPrDescription = job.ReviewPrDescription,
+            ReviewPrAuthor = job.ReviewPrAuthor,
+            LinkedIssueContexts = job.LinkedIssueContexts
+        });
         run.RepositoryName = repoProvider.RepositoryFullName;
         run.ModelName = agentProvider.Model;
         run.PipelineProviderConfigId = job.PipelineProviderConfigId;

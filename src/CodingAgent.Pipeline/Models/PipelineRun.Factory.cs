@@ -3,6 +3,41 @@ namespace CodingAgent.Pipeline.Models;
 public sealed partial class PipelineRun
 {
     /// <summary>
+    /// Single authoritative dispatch: routes <paramref name="p"/> to the correct
+    /// <c>Create*</c> factory method based on <see cref="PipelineRunCreationParams.RunType"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Callers are responsible for setting <see cref="PipelineRunCreationParams.RunType"/> correctly
+    /// before calling this method — it is the dispatch key. This method does NOT override
+    /// <see cref="PipelineRunCreationParams.IssueProviderConfigId"/>; callers that need the
+    /// consolidation sentinel must set it themselves (e.g. <c>FromDistributionRequest</c>).
+    /// </para>
+    /// <para>
+    /// Consolidation routing note: completion-strategy selection in <c>AgentJobLifecycleService</c>
+    /// keys on <c>IssueProviderConfigId == ConsolidationConstants.ProviderConfigId</c>, not on
+    /// <c>RunType</c>. Callers that need the sentinel (e.g. <c>FromDistributionRequest</c>) must
+    /// set it before calling this method; this factory passes it through unchanged.
+    /// </para>
+    /// </remarks>
+    public static PipelineRun CreateForRunType(PipelineRunCreationParams p)
+    {
+        ArgumentNullException.ThrowIfNull(p);
+        // TODO: [WARNING] The explicit PipelineRunType.Consolidation arm below is redundant — it
+        // produces exactly the same result as the _ arm. Its sole purpose is to document that
+        // Consolidation intentionally routes through CreateImplementation. A future maintainer
+        // adding a new PipelineRunType value cannot distinguish "deliberate default" from "forgot
+        // to add an arm" for Consolidation. Consider replacing it with a comment on the _ arm.
+        return p.RunType switch
+        {
+            PipelineRunType.Review => CreateReview(p),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => CreateDecomposition(p),
+            PipelineRunType.Consolidation => CreateImplementation(p), // intentional: Consolidation uses the implementation pipeline; RunType is passed through by CreateCore
+            _ => CreateImplementation(p)
+        };
+    }
+
+    /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
     /// </summary>
     // TODO: Consider adding a RunType guard here (if p.RunType != PipelineRunType.Implementation throw)
@@ -49,8 +84,8 @@ public sealed partial class PipelineRun
             RepoProviderConfigId = p.RepoProviderConfigId,
             StartedAt = now.UtcDateTime,
             StartedAtOffset = now,
-        // LastStepChangeAt is intentionally set independently from `now` — when startedAt is provided,
-        // these will differ (preserves pre-refactor behavior).
+            // LastStepChangeAt is intentionally set independently from `now` — when startedAt is provided,
+            // these will differ (preserves pre-refactor behavior).
             LastStepChangeAt = DateTimeOffset.UtcNow,
             CurrentStep = PipelineStep.Created,
             InitiatedBy = p.InitiatedBy,
