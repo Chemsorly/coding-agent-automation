@@ -16,3 +16,10 @@
     padding: 1px 6px;
     border-radius: 3px;
 }
+
+/* ═══ Dependency-blocked row ═══ */
+/* Border only. Row opacity would also fade the Blocked badge inside the row and drop its
+   contrast below AA. A selected row keeps its accent border. */
+.drawer-issue-blocked:not(.drawer-issue-selected) {
+    border-color: var(--error);
+}

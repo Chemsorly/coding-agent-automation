@@ -73,6 +73,22 @@ public class IssueDispatchDrawerTests
         Assert.DoesNotContain(selector, agentCodingCss, StringComparison.Ordinal);
     }
 
+    // Same scoping bug for the blocked row: the rule sat in AgentCoding.razor.css and never matched.
+    // It must not set opacity on the row, because that also fades the Blocked badge inside it
+    // below WCAG AA contrast.
+    [Fact]
+    public void DrawerIssueBlockedRule_IsScopedToIssueDispatchDrawer_AndDoesNotFadeTheRow()
+    {
+        var drawerCss = File.ReadAllText(FindPagesFile("IssueDispatchDrawer.razor.css"));
+        var rule = Regex.Match(drawerCss, @"\.drawer-issue-blocked[^{]*\{(?<body>[^}]*)\}");
+        Assert.True(rule.Success, ".drawer-issue-blocked must be declared in IssueDispatchDrawer.razor.css");
+        Assert.Contains("border-color: var(--error);", rule.Groups["body"].Value, StringComparison.Ordinal);
+        Assert.DoesNotContain("opacity", rule.Groups["body"].Value, StringComparison.OrdinalIgnoreCase);
+
+        var agentCodingCss = File.ReadAllText(FindPagesFile("AgentCoding.razor.css"));
+        Assert.DoesNotContain(".drawer-issue-blocked", agentCodingCss, StringComparison.Ordinal);
+    }
+
     private static string FindPagesFile(string fileName)
     {
         var relative = Path.Combine("src", "CodingAgent.Web", "Components", "Pages", fileName);
