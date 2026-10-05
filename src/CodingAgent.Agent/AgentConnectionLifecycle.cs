@@ -78,7 +78,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     public AgentConnectionLifecycle( // NOSONAR S107 — constructor consolidates all DI-resolved deps for this lifecycle manager
         IHubConnectionManager hubManager,
         IHubConnectionManagerFactory hubManagerFactory,
-        ChatSlotManager slotManager,
         AgentId agentId,
         IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger,
@@ -86,7 +85,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
-        ArgumentNullException.ThrowIfNull(slotManager);
         ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
