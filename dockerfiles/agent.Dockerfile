@@ -48,7 +48,8 @@ RUN dotnet publish src/CodingAgent.Agent/CodingAgent.Agent.csproj \
 FROM mcr.microsoft.com/dotnet/sdk:10.0.401 AS toolchain
 
 # Stack toolchains (JDK 21 + Maven, Python 3.12), git, Node.js/npm for MCP servers, tini as
-# PID 1 for OpenCode and unzip for the Kiro CLI installer
+# PID 1 for OpenCode, unzip for the Kiro CLI installer, and gpg/gpgv/jq to verify the Claude
+# Code release manifest
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         curl \
@@ -56,6 +57,9 @@ RUN apt-get update && \
         git \
         unzip \
         tini \
+        gpg \
+        gpgv \
+        jq \
         nodejs \
         npm \
         libasound2t64 \
@@ -85,7 +89,7 @@ USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
 
 # uv for MCP servers (uvx) AND Python package management (pytest, etc.)
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf --proto '=https' --tlsv1.2 https://astral.sh/uv/install.sh | sh
 
 WORKDIR /app
 
@@ -101,16 +105,43 @@ ENV AGENT_API_KEY=""
 # Target: claude — Claude Code CLI
 # =============================================================================
 FROM toolchain AS claude
+ARG TARGETARCH
 ARG STACK_LABELS
 
-# Install the Claude Code CLI (native installer, pinned version) as non-root user.
-# The installer puts the launcher at ~/.local/bin/claude. The image is the update channel:
-# DISABLE_UPDATES blocks the background updater and `claude update` alike. It is set after the
-# install because it would also block the installer's own `claude install` step.
+# Install the Claude Code CLI (pinned version) as non-root user, verified the way Anthropic
+# documents (https://code.claude.com/docs/en/setup#binary-integrity-and-code-signing): the
+# release manifest must carry a valid signature from the Claude Code release key, whose
+# fingerprint is pinned here, and the binary must match the manifest's SHA256 checksum.
+# `claude install` then puts the launcher at ~/.local/bin/claude. The image is the update
+# channel: DISABLE_UPDATES blocks the background updater and `claude update` alike. It is set
+# after the install because it would also block the `claude install` step.
 # ~/.claude/rules holds the pipeline steering the agent writes before each run.
 ARG CLAUDE_CODE_VERSION=2.1.286
+ARG CLAUDE_CODE_KEY_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 RUN mkdir -p /home/ubuntu/.claude/rules && \
-    curl -fsSL --retry 3 --retry-delay 5 https://claude.ai/install.sh | bash -s "${CLAUDE_CODE_VERSION}" && \
+    CLAUDE_PLATFORM="linux-$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64")" && \
+    CLAUDE_RELEASE="https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}" && \
+    WORK="$(mktemp -d)" && \
+    export GNUPGHOME="${WORK}/gnupg" && \
+    mkdir -m 700 "${GNUPGHOME}" && \
+    curl -fsS --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 \
+        https://downloads.claude.ai/keys/claude-code.asc -o "${WORK}/claude-code.asc" && \
+    curl -fsS --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 \
+        "${CLAUDE_RELEASE}/manifest.json" -o "${WORK}/manifest.json" && \
+    curl -fsS --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 \
+        "${CLAUDE_RELEASE}/manifest.json.sig" -o "${WORK}/manifest.json.sig" && \
+    curl -fsS --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 \
+        "${CLAUDE_RELEASE}/${CLAUDE_PLATFORM}/claude" -o "${WORK}/claude" && \
+    gpg --batch --dearmor < "${WORK}/claude-code.asc" > "${WORK}/claude-code.gpg" && \
+    gpgv --status-fd 1 --keyring "${WORK}/claude-code.gpg" \
+        "${WORK}/manifest.json.sig" "${WORK}/manifest.json" \
+        | grep -Eq "^\[GNUPG:\] VALIDSIG (.* )?${CLAUDE_CODE_KEY_FINGERPRINT}( |$)" && \
+    CLAUDE_SHA256="$(jq -er --arg p "${CLAUDE_PLATFORM}" '.platforms[$p].checksum' \
+        "${WORK}/manifest.json")" && \
+    echo "${CLAUDE_SHA256}  ${WORK}/claude" | sha256sum --check --status && \
+    chmod +x "${WORK}/claude" && \
+    "${WORK}/claude" install "${CLAUDE_CODE_VERSION}" && \
+    rm -rf "${WORK}" && \
     claude --version
 ENV DISABLE_UPDATES=1
 ENV DISABLE_AUTOUPDATER=1
@@ -178,7 +209,7 @@ ARG STACK_LABELS
 ARG OPENCODE_VERSION=1.18.21
 USER root
 RUN OC_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64") && \
-    curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+    curl -fsSL --proto '=https' --tlsv1.2 --retry 3 --retry-delay 5 --retry-all-errors \
         "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${OC_ARCH}.tar.gz" \
         -o /tmp/opencode.tar.gz && \
     tar -xzf /tmp/opencode.tar.gz -C /usr/local/bin && \
