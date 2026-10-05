@@ -117,7 +117,7 @@ ARG STACK_LABELS
 # after the install because it would also block the `claude install` step.
 # ~/.claude/rules holds the pipeline steering the agent writes before each run.
 ARG CLAUDE_CODE_VERSION=2.1.286
-ARG CLAUDE_CODE_KEY_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
+ARG CLAUDE_CODE_SIGNER_FINGERPRINT=31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE
 RUN mkdir -p /home/ubuntu/.claude/rules && \
     CLAUDE_PLATFORM="linux-$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "x64")" && \
     CLAUDE_RELEASE="https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}" && \
@@ -135,7 +135,7 @@ RUN mkdir -p /home/ubuntu/.claude/rules && \
     gpg --batch --dearmor < "${WORK}/claude-code.asc" > "${WORK}/claude-code.gpg" && \
     gpgv --status-fd 1 --keyring "${WORK}/claude-code.gpg" \
         "${WORK}/manifest.json.sig" "${WORK}/manifest.json" \
-        | grep -Eq "^\[GNUPG:\] VALIDSIG (.* )?${CLAUDE_CODE_KEY_FINGERPRINT}( |$)" && \
+        | grep -Eq "^\[GNUPG:\] VALIDSIG (.* )?${CLAUDE_CODE_SIGNER_FINGERPRINT}( |$)" && \
     CLAUDE_SHA256="$(jq -er --arg p "${CLAUDE_PLATFORM}" '.platforms[$p].checksum' \
         "${WORK}/manifest.json")" && \
     echo "${CLAUDE_SHA256}  ${WORK}/claude" | sha256sum --check --status && \
