@@ -588,21 +588,8 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("## Past Proposal Outcomes — Learn From History");
         sb.AppendLine();
 
-        if (implemented.Count > 0)
-        {
-            sb.AppendLine("### Implemented (completed by an agent — this alone does not show the team valued them)");
-            foreach (var issue in implemented)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
-            sb.AppendLine();
-        }
-
-        if (rejected.Count > 0)
-        {
-            sb.AppendLine("### Rejected (avoid similar proposals)");
-            foreach (var issue in rejected)
-                sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
-            sb.AppendLine();
-        }
+        AppendIssueListSection(sb, "### Implemented (completed by an agent — this alone does not show the team valued them)", implemented);
+        AppendIssueListSection(sb, "### Rejected (avoid similar proposals)", rejected);
 
         if (feedbackLines.Count > 0)
         {
@@ -617,5 +604,16 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("Do NOT re-propose implemented items: check the current code first — the change may already be in place.");
 
         return sb.ToString();
+    }
+
+    private static void AppendIssueListSection(StringBuilder sb, string heading, List<IssueSummary> issues)
+    {
+        if (issues.Count == 0)
+            return;
+
+        sb.AppendLine(heading);
+        foreach (var issue in issues)
+            sb.AppendLine($"- #{issue.Identifier} \"{issue.Title}\"");
+        sb.AppendLine();
     }
 }
