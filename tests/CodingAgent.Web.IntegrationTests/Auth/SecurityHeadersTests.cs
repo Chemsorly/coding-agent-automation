@@ -50,6 +50,17 @@ public class SecurityHeadersTests : IClassFixture<CustomWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Favicon_MayBeEmbeddedByOtherSites()
+    {
+        // Dashboards on other origins (e.g. Homepage) show the favicon as the service icon.
+        var response = await IngressClient("https").GetAsync(SecurityHeadersRegistration.FaviconPath);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        Header(response, "Cross-Origin-Resource-Policy").Should().Be("cross-origin");
+        Header(response, "X-Content-Type-Options").Should().Be("nosniff");
+    }
+
+    [Fact]
     public async Task Hsts_IsSentOverHttps()
     {
         var response = await IngressClient("https").GetAsync("/login");
