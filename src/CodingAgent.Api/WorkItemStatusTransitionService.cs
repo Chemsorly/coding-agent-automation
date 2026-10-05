@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -660,9 +661,22 @@ public sealed partial class WorkItemStatusTransitionService
         {
             var payload = JsonSerializer.Deserialize<JobCompletionPayload>(
                 resultJson, PipelineJsonOptions.Default);
-            return payload?.FinalLabel == AgentLabels.NeedsRefinement
-                ? AgentLabels.NeedsRefinement
-                : null;
+            var finalLabel = payload?.FinalLabel;
+
+            if (finalLabel is null)
+                return null;
+
+            if (finalLabel == AgentLabels.NeedsRefinement)
+                return AgentLabels.NeedsRefinement;
+
+            // Non-null but not in the allowlist — log at Information so operators can diagnose
+            // unexpected values without flooding the warning channel. The value comes from the
+            // agent-controlled HTTP payload, so escape CR/LF before logging it.
+            _logger.LogInformation(
+                "Ignoring FinalLabel {FinalLabel} from the Failed payload of WorkItem {WorkItemId}: only agent:needs-refinement is accepted. Falling back to agent:error label.",
+                LogSanitizer.SanitizeForLog(finalLabel),
+                workItemId);
+            return null;
         }
         catch (JsonException ex)
         {
