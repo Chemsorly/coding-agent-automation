@@ -1,10 +1,5 @@
 using AwesomeAssertions;
-using CodingAgent.AgentGateway;
 using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
-using Moq;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Pipeline.UnitTests.Services;
 

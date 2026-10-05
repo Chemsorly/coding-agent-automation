@@ -197,6 +197,50 @@ public sealed class AgentRegistrySyncServiceTests
         service.ExecuteTask!.IsFaulted.Should().BeFalse();
     }
 
+    // ── Constructor guards ────────────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_NullRegistry_Throws()
+    {
+        var clock = new FakeTimeProvider();
+        var act = () => new AgentRegistrySyncService(null!, clock, new Mock<ILogger>().Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullClock_Throws()
+    {
+        var client = new Mock<IPipelineApiAgentClient>();
+        var clock = new FakeTimeProvider();
+        var registry = CreateRegistry(client, clock);
+        var act = () => new AgentRegistrySyncService(registry, null!, new Mock<ILogger>().Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullLogger_Throws()
+    {
+        var client = new Mock<IPipelineApiAgentClient>();
+        var clock = new FakeTimeProvider();
+        var registry = CreateRegistry(client, clock);
+        var act = () => new AgentRegistrySyncService(registry, clock, null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    // ── PollInterval property ─────────────────────────────────────────────
+
+    [Fact]
+    public void PollInterval_DefaultIs2Seconds()
+    {
+        var client = new Mock<IPipelineApiAgentClient>();
+        var clock = new FakeTimeProvider();
+        var registry = CreateRegistry(client, clock);
+        var svc = new AgentRegistrySyncService(registry, clock, new Mock<ILogger>().Object);
+        svc.PollInterval.Should().Be(TimeSpan.FromSeconds(2));
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────
+
     /// <summary>
     /// Polls a condition on the real clock. The service loop runs on the thread pool, so the
     /// snapshot publish happens shortly after the mocked fetch returns rather than synchronously.
@@ -210,4 +254,7 @@ public sealed class AgentRegistrySyncServiceTests
             await Task.Delay(20);
         }
     }
+
+    private static ApiAgentRegistryService CreateRegistry(Mock<IPipelineApiAgentClient> client, FakeTimeProvider clock)
+        => new(client.Object, clock, new Mock<ILogger>().Object);
 }

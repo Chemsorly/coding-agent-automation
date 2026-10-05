@@ -1,9 +1,7 @@
 using AwesomeAssertions;
-using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
 using Moq;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
@@ -50,5 +48,4 @@ public sealed class ApiBackedConsolidationStoresTests
 
         mockClient.Verify(c => c.SaveAsync(It.IsAny<HarnessSuggestions>(), It.IsAny<CancellationToken>()), Times.Once);
     }
-
 }

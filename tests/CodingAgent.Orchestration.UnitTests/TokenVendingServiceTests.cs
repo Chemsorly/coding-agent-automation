@@ -1,13 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using AwesomeAssertions;
-using CodingAgent.Orchestration;
-using CodingAgent.Orchestration.Dispatch;
-using CodingAgent.Orchestration.Health;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Web.Services;
 using FsCheck;
 using FsCheck.Xunit;
 using Microsoft.Extensions.Hosting;
@@ -15,7 +10,7 @@ using Moq;
 using Moq.Protected;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgent.Web.UnitTests;
+namespace CodingAgent.Orchestration.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="TokenVendingService"/>.
@@ -95,6 +90,56 @@ public class TokenVendingServiceTests
     }
 
     [Fact]
+    public async Task GenerateAgentTokenAsync_InvalidInstallationId_ThrowsInvalidOperation()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        var config = new ProviderConfig
+        {
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "not-a-number"
+            }
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.GenerateAgentTokenAsync(config, CancellationToken.None));
+
+        ex.Message.Should().Contain("installationId");
+    }
+
+    [Fact]
+    public async Task GenerateAgentTokenAsync_InvalidPemContent_ThrowsInvalidOperation()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        // Base64 of "not a pem key"
+        var notPemBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not a pem key"));
+        var config = new ProviderConfig
+        {
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                [ProviderSettingKeys.ClientId] = "123",
+                [ProviderSettingKeys.InstallationId] = "456"
+            }
+        };
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.GenerateAgentTokenAsync(config, CancellationToken.None));
+
+        ex.Message.Should().Contain("PEM");
+    }
+
+    [Fact]
     public async Task PrepareAgentConfigsAsync_NullConfigs_Throws()
     {
         var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
@@ -141,24 +186,24 @@ public class TokenVendingServiceTests
     [Fact]
     public async Task PrepareAgentConfigsAsync_NonCriticalConfigWithPrivateKey_StripsKeyOnFailure()
     {
-        // Use a real HttpClient that will fail (no mock handler needed — the JWT generation
-        // will fail because the private key is not a valid PEM)
         var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        // This config has a privateKeyBase64 but it's invalid, so token generation will fail
+        var notPemBase64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("not a pem key"));
         var configs = new List<ProviderConfig>
         {
             new()
             {
-                Id = "repo-1",
+                Id = "rp-1",
                 Kind = ProviderKind.Repository,
                 ProviderType = "GitHub",
-                DisplayName = "Test Repo",
+                DisplayName = "Repo",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.PrivateKeyBase64] = "bm90LWEtcmVhbC1rZXk=", // "not-a-real-key"
-                    [ProviderSettingKeys.ClientId] = "client-123",
+                    [ProviderSettingKeys.PrivateKeyBase64] = notPemBase64,
+                    [ProviderSettingKeys.ClientId] = "123",
                     [ProviderSettingKeys.InstallationId] = "456",
-                    [ProviderSettingKeys.Owner] = "test",
-                    [ProviderSettingKeys.Repo] = "test"
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
                 }
             }
         };
@@ -166,9 +211,10 @@ public class TokenVendingServiceTests
         // Use a non-matching repoConfigId so this tests the non-critical fallback path
         var result = await service.PrepareAgentConfigsAsync(configs, "other-repo-id", CancellationToken.None);
 
-        // Should strip the private key even on failure
         result.Should().HaveCount(1);
+        result[0].Id.Should().Be("rp-1");
         result[0].Settings.Should().NotContainKey(ProviderSettingKeys.PrivateKeyBase64);
+        result[0].Settings.Should().ContainKey(ProviderSettingKeys.Owner);
     }
 
     [Fact]
