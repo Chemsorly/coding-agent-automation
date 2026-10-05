@@ -232,7 +232,7 @@ internal static class AgentStallMonitor
 
                     if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger,
                             () => reportStallEvent?.Invoke(phaseTag, PipelineTelemetry.AgentStallKinds.StallKill),
-                            timeProvider, sessionSpan))
+                            sessionSpan))
                         break;
 
                     HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime, timeProvider, sessionSpan);
@@ -307,7 +307,7 @@ internal static class AgentStallMonitor
         TimeSpan silence, TimeSpan killTimeout,
         PipelineRun run, IAgentProvider agentProvider,
         string phaseDescription, Action? onChange, Serilog.ILogger logger,
-        Action reportStall, TimeProvider timeProvider, Activity? sessionSpan)
+        Action reportStall, Activity? sessionSpan)
     {
         if (silence < killTimeout)
             return false;
