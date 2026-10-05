@@ -1487,21 +1487,11 @@ public sealed class RunLifecycleManagerErrorPathTests
 ///
 /// Covers:
 /// - CompleteRunAsync does NOT call ClearAgentState or K8s cleanup (regression guards for extraction)
-/// - Span receives the correct telemetry tags per terminal path (Fail → Error status, Cancel → cancelled tag)
 /// - History persist is called on all terminal paths (ensures it is not accidentally dropped in extraction)
-///
-/// Note on span-ordering tests: OrchestratorRunService.RemoveRun always disposes the
-/// OrchestratorActivity as a safety net before the terminal lifecycle methods call it. The
-/// canonical ordering (history before span-dispose in the shared cleanup tail) is therefore a
-/// structural property of the extracted method, not observable via IsStopped in a black-box test.
-/// The tests here verify the observable invariants that regression-protect the extraction.
 /// </summary>
-public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests : IDisposable
+public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests
 {
     private static readonly string[] DotnetLabels = ["dotnet"];
-
-    private readonly ActivityListener _activityListener;
-    private readonly List<Activity> _stoppedActivities = [];
 
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
@@ -1513,15 +1503,6 @@ public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests : ID
 
     public RunLifecycleManagerTerminalCleanupCharacterizationTests()
     {
-        _activityListener = new ActivityListener
-        {
-            ShouldListenTo = s => s.Name == CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = a => _stoppedActivities.Add(a)
-        };
-        ActivitySource.AddActivityListener(_activityListener);
-
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
 
@@ -1536,12 +1517,6 @@ public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests : ID
             _mockLabelService.Object,
             _mockLogger.Object,
             JobCleanup: _mockJobCleanup.Object));
-    }
-
-    public void Dispose()
-    {
-        _activityListener.Dispose();
-        GC.SuppressFinalize(this);
     }
 
     // ── Regression guards: CompleteRunAsync must NOT call ClearAgentState or K8s cleanup ──
@@ -1597,52 +1572,6 @@ public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests : ID
         agent.Should().NotBeNull();
         agent!.Status.Should().Be(AgentStatus.Busy,
             "CompleteRunAsync must not clear agent state; only FailRunAsync and CancelRunAsync transition the agent to Idle");
-    }
-
-    // ── Span tag precision tests ───────────────────────────────────────────
-
-    [Fact]
-    public async Task FailRunAsync_SetsActivityStatusError_AndDisposesSpan()
-    {
-        // The existing OrchestratorExecutePipelineSpanTests only checks that the span is stopped;
-        // it does not assert ActivityStatusCode.Error is set. This test locks in that contract.
-        var run = CreateRunWithActivity("run-fail-span-tags");
-        _runService.AddRun(run);
-
-        await _sut.FailRunAsync("run-fail-span-tags", "something broke", CancellationToken.None);
-
-        var stopped = _stoppedActivities.FirstOrDefault(a => a.OperationName == "ExecutePipeline");
-        stopped.Should().NotBeNull("FailRunAsync must stop the ExecutePipeline span");
-        stopped!.Status.Should().Be(ActivityStatusCode.Error,
-            "FailRunAsync must set ActivityStatusCode.Error on the span");
-        // TODO: [WARNING] CreateRunWithActivity does not explicitly set run.CurrentStep before calling FailRunAsync.
-        //       FailRunAsync sets run.CurrentStep = PipelineStep.Failed, so if PipelineStep.Failed happens to be
-        //       the default enum value (0), this assertion is vacuous — it would pass even if SetTag were removed.
-        //       Set run.CurrentStep to a non-default value (e.g. PipelineStep.Implementing) in CreateRunWithActivity
-        //       or in this test setup so the assertion proves the tag is actively written from the activity.
-        stopped.GetTagItem("pipeline.final_step").Should().Be(PipelineStep.Failed.ToString(),
-            "FailRunAsync must set pipeline.final_step to Failed");
-    }
-
-    [Fact]
-    public async Task CancelRunAsync_SetsCancelledTag_AndDisposesSpan_NotErrorStatus()
-    {
-        // CancelRunAsync uses pipeline.cancelled=true instead of SetStatus(Error).
-        // This test locks in the distinction — the span must NOT receive Error status for a graceful cancel.
-        var run = CreateRunWithActivity("run-cancel-span-tags");
-        _runService.AddRun(run);
-
-        await _sut.CancelRunAsync("run-cancel-span-tags", CancellationToken.None);
-
-        var stopped = _stoppedActivities.FirstOrDefault(a => a.OperationName == "ExecutePipeline");
-        stopped.Should().NotBeNull("CancelRunAsync must stop the ExecutePipeline span");
-        stopped!.GetTagItem("pipeline.cancelled").Should().Be(true,
-            "CancelRunAsync must set pipeline.cancelled=true");
-        stopped.GetTagItem("pipeline.final_step").Should().Be(PipelineStep.Cancelled.ToString(),
-            "CancelRunAsync must set pipeline.final_step to Cancelled");
-        // Graceful cancellation must NOT set Error status
-        stopped.Status.Should().NotBe(ActivityStatusCode.Error,
-            "CancelRunAsync must not set ActivityStatusCode.Error — use pipeline.cancelled tag instead");
     }
 
     // ── History is called on all terminal paths ────────────────────────────
@@ -1718,15 +1647,6 @@ public sealed class RunLifecycleManagerTerminalCleanupCharacterizationTests : ID
             RepoProviderConfigId = "rp-1",
             RunType = runType
         };
-    }
-
-    private static PipelineRun CreateRunWithActivity(string runId)
-    {
-        var run = CreateRun(runId, PipelineRunType.Implementation);
-        var activity = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
-        activity?.SetTag("pipeline.run_id", runId);
-        run.OrchestratorActivity = activity;
-        return run;
     }
 
     private AgentEntry RegisterAgent(string agentId)

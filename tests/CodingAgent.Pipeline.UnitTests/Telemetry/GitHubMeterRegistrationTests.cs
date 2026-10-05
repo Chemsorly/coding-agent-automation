@@ -6,8 +6,6 @@ namespace CodingAgent.Pipeline.UnitTests.Telemetry;
 /// <summary>
 /// Verifies that the <c>CodingAgent.GitHub</c> meter is registered in all four long-lived
 /// non-agent processes, and is NOT registered in the agent (which must not emit these metrics).
-///
-/// Uses the <c>FindSourceFile</c> pattern from <see cref="QualityGateMetricsMeterRegistrationTests"/>.
 /// </summary>
 public class GitHubMeterRegistrationTests
 {
@@ -78,6 +76,20 @@ public class GitHubMeterRegistrationTests
         // Also verify the literal string is absent (defense against registering via the literal instead of constant)
         source.Should().NotContain(GitHubTelemetry.MeterName,
             "Agent/Program.cs must not contain the literal meter name either");
+    }
+
+    /// <summary>
+    /// Agent pods export traces and logs only (issue #2980): all run metrics are recorded by the API,
+    /// so the agent must not register a metrics pipeline.
+    /// </summary>
+    [Fact]
+    public void AgentProgramCs_RegistersTracingButNoMetrics()
+    {
+        var source = File.ReadAllText(FindSourceFile("src/CodingAgent.Agent/Program.cs"));
+
+        source.Should().NotContain("WithMetrics",
+            "agent pods must not export metrics — anything they measure is reported to the API");
+        source.Should().Contain("WithTracing", "agent pods still export traces");
     }
 
     [Fact]

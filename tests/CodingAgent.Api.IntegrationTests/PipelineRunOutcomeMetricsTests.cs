@@ -503,12 +503,6 @@ public sealed class PipelineRunOutcomeMetricsTests
         outcome.Should().Be(StatusTransitionOutcome.AlreadyAtTarget);
         countAfter.Should().Be(0,
             "pipeline.run.outcomes must NOT increment when the transition is a no-op (AlreadyAtTarget)");
-        // TODO: [WARNING] This test does not verify that workdistribution.workitems_terminated is also
-        // NOT emitted for AlreadyAtTarget no-op transitions. If the production code were changed to
-        // emit workdistribution.workitems_terminated for no-ops, this test would not catch it.
-        // workdistribution.workitems_terminated's pre-initialization design assumes it only increments
-        // on real transitions. Add a MeterListener for WorkDistributionTelemetry.MeterName and assert
-        // that WorkItemsTerminated does not increment during this test.
     }
 
     // ── Test infrastructure ────────────────────────────────────────────────────

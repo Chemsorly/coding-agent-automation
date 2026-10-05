@@ -18,8 +18,7 @@ public partial class QualityGateExecutor
         {
             // Multi-QGC mode: validate against matched QGCs.
             // Use the server-side reporting overload when a reporter is wired (issue #2979),
-            // so process_timeout events are forwarded to the API instead of only recording
-            // the agent-side quality_gate.process.timeout counter.
+            // so process_timeout events are forwarded to the API.
             // TODO [WARNING]: This uses a concrete type-check (_qualityGateValidator is QualityGateValidator).
             // If IQualityGateValidator is implemented by a decorator or test double that wraps a QualityGateValidator,
             // the cast silently fails and ValidateAsync is called instead, dropping all process_timeout server-side

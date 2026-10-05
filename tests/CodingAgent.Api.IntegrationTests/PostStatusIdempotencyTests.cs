@@ -19,7 +19,7 @@ namespace CodingAgent.Api.IntegrationTests;
 
 /// <summary>
 /// Collection definition that disables parallel execution for <see cref="PostStatusIdempotencyTests"/>.
-/// Several tests in that class subscribe to the global <c>workdistribution.workitems_terminated</c>
+/// Several tests in that class subscribe to the global <c>pipeline.run.outcomes</c>
 /// meter via <see cref="MeterListener"/> and then wait 200 ms for a fire-and-forget background task
 /// to emit. When tests run concurrently, a background task from one test fires into another test's
 /// active listener, causing spurious tag captures (e.g. "AgentError" appearing in the
@@ -34,7 +34,7 @@ public sealed class PostStatusIdempotencyCollection { }
 ///
 /// These tests call the internal static method directly rather than going through the HTTP stack
 /// so that:
-/// 1. The <see cref="WorkDistributionTelemetry.WorkItemsTerminated"/> counter assertion is
+/// 1. The <see cref="PipelineTelemetry.RunOutcomes"/> counter assertion is
 ///    synchronous — no fire-and-forget timing concern.
 /// 2. The lifecycle manager calls can be tracked via a recording stub without Moq.
 /// 3. The test can assert 404 vs 400 without configuring a full WebApplicationFactory.
@@ -86,7 +86,7 @@ public sealed class PostStatusIdempotencyTests
     /// <summary>
     /// Regression test for issue #2226.
     /// PostStatus called with a status that matches the item's current terminal state
-    /// must NOT call LogTerminalStatus and must NOT increment workdistribution.workitems_terminated.
+    /// must NOT log the terminal line and must NOT increment pipeline.run.outcomes.
     ///
     /// Two structural assertions guard this:
     /// 1. Pre-assert that <see cref="WorkItemTransitionService.TransitionDetailedAsync"/> returns
@@ -125,8 +125,8 @@ public sealed class PostStatusIdempotencyTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
-                && instrument.Name == "workdistribution.workitems_terminated")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) => measurements.Add(value));
@@ -135,7 +135,7 @@ public sealed class PostStatusIdempotencyTests
         // CRITICAL FIX (issue #2226, TestQualityReviewer): Replace the Serilog global logger with
         // a capturing sink to assert that no "WorkItem terminal:" log event is emitted
         // (acceptance criterion #2: log must not be emitted for an already-terminal WorkItem).
-        // LogTerminalStatus calls Serilog.Log.Information("WorkItem terminal: ...") directly, so
+        // The terminal log line goes through Serilog.Log.Information("WorkItem terminal: ...") directly, so
         // the global logger must be intercepted rather than a DI-injected ILogger<T>.
         // The previous logger is restored in the finally block to avoid polluting other tests.
         var capturingSink = new CapturingSink();
@@ -160,7 +160,7 @@ public sealed class PostStatusIdempotencyTests
             // `if (transitionResult == TransitionResult.Transitioned)` block is never entered.
             result.Should().BeOfType<NoContent>("an idempotent PostStatus on an already-terminal item must return 204 No Content");
             measurements.Should().BeEmpty(
-                $"workdistribution.workitems_terminated must not increment when PostStatus is a no-op for already-{terminal} item");
+                $"pipeline.run.outcomes must not increment when PostStatus is a no-op for already-{terminal} item");
             capturingSink.Events
                 .Should().NotContain(
                     e => e.MessageTemplate.Text.Contains("WorkItem terminal:"),
@@ -289,8 +289,8 @@ public sealed class PostStatusIdempotencyTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
-                && instrument.Name == "workdistribution.workitems_terminated")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, _, _, _) =>
@@ -311,7 +311,7 @@ public sealed class PostStatusIdempotencyTests
         // Assert
         result.Should().BeOfType<Ok>();
         terminatedCount.Should().BeGreaterThanOrEqualTo(1,
-            "workdistribution.workitems_terminated must increment on a real terminal transition");
+            "pipeline.run.outcomes must increment on a real terminal transition");
     }
 
     // ── LifecycleManager IS called on a real terminal transition ─────────────
@@ -506,7 +506,7 @@ public sealed class PostStatusIdempotencyTests
     /// Regression test for issue #2341.
     /// A failureReason string that parses to a numeric value not backed by a named
     /// <see cref="FailureReason"/> member (e.g. "99") must result in a null failureReason
-    /// dimension — i.e. the workdistribution.workitems_terminated metric must carry
+    /// dimension — i.e. the pipeline.run.outcomes metric must carry
     /// failure_reason="none", not an undefined numeric enum value.
     ///
     /// Without the Enum.IsDefined guard, Enum.TryParse&lt;FailureReason&gt;("99", ...) succeeds,
@@ -522,13 +522,13 @@ public sealed class PostStatusIdempotencyTests
         var transitionService = CreateTransitionService(opts);
         var dbFactory = CreateDbFactory(opts);
 
-        // Capture the failure_reason tag value from workdistribution.workitems_terminated
+        // Capture the failure_reason tag value from pipeline.run.outcomes
         var capturedTags = new System.Collections.Concurrent.ConcurrentBag<string?>();
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
-                && instrument.Name == "workdistribution.workitems_terminated")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
@@ -575,8 +575,8 @@ public sealed class PostStatusIdempotencyTests
         // Assert
         result.Should().BeOfType<Ok>();
         capturedTags.Should().NotBeEmpty(
-            "workdistribution.workitems_terminated must have been emitted");
-        // Use Contain rather than OnlyContain: WorkDistributionTelemetry.WorkItemsTerminated is a
+            "pipeline.run.outcomes must have been emitted");
+        // Use Contain rather than OnlyContain: PipelineTelemetry.RunOutcomes is a
         // static instrument shared across all tests in the process. Parallel tests (e.g.
         // WorkItemEndpointTests.PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason)
         // can emit failure_reason="Timeout" via a fire-and-forget task that fires during the 200 ms
@@ -606,8 +606,8 @@ public sealed class PostStatusIdempotencyTests
         using var listener = new MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
-            if (instrument.Meter.Name == WorkDistributionTelemetry.MeterName
-                && instrument.Name == "workdistribution.workitems_terminated")
+            if (instrument.Meter.Name == PipelineTelemetry.SourceName
+                && instrument.Name == "pipeline.run.outcomes")
                 l.EnableMeasurementEvents(instrument);
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
@@ -646,9 +646,9 @@ public sealed class PostStatusIdempotencyTests
         // Assert
         result.Should().BeOfType<Ok>();
         capturedTags.Should().NotBeEmpty(
-            "workdistribution.workitems_terminated must have been emitted");
+            "pipeline.run.outcomes must have been emitted");
         // Use Contain rather than OnlyContain for the same reason as
-        // PostStatus_NumericUndefinedFailureReason_EmitsNoneTag: the static WorkItemsTerminated
+        // PostStatus_NumericUndefinedFailureReason_EmitsNoneTag: the static RunOutcomes
         // instrument is shared across all parallel tests, so concurrent emissions from other tests
         // may appear in capturedTags during the 200 ms wait window.
         capturedTags.Should().Contain(

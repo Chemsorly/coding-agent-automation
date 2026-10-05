@@ -57,12 +57,12 @@ spec:
             summary: "Web not ready (likely database unreachable)"
             description: "Web pod is Running but not Ready for over 2 minutes. Check database connectivity."
 
-        # Alert when too many work items are failing.
-        # Metric: workdistribution_workitems_terminated (correct — unchanged).
-        # Source: API (WorkItemStatusTransitionService records this via LogTerminalStatus, issue #2967).
+        # Alert when too many work items are failing (failed or timed out).
+        # Metric: pipeline_run_outcomes_total, recorded once per terminal transition.
+        # Source: API (WorkItemStatusTransitionService, issue #2967).
         - alert: WorkItemFailureRateHigh
           expr: |
-            rate(workdistribution_workitems_terminated{status="Failed"}[5m]) > 0.1
+            sum(rate(pipeline_run_outcomes_total{outcome=~"failed|timeout"}[5m])) > 0.1
           for: 10m
           labels:
             severity: warning
@@ -104,16 +104,17 @@ spec:
         # Complements DispatcherStalled: a dead process stops exporting the series entirely,
         # so time()-based staleness detection resolves after ~5 min. This rule fires instead.
         # Scoped to .Release.Namespace to prevent a live Scheduler in another namespace
-        # suppressing this alert when multiple releases share a Prometheus instance.
+        # suppressing this alert when multiple releases share a Prometheus instance. The metric arrives
+        # over OTLP, so the namespace is the k8s_namespace_name resource label (there is no namespace label).
         - alert: DispatcherMetricAbsent
           expr: |
-            absent(workdistribution_dispatcher_last_poll_epoch_seconds{namespace="{{ .Release.Namespace }}"})
+            absent(workdistribution_dispatcher_last_poll_epoch_seconds{k8s_namespace_name="{{ .Release.Namespace }}"})
           for: 2m
           labels:
             severity: critical
           annotations:
             summary: "Dispatcher metric absent — Scheduler may be down"
-            description: "workdistribution_dispatcher_last_poll_epoch_seconds has not been scraped for 2 minutes in namespace {{ "{{ $labels.namespace }}" }}. The Scheduler may be crashed or not running."
+            description: "workdistribution_dispatcher_last_poll_epoch_seconds has not been scraped for 2 minutes in namespace {{ .Release.Namespace }}. The Scheduler may be crashed or not running."
 
 {{- if .Values.jobController.enabled }}
         # Alert when the Job Controller pod is Running but not Ready.

@@ -1114,7 +1114,7 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
         await hub.ReportPipelineRunEvent("job-stall-1", new PipelineRunEventReport
         {
             Kind = PipelineRunEventKind.AgentStall,
-            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.StallPhases.CodeGen,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunPhases.CodeGen,
             Result = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.AgentStallKinds.StallKill
         });
         listener.RecordObservableInstruments();
@@ -1126,6 +1126,78 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
             "Stage=codegen must be forwarded to the phase tag");
         recorded[0].kind.Should().Be("stall_kill",
             "Result=stall_kill must be forwarded to the kind tag");
+    }
+
+    [Theory]
+    // Phase names older agent images still send map onto the shared phase set.
+    [InlineData("qgc_retry_agent", "process_timeout", "quality_gate")]
+    [InlineData("code_review", "stall_kill", "review")]
+    [InlineData("unknown", "process_death", "other")]
+    // Arbitrary strings cannot add label values.
+    [InlineData("some agent-chosen phase", "STALL_KILL", "other")]
+    public async Task AgentStall_NormalizesPhaseAndKindToClosedSets(string stage, string kind, string expectedPhase)
+    {
+        var recorded = new System.Collections.Concurrent.ConcurrentQueue<(string phase, string kind)>();
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            // Only the real instrument: other tests create look-alike counters on test meters.
+            if (ReferenceEquals(instrument, CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunAgentStalls))
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
+        {
+            if (value == 0) return;
+            string phase = "", recordedKind = "";
+            foreach (var tag in tags)
+            {
+                if (tag.Key == "phase") phase = tag.Value?.ToString() ?? "";
+                if (tag.Key == "kind") recordedKind = tag.Value?.ToString() ?? "";
+            }
+            recorded.Enqueue((phase, recordedKind));
+        });
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-stall-norm")).Returns(CreateRun("job-stall-norm"));
+        var hub = CreateHub();
+
+        await hub.ReportPipelineRunEvent("job-stall-norm", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.AgentStall,
+            Stage = stage,
+            Result = kind
+        });
+
+        recorded.Should().ContainSingle().Which.Should().Be((expectedPhase, kind.ToLowerInvariant()));
+    }
+
+    [Fact]
+    public async Task AgentStall_UnknownKind_DoesNotRecord()
+    {
+        var recorded = 0;
+        using var listener = new System.Diagnostics.Metrics.MeterListener();
+        listener.InstrumentPublished = (instrument, l) =>
+        {
+            if (ReferenceEquals(instrument, CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunAgentStalls))
+                l.EnableMeasurementEvents(instrument);
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) =>
+        {
+            if (value != 0) Interlocked.Increment(ref recorded);
+        });
+        listener.Start();
+
+        _mockFacade.Setup(f => f.GetRun("job-stall-rogue")).Returns(CreateRun("job-stall-rogue"));
+        var hub = CreateHub();
+
+        await hub.ReportPipelineRunEvent("job-stall-rogue", new PipelineRunEventReport
+        {
+            Kind = PipelineRunEventKind.AgentStall,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunPhases.CodeGen,
+            Result = "rogue_kind"
+        });
+
+        recorded.Should().Be(0, "a kind outside the closed set must not be recorded");
     }
 
     [Fact]
@@ -1259,7 +1331,7 @@ public sealed class AgentHubReportPipelineRunEventDispatchTests
         var act = () => hub.ReportPipelineRunEvent("job-stall-noResult-1", new PipelineRunEventReport
         {
             Kind = PipelineRunEventKind.AgentStall,
-            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.StallPhases.CodeGen,
+            Stage = CodingAgent.Pipeline.Telemetry.PipelineTelemetry.RunPhases.CodeGen,
             Result = null
         });
 
