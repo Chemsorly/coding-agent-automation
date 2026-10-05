@@ -19,7 +19,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
 
     private OidcFlowDriver Driver() => new(_fixture.Factory);
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task OperatorOfOneProject_LogsIn_WithGroupsAndProjectRole()
     {
         using var driver = Driver();
@@ -39,7 +39,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         me.ProjectRoles.Should().Equal(new Dictionary<string, string> { [KeycloakFixture.PaymentsProjectId] = "operator" });
     }
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task AdminGroupMember_IsGlobalAdmin()
     {
         using var driver = Driver();
@@ -51,7 +51,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         me.GlobalRole.Should().Be("admin");
     }
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task UserWithoutGroups_IsSignedIn_WithoutAnyRole()
     {
         using var driver = Driver();
@@ -71,7 +71,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
     /// The test realm requires PKCE S256 for the client, so every successful login in this class
     /// also proves the handler sends it.
     /// </summary>
-    [Fact]
+    [RequiresDockerFact]
     public async Task AuthorizeRedirect_UsesPushedAuthorizationRequest_ToTheConfiguredIssuer()
     {
         using var driver = Driver();
@@ -84,7 +84,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         query["code_challenge"].Should().BeNull("PKCE travels in the pushed request, not in the browser URL");
     }
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task WrongPassword_StaysOnKeycloak_AndCreatesNoSession()
     {
         using var driver = Driver();
@@ -95,7 +95,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         (await driver.WhoAmIAsync()).Should().BeNull();
     }
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task TamperedCallback_LandsOnLoginWithError()
     {
         using var driver = Driver();
@@ -108,7 +108,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         (await driver.App.GetStringAsync("/login?error=oidc")).Should().Contain("Sign-in with Keycloak failed");
     }
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task LoginPage_OffersKeycloakAndThePasswordForm()
     {
         using var driver = Driver();
@@ -119,7 +119,7 @@ public class KeycloakOidcTests : IClassFixture<KeycloakFixture>
         html.Should().Contain("data-testid=\"login-form\"");
     }
 
-    [Fact]
+    [RequiresDockerFact]
     public async Task Logout_EndsTheOidcSession()
     {
         using var driver = Driver();

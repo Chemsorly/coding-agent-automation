@@ -22,6 +22,8 @@ namespace CodingAgent.Web.IntegrationTests.Auth.Keycloak;
 /// <summary>
 /// A real Keycloak (Testcontainers) with the committed test realm, plus a web host configured
 /// against it (Spec 049 Req 12.4, D14). Needs Docker: these tests run in the <c>iam-tests</c> CI job.
+/// When Docker is absent <see cref="RequiresDockerFactAttribute"/> skips the tests before this
+/// fixture is even initialized.
 /// </summary>
 public sealed class KeycloakFixture : IAsyncLifetime
 {
