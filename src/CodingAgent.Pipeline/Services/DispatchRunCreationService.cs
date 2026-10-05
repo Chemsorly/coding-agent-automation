@@ -188,47 +188,19 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
 
-        var run = runType switch
+        var run = PipelineRun.CreateForRunType(new PipelineRunCreationParams
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
-            {
-                RunId = Guid.NewGuid().ToString(),
-                IssueIdentifier = issueIdentifier,
-                IssueTitle = string.Empty,
-                IssueProviderConfigId = issueProviderId.Value,
-                RepoProviderConfigId = repoProviderId.Value,
-                RunType = PipelineRunType.Review,
-                InitiatedBy = initiatedBy,
-                AgentId = agentIdTyped,
-                AgentProviderConfigId = agentProviderId.Value,
-                BrainProviderConfigId = brainProviderId
-            }),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
-            {
-                RunId = Guid.NewGuid().ToString(),
-                IssueIdentifier = issueIdentifier,
-                IssueTitle = string.Empty,
-                IssueProviderConfigId = issueProviderId.Value,
-                RepoProviderConfigId = repoProviderId.Value,
-                RunType = runType,
-                InitiatedBy = initiatedBy,
-                AgentId = agentIdTyped,
-                AgentProviderConfigId = agentProviderId.Value,
-                BrainProviderConfigId = brainProviderId
-            }),
-            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
-            {
-                RunId = Guid.NewGuid().ToString(),
-                IssueIdentifier = issueIdentifier,
-                IssueTitle = string.Empty,
-                IssueProviderConfigId = issueProviderId.Value,
-                RepoProviderConfigId = repoProviderId.Value,
-                InitiatedBy = initiatedBy,
-                AgentId = agentIdTyped,
-                AgentProviderConfigId = agentProviderId.Value,
-                BrainProviderConfigId = brainProviderId
-            })
-        };
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = string.Empty,
+            IssueProviderConfigId = issueProviderId.Value,
+            RepoProviderConfigId = repoProviderId.Value,
+            RunType = runType,
+            InitiatedBy = initiatedBy,
+            AgentId = agentIdTyped,
+            AgentProviderConfigId = agentProviderId.Value,
+            BrainProviderConfigId = brainProviderId
+        });
         run.RepositoryName = tempRepoProvider.RepositoryFullName;
         run.ModelName = configuredModel;
         run.PipelineProviderConfigId = pipelineProviderId;

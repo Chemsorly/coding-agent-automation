@@ -48,7 +48,7 @@ public class ChatJobExecutorTests : IDisposable
         var hm = TestAgentWorkerServiceFactory.CreateTestHubManager(mockLogger);
         var hmFactory = TestAgentWorkerServiceFactory.CreateTestHubManagerFactory(mockLogger);
         var slotManager = new ChatSlotManager();
-        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory, slotManager,
+        var lifecycle = new AgentConnectionLifecycle(hm, hmFactory,
             new AgentId("test-chat"), lifetime, mockLogger);
 
         var deps = new ChatJobExecutorDependencies(

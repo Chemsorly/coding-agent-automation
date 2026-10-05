@@ -194,8 +194,6 @@ public class AgentConnectionLifecycleReconnectionTests
         var factory = new FakeHubConnectionManagerFactory(
             factoryFunc ?? (() => new FakeHubConnectionManager()));
 
-        var slotManager = new ChatSlotManager();
-
         var lifetimeMock = new Mock<IHostApplicationLifetime>();
         lifetimeMock.Setup(l => l.ApplicationStopping).Returns(appStoppingToken);
         if (stopApplication is not null)
@@ -204,7 +202,6 @@ public class AgentConnectionLifecycleReconnectionTests
         var lifecycle = new AgentConnectionLifecycle(
             initialManager,
             factory,
-            slotManager,
             new AgentId("test-agent"),
             lifetimeMock.Object,
             mockLogger);
