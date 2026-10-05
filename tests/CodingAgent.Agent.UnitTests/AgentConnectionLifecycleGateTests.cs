@@ -123,7 +123,6 @@ public class AgentConnectionLifecycleGateTests
         var mockLogger = new Mock<Serilog.ILogger>().Object;
         var initialManager = new FakeHubConnectionManager();
         var factory = new FakeHubConnectionManagerFactory(factoryFunc ?? (() => new FakeHubConnectionManager()));
-        var slotManager = new ChatSlotManager();
         var lifetimeMock = new Mock<IHostApplicationLifetime>();
         lifetimeMock.Setup(l => l.ApplicationStopping).Returns(appStoppingToken);
         if (stopApplication is not null)
@@ -132,7 +131,6 @@ public class AgentConnectionLifecycleGateTests
         var lifecycle = new AgentConnectionLifecycle(
             initialManager,
             factory,
-            slotManager,
             new AgentId("gate-agent"),
             lifetimeMock.Object,
             mockLogger);

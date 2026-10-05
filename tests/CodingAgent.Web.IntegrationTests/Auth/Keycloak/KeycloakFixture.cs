@@ -33,30 +33,45 @@ public sealed class KeycloakFixture : IAsyncLifetime
     // Pinned like every other image in CI; bump deliberately.
     private const string KeycloakImage = "quay.io/keycloak/keycloak:26.3";
 
-    private readonly KeycloakContainer _keycloak = new KeycloakBuilder()
-        .WithImage(KeycloakImage)
-        .WithResourceMapping(
-            new FileInfo(Path.Combine(AppContext.BaseDirectory, "Auth", "Keycloak", $"{Realm}-realm.json")),
-            "/opt/keycloak/data/import/")
-        .WithCommand("--import-realm")
-        .Build();
+    // Null until InitializeAsync: building in a field initializer throws in Docker-less environments
+    // before trait filtering can exclude these tests (same pattern as StartupSeedingPostgresFixture).
+    private KeycloakContainer? _keycloak;
 
     public string Issuer { get; private set; } = "";
 
     public OidcWebApplicationFactory Factory { get; private set; } = null!;
 
+    /// <summary>True when Docker is unavailable; each test should return early when this is set.</summary>
+    public bool IsDockerUnavailable { get; private set; }
+
     public async Task InitializeAsync()
     {
-        await _keycloak.StartAsync();
-        Issuer = new Uri(new Uri(_keycloak.GetBaseAddress()), $"realms/{Realm}").ToString();
-        Factory = new OidcWebApplicationFactory(Issuer);
+        try
+        {
+            _keycloak = new KeycloakBuilder()
+                .WithImage(KeycloakImage)
+                .WithResourceMapping(
+                    new FileInfo(Path.Combine(AppContext.BaseDirectory, "Auth", "Keycloak", $"{Realm}-realm.json")),
+                    "/opt/keycloak/data/import/")
+                .WithCommand("--import-realm")
+                .Build();
+
+            await _keycloak.StartAsync();
+            Issuer = new Uri(new Uri(_keycloak.GetBaseAddress()), $"realms/{Realm}").ToString();
+            Factory = new OidcWebApplicationFactory(Issuer);
+        }
+        catch (DotNet.Testcontainers.Builders.DockerUnavailableException)
+        {
+            IsDockerUnavailable = true;
+        }
     }
 
     public async Task DisposeAsync()
     {
         if (Factory is not null)
             await Factory.DisposeAsync();
-        await _keycloak.DisposeAsync();
+        if (_keycloak is not null)
+            await _keycloak.DisposeAsync();
     }
 }
 
