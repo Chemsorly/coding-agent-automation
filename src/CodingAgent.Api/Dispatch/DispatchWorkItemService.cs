@@ -544,19 +544,6 @@ internal sealed class DispatchWorkItemService
 
     // ── Shared gate + context + lifecycle entry point ────────────────────────
 
-    /// <summary>
-    /// Returns <c>true</c> when the template targets a kiro provider.
-    /// Centralises the <c>"kiro"</c> string literal so it does not appear in
-    /// <c>WorkItemDispatchEndpoints.cs</c> (issue #2890, AC3).
-    /// </summary>
-    // TODO [WARNING]: IsKiroAgent has no dedicated unit tests. The method has clear boundary behaviour
-    // (case-insensitive "kiro" vs any other string). An accidental change — e.g. OrdinalIgnoreCase →
-    // Ordinal, or a typo in the literal — would go undetected. Add parameterized tests covering at
-    // minimum: "kiro" (exact), "KIRO" (upper-case), "Kiro" (mixed), "" (empty), "opencode" (other).
-    // (TestQualityReviewer review [WARNING])
-    internal bool IsKiroAgent(JobTemplate template)
-        => string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
     // TODO [WARNING]: DispatchResolvedWorkItemAsync has no dedicated unit tests. It is reached indirectly
     // via SynchronousDispatchEndpointTests and DispatchPendingWorkItemEndpointTests, but the specific
     // branching inside this method — gate fires → return gate result; onDispatchFailure null vs non-null
@@ -620,8 +607,8 @@ internal sealed class DispatchWorkItemService
         var pvcResult = request.PvcResult;
         var callerName = request.CallerName;
 
-        // Compute isKiroAgent exactly once via IsKiroAgent — the "kiro" literal lives there only (AC3).
-        var isKiroAgent = IsKiroAgent(template);
+        // Compute isKiroAgent exactly once via JobTemplateProviderType.IsKiro — the "kiro" literal lives there only (AC3).
+        var isKiroAgent = JobTemplateProviderType.IsKiro(template.ProviderType);
 
         // Concurrency gate + PVC gate.
         // NOTE: PvcPoolExhaustions and UpdateCredentialPoolMetrics are NOT emitted here —
@@ -851,7 +838,7 @@ internal sealed class DispatchWorkItemService
         //   PvcExhausted503           → 503 from PVC gate; caller emits PvcPoolExhaustions.Add(1)
         //   K8sError503               → 503 from K8s failure; return as-is
         //   PassThrough               → success; emit RecordDispatchAttempt("dispatched","none")
-        var isKiroAgent = IsKiroAgent(template);
+        var isKiroAgent = JobTemplateProviderType.IsKiro(template.ProviderType);
         var (interpretedResult, outcome) = InterpretDispatchResult(dispatchResult, pvcResult, isKiroAgent, rewriteConcurrencyLimitAsDeferred: true);
 
         // Branch exclusively on the explicit outcome discriminator (issue #3260).
