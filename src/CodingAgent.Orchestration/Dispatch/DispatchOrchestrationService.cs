@@ -200,7 +200,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var runId = Guid.NewGuid().ToString();
         try
         {
-            // Shared fields declared once; each arm differs only by factory method and RunType.
+            // Shared fields declared once; Build captures them once and sets RunType from the argument.
             // Note: PipelineRunCreationParams is a sealed class (not a record) so `with` expressions
             // are unavailable — a local function is the idiomatic alternative.
             PipelineRunCreationParams Build(PipelineRunType runType) => new PipelineRunCreationParams
@@ -216,15 +216,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 BrainProviderConfigId = request.BrainProviderId
             };
 
-            return request.RunType switch
-            {
-                PipelineRunType.Review =>
-                    PipelineRun.CreateReview(Build(PipelineRunType.Review)),
-                PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition =>
-                    PipelineRun.CreateDecomposition(Build(request.RunType)),
-                _ =>
-                    PipelineRun.CreateImplementation(Build(PipelineRunType.Implementation))
-            };
+            // Intentional behavior change (issue #3344): previously the _ arm hardcoded
+            // Build(PipelineRunType.Implementation), mis-typing Consolidation requests as
+            // Implementation. Passing Build(request.RunType) routes Consolidation correctly.
+            return PipelineRun.CreateForRunType(Build(request.RunType));
         }
         catch
         {
