@@ -5,7 +5,6 @@ using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using Serilog;
-using Xunit;
 
 namespace CodingAgent.Web.UnitTests.Hubs;
 
@@ -14,8 +13,9 @@ namespace CodingAgent.Web.UnitTests.Hubs;
 /// - SubscribeToChatSession / UnsubscribeFromChatSession group management
 /// - ReportChatResponse session ownership validation and broadcast
 /// - ReportChatCompleted session ownership validation, ActiveChatSessionId cleared, broadcast
+/// - ValidateChatSessionOwnership branch matrix
 /// </summary>
-public sealed class AgentHubChatPartialTests
+public sealed class AgentHubChatTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<IChatNotifier> _chatNotifier = new();
@@ -59,18 +59,6 @@ public sealed class AgentHubChatPartialTests
     // ── SubscribeToChatSession ────────────────────────────────────────────
 
     [Fact]
-    public async Task SubscribeToChatSession_CallsGroupAddToGroup()
-    {
-        _groups.Setup(g => g.AddToGroupAsync("conn-1", "chat-session-abc", default))
-               .Returns(Task.CompletedTask);
-
-        var hub = CreateHub();
-        await hub.SubscribeToChatSession("abc");
-
-        _groups.Verify(g => g.AddToGroupAsync("conn-1", "chat-session-abc", default), Times.Once);
-    }
-
-    [Fact]
     public async Task SubscribeToChatSession_NullSessionId_Throws()
     {
         var hub = CreateHub();
@@ -81,44 +69,11 @@ public sealed class AgentHubChatPartialTests
     // ── UnsubscribeFromChatSession ────────────────────────────────────────
 
     [Fact]
-    public async Task UnsubscribeFromChatSession_CallsGroupRemoveFromGroup()
-    {
-        _groups.Setup(g => g.RemoveFromGroupAsync("conn-1", "chat-session-xyz", default))
-               .Returns(Task.CompletedTask);
-
-        var hub = CreateHub();
-        await hub.UnsubscribeFromChatSession("xyz");
-
-        _groups.Verify(g => g.RemoveFromGroupAsync("conn-1", "chat-session-xyz", default), Times.Once);
-    }
-
-    [Fact]
     public async Task UnsubscribeFromChatSession_NullSessionId_Throws()
     {
         var hub = CreateHub();
         var act = () => hub.UnsubscribeFromChatSession(null!);
         await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    // ── ReportChatResponse — valid ownership ──────────────────────────────
-
-    [Fact]
-    public async Task ReportChatResponse_ValidSession_BroadcastsAndNotifies()
-    {
-        var agent = CreateAgent("agent-1", "conn-1", activeSessionId: "sess-1");
-        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-
-        var hub = CreateHub();
-        var message = new ChatResponseMessage
-        {
-            SessionId = "sess-1",
-            Lines = ["hello world"]
-        };
-
-        var act = () => hub.ReportChatResponse(message);
-        await act.Should().NotThrowAsync("valid session ownership must succeed");
-
-        _chatNotifier.Verify(n => n.NotifyChatResponse("sess-1", It.IsAny<IReadOnlyList<string>>()), Times.Once);
     }
 
     // ── ReportChatResponse — session not owned → HubException ────────────
@@ -142,51 +97,11 @@ public sealed class AgentHubChatPartialTests
     }
 
     [Fact]
-    public async Task ReportChatResponse_AgentNotFound_ThrowsHubException()
-    {
-        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
-
-        var hub = CreateHub();
-        var message = new ChatResponseMessage
-        {
-            SessionId = "sess-1",
-            Lines = ["line"]
-        };
-
-        var act = () => hub.ReportChatResponse(message);
-        await act.Should().ThrowAsync<HubException>(
-            "unknown connection has no session ownership");
-    }
-
-    [Fact]
     public async Task ReportChatResponse_NullMessage_Throws()
     {
         var hub = CreateHub();
         var act = () => hub.ReportChatResponse(null!);
         await act.Should().ThrowAsync<ArgumentNullException>();
-    }
-
-    // ── ReportChatCompleted — valid ownership ─────────────────────────────
-
-    [Fact]
-    public async Task ReportChatCompleted_ValidSession_ClearsActiveSessionIdAndNotifies()
-    {
-        var agent = CreateAgent("agent-1", "conn-1", activeSessionId: "sess-2");
-        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-
-        var hub = CreateHub();
-        var message = new ChatCompletedMessage
-        {
-            SessionId = "sess-2",
-            ExitCode = 0,
-            Error = null
-        };
-
-        await hub.ReportChatCompleted(message);
-
-        agent.ActiveChatSessionId.Should().BeNull(
-            "ReportChatCompleted must clear ActiveChatSessionId so the next prompt gets a fresh session");
-        _chatNotifier.Verify(n => n.NotifyChatCompleted("sess-2", 0, null), Times.Once);
     }
 
     // ── ReportChatCompleted — session not owned → HubException ───────────
@@ -207,18 +122,6 @@ public sealed class AgentHubChatPartialTests
         var act = () => hub.ReportChatCompleted(message);
         await act.Should().ThrowAsync<HubException>()
             .WithMessage("*sess-mine*not assigned*");
-    }
-
-    [Fact]
-    public async Task ReportChatCompleted_AgentNotFound_ThrowsHubException()
-    {
-        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
-
-        var hub = CreateHub();
-        var message = new ChatCompletedMessage { SessionId = "sess-1", ExitCode = 1 };
-
-        var act = () => hub.ReportChatCompleted(message);
-        await act.Should().ThrowAsync<HubException>();
     }
 
     [Fact]
@@ -271,10 +174,53 @@ public sealed class AgentHubChatPartialTests
     }
 
     [Fact]
-    public void ValidateChatSessionOwnership_NoActiveSession_ReturnsInvalid()
+    public void ValidateChatSessionOwnership_WhenSessionMatches_ReturnsValid()
     {
-        var agent = CreateAgent("agent-X", "conn-X", activeSessionId: null);
-        var (isValid, _) = AgentHub.ValidateChatSessionOwnership(agent, "sess-1");
-        isValid.Should().BeFalse("null ActiveChatSessionId can never match a real session");
+        var agent = MakeAgent(activeSession: "session-42");
+
+        var (isValid, agentId) = AgentHub.ValidateChatSessionOwnership(agent, "session-42");
+
+        isValid.Should().BeTrue();
+        agentId.Should().Be("agent-1");
+    }
+
+    [Theory]
+    [InlineData("session-1", "session-1", true)]
+    [InlineData("session-1", "session-2", false)]
+    [InlineData(null, "session-1", false)]
+    [InlineData("session-1", "SESSION-1", false)] // case-sensitive
+    public void ValidateChatSessionOwnership_Theory(string? agentSession, string requestedSession, bool expectedValid)
+    {
+        var agent = MakeAgent(activeSession: agentSession);
+
+        var (isValid, _) = AgentHub.ValidateChatSessionOwnership(agent, requestedSession);
+
+        isValid.Should().Be(expectedValid);
+    }
+
+    [Fact]
+    public void ValidateChatSessionOwnership_AgentHasNullSession_ReturnsInvalid()
+    {
+        var agent = MakeAgent("agent-1", null);
+        var (isValid, agentId) = AgentHub.ValidateChatSessionOwnership(agent, "session-abc");
+
+        isValid.Should().BeFalse();
+        agentId.Should().Be("agent-1");
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static AgentEntry MakeAgent(string agentId = "agent-1", string? activeSession = null)
+    {
+        var entry = new AgentEntry
+        {
+            AgentId = new AgentId(agentId),
+            ConnectionId = $"conn-{agentId}",
+            Hostname = "test-host",
+            Labels = [],
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
+        entry.ActiveChatSessionId = activeSession;
+        return entry;
     }
 }

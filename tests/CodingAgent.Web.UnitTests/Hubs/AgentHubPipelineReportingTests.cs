@@ -315,26 +315,37 @@ public sealed class AgentHubPipelineReportingTests
     }
 
     [Fact]
-    public async Task ReportQualityGateResult_MultipleReports_AllEnqueued()
-    {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-
-        var hub = CreateHub();
-        await hub.ReportQualityGateResult("job-1", FailedReport());
-        await hub.ReportQualityGateResult("job-1", PassedReport());
-
-        run.QualityGateHistory.Count.Should().Be(2);
-        run.LatestQualityReport!.AllPassed.Should().BeTrue("last report should win");
-    }
-
-    [Fact]
     public async Task ReportQualityGateResult_NullRun_DoesNotThrow()
     {
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
         var hub = CreateHub();
         var act = () => hub.ReportQualityGateResult("job-1", PassedReport());
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task ReportQualityGateResult_MultipleReports_AllEnqueued()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun(It.Is<JobId>(j => j.Value == "job-1"))).Returns(run);
+
+        var report1 = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = false },
+            Tests = new GateResult { GateName = "Tests", Passed = false }
+        };
+        var report2 = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true }
+        };
+
+        var hub = CreateHub();
+        await hub.ReportQualityGateResult(new JobId { Value = "job-1" }, report1);
+        await hub.ReportQualityGateResult(new JobId { Value = "job-1" }, report2);
+
+        run.QualityGateHistory.Count.Should().Be(2);
+        run.LatestQualityReport.Should().Be(report2, "LatestQualityReport is overwritten each time");
     }
 
     // ── ReportStepTransition — OrphanRestoredAt clearing ─────────────────

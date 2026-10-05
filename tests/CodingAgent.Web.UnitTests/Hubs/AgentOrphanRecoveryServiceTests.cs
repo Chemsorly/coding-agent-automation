@@ -1661,7 +1661,7 @@ public sealed class AgentOrphanRecoveryServiceTests
     // TODO: [WARNING] AC#3 (RequestCreateIssueForProvider on a run without a project rejects any
     // provider other than the run's own) is covered by the pre-existing test
     // RequestCreateIssueForProvider_EmptyProjectId_RejectsOtherProvider in
-    // AgentHubDecompositionPartialTests.cs. That test already exercises the correct rejection path.
+    // AgentHubIssueProxyTests.cs. That test already exercises the correct rejection path.
     // However, no new test was added in this diff that specifically demonstrates the regression: a
     // run rebuilt from DB without a ProjectId bypassing the scope check. Consider adding a test that
     // reconstructs an Implementation WorkItem (ProjectId = null), then calls RequestCreateIssueForProvider

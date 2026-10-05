@@ -1,6 +1,5 @@
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
-using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.Http;
@@ -10,18 +9,15 @@ using Microsoft.AspNetCore.SignalR;
 using Moq;
 using Serilog;
 using System.Security.Claims;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgent.Web.UnitTests.Hubs;
 
 /// <summary>
-/// Branch coverage tests for AgentHub.Registration.cs:
-/// - RegisterAgent query-param mismatch → HubException
-/// - RegisterAgent authenticated-identity mismatch → HubException
-/// - RegisterAgent with force-disconnect of old connection (exception swallowed)
-/// - AgentHub.cs OnConnectedAsync paths (with agentId, missing non-operator, operator)
-/// - AgentHub.cs OnDisconnectedAsync (agent found vs null)
+/// Tests for AgentHub.Registration.cs (RegisterAgent, DeregisterAgent, AgentReady) and the
+/// AgentHub.cs OnConnectedAsync handshake.
 /// </summary>
-public sealed class AgentHubRegistrationBranchTests
+public sealed class AgentHubRegistrationTests
 {
     private readonly Mock<IAgentHubFacade> _facade = new();
     private readonly Mock<IChatNotifier> _chatNotifier = new();
@@ -30,7 +26,7 @@ public sealed class AgentHubRegistrationBranchTests
     private readonly Mock<IAgentJobLifecycleService> _lifecycleService = new();
     private readonly Mock<IAgentTokenRefreshService> _tokenRefreshService = new();
     private readonly Mock<IAgentOrphanRecoveryService> _orphanRecoveryService = new();
-
+    private readonly Mock<ILogger> _logger = new();
 
     private AgentHub CreateHub(HubCallerContext context)
     {
@@ -47,6 +43,29 @@ public sealed class AgentHubRegistrationBranchTests
             UiContext: HubTestHelpers.CreateNoOpHubContext()));
 
         hub.Context = context;
+        hub.Groups = new Mock<IGroupManager>().Object;
+        return hub;
+    }
+
+    /// <summary>A hub on <paramref name="connectionId"/> whose logger is <see cref="_logger"/>.</summary>
+    private AgentHub CreateHub(string connectionId)
+    {
+        var mockCtx = new Mock<HubCallerContext>();
+        mockCtx.Setup(c => c.ConnectionId).Returns(connectionId);
+
+        var hub = new AgentHub(new AgentHubDependencies(
+            Facade: _facade.Object,
+            ChatNotifier: Mock.Of<IChatNotifier>(),
+            ChangeNotifier: Mock.Of<IChangeNotifier>(),
+            ConsolidationOps: Mock.Of<IHubConsolidationOperations>(),
+            IssueOps: Mock.Of<IHubIssueOperations>(),
+            LifecycleService: Mock.Of<IAgentJobLifecycleService>(),
+            TokenRefreshService: Mock.Of<IAgentTokenRefreshService>(),
+            Logger: _logger.Object,
+            OrphanRecoveryService: Mock.Of<IAgentOrphanRecoveryService>(),
+            UiContext: HubTestHelpers.CreateNoOpHubContext()));
+
+        hub.Context = mockCtx.Object;
         hub.Groups = new Mock<IGroupManager>().Object;
         return hub;
     }
@@ -331,59 +350,6 @@ public sealed class AgentHubRegistrationBranchTests
         await hub.OnConnectedAsync();
 
         aborted.Should().BeFalse("operator connections must not be aborted");
-    }
-
-    // ── OnDisconnectedAsync — agent found → transitions to Disconnected ───
-
-    [Fact]
-    public async Task OnDisconnectedAsync_AgentFound_TransitionsToDisconnected()
-    {
-        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1");
-        var hub = CreateHub(ctx);
-
-        var agent = CreateEntry("agent-1", "conn-1");
-        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-
-        await hub.OnDisconnectedAsync(exception: null);
-
-        _facade.Verify(f => f.TransitionStatus(
-            It.Is<AgentId>(a => a.Value == "agent-1"),
-            AgentStatus.Disconnected), Times.Once);
-    }
-
-    // ── OnDisconnectedAsync — agent not found → no-op ────────────────────
-
-    [Fact]
-    public async Task OnDisconnectedAsync_AgentNotFound_DoesNotThrow()
-    {
-        var ctx = BuildContext("conn-unknown", agentIdQueryParam: null);
-        var hub = CreateHub(ctx);
-
-        _facade.Setup(f => f.GetByConnectionId("conn-unknown")).Returns((AgentEntry?)null);
-
-        var act = () => hub.OnDisconnectedAsync(exception: null);
-        await act.Should().NotThrowAsync("missing agent entry must be a no-op");
-
-        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
-    }
-
-    // ── OnDisconnectedAsync — with exception ──────────────────────────────
-
-    [Fact]
-    public async Task OnDisconnectedAsync_WithException_LogsExceptionMessage()
-    {
-        var ctx = BuildContext("conn-1", agentIdQueryParam: "agent-1");
-        var hub = CreateHub(ctx);
-
-        var agent = CreateEntry("agent-1", "conn-1");
-        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
-
-        // Should not rethrow the passed exception
-        await hub.OnDisconnectedAsync(exception: new InvalidOperationException("test error"));
-
-        _facade.Verify(f => f.TransitionStatus(
-            It.Is<AgentId>(a => a.Value == "agent-1"),
-            AgentStatus.Disconnected), Times.Once);
     }
 
     // ── RegisterAgent — K8s-mode in-progress label swap on actual pickup ──────
@@ -915,6 +881,124 @@ public sealed class AgentHubRegistrationBranchTests
         // Registration must complete with preserveExistingConnectionId=true to keep conn-old in _connectionIndex
         _facade.Verify(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-new", true), Times.Once,
             "registration must use preserveExistingConnectionId=true to preserve the in-flight pipeline connection");
+    }
+
+    // ── DeregisterAgent — null agentId.Value throws ───────────────────────
+
+    [Fact]
+    public void DeregisterAgent_NullAgentIdValue_Throws()
+    {
+        var hub = CreateHub("conn-1");
+        // ArgumentNullException.ThrowIfNull(agentId.Value) fires synchronously before any Task is created.
+        // Use explicit try/catch to avoid xUnit2014 false-positive on Action wrappers over Task-returning methods.
+        Exception? caught = null;
+        try { hub.DeregisterAgent(default(AgentId)); } catch (Exception ex) { caught = ex; }
+        Assert.IsType<ArgumentNullException>(caught);
+    }
+
+    // ── DeregisterAgent — caller does not own agent → no-op ──────────────
+
+    [Fact]
+    public async Task DeregisterAgent_CallerNotFound_DoesNotDeregister()
+    {
+        var hub = CreateHub("conn-caller");
+        _facade.Setup(f => f.GetByConnectionId("conn-caller")).Returns((AgentEntry?)null);
+
+        await hub.DeregisterAgent(new AgentId("agent-1"));
+
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+        // Warning logged with structured args — verify template only via typed overload
+        _logger.Verify(l => l.Warning(
+            It.Is<string>(s => s.Contains("rejected")),
+            It.IsAny<string>(), It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DeregisterAgent_CallerOwnsOtherAgent_DoesNotDeregister()
+    {
+        var hub = CreateHub("conn-caller");
+        var agent = CreateEntry("agent-other", "conn-caller");
+        _facade.Setup(f => f.GetByConnectionId("conn-caller")).Returns(agent);
+
+        // Caller owns "agent-other" but tries to deregister "agent-1"
+        await hub.DeregisterAgent(new AgentId("agent-1"));
+
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+    }
+
+    // ── DeregisterAgent — happy path: caller owns agent → deregisters ─────
+
+    [Fact]
+    public async Task DeregisterAgent_CallerOwnsAgent_Deregisters()
+    {
+        var hub = CreateHub("conn-1");
+        var agent = CreateEntry("agent-1", "conn-1");
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        await hub.DeregisterAgent(new AgentId("agent-1"));
+
+        _facade.Verify(f => f.Deregister(It.Is<AgentId>(a => a.Value == "agent-1")), Times.Once);
+    }
+
+    // ── AgentReady — null agentId.Value throws ────────────────────────────
+
+    [Fact]
+    public void AgentReady_NullAgentIdValue_Throws()
+    {
+        var hub = CreateHub("conn-1");
+        Exception? caught = null;
+        try { hub.AgentReady(default(AgentId)); } catch (Exception ex) { caught = ex; }
+        Assert.IsType<ArgumentNullException>(caught);
+    }
+
+    // ── AgentReady — caller does not own → no-op ─────────────────────────
+
+    [Fact]
+    public async Task AgentReady_CallerNotFound_NoOp()
+    {
+        var hub = CreateHub("conn-caller");
+        _facade.Setup(f => f.GetByConnectionId("conn-caller")).Returns((AgentEntry?)null);
+
+        // Must not throw; logs a warning
+        await hub.AgentReady(new AgentId("agent-1"));
+        // Verified via typed overload: Warning<string,string>(template, conn, agentId)
+        _logger.Verify(l => l.Warning(
+            It.Is<string>(s => s.Contains("rejected")),
+            It.IsAny<string>(), It.IsAny<string>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task AgentReady_CallerOwnsOtherAgent_NoOp()
+    {
+        var hub = CreateHub("conn-caller");
+        var agent = CreateEntry("agent-other", "conn-caller");
+        _facade.Setup(f => f.GetByConnectionId("conn-caller")).Returns(agent);
+
+        await hub.AgentReady(new AgentId("agent-1"));
+
+        _logger.Verify(l => l.Warning(
+            It.Is<string>(s => s.Contains("rejected")),
+            It.IsAny<string>(), It.IsAny<string>()),
+            Times.Once);
+    }
+
+    // ── AgentReady — happy path ───────────────────────────────────────────
+
+    [Fact]
+    public async Task AgentReady_CallerOwnsAgent_LogsReady()
+    {
+        var hub = CreateHub("conn-1");
+        var agent = CreateEntry("agent-1", "conn-1");
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        await hub.AgentReady(new AgentId("agent-1"));
+
+        _logger.Verify(l => l.Information(
+            It.Is<string>(s => s.Contains("signaled ready")),
+            It.IsAny<string>()),
+            Times.Once);
     }
 
     // ── Test helpers ──────────────────────────────────────────────────────
