@@ -16,22 +16,12 @@ public partial class QualityGateExecutor
     {
         if (context.QualityGateConfigs.Count > 0)
         {
-            // Multi-QGC mode: validate against matched QGCs.
-            // Use the server-side reporting overload when a reporter is wired (issue #2979),
-            // so process_timeout events are forwarded to the API.
-            // TODO [WARNING]: This uses a concrete type-check (_qualityGateValidator is QualityGateValidator).
-            // If IQualityGateValidator is implemented by a decorator or test double that wraps a QualityGateValidator,
-            // the cast silently fails and ValidateAsync is called instead, dropping all process_timeout server-side
-            // reporting without any warning. Consider promoting ValidateWithServerSideReportingAsync to the interface,
-            // or refactoring to avoid the concrete type dependency. (DotNetSpecialist #2979)
-            if (_qualityGateValidator is QualityGateValidator concreteValidator
-                && context.ReportPipelineRunEvent is { } reportEvent)
-            {
-                return await concreteValidator.ValidateWithServerSideReportingAsync(
-                    workspacePath, context.QualityGateConfigs, ct, reportEvent, context.RepoProvider.BaseBranch);
-            }
-
-            return await _qualityGateValidator.ValidateAsync(workspacePath, context.QualityGateConfigs, ct, context.RepoProvider.BaseBranch);
+            return await _qualityGateValidator.ValidateAsync(
+                workspacePath,
+                context.QualityGateConfigs,
+                ct,
+                baseBranch: context.RepoProvider.BaseBranch,
+                reportEvent: context.ReportPipelineRunEvent);
         }
 
         // No QGCs matched (or none configured) — skip quality gates

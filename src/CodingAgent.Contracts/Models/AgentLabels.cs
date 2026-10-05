@@ -107,14 +107,9 @@ public static class AgentLabels
     /// Used by housekeeping collaborators to guard both conflict-rework label swaps and stale
     /// branch deletion. An issue bearing any of these labels must not be re-queued or have its
     /// branch deleted — work is either pending dispatch or currently running.
+    /// Membership checks are case-insensitive.
     /// </summary>
-    // TODO: HousekeepingActiveLabels uses StringComparer.Ordinal while all other membership-check sets
-    // in this file were migrated to OrdinalIgnoreCase (issue #3337). If a caller ever checks this set
-    // against a label received from GitHub/GitLab (which preserves creation-time casing), a mixed-case
-    // value like "Agent:Epic-Approved" would not match, potentially allowing stale-branch deletion or
-    // conflict-rework re-queuing of an epic-approved issue. Consider migrating to OrdinalIgnoreCase for
-    // consistency and correctness.
-    public static readonly IReadOnlySet<string> HousekeepingActiveLabels = new HashSet<string>(StringComparer.Ordinal)
+    public static readonly IReadOnlySet<string> HousekeepingActiveLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Next,
         InProgress,
@@ -137,12 +132,9 @@ public static class AgentLabels
     /// <c>agent:error</c> and <c>agent:needs-refinement</c> are intentionally excluded —
     /// they are human-placed signals that the issue should be re-queued for rework.
     /// </para>
+    /// Membership checks are case-insensitive.
     /// </summary>
-    // TODO: HousekeepingTerminalReworkBlockers uses StringComparer.Ordinal while all other membership-check
-    // sets in this file were migrated to OrdinalIgnoreCase (issue #3337). A mixed-case label sourced from
-    // an external webhook could bypass the rework-blocker guard. Consider migrating to OrdinalIgnoreCase
-    // for consistency with the rest of the file.
-    public static readonly IReadOnlySet<string> HousekeepingTerminalReworkBlockers = new HashSet<string>(StringComparer.Ordinal)
+    public static readonly IReadOnlySet<string> HousekeepingTerminalReworkBlockers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         WontDo,
         Cancelled,

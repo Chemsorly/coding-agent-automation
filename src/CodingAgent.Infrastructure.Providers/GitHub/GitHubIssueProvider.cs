@@ -48,47 +48,14 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize,
         IReadOnlyList<string>? labels, CancellationToken ct)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+        ValidatePaginationParameters(page, pageSize);
 
-        var request = new RepositoryIssueRequest
-        {
-            State = ItemStateFilter.Open
-        };
-
+        var request = new RepositoryIssueRequest { State = ItemStateFilter.Open };
         if (labels is { Count: > 0 })
-        {
             foreach (var label in labels)
                 request.Labels.Add(label);
-        }
 
-        var apiOptions = new ApiOptions
-        {
-            PageSize = pageSize + 1, // fetch one extra to detect HasMore
-            StartPage = page,
-            PageCount = 1
-        };
-
-        var issues = await ExecuteWithResilienceAsync(
-            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
-            "ListOpenIssues", ct);
-
-        var hasMore = issues.Count > pageSize;
-
-        var items = issues
-            .Where(i => i.PullRequest == null)
-            .Select(MapToIssueSummary)
-            .Take(pageSize)
-            .ToList();
-
-        return new PagedResult<IssueSummary>
-        {
-            Items = items.AsReadOnly(),
-            Page = page,
-            PageSize = pageSize,
-            HasMore = hasMore
-        };
+        return await EnumerateIssuesAsync(request, page, pageSize, "ListOpenIssues", ct);
     }
 
     public Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
@@ -97,48 +64,18 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     public async Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(int page, int pageSize,
         IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
     {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+        ValidatePaginationParameters(page, pageSize);
 
         var request = new RepositoryIssueRequest
         {
             State = ItemStateFilter.Closed,
             Since = since?.ToUniversalTime()
         };
-
         if (labels is { Count: > 0 })
-        {
             foreach (var label in labels)
                 request.Labels.Add(label);
-        }
 
-        var apiOptions = new ApiOptions
-        {
-            PageSize = pageSize + 1,
-            StartPage = page,
-            PageCount = 1
-        };
-
-        var issues = await ExecuteWithResilienceAsync(
-            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
-            "ListClosedIssues", ct);
-
-        var hasMore = issues.Count > pageSize;
-
-        var items = issues
-            .Where(i => i.PullRequest == null)
-            .Select(MapToIssueSummary)
-            .Take(pageSize)
-            .ToList();
-
-        return new PagedResult<IssueSummary>
-        {
-            Items = items.AsReadOnly(),
-            Page = page,
-            PageSize = pageSize,
-            HasMore = hasMore
-        };
+        return await EnumerateIssuesAsync(request, page, pageSize, "ListClosedIssues", ct);
     }
 
     private static IssueDetail MapToIssueDetail(Issue issue)
@@ -360,6 +297,58 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         };
     }
 
+    #region Private Helpers
+
+    /// <summary>
+    /// Validates pagination parameters (page >= 1, pageSize 1–100).
+    /// </summary>
+    private static void ValidatePaginationParameters(int page, int pageSize)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
+    }
+
+    /// <summary>
+    /// Fetches a single page of issues using the overfetch-by-one pattern to determine HasMore,
+    /// then filters out pull requests and assembles the <see cref="PagedResult{T}"/>.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="request"/> must already have State (and optionally Since/Labels) set by the caller.
+    /// <c>hasMore</c> is computed from the raw count before PR filtering — this is intentional so that
+    /// a page full of PRs still signals that more pages may exist.
+    /// </remarks>
+    private async Task<PagedResult<IssueSummary>> EnumerateIssuesAsync(
+        RepositoryIssueRequest request, int page, int pageSize, string resilienceLabel, CancellationToken ct)
+    {
+        var apiOptions = new ApiOptions
+        {
+            PageSize = pageSize + 1, // fetch one extra to detect HasMore
+            StartPage = page,
+            PageCount = 1
+        };
+
+        var issues = await ExecuteWithResilienceAsync(
+            client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
+            resilienceLabel, ct);
+
+        var hasMore = issues.Count > pageSize;
+
+        var items = issues
+            .Where(i => i.PullRequest == null)
+            .Select(MapToIssueSummary)
+            .Take(pageSize)
+            .ToList();
+
+        return new PagedResult<IssueSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
+    }
+
     private static IssueSummary MapToIssueSummary(Issue issue)
     {
         var labels = issue.Labels?.ToList() ?? [];
@@ -384,4 +373,6 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             Url = issue.HtmlUrl
         };
     }
+
+    #endregion
 }

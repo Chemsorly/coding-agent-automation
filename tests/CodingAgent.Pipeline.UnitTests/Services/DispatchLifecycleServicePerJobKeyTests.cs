@@ -396,7 +396,7 @@ public sealed class DispatchLifecycleServicePerJobKeyTests : IDisposable
             db,
             projection,
             template,
-            IsKiroAgent: true,
+            IsKiro: true,
             AvailablePvcs: ["pvc-0"],
             ConcurrencyBySelector: new Dictionary<string, int>(),
             LogPrefix: "test ");
