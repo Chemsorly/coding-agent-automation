@@ -38,6 +38,18 @@ public sealed class KnowledgePage
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
         await _page.WaitForBlazorAsync(DefaultTimeout);
         await WaitForLoadCompleteAsync();
+        // Wait for the interactive circuit to complete its data fetch. The prerender (SSR) phase
+        // can show an error or empty state before the Blazor circuit re-runs OnInitializedAsync
+        // and loads data via IPipelineApiRunHistoryClient (HTTP). WaitForLoadCompleteAsync only
+        // waits for "Loading…" to disappear, which can happen on the prerendered HTML before the
+        // circuit's async data load completes. This extra wait ensures the interactive render has
+        // settled: either the stat strip or the definitive empty/error state is present.
+        await _page.WaitForFunctionAsync(
+            "() => document.querySelector('.cockpit-stat-strip') !== null || " +
+            "      (document.querySelector('.cockpit-card .cockpit-empty') !== null && " +
+            "       ![...document.querySelectorAll('.cockpit-card .cockpit-empty')].some(e => e.textContent.trim() === 'Loading\u2026'))",
+            null,
+            new() { Timeout = DefaultTimeout });
     }
 
     /// <summary>
