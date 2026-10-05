@@ -640,6 +640,10 @@ public sealed class AgentHubPipelineReportingTests
 /// </summary>
 public sealed class AgentHubReportQualityGateResultMetricsTests
 {
+    // Counter.Add invokes MeterListener callbacks synchronously on the emitting flow, so tagging each
+    // test with its own AsyncLocal value filters out measurements from tests running in parallel.
+    private static readonly AsyncLocal<object?> TestFlow = new();
+
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
 
     private AgentHub CreateHub()
@@ -667,6 +671,8 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
     {
         // Arrange: use a MeterListener to observe the shared static instrument.
         var observed = new List<(string gate, string result, string infraFailure)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -676,6 +682,7 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            if (!ReferenceEquals(TestFlow.Value, flow)) return;
             string gate = "", result = "", infra = "";
             foreach (var tag in tags)
             {
@@ -723,6 +730,8 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
     public async Task ReportQualityGateResult_FailedTestsGate_RecordsFailTag()
     {
         var observed = new List<(string gate, string result)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -732,6 +741,7 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            if (!ReferenceEquals(TestFlow.Value, flow)) return;
             string gate = "", result = "";
             foreach (var tag in tags)
             {
@@ -777,6 +787,10 @@ public sealed class AgentHubReportQualityGateResultMetricsTests
 /// </summary>
 public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
 {
+    // Counter.Add invokes MeterListener callbacks synchronously on the emitting flow, so tagging each
+    // test with its own AsyncLocal value filters out measurements from tests running in parallel.
+    private static readonly AsyncLocal<object?> TestFlow = new();
+
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
 
     private AgentHub CreateHub()
@@ -820,6 +834,8 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
     {
         // Use ConcurrentBag to avoid data races from background-thread MeterListener callbacks.
         var observed = new System.Collections.Concurrent.ConcurrentBag<(string gate, string result)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -829,6 +845,7 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            if (!ReferenceEquals(TestFlow.Value, flow)) return;
             string gate = "", result = "";
             foreach (var tag in tags)
             {
@@ -900,6 +917,8 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
     public async Task ReportQualityGateResult_WithExternalCiGate_RecordsExternalCiMetric()
     {
         var observed = new List<(string gate, string result)>();
+        var flow = new object();
+        TestFlow.Value = flow;
         using var listener = new System.Diagnostics.Metrics.MeterListener();
         listener.InstrumentPublished = (instrument, l) =>
         {
@@ -909,6 +928,7 @@ public sealed class AgentHubReportQualityGateResultMetricsMultiQgcTests
         };
         listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
         {
+            if (!ReferenceEquals(TestFlow.Value, flow)) return;
             string gate = "", result = "";
             foreach (var tag in tags)
             {
