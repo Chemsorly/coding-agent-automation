@@ -4,6 +4,7 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Pipeline.Services;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -37,6 +38,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 {
     private static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromSeconds(60);
     private const int MinimumSweepIntervalMinutes = 5;
+    private static readonly DispatchEligibilityEvaluator _eligibilityEvaluator = new();
 
     private readonly IOrchestratorRunService _runService;
     private readonly IPipelineApiConfigClient _configClient;
@@ -293,8 +295,13 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             foreach (var issue in result.Items)
             {
-                if (!_runService.IsIssueBeingProcessed(issue.Identifier, providerConfigId)
-                    && await TryRecoverSingleIssueAsync(issue, issueProvider, providerConfigId, ct))
+                var activeResult = _eligibilityEvaluator.EvaluateActiveElsewhere(
+                    isBeingProcessed: _runService.IsIssueBeingProcessed(issue.Identifier, providerConfigId),
+                    isInActiveSet: false); // OrphanedLabelRecoveryService has no in-cycle snapshot
+                if (!activeResult.IsEligible)
+                    continue;
+
+                if (await TryRecoverSingleIssueAsync(issue, issueProvider, providerConfigId, ct))
                 {
                     recovered++;
                     // Record every issue resolved (either as orphan or dual-label) so that
