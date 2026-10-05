@@ -96,76 +96,59 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
                     "Brain sync cannot be performed.");
             }
 
-            // Retry once on transient null: provider config store may have a brief propagation lag.
-            ProviderConfig brainConfig;
             try
             {
-                // TODO [WARNING]: If GetProviderConfigByIdAsync throws an exception (rather than
-                // returning null) during either attempt, Task.Delay and the second attempt are
-                // skipped entirely and the original exception propagates through ResolveRequiredAsync
-                // without being caught by the catch (InvalidOperationException) block below —
-                // surfacing a raw non-HubException to the SignalR caller. This was also present in
-                // the pre-refactor code but is less obvious here because the two-attempt pattern is
-                // embedded in a lambda. Fix: catch Exception (not just InvalidOperationException)
-                // at the call site, or wrap exceptions inside the lambda before returning null.
-                brainConfig = await ProviderConfigResolver.ResolveRequiredAsync(
-                    async () =>
-                    {
-                        var cfg = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
-                        if (cfg is null)
-                        {
-                            await Task.Delay(500, ct);
-                            cfg = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId.Value.Value, ProviderKind.Repository, ct);
-                        }
-                        return cfg;
-                    },
-                    brainProviderConfigId.Value.Value, ProviderKind.Repository, _logger);
+                return await ResolveRepositoryStoredConfigWithRetryAsync(brainProviderConfigId.Value.Value, ct);
             }
             catch (InvalidOperationException ex)
             {
                 throw new HubException($"Brain provider config '{brainProviderConfigId.Value.Value}' not found for job {jobId}", ex);
             }
-            return brainConfig;
         }
-        else
-        {
-            if (!repoProviderConfigId.HasValue)
-            {
-                _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
-                throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
-            }
 
-            // Retry once on transient null: provider config store may have a brief propagation lag.
-            ProviderConfig repoConfig;
-            try
-            {
-                // TODO [WARNING]: If GetProviderConfigByIdAsync throws an exception (rather than
-                // returning null) during either attempt, Task.Delay and the second attempt are
-                // skipped entirely and the original exception propagates through ResolveRequiredAsync
-                // without being caught by the catch (InvalidOperationException) block below —
-                // surfacing a raw non-HubException to the SignalR caller. This was also present in
-                // the pre-refactor code but is less obvious here because the two-attempt pattern is
-                // embedded in a lambda. Fix: catch Exception (not just InvalidOperationException)
-                // at the call site, or wrap exceptions inside the lambda before returning null.
-                repoConfig = await ProviderConfigResolver.ResolveRequiredAsync(
-                    async () =>
-                    {
-                        var cfg = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
-                        if (cfg is null)
-                        {
-                            await Task.Delay(500, ct);
-                            cfg = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId.Value.Value, ProviderKind.Repository, ct);
-                        }
-                        return cfg;
-                    },
-                    repoProviderConfigId.Value.Value, ProviderKind.Repository, _logger);
-            }
-            catch (InvalidOperationException ex)
-            {
-                throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})", ex);
-            }
-            return repoConfig;
+        if (!repoProviderConfigId.HasValue)
+        {
+            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
+            throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
         }
+
+        try
+        {
+            return await ResolveRepositoryStoredConfigWithRetryAsync(repoProviderConfigId.Value.Value, ct);
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})", ex);
+        }
+    }
+
+    /// <summary>
+    /// Resolves a <see cref="ProviderKind.Repository"/>-stored provider config (repo or brain),
+    /// retrying once on a transient null: the provider config store may have a brief propagation lag.
+    /// </summary>
+    private async Task<ProviderConfig> ResolveRepositoryStoredConfigWithRetryAsync(string configId, CancellationToken ct)
+    {
+        // TODO [WARNING]: If GetProviderConfigByIdAsync throws an exception (rather than
+        // returning null) during either attempt, Task.Delay and the second attempt are
+        // skipped entirely and the original exception propagates through ResolveRequiredAsync
+        // without being caught by the catch (InvalidOperationException) blocks in
+        // ResolveTargetConfigAsync — surfacing a raw non-HubException to the SignalR caller.
+        // This was also present in the pre-refactor code but is less obvious here because the
+        // two-attempt pattern is embedded in a lambda. Fix: catch Exception (not just
+        // InvalidOperationException) at the call sites, or wrap exceptions inside the lambda
+        // before returning null.
+        return await ProviderConfigResolver.ResolveRequiredAsync(
+            async () =>
+            {
+                var cfg = await _facade.GetProviderConfigByIdAsync(configId, ProviderKind.Repository, ct);
+                if (cfg is null)
+                {
+                    await Task.Delay(500, ct);
+                    cfg = await _facade.GetProviderConfigByIdAsync(configId, ProviderKind.Repository, ct);
+                }
+                return cfg;
+            },
+            configId, ProviderKind.Repository, _logger);
     }
 
     private async Task<TokenRefreshResponse> VendTokenAsync(
@@ -214,37 +197,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             // GitHub App token would be returned with a fabricated 24 h sentinel, silently
             // reintroducing the stale-token bug this fix was designed to eliminate. (CRITICAL fix)
             if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.TokenExpiresAt, out var expiresAtStr))
-            {
-                if (!DateTimeOffset.TryParse(expiresAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAtParsed))
-                {
-                    var preview = expiresAtStr.Length > 8 ? expiresAtStr[..8] + "..." : expiresAtStr;
-                    _logger.Warning(
-                        "Pre-vended token for job {JobId} (kind: {ProviderKind}) has a malformed 'tokenExpiresAt' value " +
-                        "(len={Length}, prefix='{Prefix}'). Cannot determine expiry — treating as expired to prevent stale-token use.",
-                        jobId, providerKind, expiresAtStr.Length, preview);
-                    throw new HubException(
-                        $"Pre-vended token for job {jobId} (kind: {providerKind}) has a malformed 'tokenExpiresAt' value " +
-                        "and cannot be validated. The agent must be re-dispatched with a valid provider configuration.");
-                }
-
-                var renewalBuffer = TokenRefreshConstants.RenewalBuffer;
-                if (expiresAtParsed - DateTimeOffset.UtcNow <= renewalBuffer)
-                {
-                    _logger.Warning(
-                        "Pre-vended token for job {JobId} (kind: {ProviderKind}) is expired or expiring within {Buffer}. " +
-                        "Cannot vend stale token — provider config has no GitHub App key to mint a fresh one. " +
-                        "Ensure the provider uses 'privateKeyBase64' auth for long-running runs.",
-                        jobId, providerKind, renewalBuffer);
-                    throw new HubException(
-                        $"Pre-vended token for job {jobId} (kind: {providerKind}) is expired or expiring imminently " +
-                        "and no GitHub App key is present to mint a fresh one. The agent must be re-dispatched.");
-                }
-
-                _logger.Information("Returning pre-vended token for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
-                    jobId, providerKind, expiresAtParsed);
-
-                return new TokenRefreshResponse { Token = existingToken, ExpiresAt = expiresAtParsed };
-            }
+                return ValidatePreVendedToken(jobId, providerKind, existingToken, expiresAtStr);
 
             // No expiry metadata — this is a genuinely static token (e.g., a personal access
             // token stored directly in the provider config). Return it with a far-future sentinel.
@@ -263,5 +216,43 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
         _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId, providerKind);
         throw new HubException($"Provider config for job {jobId} (kind: {providerKind}) has no supported authentication method. " +
             "Expected 'privateKeyBase64' (GitHub App), 'accessToken' (GitLab PAT), or 'token'.");
+    }
+
+    /// <summary>
+    /// Returns the pre-vended token with its real expiry, or throws a <see cref="HubException"/> when
+    /// <paramref name="expiresAtStr"/> is malformed or the token is expired / within the renewal buffer.
+    /// </summary>
+    private TokenRefreshResponse ValidatePreVendedToken(
+        string jobId, ProviderKind providerKind, string existingToken, string expiresAtStr)
+    {
+        if (!DateTimeOffset.TryParse(expiresAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var expiresAtParsed))
+        {
+            var preview = expiresAtStr.Length > 8 ? expiresAtStr[..8] + "..." : expiresAtStr;
+            _logger.Warning(
+                "Pre-vended token for job {JobId} (kind: {ProviderKind}) has a malformed 'tokenExpiresAt' value " +
+                "(len={Length}, prefix='{Prefix}'). Cannot determine expiry — treating as expired to prevent stale-token use.",
+                jobId, providerKind, expiresAtStr.Length, preview);
+            throw new HubException(
+                $"Pre-vended token for job {jobId} (kind: {providerKind}) has a malformed 'tokenExpiresAt' value " +
+                "and cannot be validated. The agent must be re-dispatched with a valid provider configuration.");
+        }
+
+        var renewalBuffer = TokenRefreshConstants.RenewalBuffer;
+        if (expiresAtParsed - DateTimeOffset.UtcNow <= renewalBuffer)
+        {
+            _logger.Warning(
+                "Pre-vended token for job {JobId} (kind: {ProviderKind}) is expired or expiring within {Buffer}. " +
+                "Cannot vend stale token — provider config has no GitHub App key to mint a fresh one. " +
+                "Ensure the provider uses 'privateKeyBase64' auth for long-running runs.",
+                jobId, providerKind, renewalBuffer);
+            throw new HubException(
+                $"Pre-vended token for job {jobId} (kind: {providerKind}) is expired or expiring imminently " +
+                "and no GitHub App key is present to mint a fresh one. The agent must be re-dispatched.");
+        }
+
+        _logger.Information("Returning pre-vended token for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
+            jobId, providerKind, expiresAtParsed);
+
+        return new TokenRefreshResponse { Token = existingToken, ExpiresAt = expiresAtParsed };
     }
 }

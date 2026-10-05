@@ -194,8 +194,7 @@ public static class WorkItemAgentEndpoints
                     // AsNoTracking read (snapshot before the CAS write) while 'now' is captured after
                     // FindAsync. If clock skew between API replicas causes item.DispatchedAt to be in
                     // the future relative to 'now', podStartSeconds will be negative. Negative histogram
-                    // observations corrupt p-quantile statistics. Consider clamping to 0:
-                    //   var podStartSeconds = Math.Max(0, (now - item.DispatchedAt.Value).TotalSeconds);
+                    // observations corrupt p-quantile statistics. Consider clamping the value to a minimum of 0.
                     // TODO [WARNING]: FirstAssignmentAt is never cleared on re-dispatch (retry/re-queue).
                     // If a WorkItem fails and is re-queued, FirstAssignmentAt from the prior dispatch
                     // lifecycle remains set, and pod_start_seconds is never recorded for subsequent
@@ -350,28 +349,20 @@ public static class WorkItemAgentEndpoints
 
     /// <summary>
     /// Backward-compatible overload for <c>PostStatusIdempotencyTests.cs</c>, which constructs
-    /// <see cref="WorkItemTransitionService"/>, <see cref="IOrchestratorRunService"/>, and
-    /// <see cref="IRunLifecycleManager"/> directly. This overload wraps the three dependencies
-    /// into a <see cref="WorkItemStatusTransitionService"/> and forwards to the primary overload.
+    /// <see cref="WorkItemTransitionService"/> and <see cref="IRunLifecycleManager"/> directly.
+    /// This overload wraps the two dependencies into a <see cref="WorkItemStatusTransitionService"/>
+    /// and forwards to the primary overload.
     /// </summary>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1068", Justification = "Test seam bool appended after ct intentionally")]
     internal static Task<IResult> PostStatus(
         Guid id,
         WorkItemStatusRequest request,
         WorkItemTransitionService transitionService,
-        IOrchestratorRunService runService,
         IRunLifecycleManager runLifecycleManager,
         IDbContextFactory<PipelineDbContext>? dbFactory = null,
         CancellationToken ct = default,
         bool awaitTelemetry = false)
     {
-        // TODO: [WARNING] runService is accepted here only to maintain call-site compatibility with
-        // existing tests that pass it by position. It is intentionally discarded — WorkItemStatusTransitionService
-        // does not consume IOrchestratorRunService. Callers passing a non-null runService receive no
-        // indication that the argument has no effect, which could mask a future intent to use it.
-        // If runService is genuinely unused, consider marking the parameter with _ = runService or
-        // adding a #pragma warning disable IDE0060 suppression; if it should be used, wire it through.
-        _ = runService;
         // TODO: [WARNING] NullLogger is hard-wired here, which silently suppresses the Warning log
         // emitted by WorkItemStatusTransitionService for malformed agent Result payloads. Requests
         // routed through this endpoint helper will still fall back to agent:error but operators get

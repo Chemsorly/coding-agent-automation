@@ -149,7 +149,7 @@ public class IssueDrawerServiceTests
         _mockDependencyChecker.Setup(d => d.CheckAsync("11", "No deps", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
-        await _service.CheckDrawerDependenciesAsync(template);
+        await _service.CheckDrawerDependenciesAsync(template, null, CancellationToken.None);
 
         Assert.Equal(2, _service.DrawerReadiness.Count);
         Assert.False(_service.DrawerReadiness["10"].IsReady);
@@ -162,7 +162,7 @@ public class IssueDrawerServiceTests
         _service.SetProviderContext(new List<ProviderConfig>(), RepoProviders);
         var template = MakeTemplate();
 
-        await _service.CheckDrawerDependenciesAsync(template);
+        await _service.CheckDrawerDependenciesAsync(template, null, CancellationToken.None);
 
         Assert.Empty(_service.DrawerReadiness);
     }
@@ -179,7 +179,7 @@ public class IssueDrawerServiceTests
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
         int progressCount = 0;
-        await _service.CheckDrawerDependenciesAsync(template, () => progressCount++);
+        await _service.CheckDrawerDependenciesAsync(template, () => progressCount++, CancellationToken.None);
 
         Assert.Equal(2, progressCount);
     }

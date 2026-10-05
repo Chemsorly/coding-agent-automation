@@ -35,7 +35,10 @@ internal sealed partial class DispatchScheduler
             // this is safe today. If DispatchRoundAsync is ever changed to invoke delegates concurrently,
             // this unsynchronised read/write becomes a race condition. Consider passing a ref-counted guard
             // or using an interlocked counter if concurrent dispatch is introduced.
-            if (activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions)
+            var concurrencyResult = _eligibilityEvaluator.EvaluateConcurrencyLimit(
+                activeCount: activeDecompositionCount + additionalDecompDispatches,
+                maxAllowed: config.MaxConcurrentDecompositions);
+            if (!concurrencyResult.IsEligible)
             {
                 _logger.Information("Decomposition concurrency limit reached ({Active}/{Max}), skipping remaining decomposition dispatch",
                     activeDecompositionCount + additionalDecompDispatches, config.MaxConcurrentDecompositions);

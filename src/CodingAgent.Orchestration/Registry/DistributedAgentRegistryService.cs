@@ -150,38 +150,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         if (!string.IsNullOrEmpty(activeJobId) && status != AgentStatus.Busy)
             status = AgentStatus.Busy;
 
-        // Build hash — do NOT overwrite disabled on re-registration
-        var fields = AgentEntryToHashEntries(
-            agentId: agentId,
-            connectionId: connectionId,
-            hostname: message.Hostname,
-            labels: message.Labels,
-            status: status,
-            registeredAt: existing?.RegisteredAt ?? now,
-            lastHeartbeatAt: now,
-            lastJobCompletedAt: existing?.LastJobCompletedAt,
-            disconnectedAt: null,
-            busySince: status == AgentStatus.Busy ? (existing?.BusySince ?? now) : null,
-            activeJobId: activeJobId,
-            activeChatSessionId: existing?.ActiveChatSessionId,
-            disabled: disabled,
-            orphanRestoredAt: null,
-            batchAsync: false);
-
-        // Fire-and-forget write to Redis; return a snapshot immediately so the hub method
-        // completes without blocking on Redis I/O. The brief window between return and Redis
-        // write means the dispatcher on another replica may not see the agent for one cycle.
-        // Log any Redis write failures so they surface rather than being swallowed silently.
-        // Mark the agent as having a pending write so GetAgentRaw can return the snapshot
-        // during the fire-and-forget window. Cleared by WriteRegistrationAsync on completion.
-        _pendingRegistrationWrite[agentId] = 0;
-        _ = WriteRegistrationAsync(message.AgentId, connectionId, status, fields)
-            .ContinueWith(t => _logger.Warning(t.Exception,
-                "WriteRegistrationAsync failed for agent {AgentId}", agentId),
-                TaskContinuationOptions.OnlyOnFaulted);
-
-        _connectionIndex[connectionId] = agentId;
-
         var entry = new AgentEntry
         {
             AgentId = new AgentId(agentId),
@@ -194,6 +162,30 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             ActiveJobId = activeJobId,
             Disabled = disabled
         };
+
+        // Build hash — do NOT overwrite disabled on re-registration. The hash additionally carries
+        // lastJobCompletedAt, busySince and activeChatSessionId from the existing entry; the local
+        // snapshot (`entry`) intentionally does not track those fields (see the note further below).
+        var fields = AgentEntryToHashEntries(entry with
+        {
+            LastJobCompletedAt = existing?.LastJobCompletedAt,
+            BusySince = status == AgentStatus.Busy ? (existing?.BusySince ?? now) : null,
+            ActiveChatSessionId = existing?.ActiveChatSessionId
+        });
+
+        // Fire-and-forget write to Redis; return a snapshot immediately so the hub method
+        // completes without blocking on Redis I/O. The brief window between return and Redis
+        // write means the dispatcher on another replica may not see the agent for one cycle.
+        // Log any Redis write failures so they surface rather than being swallowed silently.
+        // Mark the agent as having a pending write so GetAgentRaw can return the snapshot
+        // during the fire-and-forget window. Cleared by WriteRegistrationAsync on completion.
+        _pendingRegistrationWrite[agentId] = 0;
+        _ = WriteRegistrationAsync(message.AgentId, status, fields)
+            .ContinueWith(t => _logger.Warning(t.Exception,
+                "WriteRegistrationAsync failed for agent {AgentId}", agentId),
+                TaskContinuationOptions.OnlyOnFaulted);
+
+        _connectionIndex[connectionId] = agentId;
 
         // Keep a local snapshot so UpdateHeartbeatAsync can recreate the Redis hash if it
         // expires due to TTL while the SignalR connection is still live (issue #2110).
@@ -252,7 +244,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         return committedEntry;
     }
 
-    private async Task WriteRegistrationAsync(AgentId agentId, string connectionId, AgentStatus status, HashEntry[] fields)
+    private async Task WriteRegistrationAsync(AgentId agentId, AgentStatus status, HashEntry[] fields)
     {
         var key = AgentKey(agentId.Value);
         await _store.HashSetAsync(key, fields);
@@ -403,24 +395,9 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                     "Heartbeat for TTL-expired agent {AgentId} — re-registering from local snapshot to restore registry",
                     agentId.Value);
 
-                var fields = AgentEntryToHashEntries(
-                    agentId: agentId.Value,
-                    connectionId: snapshot.ConnectionId,
-                    hostname: snapshot.Hostname,
-                    labels: snapshot.Labels,
-                    status: snapshot.Status,
-                    registeredAt: snapshot.RegisteredAt,
-                    lastHeartbeatAt: timestamp,
-                    lastJobCompletedAt: snapshot.LastJobCompletedAt,
-                    disconnectedAt: snapshot.DisconnectedAt,
-                    busySince: snapshot.BusySince,
-                    activeJobId: snapshot.ActiveJobId,
-                    activeChatSessionId: snapshot.ActiveChatSessionId,
-                    disabled: snapshot.Disabled,
-                    orphanRestoredAt: snapshot.OrphanRestoredAt,
-                    batchAsync: false);
+                var fields = AgentEntryToHashEntries(snapshot with { LastHeartbeatAt = timestamp });
 
-                await WriteRegistrationAsync(agentId, snapshot.ConnectionId, snapshot.Status, fields);
+                await WriteRegistrationAsync(agentId, snapshot.Status, fields);
                 return;
             }
 
@@ -469,8 +446,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var current = HashToEntry(existing);
         var oldStatus = current?.Status ?? AgentStatus.Idle;
 
-        // Reject Disconnected → Busy: must re-register first
-        if (oldStatus == AgentStatus.Disconnected && newStatus == AgentStatus.Busy)
+        if (!AgentStatusTransition.IsAllowed(oldStatus, newStatus))
         {
             _logger.Warning(
                 "Agent {AgentId} invalid transition {Old} → {New} rejected (must re-register first)",
@@ -519,41 +495,44 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // The busySinceValue and disconnectedAtValue computations are inside the factory so that
         // any internal retry by AddOrUpdate under contention uses the current live value.
         if (_localSnapshot.ContainsKey(agentId.Value))
-        {
-            // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
-            // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
-            // causing addValueFactory to fire. The addValueFactory must NOT throw — concurrent
-            // deregistration mid-async-await is a normal production event (agent disconnects while
-            // orphan recovery is calling TransitionStatusAsync). Instead, we return a no-op
-            // AgentEntry and immediately remove it so we don't re-insert a deregistered agent.
-            // The snapshot omission is safe: the agent is being removed from the system anyway.
-            // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
-            // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
-            // NOTE: the sentinel is momentarily visible in _localSnapshot between AddOrUpdate return
-            // and TryRemove. A concurrent GetByConnectionId or GetAllAgents reader in that window
-            // would see a sentinel AgentEntry (RegisteredAt=MinValue, Status=default, ActiveJobId=null,
-            // ConnectionId=""). GetByConnectionId would not match it (ConnectionId is empty), so the
-            // practical risk is low, but the window is real. Full atomicity would require a dedicated
-            // per-agent lock around AddOrUpdate+TryRemove, which is out of scope for this fix. (.NET specialist WARNING, issue #2873)
-            var committed = _localSnapshot.AddOrUpdate(
-                agentId.Value,
-                addValueFactory: CreateDeregistrationRaceSentinel,
-                updateValueFactory: (_, current) =>
-                {
-                    var bs = newStatus == AgentStatus.Busy ? (current.BusySince ?? now) : (DateTimeOffset?)null;
-                    var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
-                    return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
-                });
-            if (!RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId.Value, committed,
-                    "TransitionStatusAsync", _logger))
-            {
-                // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
-                // return up-to-date status without hitting Redis.
-                UpdateAllAgentsCache(committed);
-            }
-        }
+            SyncLocalSnapshotStatus(agentId.Value, newStatus, now);
 
         _logger.Information("Agent {AgentId} status transitioned {Old} → {New}", agentId, oldStatus, newStatus);
+    }
+
+    private void SyncLocalSnapshotStatus(string agentId, AgentStatus newStatus, DateTimeOffset now)
+    {
+        // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
+        // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
+        // causing addValueFactory to fire. The addValueFactory must NOT throw — concurrent
+        // deregistration mid-async-await is a normal production event (agent disconnects while
+        // orphan recovery is calling TransitionStatusAsync). Instead, we return a no-op
+        // AgentEntry and immediately remove it so we don't re-insert a deregistered agent.
+        // The snapshot omission is safe: the agent is being removed from the system anyway.
+        // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
+        // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
+        // NOTE: the sentinel is momentarily visible in _localSnapshot between AddOrUpdate return
+        // and TryRemove. A concurrent GetByConnectionId or GetAllAgents reader in that window
+        // would see a sentinel AgentEntry (RegisteredAt=MinValue, Status=default, ActiveJobId=null,
+        // ConnectionId=""). GetByConnectionId would not match it (ConnectionId is empty), so the
+        // practical risk is low, but the window is real. Full atomicity would require a dedicated
+        // per-agent lock around AddOrUpdate+TryRemove, which is out of scope for this fix. (.NET specialist WARNING, issue #2873)
+        var committed = _localSnapshot.AddOrUpdate(
+            agentId,
+            addValueFactory: CreateDeregistrationRaceSentinel,
+            updateValueFactory: (_, current) =>
+            {
+                var bs = newStatus == AgentStatus.Busy ? (current.BusySince ?? now) : (DateTimeOffset?)null;
+                var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
+                return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
+            });
+        if (!RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId, committed,
+                "TransitionStatusAsync", _logger))
+        {
+            // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
+            // return up-to-date status without hitting Redis.
+            UpdateAllAgentsCache(committed);
+        }
     }
 
     // ── Lookups ───────────────────────────────────────────────────────
@@ -795,14 +774,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                     agentId.Value,
                     addValueFactory: _ => throw new InvalidOperationException(
                         $"DistributedAgentRegistryService.UpdateAgentFieldAsync: unexpected add path for agent {agentId.Value} — key was present at ContainsKey check"),
-                    updateValueFactory: (_, current) => field switch
-                    {
-                        "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                        "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                        "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
-                        "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? current with { OrphanRestoredAt = ora } : current,
-                        _ => current
-                    });
+                    updateValueFactory: (_, current) => WithAgentField(current, field, value));
             }
             // TODO: _allAgentsCache is NOT updated here. Fields written via this method (e.g. disabled,
             // activeJobId) will not be reflected in GetAllAgents() / GetBusyAgentCount() sync reads until
@@ -818,6 +790,15 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 field, agentId.Value);
         }
     }
+
+    private static AgentEntry WithAgentField(AgentEntry current, string field, string? value) => field switch
+    {
+        "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+        "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+        "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+        "orphanRestoredAt" => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+        _ => current
+    };
 
     // ── SetLocalSnapshotField ─────────────────────────────────────────
 
@@ -1000,20 +981,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         if (!dict.TryGetValue("registeredAt", out var registeredAtStr) || string.IsNullOrEmpty(registeredAtStr))
             return null;
 
-        List<string> labels;
-        if (dict.TryGetValue("labels", out var labelsJson) && !string.IsNullOrEmpty(labelsJson))
-            labels = JsonSerializer.Deserialize<List<string>>(labelsJson) ?? new List<string>();
-        else
-            labels = new List<string>();
+        var labels = ParseLabels(dict);
 
         _ = Enum.TryParse<AgentStatus>(dict.GetValueOrDefault("status") ?? "Idle", out var status);
-        _ = DateTimeOffset.TryParse(registeredAtStr, out var registeredAt);
-        _ = DateTimeOffset.TryParse(dict.GetValueOrDefault("lastHeartbeatAt"), out var lastHeartbeat);
+        _ = DateTimeOffset.TryParse(registeredAtStr, CultureInfo.InvariantCulture, out var registeredAt);
+        _ = DateTimeOffset.TryParse(dict.GetValueOrDefault("lastHeartbeatAt"), CultureInfo.InvariantCulture, out var lastHeartbeat);
 
-        DateTimeOffset? lastJobCompleted = DateTimeOffset.TryParse(dict.GetValueOrDefault("lastJobCompletedAt"), out var ljc) ? ljc : null;
-        DateTimeOffset? disconnectedAt = DateTimeOffset.TryParse(dict.GetValueOrDefault("disconnectedAt"), out var da) ? da : null;
-        DateTimeOffset? busySince = DateTimeOffset.TryParse(dict.GetValueOrDefault("busySince"), out var bs) ? bs : null;
-        DateTimeOffset? orphanRestoredAt = DateTimeOffset.TryParse(dict.GetValueOrDefault("orphanRestoredAt"), out var ora) ? ora : null;
+        var lastJobCompleted = ParseOptionalTimestamp(dict, "lastJobCompletedAt");
+        var disconnectedAt = ParseOptionalTimestamp(dict, "disconnectedAt");
+        var busySince = ParseOptionalTimestamp(dict, "busySince");
+        var orphanRestoredAt = ParseOptionalTimestamp(dict, "orphanRestoredAt");
 
         _ = bool.TryParse(dict.GetValueOrDefault("disabled") ?? "false", out var disabled);
 
@@ -1036,30 +1013,34 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         };
     }
 
-    private static HashEntry[] AgentEntryToHashEntries(
-        string agentId, string connectionId, string hostname,
-        IReadOnlyList<string> labels, AgentStatus status,
-        DateTimeOffset registeredAt, DateTimeOffset lastHeartbeatAt,
-        DateTimeOffset? lastJobCompletedAt, DateTimeOffset? disconnectedAt,
-        DateTimeOffset? busySince, string? activeJobId, string? activeChatSessionId,
-        bool disabled, DateTimeOffset? orphanRestoredAt, bool batchAsync)
+    private static List<string> ParseLabels(Dictionary<string, string?> dict)
+    {
+        if (dict.TryGetValue("labels", out var labelsJson) && !string.IsNullOrEmpty(labelsJson))
+            return JsonSerializer.Deserialize<List<string>>(labelsJson) ?? new List<string>();
+        return new List<string>();
+    }
+
+    private static DateTimeOffset? ParseOptionalTimestamp(Dictionary<string, string?> dict, string key)
+        => DateTimeOffset.TryParse(dict.GetValueOrDefault(key), CultureInfo.InvariantCulture, out var value) ? value : null;
+
+    private static HashEntry[] AgentEntryToHashEntries(AgentEntry entry)
     {
         return
         [
-            new HashEntry("agentId", agentId),
-            new HashEntry("connectionId", connectionId),
-            new HashEntry("hostname", hostname),
-            new HashEntry("labels", JsonSerializer.Serialize(labels)),
-            new HashEntry("status", status.ToString()),
-            new HashEntry("registeredAt", registeredAt.ToString("O")),
-            new HashEntry("lastHeartbeatAt", lastHeartbeatAt.ToString("O")),
-            new HashEntry("lastJobCompletedAt", lastJobCompletedAt?.ToString("O") ?? ""),
-            new HashEntry("disconnectedAt", disconnectedAt?.ToString("O") ?? ""),
-            new HashEntry("busySince", busySince?.ToString("O") ?? ""),
-            new HashEntry("activeJobId", activeJobId ?? ""),
-            new HashEntry("activeChatSessionId", activeChatSessionId ?? ""),
-            new HashEntry("disabled", disabled.ToString()),
-            new HashEntry("orphanRestoredAt", orphanRestoredAt?.ToString("O") ?? "")
+            new HashEntry("agentId", entry.AgentId.Value),
+            new HashEntry("connectionId", entry.ConnectionId),
+            new HashEntry("hostname", entry.Hostname),
+            new HashEntry("labels", JsonSerializer.Serialize(entry.Labels)),
+            new HashEntry("status", entry.Status.ToString()),
+            new HashEntry("registeredAt", entry.RegisteredAt.ToString("O")),
+            new HashEntry("lastHeartbeatAt", entry.LastHeartbeatAt.ToString("O")),
+            new HashEntry("lastJobCompletedAt", entry.LastJobCompletedAt?.ToString("O") ?? ""),
+            new HashEntry("disconnectedAt", entry.DisconnectedAt?.ToString("O") ?? ""),
+            new HashEntry("busySince", entry.BusySince?.ToString("O") ?? ""),
+            new HashEntry("activeJobId", entry.ActiveJobId ?? ""),
+            new HashEntry("activeChatSessionId", entry.ActiveChatSessionId ?? ""),
+            new HashEntry("disabled", entry.Disabled.ToString()),
+            new HashEntry("orphanRestoredAt", entry.OrphanRestoredAt?.ToString("O") ?? "")
         ];
     }
 }

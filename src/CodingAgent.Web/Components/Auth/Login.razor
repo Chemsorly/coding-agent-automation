@@ -21,7 +21,9 @@
 
     @if (Oidc.Enabled)
     {
-        <a class="btn-save auth-oidc" data-testid="login-oidc" href="@OidcHref">Sign in with @Oidc.Name</a>
+        @* A full page load, not enhanced navigation: /auth/oidc redirects to the provider, so an
+           enhanced fetch would run the challenge (and its PAR round-trip) twice. *@
+        <a class="btn-save auth-oidc" data-testid="login-oidc" href="@OidcHref" data-enhance-nav="false">Sign in with @Oidc.Name</a>
     }
 
     @if (Oidc.Enabled && Admin.Enabled)

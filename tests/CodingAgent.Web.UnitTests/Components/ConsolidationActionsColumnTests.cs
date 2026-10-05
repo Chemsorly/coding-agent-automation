@@ -48,10 +48,7 @@ public class ConsolidationActionsColumnTests : BunitContext
 
         // Default run history: empty
         _mockRunHistoryClient
-            .Setup(s => s.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
-                It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = Array.Empty<PipelineRunSummary>().ToList(), Page = 1, PageSize = 200, HasMore = false
@@ -103,10 +100,7 @@ public class ConsolidationActionsColumnTests : BunitContext
     private void SetupRunHistory(IReadOnlyList<PipelineRunSummary> runs)
     {
         _mockRunHistoryClient
-            .Setup(s => s.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(),
-                It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary>
             {
                 Items = runs.ToList(), Page = 1, PageSize = 200, HasMore = false

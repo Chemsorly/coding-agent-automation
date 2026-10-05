@@ -102,7 +102,7 @@
     private async void HandleProjectChanged()
     {
         try { await LoadAsync(); await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task LoadAsync()
@@ -114,7 +114,7 @@
         _brainRuns = _nonBrainRuns = _brainSuccess = _nonBrainSuccess = 0;
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId), _cts.Token);
             var items = runs.Items;
             _total = items.Count;
             if (_total == 0) { _loading = false; return; }
@@ -134,7 +134,7 @@
             _brainSuccess = _brainRuns > 0 ? (int)Math.Round(100.0 * brain.Count(r => r.FinalStep == PipelineStep.Completed) / _brainRuns) : 0;
             _nonBrainSuccess = _nonBrainRuns > 0 ? (int)Math.Round(100.0 * nonBrain.Count(r => r.FinalStep == PipelineStep.Completed) / _nonBrainRuns) : 0;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load knowledge metrics: {ex.Message}";

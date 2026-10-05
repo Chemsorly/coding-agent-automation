@@ -65,7 +65,7 @@ public static class AgentJobKeySecret
         // not update. The stale Secret can vanish on its own in between (its old Job is being
         // garbage-collected, so the delete finds nothing), and another dispatcher of the same Job
         // can recreate it (so the create conflicts again); both are retried.
-        for (var attempt = 1; ; attempt++)
+        for (var attempt = 1; attempt <= MaxCreateAttempts; attempt++)
         {
             try
             {
@@ -98,7 +98,8 @@ public static class AgentJobKeySecret
         ArgumentNullException.ThrowIfNull(client);
         var delays = retryDelays ?? DefaultUidReadRetryDelays;
 
-        for (var attempt = 0; ; attempt++)
+        var attempt = 0;
+        while (true)
         {
             try
             {
@@ -107,7 +108,7 @@ public static class AgentJobKeySecret
             }
             catch (Exception) when (!ct.IsCancellationRequested && attempt < delays.Count)
             {
-                await Task.Delay(delays[attempt], ct);
+                await Task.Delay(delays[attempt++], ct);
             }
             catch (Exception) when (!ct.IsCancellationRequested)
             {

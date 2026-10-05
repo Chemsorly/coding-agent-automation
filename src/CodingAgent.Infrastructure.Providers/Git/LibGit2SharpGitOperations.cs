@@ -93,9 +93,11 @@ public sealed class LibGit2SharpGitOperations : IGitOperations
     {
         using var repo = new Repository(repoPath);
         var headCommit = repo.Head.Tip;
-        var parentTree = headCommit?.Parents.FirstOrDefault()?.Tree;
+        if (headCommit is null)
+            return Array.Empty<FileChange>();
 
-        if (parentTree is null || headCommit is null)
+        var parentTree = headCommit.Parents.FirstOrDefault()?.Tree;
+        if (parentTree is null)
             return Array.Empty<FileChange>();
 
         var diff = repo.Diff.Compare<TreeChanges>(parentTree, headCommit.Tree);

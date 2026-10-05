@@ -30,7 +30,7 @@ public static class GracefulShutdownHelper
         if (cts is not null)
         {
             try { await cts.CancelAsync(); }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Already disposed. */ }
         }
 
         try
