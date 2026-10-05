@@ -4,6 +4,7 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
 using Serilog;
+using StackExchange.Redis;
 
 namespace CodingAgent.Orchestration.UnitTests.Redis;
 
@@ -1429,6 +1430,79 @@ public sealed class DistributedAgentRegistryServiceTests
         idleAgents.Should().NotContain(a => a.AgentId.Value == "agent-1",
             "an agent with a non-null ActiveJobId must not appear in GetIdleAgents() — " +
             "registering it as Idle when it has an active run is a double-booking vector");
+    }
+}
+
+/// <summary>
+/// Characterization tests for the required-field guard in HashToEntry:
+/// when a required field is absent from the stored hash, GetByAgentId must return null.
+/// Tests exercise HashToEntry indirectly via FakeRedisStore → GetByAgentId → GetAgentRaw.
+/// </summary>
+// TODO: add equivalent tests that exercise the async path (GetByAgentIdAsync), which calls
+// HashToEntry directly without going through GetAgentRaw. A future change accidentally bypassing
+// HashToEntry in GetByAgentIdAsync would not be caught by the sync-path tests below.
+// Tracked: TestQualityReviewer warning — DistributedAgentRegistryServiceTests.cs:1463
+public sealed class HashToEntryRequiredFieldTests
+{
+    private readonly FakeRedisStore _store = new();
+    private readonly DistributedAgentRegistryService _sut;
+
+    public HashToEntryRequiredFieldTests()
+    {
+        _sut = new DistributedAgentRegistryService(_store, Log.Logger);
+    }
+
+    private static HashEntry[] FullHash(string agentId = "agent-1") =>
+    [
+        new HashEntry("agentId", agentId),
+        new HashEntry("connectionId", "conn-1"),
+        new HashEntry("registeredAt", DateTimeOffset.UtcNow.ToString("O")),
+        new HashEntry("hostname", "host-1"),
+        new HashEntry("status", "Idle"),
+        new HashEntry("labels", "[]"),
+        new HashEntry("disabled", "False"),
+        // TODO: FullHash intentionally omits "lastHeartbeatAt" (and other optional DateTimeOffset
+        // fields) to keep it minimal. Add a test that verifies HashToEntry still returns a non-null
+        // entry with LastHeartbeatAt == default(DateTimeOffset) when the field is absent, to lock
+        // in the silent-default behaviour and catch any future change that makes it required.
+        // Tracked: TestQualityReviewer warning — DistributedAgentRegistryServiceTests.cs:1456
+    ];
+
+    [Fact]
+    public async Task GetByAgentId_MissingAgentIdField_ReturnsNull()
+    {
+        var partial = FullHash().Where(e => (string)e.Name! != "agentId").ToArray();
+        await _store.HashSetAsync("agent:agent-1", partial);
+        await _store.SetAddAsync("agents:all", "agent-1");
+
+        // TODO: consider adding a pre-assertion that the FakeRedisStore actually stored the
+        // partial hash (non-zero length) to rule out a silent-empty-write masking the test.
+        // Low risk: FakeRedisStore is well-exercised elsewhere and the 6-element Where result
+        // is not empty, but the gap was flagged in review (TestQualityReviewer warning).
+        _sut.GetByAgentId(new AgentId("agent-1"))
+            .Should().BeNull("missing agentId field in the stored hash must cause HashToEntry to return null");
+    }
+
+    [Fact]
+    public async Task GetByAgentId_MissingConnectionIdField_ReturnsNull()
+    {
+        var partial = FullHash().Where(e => (string)e.Name! != "connectionId").ToArray();
+        await _store.HashSetAsync("agent:agent-1", partial);
+        await _store.SetAddAsync("agents:all", "agent-1");
+
+        _sut.GetByAgentId(new AgentId("agent-1"))
+            .Should().BeNull("missing connectionId field in the stored hash must cause HashToEntry to return null");
+    }
+
+    [Fact]
+    public async Task GetByAgentId_MissingRegisteredAtField_ReturnsNull()
+    {
+        var partial = FullHash().Where(e => (string)e.Name! != "registeredAt").ToArray();
+        await _store.HashSetAsync("agent:agent-1", partial);
+        await _store.SetAddAsync("agents:all", "agent-1");
+
+        _sut.GetByAgentId(new AgentId("agent-1"))
+            .Should().BeNull("missing registeredAt field in the stored hash must cause HashToEntry to return null");
     }
 }
 
