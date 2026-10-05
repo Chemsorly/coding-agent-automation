@@ -387,6 +387,7 @@ public static class DecompositionPromptBuilder
         sb.AppendLine();
         sb.AppendLine("- If the plan is thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
         sb.AppendLine("- When stating no issues were found, do NOT echo severity marker syntax. Write \"No issues found\" — not \"No [CRITICAL] issues found\".");
+        sb.AppendLine($"- {PromptBuilder.FindingLineRule}");
         sb.AppendLine("- Do NOT modify source files, configuration files, or the plan file. Only read the inputs and write the review findings file.");
 
         return sb.ToString();

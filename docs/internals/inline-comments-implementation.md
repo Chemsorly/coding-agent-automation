@@ -4,6 +4,8 @@ Internal reference for the inline review comments feature implementation.
 
 ## FindingsParser
 
+A finding is a line whose first token is a severity marker (`[CRITICAL]`, `[WARNING]` or `[SUGGESTION]`, any case). Indentation, a list bullet or number, heading hashes, bold or a code span may come before the marker. A marker anywhere else on a line is prose that names a severity ("No [CRITICAL] issues", `// TODO [WARNING]: …`) and is not a finding. A finding line that carries the upper-case word `RESOLVED` reports a prior finding as fixed and is skipped. `SeverityParser` counts the same lines, so the severity table, the review type and the fix-prompt decision always match the parsed findings.
+
 Recognizes four file:line reference formats:
 - `path/to/file.cs:42`
 - `path/to/file.cs#L42`

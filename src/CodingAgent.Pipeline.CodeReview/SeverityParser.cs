@@ -1,15 +1,17 @@
+using CodingAgent.Pipeline.CodeReview.Models;
+
 namespace CodingAgent.Pipeline.CodeReview;
 
 /// <summary>
-/// Parses code review output for severity markers ([CRITICAL], [WARNING], [SUGGESTION]).
+/// Counts the findings in code review output by their severity markers ([CRITICAL], [WARNING], [SUGGESTION]).
 /// </summary>
 public static class SeverityParser
 {
     /// <summary>
-    /// Counts occurrences of severity markers in agent output lines.
-    /// Matching is case-insensitive.
-    /// Lines containing "RESOLVED" (case-insensitive) are excluded from counting,
-    /// as they represent prior findings that have been addressed.
+    /// Counts the finding lines in agent output by severity: one finding per line whose first token is a
+    /// severity marker, matched case-insensitively. A marker anywhere else on a line is prose that names a
+    /// severity and is not counted, and neither is a finding marked RESOLVED (a prior finding that has been
+    /// addressed). <see cref="FindingsParser"/> parses the same lines, so the counts match its findings.
     /// </summary>
     public static SeverityCounts Parse(IReadOnlyList<string> outputLines)
     {
@@ -19,28 +21,24 @@ public static class SeverityParser
 
         foreach (var line in outputLines)
         {
-            // Skip lines referencing resolved findings from prior reviews
-            if (line.Contains("RESOLVED", StringComparison.OrdinalIgnoreCase))
+            if (!FindingLineMatcher.TryMatch(line, out var severity, out _))
                 continue;
 
-            critical += CountOccurrences(line, "[CRITICAL]");
-            warning += CountOccurrences(line, "[WARNING]");
-            suggestion += CountOccurrences(line, "[SUGGESTION]");
+            switch (severity)
+            {
+                case FindingSeverity.Critical:
+                    critical++;
+                    break;
+                case FindingSeverity.Warning:
+                    warning++;
+                    break;
+                default:
+                    suggestion++;
+                    break;
+            }
         }
 
         return new SeverityCounts(critical, warning, suggestion);
-    }
-
-    private static int CountOccurrences(string text, string marker)
-    {
-        var count = 0;
-        var index = 0;
-        while ((index = text.IndexOf(marker, index, StringComparison.OrdinalIgnoreCase)) >= 0)
-        {
-            count++;
-            index += marker.Length;
-        }
-        return count;
     }
 }
 

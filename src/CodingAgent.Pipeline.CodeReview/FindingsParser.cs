@@ -5,8 +5,8 @@ namespace CodingAgent.Pipeline.CodeReview;
 
 /// <summary>
 /// Extracts structured findings with file:line metadata from review agent output.
-/// Supplementary to SeverityParser — does not replace it for count tracking.
-/// Produces one StructuredFinding per input line containing a severity marker.
+/// Produces one StructuredFinding per finding line: a line whose first token is a severity marker
+/// (see <see cref="FindingLineMatcher"/>). SeverityParser counts the same lines.
 /// </summary>
 public static partial class FindingsParser
 {
@@ -29,16 +29,10 @@ public static partial class FindingsParser
         {
             var line = rawLine.TrimEnd('\r');
 
-            // Skip lines referencing resolved findings from prior reviews
-            if (line.Contains("RESOLVED", StringComparison.OrdinalIgnoreCase))
+            if (!FindingLineMatcher.TryMatch(line, out var severity, out var markerEnd))
                 continue;
 
-            var severityMatch = SeverityMarkerRegex().Match(line);
-            if (!severityMatch.Success)
-                continue;
-
-            var severity = ParseSeverity(severityMatch.Value);
-            var afterMarker = line[(severityMatch.Index + severityMatch.Length)..];
+            var afterMarker = line[markerEnd..];
 
             // Search for file:line reference in the content after the severity marker.
             // Bound the scan to the start of the content: a file:line reference always appears
@@ -221,19 +215,6 @@ public static partial class FindingsParser
         return afterBackticks.Length == 0 || FenceLanguageRegex().IsMatch(afterBackticks);
     }
 
-    private static FindingSeverity ParseSeverity(string marker)
-    {
-        // marker includes brackets, e.g. "[CRITICAL]"
-        var inner = marker[1..^1]; // strip [ and ]
-        return inner.ToUpperInvariant() switch
-        {
-            "CRITICAL" => FindingSeverity.Critical,
-            "WARNING" => FindingSeverity.Warning,
-            "SUGGESTION" => FindingSeverity.Suggestion,
-            _ => FindingSeverity.Suggestion
-        };
-    }
-
     /// <summary>
     /// Normalizes file paths to forward slashes and strips leading ./ or / prefixes.
     /// </summary>
@@ -271,13 +252,6 @@ public static partial class FindingsParser
 
         return trimmed;
     }
-
-    /// <summary>
-    /// Matches the first severity marker on a line (case-insensitive).
-    /// Matches [CRITICAL], [WARNING], or [SUGGESTION] in any case.
-    /// </summary>
-    [GeneratedRegex(@"\[(critical|warning|suggestion)\]", RegexOptions.IgnoreCase)]
-    private static partial Regex SeverityMarkerRegex();
 
     /// <summary>
     /// Matches file:line reference in format path:N (e.g., src/Service.cs:42).
