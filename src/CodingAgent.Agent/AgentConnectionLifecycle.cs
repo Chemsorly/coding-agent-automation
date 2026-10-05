@@ -31,7 +31,6 @@ namespace CodingAgent.Agent;
 public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
     private readonly ConnectionReconnectCoordinator _coordinator;
-    private readonly ChatSlotManager _slotManager;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
@@ -79,7 +78,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     public AgentConnectionLifecycle( // NOSONAR S107 — constructor consolidates all DI-resolved deps for this lifecycle manager
         IHubConnectionManager hubManager,
         IHubConnectionManagerFactory hubManagerFactory,
-        ChatSlotManager slotManager,
         AgentId agentId,
         IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger,
@@ -87,11 +85,9 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
-        ArgumentNullException.ThrowIfNull(slotManager);
         ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _slotManager = slotManager;
         _hostApplicationLifetime = hostApplicationLifetime;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
