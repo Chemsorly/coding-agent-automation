@@ -264,7 +264,7 @@
         <div class="cockpit-card">
             <div class="cockpit-card-header">
                 <h2>Provider backlog</h2>
-                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Issues.Count(b => b.IsReady && !IsWorkItemActive(b))} ready · {(_backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}")} open")</span>
+                <span style="font-size: 12px; color: var(--text-muted);">@BacklogSummary</span>
             </div>
             @if (_backlogLoading)
             {
@@ -390,6 +390,18 @@
     // Provider backlog is a LIVE query (issue provider + dependency checker) — loaded after first render.
     private BacklogResult _backlog = new([], IsTruncated: false);
     private bool _backlogLoading = true;
+
+    /// <summary>Provider backlog card header: ready/open counts, or "checking…" while the live query runs.</summary>
+    private string BacklogSummary
+    {
+        get
+        {
+            if (_backlogLoading) return "checking…";
+            var ready = _backlog.Issues.Count(b => b.IsReady && !IsWorkItemActive(b));
+            var open = _backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}";
+            return $"{ready} ready · {open} open";
+        }
+    }
 
     protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
 
@@ -599,7 +611,10 @@
     private void OpenRun(Guid id) => Nav.NavigateTo($"runs/{id}");
 
     private static string Truncate(string? s, int n)
-        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
 
     private static string Ago(DateTimeOffset t)
     {

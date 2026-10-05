@@ -291,8 +291,11 @@
 
     private static string Abs(DateTimeOffset t) => t.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
 
-    private static string Truncate(string? s, int max) =>
-        string.IsNullOrEmpty(s) ? "" : s.Length <= max ? s : s[..max] + "…";
+    private static string Truncate(string? s, int max)
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length <= max ? s : s[..max] + "…";
+    }
 
     public async ValueTask DisposeAsync()
     {

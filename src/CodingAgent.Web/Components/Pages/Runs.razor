@@ -230,12 +230,7 @@
     </div>
 
     <div class="cockpit-pager">
-        <span class="cockpit-pager-info">Page @_page@(
-            _result is { Items.Count: > 0 }
-                ? (_filteredRuns.Count != _result.Items.Count
-                    ? $" · {_filteredRuns.Count} of {_result.Items.Count} on this page"
-                    : $" · {_filteredRuns.Count} shown")
-                : "")</span>
+        <span class="cockpit-pager-info">Page @_page@(PagerSummary)</span>
         <div class="cockpit-pager-buttons">
             <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
                 <Icon Name="chevrons-left" Size="14" /> Prev
@@ -260,6 +255,18 @@
     /// and the pager (which lives outside the if/else block and needs component-level state).
     /// </summary>
     private List<PipelineRunSummary> _filteredRuns = [];
+
+    /// <summary>Pager suffix describing how many of the current page's runs survive the client-side filters.</summary>
+    private string PagerSummary
+    {
+        get
+        {
+            if (_result is not { Items.Count: > 0 }) return "";
+            return _filteredRuns.Count != _result.Items.Count
+                ? $" · {_filteredRuns.Count} of {_result.Items.Count} on this page"
+                : $" · {_filteredRuns.Count} shown";
+        }
+    }
 
     private int _page = 1;
     private bool _feedbackOnly;
@@ -618,7 +625,10 @@
     }
 
     private static string Truncate(string? s, int n)
-        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
 
     private static string Dur(DateTimeOffset start, DateTimeOffset? end)
     {

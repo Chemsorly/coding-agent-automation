@@ -102,7 +102,7 @@
 
         <div class="cockpit-card">
             <div class="cockpit-card-pad cockpit-detail-grid">
-                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset, _isLive)</div></div>
+                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
                 <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
                 <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
                 @if (run.ModelName is not null)
@@ -777,12 +777,12 @@
     }
 
     private static string Truncate(string? s, int n)
-        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
 
-    // TODO: [WARNING] The isLive parameter is accepted but never read — the live-vs-terminal
-    // distinction is handled by the `end ?? DateTimeOffset.UtcNow` fallback alone. Either use the
-    // flag to alter formatting (e.g. show seconds for live runs) or remove it to avoid a misleading API.
-    private static string Dur(DateTimeOffset start, DateTimeOffset? end, bool isLive = false)
+    private static string Dur(DateTimeOffset start, DateTimeOffset? end)
     {
         var d = (end ?? DateTimeOffset.UtcNow) - start;
         // For live runs with no CompletedAtOffset, show the live elapsed (same value as the sidebar

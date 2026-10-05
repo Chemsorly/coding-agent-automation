@@ -123,7 +123,7 @@
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
-    private CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _cts = new();
     private bool _showForm;
     private bool _showDeleteConfirm;
     private string? _deletingProviderId;

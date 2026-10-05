@@ -239,9 +239,15 @@
     private void OpenRun(string runId) => Nav.NavigateTo($"runs/{runId}");
 
     // ── loop hero (read-only) ───────────────────────────────────────────────
-    private string LoopTitle => LoopService.IsSchedulerUnreachable ? "Scheduler unavailable"
-        : LoopService.IsCircuitBroken ? "Loop paused — circuit broken"
-        : LoopService.IsLoopActive ? "Closed-loop active" : "Loop idle";
+    private string LoopTitle
+    {
+        get
+        {
+            if (LoopService.IsSchedulerUnreachable) return "Scheduler unavailable";
+            if (LoopService.IsCircuitBroken) return "Loop paused — circuit broken";
+            return LoopService.IsLoopActive ? "Closed-loop active" : "Loop idle";
+        }
+    }
 
     private string LoopSubtitle
     {
@@ -254,10 +260,25 @@
         }
     }
 
-    private string LoopIconBg => LoopService.IsSchedulerUnreachable || LoopService.IsCircuitBroken ? "var(--warning-bg)"
-        : LoopService.IsLoopActive ? "var(--bg-info)" : "var(--surface-alt)";
-    private string LoopIconColor => LoopService.IsSchedulerUnreachable || LoopService.IsCircuitBroken ? "var(--warning)"
-        : LoopService.IsLoopActive ? "#0E7490" : "var(--text-muted)";
+    private bool LoopIsDegraded => LoopService.IsSchedulerUnreachable || LoopService.IsCircuitBroken;
+
+    private string LoopIconBg
+    {
+        get
+        {
+            if (LoopIsDegraded) return "var(--warning-bg)";
+            return LoopService.IsLoopActive ? "var(--bg-info)" : "var(--surface-alt)";
+        }
+    }
+
+    private string LoopIconColor
+    {
+        get
+        {
+            if (LoopIsDegraded) return "var(--warning)";
+            return LoopService.IsLoopActive ? "#0E7490" : "var(--text-muted)";
+        }
+    }
 
     private async void HandleLoopChanged()
     {

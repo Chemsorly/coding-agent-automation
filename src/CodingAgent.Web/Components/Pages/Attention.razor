@@ -126,6 +126,12 @@
 
     private static string AttentionItemsLabel(int count) => count == 1 ? "1 item" : $"{count} items";
 
+    private static string FailedRunSubline(PipelineRunSummary run)
+    {
+        if (!string.IsNullOrEmpty(run.FailureReason)) return run.FailureReason;
+        return run.RetryCount > 0 ? $"Failed after {run.RetryCount} retries" : "Failed";
+    }
+
     private readonly CancellationTokenSource _cts = new();
     private bool _loading = true;
     private string? _error;
@@ -213,9 +219,7 @@
                 new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", attn.NeedsRefinement.ToList(),
                     _ => "Confidence gate: scope not ready — refine on the issue", "needs-refinement"),
                 new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", attn.FailedRuns.ToList(),
-                    r => string.IsNullOrEmpty(r.FailureReason)
-                        ? (r.RetryCount > 0 ? $"Failed after {r.RetryCount} retries" : "Failed")
-                        : r.FailureReason, "failed-runs"),
+                    FailedRunSubline, "failed-runs"),
                 new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", attn.PlansToApprove.ToList(),
                     _ => "Plan posted — approve by adding agent:epic-approved on the issue", "plans-posted"),
             };

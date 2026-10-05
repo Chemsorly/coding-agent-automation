@@ -495,11 +495,11 @@
 
         // PrMerged: show steps up to CreatingBranch as completed, and mark PrMerged as a clean success.
         if (current == PipelineStep.PrMerged)
-            return step == PipelineStep.PrMerged ? StepState.Completed : GetStepStateWhenPrTerminal(step, current);
+            return step == PipelineStep.PrMerged ? StepState.Completed : GetStepStateWhenPrTerminal(step);
 
         // PrClosed: same treatment but ends Cancelled.
         if (current == PipelineStep.PrClosed)
-            return step == PipelineStep.PrClosed ? StepState.Cancelled : GetStepStateWhenPrTerminal(step, current);
+            return step == PipelineStep.PrClosed ? StepState.Cancelled : GetStepStateWhenPrTerminal(step);
 
         if (current == PipelineStep.Completed)
             return GetStepStateWhenCompleted(step);
@@ -534,7 +534,7 @@
         return StepState.Pending;
     }
 
-    private StepState GetStepStateWhenPrTerminal(PipelineStep step, PipelineStep current)
+    private StepState GetStepStateWhenPrTerminal(PipelineStep step)
     {
         // For PrMerged/PrClosed, show steps up through CreatingBranch as completed.
         var last = GetLastReachedStep();
@@ -597,27 +597,27 @@
     private RenderFragment RenderStepDetails(PipelineStep step, StepState state) => step switch
     {
         PipelineStep.CloningRepository when !string.IsNullOrEmpty(Run.RepositoryName)
-            => RenderCloningRepositoryDetails(state),
+            => RenderCloningRepositoryDetails(),
         PipelineStep.SyncingBrainRepoPreRun when Run.BrainProviderConfigId != null
             => RenderSyncingBrainPreRunDetails(state),
         PipelineStep.Created when !string.IsNullOrEmpty(Run.ModelName)
-            => RenderCreatedDetails(state),
+            => RenderCreatedDetails(),
         PipelineStep.CreatingBranch when !string.IsNullOrEmpty(Run.BranchName)
-            => RenderCreatingBranchDetails(state),
+            => RenderCreatingBranchDetails(),
         PipelineStep.VerifyingBaseline when Run.BaselineHealthPassed.HasValue
-            => RenderVerifyingBaselineDetails(state),
-        PipelineStep.AnalyzingCode => RenderAnalyzingCodeDetails(state),
-        PipelineStep.ReviewingAnalysis => RenderReviewingAnalysisDetails(state),
+            => RenderVerifyingBaselineDetails(),
+        PipelineStep.AnalyzingCode => RenderAnalyzingCodeDetails(),
+        PipelineStep.ReviewingAnalysis => RenderReviewingAnalysisDetails(),
         PipelineStep.GeneratingCode => RenderGeneratingCodeDetails(state),
         PipelineStep.ReviewingCode => RenderReviewingCodeDetails(state),
         PipelineStep.RunningQualityGates when Run.LatestQualityReport != null
-            => RenderRunningQualityGatesDetails(state),
+            => RenderRunningQualityGatesDetails(),
         PipelineStep.ExtractingLinkedIssues => RenderExtractingLinkedIssuesDetails(state),
         PipelineStep.PostingFindings => RenderPostingFindingsDetails(state),
         PipelineStep.PreparingForPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
-            => RenderPreparingForPullRequestDetails(state),
+            => RenderPreparingForPullRequestDetails(),
         PipelineStep.FinalizingPullRequest when !string.IsNullOrEmpty(Run.PullRequestUrl)
-            => RenderFinalizingPullRequestDetails(state),
+            => RenderFinalizingPullRequestDetails(),
         PipelineStep.ReflectingOnRun when Run.BrainProviderConfigId != null
             => RenderReflectingOnRunDetails(state),
         PipelineStep.SyncingBrainRepoPostRun when Run.BrainProviderConfigId != null
@@ -633,7 +633,7 @@
         _ => _ => { }
     };
 
-    private RenderFragment RenderCloningRepositoryDetails(StepState state) => __builder =>
+    private RenderFragment RenderCloningRepositoryDetails() => __builder =>
     {
         <div class="step-detail">@Run.RepositoryName</div>
     };
@@ -656,22 +656,22 @@
         </div>
     };
 
-    private RenderFragment RenderCreatedDetails(StepState state) => __builder =>
+    private RenderFragment RenderCreatedDetails() => __builder =>
     {
         <div class="step-detail">Model: @Run.ModelName</div>
     };
 
-    private RenderFragment RenderCreatingBranchDetails(StepState state) => __builder =>
+    private RenderFragment RenderCreatingBranchDetails() => __builder =>
     {
         <div class="step-detail step-detail-mono">@Truncate(Run.BranchName, 36)</div>
     };
 
-    private RenderFragment RenderVerifyingBaselineDetails(StepState state) => __builder =>
+    private RenderFragment RenderVerifyingBaselineDetails() => __builder =>
     {
         <div class="step-detail">@if (Run.BaselineHealthPassed!.Value) {<Icon Name="check-circle" /><text> Baseline healthy</text>} else {<Icon Name="alert-triangle" /><text> Pre-existing issues</text>}</div>
     };
 
-    private RenderFragment RenderAnalyzingCodeDetails(StepState state) => __builder =>
+    private RenderFragment RenderAnalyzingCodeDetails() => __builder =>
     {
         <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
         if (Run.AnalysisRecommendation == AnalysisGateResult.NotReady)
@@ -684,7 +684,7 @@
         }
     };
 
-    private RenderFragment RenderReviewingAnalysisDetails(StepState state) => __builder =>
+    private RenderFragment RenderReviewingAnalysisDetails() => __builder =>
     {
         <div class="step-detail">Adversarial review</div>
     };
@@ -738,7 +738,7 @@
         </div>
     };
 
-    private RenderFragment RenderRunningQualityGatesDetails(StepState state) => __builder =>
+    private RenderFragment RenderRunningQualityGatesDetails() => __builder =>
     {
         if (Run.LatestQualityReport is { } qr)
         {
@@ -892,7 +892,7 @@
         </div>
     };
 
-    private RenderFragment RenderPreparingForPullRequestDetails(StepState state) => __builder =>
+    private RenderFragment RenderPreparingForPullRequestDetails() => __builder =>
     {
         <div class="step-detail-box">
             <div>Existing PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>
@@ -900,7 +900,7 @@
         </div>
     };
 
-    private RenderFragment RenderFinalizingPullRequestDetails(StepState state) => __builder =>
+    private RenderFragment RenderFinalizingPullRequestDetails() => __builder =>
     {
         <div class="step-detail-box">
             <div>PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "") @(Run.IsDraftPr ? "(draft)" : "(final)")</div>

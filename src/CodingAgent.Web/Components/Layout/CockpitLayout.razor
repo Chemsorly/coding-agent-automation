@@ -291,11 +291,11 @@
     }
 
     // TODO: [WARNING] HandleProjectChanged is declared async void. RefreshAttentionCountAsync wraps its
-    // body in catch (Exception ex), so today's risk is low. However if RefreshAttentionCountAsync ever
+    // body in a catch-all handler, so today's risk is low. However if RefreshAttentionCountAsync ever
     // rethrows, or if new awaitable work is added outside its try/catch, the exception will escape the
-    // outer catch (ObjectDisposedException) guard here and be delivered to the Blazor circuit's unhandled-
-    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in
-    // catch (Exception) or scheduling via _ = InvokeAsync(RefreshAttentionCountAsync) so Blazor's own
+    // outer ObjectDisposedException guard here and be delivered to the Blazor circuit's unhandled-
+    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in a
+    // catch-all handler, or scheduling the refresh as a discarded InvokeAsync task, so Blazor's own
     // error pipeline handles it. Also note that OperationCanceledException on circuit teardown would
     // also escape the current ObjectDisposedException guard.
     private async void HandleProjectChanged()
