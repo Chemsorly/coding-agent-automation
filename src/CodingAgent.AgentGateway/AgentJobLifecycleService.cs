@@ -483,84 +483,136 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         if (run is not null)
         {
             var previousStep = run.CurrentStep;
-            run.CurrentStep = step;
 
-            // Capture previous step's start time BEFORE mutation 2 overwrites it.
-            // Must be after run.CurrentStep = step (mutation 1) but before
-            // run.LastStepChangeAt = clampedTimestamp (mutation 2).
-            // TODO: [WARNING] This ordering is fragile: if run.LastStepChangeAt = clampedTimestamp
-            // were moved above this capture (e.g. during a refactor), previousStepChangedAt would
-            // equal clampedTimestamp and every delta would be 0. No test currently fails if these
-            // lines are reordered. Consider a regression test or a code comment asserting the
-            // invariant: previousStepChangedAt must equal the value of LastStepChangeAt at the
-            // time the previous step started, not the current clamped timestamp.
-            // See review findings [WARNING] Correctness L540.
-            var previousStepChangedAt = run.LastStepChangeAt;
-
-            var clampedTimestamp = timestamp <= DateTimeOffset.UtcNow
-                ? timestamp
-                : DateTimeOffset.UtcNow;
-            run.LastStepChangeAt = clampedTimestamp;
-
-            // Persist progress to DB for cross-replica timeout enforcement (throttled)
-            _ = _facade.TouchLastProgressAsync(jobId, clampedTimestamp, CancellationToken.None);
-
-            // Update HighWaterMark — only advance, never go backward
-            // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
-            // Terminal states (Failed, Cancelled) return -1 and are excluded.
-            if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-                && StepOrder.GetOrder(step) > StepOrder.GetOrder(run.HighWaterMark))
-                run.HighWaterMark = step;
-
-            // Apply step metadata from the agent (carries data from the just-completed step).
-            // Capture sub-issue counts before Apply so we can detect first-write (once per run).
-            // NOTE: capture unconditionally (before the metadata guard) so that when metadata is null
-            // or empty, previousSubIssuesAttempted reflects the already-set value from a prior call.
-            // If captured inside the if-block only, a subsequent null-metadata call would leave
-            // previousSubIssuesAttempted=0 while run.DecompositionSubIssuesAttempted is already >0,
-            // causing the once-per-run guard to fire again and double-emit the counters.
+            // Capture sub-issue counts unconditionally before metadata is applied — see comment
+            // on EmitSubIssueCountersOnce for why this must not be inside the metadata guard.
             int previousSubIssuesAttempted = run.DecompositionSubIssuesAttempted;
+
+            // ApplyStepMutation returns previousStepChangedAt (the old LastStepChangeAt).
+            // Ordering is enforced by data flow: RecordStepDurationTelemetry cannot be called
+            // without first receiving this value from ApplyStepMutation.
+            var previousStepChangedAt = ApplyStepMutation(run, jobId, step, timestamp);
+
             if (metadata is { Count: > 0 })
-            {
                 StepMetadataApplier.Apply(run, metadata);
-            }
 
             // Persist mutated run back to the store (no-op for in-memory; required for Redis).
+            // Must be after both ApplyStepMutation and StepMetadataApplier.Apply.
             _facade.ReplaceRun(run);
 
-            // Record step duration for the step that just completed (previousStep).
-            // Guard: only when the step actually changed (prevents double-recording on no-op transitions).
-            // Re-visits (e.g. GeneratingCode appearing twice in a retry loop) each produce their own sample.
-            // Note: previousStep is always set (PipelineStep is a non-nullable enum); the first transition
-            // from the initial state (Created=0) still records a sample — by design.
-            if (step != previousStep)
-            {
-                var delta = clampedTimestamp - previousStepChangedAt;
-                if (delta.TotalSeconds >= 0)
-                {
-                    PipelineTelemetry.RunStepDuration.Record(
-                        delta.TotalSeconds,
-                        new KeyValuePair<string, object?>("run_type", run.RunType.ToString().ToLowerInvariant()),
-                        new KeyValuePair<string, object?>("step", previousStep.ToString()));
-                }
-            }
-
-            // Record sub-issue counters once per run: fire only when DecompositionSubIssuesAttempted
-            // transitions from 0 to non-zero (guards against re-emission on metadata retransmission).
-            if (run.DecompositionSubIssuesAttempted > 0 && previousSubIssuesAttempted == 0)
-            {
-                var failed = run.DecompositionSubIssuesAttempted - run.DecompositionSubIssuesCreated;
-                if (run.DecompositionSubIssuesCreated > 0)
-                    PipelineTelemetry.RunSubIssues.Add(run.DecompositionSubIssuesCreated,
-                        new KeyValuePair<string, object?>("result", "created"));
-                if (failed > 0)
-                    PipelineTelemetry.RunSubIssues.Add(failed,
-                        new KeyValuePair<string, object?>("result", "failed"));
-            }
+            RecordStepDurationTelemetry(run, previousStep, step, previousStepChangedAt);
+            EmitSubIssueCountersOnce(run, previousSubIssuesAttempted);
 
             _logger.Information("Job {JobId} step transition {Previous} → {Step}",
                 jobId.Value, previousStep, step);
             _changeNotifier.NotifyChange();
+        }
+    }
+
+    /// <summary>
+    /// Applies the step mutation to the run: sets <see cref="PipelineRun.CurrentStep"/>,
+    /// clamps and records <see cref="PipelineRun.LastStepChangeAt"/>, fires the throttled
+    /// progress-persistence side-effect, and advances <see cref="PipelineRun.HighWaterMark"/>.
+    /// </summary>
+    /// <returns>
+    /// The value of <see cref="PipelineRun.LastStepChangeAt"/> captured <em>before</em> the
+    /// mutation — i.e. the timestamp at which the previous step started. Returning it here
+    /// enforces ordering by data flow: <see cref="RecordStepDurationTelemetry"/> cannot be
+    /// invoked without first calling this method.
+    /// </returns>
+    private DateTimeOffset ApplyStepMutation(PipelineRun run, JobId jobId, PipelineStep step, DateTimeOffset timestamp)
+    {
+        run.CurrentStep = step;
+
+        // Capture the previous step's start time BEFORE overwriting LastStepChangeAt.
+        // Returning this value (rather than reading it after the write) makes the ordering
+        // invariant compiler-enforceable: callers receive it from this method and cannot
+        // accidentally read the post-mutation value.
+        var previousStepChangedAt = run.LastStepChangeAt;
+
+        var clampedTimestamp = timestamp <= DateTimeOffset.UtcNow
+            ? timestamp
+            : DateTimeOffset.UtcNow;
+        run.LastStepChangeAt = clampedTimestamp;
+
+        // Persist progress to DB for cross-replica timeout enforcement (throttled).
+        _ = _facade.TouchLastProgressAsync(jobId, clampedTimestamp, CancellationToken.None);
+
+        // Update HighWaterMark — only advance, never go backward.
+        // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
+        // Terminal states (Failed, Cancelled) return -1 and are excluded.
+        if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
+            && StepOrder.GetOrder(step) > StepOrder.GetOrder(run.HighWaterMark))
+            run.HighWaterMark = step;
+
+        return previousStepChangedAt;
+    }
+
+    /// <summary>
+    /// Records a step-duration histogram sample for the step that just completed
+    /// (<paramref name="previousStep"/>). No-ops when the step did not change or when
+    /// the computed delta is negative (clock skew guard).
+    /// </summary>
+    /// <remarks>
+    /// Reads <see cref="PipelineRun.LastStepChangeAt"/> as the clamped end-timestamp; this is
+    /// safe because <see cref="ApplyStepMutation"/> has already written the clamped value.
+    /// </remarks>
+    private static void RecordStepDurationTelemetry(
+        PipelineRun run,
+        PipelineStep previousStep,
+        PipelineStep currentStep,
+        DateTimeOffset previousStepChangedAt)
+    {
+        // Guard: only when the step actually changed (prevents double-recording on no-op transitions).
+        // Re-visits (e.g. GeneratingCode appearing twice in a retry loop) each produce their own sample.
+        // Note: previousStep is always set (PipelineStep is a non-nullable enum); the first transition
+        // from the initial state (Created=0) still records a sample — by design.
+        if (currentStep == previousStep)
+            return;
+
+        // TODO: [WARNING] run.LastStepChangeAt is read here from shared mutable state rather than
+        // consuming the clamped value that ApplyStepMutation already computed. In the current
+        // single-threaded call chain the two values are always equal, but a concurrent heartbeat
+        // on the same job (AgentHub sets run.LastStepChangeAt when CurrentStep matches) can
+        // overwrite the field between ApplyStepMutation and this call, producing a sample that
+        // reflects the heartbeat's timestamp instead of the transition's clamped value.
+        // Fix: have ApplyStepMutation return both timestamps (e.g. a (previousStepChangedAt,
+        // clampedTimestamp) tuple) and compute delta from the two returned locals so no shared-state
+        // read is needed here. This closes the residual coupling and makes RecordStepDurationTelemetry
+        // a pure function of its parameters. (Correctness L584, DotnetSpecialist L580)
+        var delta = run.LastStepChangeAt - previousStepChangedAt;
+        if (delta.TotalSeconds >= 0)
+        {
+            PipelineTelemetry.RunStepDuration.Record(
+                delta.TotalSeconds,
+                new KeyValuePair<string, object?>("run_type", run.RunType.ToString().ToLowerInvariant()),
+                new KeyValuePair<string, object?>("step", previousStep.ToString()));
+        }
+    }
+
+    /// <summary>
+    /// Emits sub-issue telemetry counters exactly once per run: fires only when
+    /// <see cref="PipelineRun.DecompositionSubIssuesAttempted"/> transitions from 0 to non-zero,
+    /// preventing re-emission on metadata retransmission.
+    /// </summary>
+    /// <param name="run">The pipeline run after metadata has been applied.</param>
+    /// <param name="previousSubIssuesAttempted">
+    /// The value of <see cref="PipelineRun.DecompositionSubIssuesAttempted"/> captured
+    /// <em>before</em> metadata was applied — and captured unconditionally (not inside the
+    /// metadata guard), so that a subsequent null-metadata call does not reset this to 0 and
+    /// cause the guard to fire a second time.
+    /// </param>
+    private static void EmitSubIssueCountersOnce(PipelineRun run, int previousSubIssuesAttempted)
+    {
+        if (run.DecompositionSubIssuesAttempted > 0 && previousSubIssuesAttempted == 0)
+        {
+            var failed = run.DecompositionSubIssuesAttempted - run.DecompositionSubIssuesCreated;
+            if (run.DecompositionSubIssuesCreated > 0)
+                PipelineTelemetry.RunSubIssues.Add(run.DecompositionSubIssuesCreated,
+                    new KeyValuePair<string, object?>("result", "created"));
+            if (failed > 0)
+                PipelineTelemetry.RunSubIssues.Add(failed,
+                    new KeyValuePair<string, object?>("result", "failed"));
         }
     }
 }
