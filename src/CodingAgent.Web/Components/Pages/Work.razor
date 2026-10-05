@@ -560,18 +560,25 @@
         if (labels is null) return null;
         foreach (var l in labels)
         {
-            if (l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase)) return ("In progress", "accent");
-            if (l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase)) return ("Done", "muted");
-            if (l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase)) return ("Error", "error");
-            if (l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
-             || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase)) return ("Won't do", "muted");
-            if (l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase)) return ("Needs refinement", "warning");
-            if (l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase)) return ("Queued", "accent");
-            if (l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
-             || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
-             || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase)) return ("Epic", "muted");
-            if (l.Equals("backlog", StringComparison.OrdinalIgnoreCase)) return ("Parked", "muted");
+            var display = GetLabelDisplay(l);
+            if (display is not null) return display;
         }
+        return null;
+    }
+
+    private static (string Text, string StyleClass)? GetLabelDisplay(string l)
+    {
+        if (l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase)) return ("In progress", "accent");
+        if (l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase)) return ("Done", "muted");
+        if (l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase)) return ("Error", "error");
+        if (l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
+         || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase)) return ("Won't do", "muted");
+        if (l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase)) return ("Needs refinement", "warning");
+        if (l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase)) return ("Queued", "accent");
+        if (l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
+         || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
+         || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase)) return ("Epic", "muted");
+        if (l.Equals("backlog", StringComparison.OrdinalIgnoreCase)) return ("Parked", "muted");
         return null;
     }
 

@@ -502,11 +502,19 @@
             return step == PipelineStep.PrClosed ? StepState.Cancelled : GetStepStateWhenPrTerminal(step, current);
 
         if (current == PipelineStep.Completed)
-            return step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
-                       or PipelineStep.ConflictRestart or PipelineStep.PrMerged or PipelineStep.PrClosed
-                ? StepState.Pending
-                : StepState.Completed;
+            return GetStepStateWhenCompleted(step);
 
+        return GetStepStateWhenInProgress(step, current);
+    }
+
+    private static StepState GetStepStateWhenCompleted(PipelineStep step) =>
+        step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
+             or PipelineStep.ConflictRestart or PipelineStep.PrMerged or PipelineStep.PrClosed
+            ? StepState.Pending
+            : StepState.Completed;
+
+    private StepState GetStepStateWhenInProgress(PipelineStep step, PipelineStep current)
+    {
         if (step == current) return StepState.Active;
 
         if (LogicalOrder(step) > LogicalOrder(current) && LogicalOrder(step) <= LogicalOrder(Run.HighWaterMark))

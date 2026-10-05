@@ -530,32 +530,35 @@
             // Reload the now-terminal summary for final metadata, and advance the sidebar model's
             // step to the terminal step — without discarding the live pipeline detail (quality gates,
             // PR, review) already accumulated from snapshots.
-            if (Guid.TryParse(RunId, out var id))
-            {
-                try
-                {
-                    _run = await RunHistory.GetRunAsync(id, _cts.Token);
-                    if (_run is not null && _model is not null)
-                    {
-                        _model.CurrentStep = _run.FinalStep;
-                        if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
-                            _model.HighWaterMark = _run.FinalStep;
-                        // TODO: [WARNING] Unconditionally overwriting HighWaterMark with FinalStep
-                        // (Completed/Failed ordinal) for terminal states clobbers the real last-active
-                        // step if no live snapshots were received before OnCompleted fired (e.g. reconnect
-                        // race). In that case _model has no data fields set and GetLastReachedStep falls
-                        // back to Created. Consider using _run.LastActiveStep here for terminal FinalSteps,
-                        // mirroring the logic in BuildRunModelFromSummary.
-                        // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
-                        // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
-                        _model.CompletedAtOffset = _run.CompletedAtOffset;
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
-            }
+            await ReloadCompletedRunAsync();
             StateHasChanged();
         });
+    }
+
+    private async Task ReloadCompletedRunAsync()
+    {
+        if (!Guid.TryParse(RunId, out var id)) return;
+        try
+        {
+            _run = await RunHistory.GetRunAsync(id, _cts.Token);
+            if (_run is not null && _model is not null)
+            {
+                _model.CurrentStep = _run.FinalStep;
+                if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
+                    _model.HighWaterMark = _run.FinalStep;
+                // TODO: [WARNING] Unconditionally overwriting HighWaterMark with FinalStep
+                // (Completed/Failed ordinal) for terminal states clobbers the real last-active
+                // step if no live snapshots were received before OnCompleted fired (e.g. reconnect
+                // race). In that case _model has no data fields set and GetLastReachedStep falls
+                // back to Created. Consider using _run.LastActiveStep here for terminal FinalSteps,
+                // mirroring the logic in BuildRunModelFromSummary.
+                // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
+                // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
+                _model.CompletedAtOffset = _run.CompletedAtOffset;
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
     }
 
     // Accumulates incremental chat entries pushed by the hub during an active run.
