@@ -50,24 +50,13 @@ internal class CodeReviewOrchestrator
             // We own the lifetime here and dispose it at the end of the loop body.
             using var iterationActivity = SetupIterationTelemetry(context, run, i, maxIterations, useParallel);
 
-            context.Callbacks.EmitOutputLine(useParallel
-                ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
-                : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
-
-            run.ChatHistory.Enqueue(new ChatEntry
-            {
-                Role = ChatRole.System,
-                Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
-            });
-            context.Callbacks.NotifyChange();
+            AnnounceIterationStart(context, agents, i, maxIterations, useParallel);
 
             // Re-compute diff artifacts every iteration (fix agent may have committed since last iteration)
             await AgentPhaseExecutor.PreComputeDiffArtifactsAsync(run, _logger, ct);
 
             // Delete consolidated findings from prior iteration (hygiene — prevents accidental prior-finding influence)
-            var consolidatedFindingsPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
-            if (File.Exists(consolidatedFindingsPath))
-                File.Delete(consolidatedFindingsPath);
+            DeleteConsolidatedFindings(run);
 
             var iterationFindings = new System.Text.StringBuilder();
             var iterationCriticalCount = 0;
@@ -166,6 +155,32 @@ internal class CodeReviewOrchestrator
             run.RunId, i + 1, maxIterations);
 
         return iterationActivity;
+    }
+
+    /// <summary>
+    /// Emits the iteration-start output line and chat history entry, then notifies the UI.
+    /// </summary>
+    private static void AnnounceIterationStart(
+        AgentPhaseContext context, IReadOnlyList<ReviewAgentConfig> agents, int i, int maxIterations, bool useParallel)
+    {
+        var agentNames = string.Join(", ", agents.Select(a => a.Name));
+        context.Callbacks.EmitOutputLine(useParallel
+            ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {agentNames})"
+            : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {agentNames})");
+
+        context.Run.ChatHistory.Enqueue(new ChatEntry
+        {
+            Role = ChatRole.System,
+            Content = $"Code review iteration {i + 1}/{context.Config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
+        });
+        context.Callbacks.NotifyChange();
+    }
+
+    private static void DeleteConsolidatedFindings(PipelineRun run)
+    {
+        var consolidatedFindingsPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+        if (File.Exists(consolidatedFindingsPath))
+            File.Delete(consolidatedFindingsPath);
     }
 
     private async Task<(int criticalCount, int crashCount)> DispatchReviewAgentsAsync(
@@ -498,7 +513,7 @@ internal class CodeReviewOrchestrator
             var prompt = PromptBuilder.BuildAcceptanceCriteriaPrompt(config.AcceptanceCriteriaPrompt);
 
             var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                context.AgentProvider,
+                new AgentMonitorContext(context.AgentProvider, run, config, "Acceptance criteria compliance", context.Callbacks.NotifyChange, _logger),
                 new AgentRequest
                 {
                     Prompt = prompt,
@@ -506,8 +521,7 @@ internal class CodeReviewOrchestrator
                     Timeout = config.AgentTimeout,
                     UseResume = false
                 },
-                run, config, "Acceptance criteria compliance",
-                context.Callbacks.NotifyChange, _logger, ct,
+                ct,
                 line => context.Callbacks.EmitOutputLine($"[AcceptanceCriteria] {line}"),
                 reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "code_review");
@@ -585,7 +599,7 @@ internal class CodeReviewOrchestrator
         activity?.SetTag("pipeline.prompt_length_chars", reviewPrompt.Length);
 
         var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            context.AgentProvider,
+            new AgentMonitorContext(context.AgentProvider, run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger),
             new AgentRequest
             {
                 Prompt = reviewPrompt,
@@ -596,7 +610,7 @@ internal class CodeReviewOrchestrator
                     ? context.DownloadedImages?.Select(d => d.LocalPath).ToList()
                     : null
             },
-            run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
+            ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"),
             reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
             phase: "code_review");

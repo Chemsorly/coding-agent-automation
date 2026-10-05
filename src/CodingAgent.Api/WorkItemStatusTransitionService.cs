@@ -100,8 +100,7 @@ public sealed partial class WorkItemStatusTransitionService
         // a DB query returning null (not found) and return StatusTransitionOutcome.NotFound. This is the
         // correct observable outcome, but Guid.Empty reaching the persistence layer is a correctness
         // hazard if EF or the DB ever treats the all-zeros GUID specially (e.g. default value handling,
-        // optimistic concurrency on a default GUID). Consider adding:
-        //   if (id == Guid.Empty) return StatusTransitionOutcome.NotFound;
+        // optimistic concurrency on a default GUID). Consider returning NotFound early for an empty id,
         // or throwing ArgumentException to fail fast at the public boundary.
 
         // ── Infrastructure-recovery guard (issue #2459) ───────────────────────────────────
@@ -149,47 +148,7 @@ public sealed partial class WorkItemStatusTransitionService
         // ── Lifecycle dispatch + telemetry (Transitioned only) ───────────────────────────
         if (transitionResult == TransitionResult.Transitioned)
         {
-            if (request.Status == WorkItemStatus.Failed)
-            {
-                var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
-
-                // Resolve the FinalLabel from the payload, allowing only agent:needs-refinement
-                // on the HTTP Failed path. All other values (including agent:error, agent:wont-do,
-                // any disallowed label, or absent payload) fall back to null — which causes
-                // RunLifecycleManager to use its default agent:error label.
-                string? resolvedFinalLabel = ResolveAllowedFinalLabelFromPayload(request.Result, id);
-
-                await _runLifecycleManager.FailRunWithLabelAsync(
-                    new RunId(id.ToString()),
-                    failureReason,
-                    resolvedFinalLabel,
-                    ct,
-                    CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure);
-            }
-            else if (request.Status == WorkItemStatus.Cancelled)
-            {
-                await _runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
-            }
-
-            if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-            {
-                // CancellationToken.None is intentional: this task outlives the HTTP request
-                // lifetime. The request-scoped ct is cancelled when the response is sent,
-                // which would cause spurious OperationCanceledException inside the task.
-                var emitTask = EmitTerminalStatusTelemetryAsync(id, request, _dbFactory, CancellationToken.None);
-                if (awaitTelemetry)
-                    await emitTask;
-                else
-                    // TODO: [WARNING] The fire-and-forget discard (_ = emitTask) is safe as long as all
-                    // awaits inside EmitTerminalStatusTelemetryAsync are covered by the outer try/catch.
-                    // If EmitTerminalStatusTelemetryAsync is ever modified to add an await outside that
-                    // try/catch block (e.g. for a new enrichment read), an exception on that path would
-                    // produce an unobserved faulted Task and trigger TaskScheduler.UnobservedTaskException.
-                    // The current implementation is safe, but reviewers should ensure any future changes
-                    // to EmitTerminalStatusTelemetryAsync keep all awaits inside the try/catch.
-                    _ = emitTask;
-            }
-
+            await DispatchTransitionedAsync(id, request, awaitTelemetry, ct);
             return StatusTransitionOutcome.Transitioned;
         }
 
@@ -203,6 +162,58 @@ public sealed partial class WorkItemStatusTransitionService
     // "unknown" appears in ResolveRunContextAsync (2× early-exit returns + 1× fallback assignment)
     // and in RecordRunOutcomeMetrics (project_name fallback) — 4 uses across this class.
     private const string UnknownTag = "unknown";
+
+    /// <summary>
+    /// Dispatches the run lifecycle event for a real (<see cref="TransitionResult.Transitioned"/>)
+    /// state change and launches the terminal-status telemetry.
+    /// </summary>
+    private async Task DispatchTransitionedAsync(
+        Guid id,
+        WorkItemStatusRequest request,
+        bool awaitTelemetry,
+        CancellationToken ct)
+    {
+        if (request.Status == WorkItemStatus.Failed)
+        {
+            var failureReason = request.ErrorMessage ?? request.FailureReason ?? "Infrastructure failure";
+
+            // Resolve the FinalLabel from the payload, allowing only agent:needs-refinement
+            // on the HTTP Failed path. All other values (including agent:error, agent:wont-do,
+            // any disallowed label, or absent payload) fall back to null — which causes
+            // RunLifecycleManager to use its default agent:error label.
+            string? resolvedFinalLabel = ResolveAllowedFinalLabelFromPayload(request.Result, id);
+
+            await _runLifecycleManager.FailRunWithLabelAsync(
+                new RunId(id.ToString()),
+                failureReason,
+                resolvedFinalLabel,
+                ct,
+                CodingAgent.Pipeline.Models.FailureReason.InfrastructureFailure);
+        }
+        else if (request.Status == WorkItemStatus.Cancelled)
+        {
+            await _runLifecycleManager.CancelRunAsync(new RunId(id.ToString()), ct);
+        }
+
+        if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+        {
+            // CancellationToken.None is intentional: this task outlives the HTTP request
+            // lifetime. The request-scoped ct is cancelled when the response is sent,
+            // which would cause spurious OperationCanceledException inside the task.
+            var emitTask = EmitTerminalStatusTelemetryAsync(id, request, _dbFactory, CancellationToken.None);
+            if (awaitTelemetry)
+                await emitTask;
+            else
+                // TODO: [WARNING] The fire-and-forget discard (_ = emitTask) is safe as long as all
+                // awaits inside EmitTerminalStatusTelemetryAsync are covered by the outer try/catch.
+                // If EmitTerminalStatusTelemetryAsync is ever modified to add an await outside that
+                // try/catch block (e.g. for a new enrichment read), an exception on that path would
+                // produce an unobserved faulted Task and trigger TaskScheduler.UnobservedTaskException.
+                // The current implementation is safe, but reviewers should ensure any future changes
+                // to EmitTerminalStatusTelemetryAsync keep all awaits inside the try/catch.
+                _ = emitTask;
+        }
+    }
 
     private static void ApplyStatusMutation(WorkItemEntity entity, WorkItemStatusRequest request)
     {

@@ -102,7 +102,6 @@ internal sealed class DispatchLifecycleService : IDisposable
         var template = ctx.Template;
         var isKiroAgent = ctx.IsKiroAgent;
         var availablePvcs = ctx.AvailablePvcs;
-        var concurrencyBySelector = ctx.ConcurrencyBySelector;
         var logPrefix = ctx.LogPrefix;
 
         // Generate deterministic job name
@@ -176,7 +175,7 @@ internal sealed class DispatchLifecycleService : IDisposable
 
         // Update to Dispatched — clear change tracker first to get fresh state
         // (avoids stale entity if another service modified the item during K8s API call)
-        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, logPrefix, ctx.ExpectedInitialStatus, ct);
+        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(ctx, jobName, claimedPvc, ct);
         if (!shouldContinue)
             return;
 
@@ -189,7 +188,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         // called db.ChangeTracker.Clear() before re-fetching from the DB.
         workItem.ClaimedPvcName = claimedPvc;
 
-        await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, _log, ct);
+        await FinalizeDispatchAsync(ctx, workItem, onDispatchSuccess, _log, ct);
     }
 
     /// <summary>
@@ -233,15 +232,16 @@ internal sealed class DispatchLifecycleService : IDisposable
     /// and invokes the variant-specific post-dispatch success callback.
     /// </summary>
     private static async Task FinalizeDispatchAsync(
-        PipelineDbContext db,
+        DispatchLifecycleContext ctx,
         WorkItemEntity workItem,
-        PendingWorkItemProjection item,
-        string logPrefix,
-        Dictionary<string, int> concurrencyBySelector,
         Func<WorkItemEntity, Task>? onDispatchSuccess,
         Serilog.ILogger log,
         CancellationToken ct)
     {
+        var db = ctx.Db;
+        var item = ctx.Item;
+        var logPrefix = ctx.LogPrefix;
+        var concurrencyBySelector = ctx.ConcurrencyBySelector;
         var jobName = workItem.K8sJobName!;
         try
         {
@@ -501,20 +501,22 @@ internal sealed class DispatchLifecycleService : IDisposable
 
     /// <summary>
     /// Clears the change tracker, re-fetches the WorkItem, and checks for race conditions.
-    /// If the WorkItem is no longer in <paramref name="expectedStatus"/>, releases the PVC and deletes the orphaned K8s Job.
+    /// If the WorkItem is no longer in <see cref="DispatchLifecycleContext.ExpectedInitialStatus"/>, releases the PVC
+    /// and deletes the orphaned K8s Job.
     /// Returns (true, reloadedWorkItem) if the caller should continue, or (false, null) if the caller
     /// should return early due to a detected race condition.
     /// </summary>
     private async Task<(bool shouldContinue, WorkItemEntity? reloadedWorkItem)> HandleOrphanedJobIfRaceDetectedAsync(
-        PipelineDbContext db,
-        Guid workItemId,
+        DispatchLifecycleContext ctx,
         string jobName,
         string? claimedPvc,
-        List<string> availablePvcs,
-        string logPrefix,
-        WorkItemStatus expectedStatus,
         CancellationToken ct)
     {
+        var db = ctx.Db;
+        var workItemId = ctx.Item.Id;
+        var availablePvcs = ctx.AvailablePvcs;
+        var logPrefix = ctx.LogPrefix;
+        var expectedStatus = ctx.ExpectedInitialStatus;
         db.ChangeTracker.Clear();
         var workItem = await db.WorkItems.FindAsync([workItemId], ct);
         if (workItem is null || workItem.Status != expectedStatus)

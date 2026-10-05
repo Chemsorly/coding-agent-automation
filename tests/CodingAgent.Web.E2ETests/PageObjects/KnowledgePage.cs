@@ -29,30 +29,40 @@ public sealed class KnowledgePage
     }
 
     /// <summary>
-    /// Navigates to /knowledge, waits for the Blazor circuit, and waits for the loading state
-    /// to clear. After this method returns, either the stat strip or the empty state is visible.
+    /// Navigates to /knowledge, waits for the interactive circuit's first render, and waits for
+    /// the loading state to clear. After this method returns, either the stat strip or a
+    /// non-loading empty state is present.
     /// </summary>
     public async Task NavigateAsync()
     {
         await _page.GotoAsync($"{_baseUrl}/knowledge");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
         await _page.WaitForBlazorAsync(DefaultTimeout);
+        // The prerendered HTML already contains the stat strip, but when the circuit connects the
+        // interactive component re-runs OnInitializedAsync and replaces it with "Loading…" until
+        // the run-history API call returns. Wait for the circuit to attach the layout's event
+        // handlers so the settled-state check below cannot be satisfied by prerendered markup.
+        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", DefaultTimeout);
         await WaitForLoadCompleteAsync();
     }
 
     /// <summary>
-    /// Waits until the "Loading…" state disappears. Safe to call even if no loading card exists
-    /// (returns immediately in that case).
+    /// Waits until the page shows a settled state: no "Loading…" card, and either the stat strip
+    /// or an empty/error card is present.
     /// </summary>
     public Task WaitForLoadCompleteAsync()
         => _page.WaitForFunctionAsync(
-            "() => !document.querySelector('.cockpit-card .cockpit-empty') || " +
-            "      ![...document.querySelectorAll('.cockpit-card .cockpit-empty')].some(e => e.textContent.trim() === 'Loading\u2026')",
+            "() => { " +
+            "  const empties = [...document.querySelectorAll('.cockpit-page .cockpit-card .cockpit-empty')]; " +
+            "  if (empties.some(e => e.textContent.trim() === 'Loading\u2026')) return false; " +
+            "  return !!document.querySelector('.cockpit-page .cockpit-stat') || empties.length > 0; " +
+            "}",
             null,
             new() { Timeout = DefaultTimeout });
 
     /// <summary>
-    /// Returns the value text of the stat tile matching the given label, or null if not found.
+    /// Returns the value text of the stat tile matching the given label, or null if the tile does
+    /// not appear within <see cref="DefaultTimeout"/>.
     /// </summary>
     public async Task<string?> GetStatTileValueAsync(string label)
     {
@@ -62,8 +72,14 @@ public sealed class KnowledgePage
         // GetByText/filter API over raw string interpolation to make this safe for future callers.
         var valueLocator = _page.Locator(
             $".cockpit-stat:has(.cockpit-stat-l:has-text('{label}')) .cockpit-stat-v");
-        if (await valueLocator.CountAsync() == 0)
+        try
+        {
+            await valueLocator.WaitForAsync(new() { Timeout = DefaultTimeout });
+        }
+        catch (TimeoutException)
+        {
             return null;
+        }
         return (await valueLocator.TextContentAsync())?.Trim();
     }
 

@@ -515,7 +515,7 @@ public sealed class DispatchWorkItemServiceTests
     // ── BuildProjectionFromEntity ─────────────────────────────────────────────
 
     /// <summary>
-    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromEntity"/> maps all 9
+    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromEntity"/> maps the 9 projection
     /// fields of <see cref="PendingWorkItemProjection"/> correctly from a <see cref="WorkItemEntity"/>.
     /// </summary>
     [Fact]
@@ -559,13 +559,13 @@ public sealed class DispatchWorkItemServiceTests
     // ── BuildProjectionFromQuickCheck ─────────────────────────────────────────
 
     /// <summary>
-    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromQuickCheck"/> maps all 9
-    /// explicit parameters to the correct <see cref="PendingWorkItemProjection"/> fields.
+    /// Verifies that <see cref="DispatchWorkItemService.BuildProjectionFromQuickCheck"/> maps the 9 projection
+    /// fields (8 from the quick-check row, AgentSelector from normalizedSelector) to the correct <see cref="PendingWorkItemProjection"/> fields.
     /// </summary>
     [Fact]
     public void BuildProjectionFromQuickCheck_MapsAllFieldsCorrectly()
     {
-        // Arrange: distinctive values for each of the 9 parameters
+        // Arrange: distinctive values for each of the 9 projection fields
         var id = Guid.NewGuid();
         var projectId = Guid.NewGuid();
         var createdAt = new DateTimeOffset(2025, 3, 10, 8, 0, 0, TimeSpan.Zero);
@@ -577,16 +577,20 @@ public sealed class DispatchWorkItemServiceTests
         const int priorityWeight = 50;
 
         // Act
-        var projection = DispatchWorkItemService.BuildProjectionFromQuickCheck(
-            id: id,
-            normalizedSelector: normalizedSelector,
-            createdAt: createdAt,
-            timeoutSeconds: timeoutSeconds,
-            taskType: taskType,
-            projectId: projectId,
-            issueIdentifier: issueIdentifier,
-            issueProviderConfigId: issueProviderConfigId,
-            priorityWeight: priorityWeight);
+        var quickCheck = new DispatchQuickCheck
+        {
+            Id = id,
+            Status = WorkItemStatus.Pending,
+            AgentSelector = "dotnet",
+            CreatedAt = createdAt,
+            TimeoutSeconds = timeoutSeconds,
+            TaskType = taskType,
+            ProjectId = projectId,
+            IssueIdentifier = issueIdentifier,
+            IssueProviderConfigId = issueProviderConfigId,
+            PriorityWeight = priorityWeight
+        };
+        var projection = DispatchWorkItemService.BuildProjectionFromQuickCheck(quickCheck, normalizedSelector);
 
         // Assert: all 9 fields mapped correctly
         projection.Id.Should().Be(id);

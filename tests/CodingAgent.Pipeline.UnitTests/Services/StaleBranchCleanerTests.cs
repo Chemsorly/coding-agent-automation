@@ -54,11 +54,17 @@ public class StaleBranchCleanerTests
     {
         var repoTag = new KeyValuePair<string, object?>("repo_provider_id", RepoId);
         return cleaner.RunIfDueAsync(
-            repo.Object, issues.Object,
-            agentDonePrs ?? Array.Empty<PullRequestSummary>(),
-            wasInputTruncated,
-            RepoId, repoTag,
-            enabled, intervalMinutes,
+            new StaleBranchCleanupRequest
+            {
+                RepoProvider = repo.Object,
+                IssueProvider = issues.Object,
+                AgentDonePrs = agentDonePrs ?? Array.Empty<PullRequestSummary>(),
+                WasInputTruncated = wasInputTruncated,
+                RepoProviderId = RepoId,
+                RepoTag = repoTag,
+                Enabled = enabled,
+                CleanupIntervalMinutes = intervalMinutes
+            },
             CancellationToken.None);
     }
 

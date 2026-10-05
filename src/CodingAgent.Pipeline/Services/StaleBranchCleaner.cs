@@ -41,23 +41,16 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
     }
 
     /// <inheritdoc />
-    public async Task RunIfDueAsync(
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        IReadOnlyList<PullRequestSummary> agentDonePrs,
-        bool wasInputTruncated,
-        string repoProviderId,
-        KeyValuePair<string, object?> repoTag,
-        bool enabled,
-        int cleanupIntervalMinutes,
-        CancellationToken ct)
+    public async Task RunIfDueAsync(StaleBranchCleanupRequest request, CancellationToken ct)
     {
-        if (!enabled)
+        ArgumentNullException.ThrowIfNull(request);
+        if (!request.Enabled)
             return;
 
+        var repoProviderId = request.RepoProviderId;
         var now = UtcNow();
         var lastCleanup = _lastCleanupAt.GetValueOrDefault(repoProviderId, DateTimeOffset.MinValue);
-        var intervalElapsed = (now - lastCleanup).TotalMinutes >= cleanupIntervalMinutes;
+        var intervalElapsed = (now - lastCleanup).TotalMinutes >= request.CleanupIntervalMinutes;
 
         if (intervalElapsed)
         {
@@ -75,7 +68,8 @@ public sealed class StaleBranchCleaner : IStaleBranchCleaner
             // Fix: stamp _lastCleanupAt only after a non-skipped cleanup completes, or at minimum
             // after the truncation guard inside RunBranchCleanupAsync passes.
             _lastCleanupAt[repoProviderId] = now;
-            await RunBranchCleanupAsync(repoProvider, issueProvider, agentDonePrs, wasInputTruncated, repoTag, ct);
+            await RunBranchCleanupAsync(request.RepoProvider, request.IssueProvider, request.AgentDonePrs,
+                request.WasInputTruncated, request.RepoTag, ct);
         }
     }
 

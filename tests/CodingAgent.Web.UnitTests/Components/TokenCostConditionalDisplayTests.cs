@@ -58,9 +58,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     public void Insights_HidesTokenStatAndCostCard_WhenAllRunsHaveZeroTokens()
     {
         var mock = new Mock<IPipelineApiRunHistoryClient>();
-        mock.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterInsightsServices(mock);
 
@@ -81,9 +79,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     public void Insights_ShowsTokenStatAndCostCard_WhenSomeRunsHaveTokens()
     {
         var mock = new Mock<IPipelineApiRunHistoryClient>();
-        mock.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 5000), MakeRun("r2", tokens: 0)));
         RegisterInsightsServices(mock);
 
@@ -137,9 +133,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     public void Overview_HidesTokensRecentTile_WhenNoRunHasTokens()
     {
         var mock = new Mock<IPipelineApiRunHistoryClient>();
-        mock.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterOverviewServices(mock);
 
@@ -154,9 +148,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     public void Overview_ShowsTokensRecentTile_WhenSomeRunsHaveTokens()
     {
         var mock = new Mock<IPipelineApiRunHistoryClient>();
-        mock.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(
                 MakeRun("r1", tokens: 12345),
                 MakeRun("r2", tokens: 0)));
@@ -193,9 +185,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     public void Runs_HidesTokensColumn_WhenNoRunHasTokens()
     {
         var mock = new Mock<IPipelineApiRunHistoryClient>();
-        mock.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 0), MakeRun("r2", tokens: 0)));
         RegisterRunsServices(mock);
 
@@ -210,9 +200,7 @@ public class TokenCostConditionalDisplayTests : BunitContext
     public void Runs_ShowsTokensColumn_WhenSomeRunsHaveTokens()
     {
         var mock = new Mock<IPipelineApiRunHistoryClient>();
-        mock.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mock.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(PagedHistory(MakeRun("r1", tokens: 7777), MakeRun("r2", tokens: 0)));
         RegisterRunsServices(mock);
 

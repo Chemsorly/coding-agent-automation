@@ -612,8 +612,8 @@ internal sealed class CiPollingCoordinator
             // PollAndHandleInfraRetryAsync would receive the raw pipeline token (no timeout),
             // allowing post-PR CI to block indefinitely when CI hangs or infra-retry loops
             // run repeatedly. The linked token fires after ExternalCiTimeout, and the
-            // catch (OperationCanceledException) when (!ct.IsCancellationRequested) arm
-            // below then produces the "Post-PR CI timed out after X" gate result.
+            // OperationCanceledException handler below (filtered to non-pipeline cancellation)
+            // then produces the "Post-PR CI timed out after X" gate result.
             using var timeoutCts = new CancellationTokenSource(config.ExternalCiTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
             var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(

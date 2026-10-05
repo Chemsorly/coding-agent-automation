@@ -230,12 +230,7 @@
     </div>
 
     <div class="cockpit-pager">
-        <span class="cockpit-pager-info">Page @_page@(
-            _result is { Items.Count: > 0 }
-                ? (_filteredRuns.Count != _result.Items.Count
-                    ? $" · {_filteredRuns.Count} of {_result.Items.Count} on this page"
-                    : $" · {_filteredRuns.Count} shown")
-                : "")</span>
+        <span class="cockpit-pager-info">Page @_page@(PagerSummary)</span>
         <div class="cockpit-pager-buttons">
             <button class="cockpit-pager-btn" disabled="@(_page <= 1 || _loading)" @onclick="PrevPage">
                 <Icon Name="chevrons-left" Size="14" /> Prev
@@ -260,6 +255,18 @@
     /// and the pager (which lives outside the if/else block and needs component-level state).
     /// </summary>
     private List<PipelineRunSummary> _filteredRuns = [];
+
+    /// <summary>Pager suffix describing how many of the current page's runs survive the client-side filters.</summary>
+    private string PagerSummary
+    {
+        get
+        {
+            if (_result is not { Items.Count: > 0 }) return "";
+            return _filteredRuns.Count != _result.Items.Count
+                ? $" · {_filteredRuns.Count} of {_result.Items.Count} on this page"
+                : $" · {_filteredRuns.Count} shown";
+        }
+    }
 
     private int _page = 1;
     private bool _feedbackOnly;
@@ -378,7 +385,7 @@
                 await RefreshQuietAsync();
                 StateHasChanged();
             }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Already disposed. */ }
         });
     }
 
@@ -391,7 +398,7 @@
             await LoadAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task SetOutcome(OutcomeFilter outcome)
@@ -417,11 +424,12 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
-                finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+                new RunHistoryQuery(Page: _page, PageSize: PageSize, FeedbackOnly: _feedbackOnly, IncludeActive: true,
+                    FinalStep: FinalStepFilter, ProjectId: State.SelectedProjectId),
+                _cts.Token);
             _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load runs: {ex.Message}";
@@ -445,12 +453,13 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
-                finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+                new RunHistoryQuery(Page: _page, PageSize: PageSize, FeedbackOnly: _feedbackOnly, IncludeActive: true,
+                    FinalStep: FinalStepFilter, ProjectId: State.SelectedProjectId),
+                _cts.Token);
             _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
             _error = null;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* keep the current page until the next tick */ }
         finally
         {
@@ -618,7 +627,10 @@
     }
 
     private static string Truncate(string? s, int n)
-        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
 
     private static string Dur(DateTimeOffset start, DateTimeOffset? end)
     {

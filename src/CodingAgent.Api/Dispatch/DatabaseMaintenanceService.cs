@@ -319,10 +319,8 @@ public class DatabaseMaintenanceService
             // current 33 ghost runs this is harmless, but the method runs on every maintenance cycle.
             // If the forward fix (try-finally in PullRequestFinalizationService) regresses or the
             // separate terminal gap in QualityGateExecutor.RetryLoop produces orphans at scale, the
-            // in-memory load could grow unbounded. Consider replacing with:
-            //   await db.PipelineRuns
-            //       .Where(r => r.CompletedAt == null && ...)
-            //       .ExecuteUpdateAsync(s => s.SetProperty(r => r.CompletedAt, DateTimeOffset.UtcNow), ct);
+            // in-memory load could grow unbounded. Consider replacing it with a set-based ExecuteUpdateAsync
+            // on PipelineRuns (same filter) that sets CompletedAt to the current time server-side.
             var orphans = await db.PipelineRuns
                 .Where(r => r.CompletedAt == null &&
                             (r.FinalStep == PipelineStep.Completed ||

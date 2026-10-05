@@ -25,9 +25,7 @@ public class PipelinePollingHelperTests
             getRunStatusAsync: _ => Task.FromResult(passedStatus),
             enrichFailedJobsAsync: (s, _) => { enrichCalled = true; return Task.FromResult(s); },
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromSeconds(5),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(5), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
@@ -50,9 +48,7 @@ public class PipelinePollingHelperTests
                 return Task.FromResult(enrichedStatus);
             },
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromSeconds(5),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(5), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
@@ -79,9 +75,7 @@ public class PipelinePollingHelperTests
             getRunStatusAsync: _ => Task.FromResult(cancelledStatus),
             enrichFailedJobsAsync: (s, _) => { enrichCalled = true; return Task.FromResult(s); },
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromSeconds(5),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(5), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
@@ -103,9 +97,7 @@ public class PipelinePollingHelperTests
             },
             enrichFailedJobsAsync: (s, _) => Task.FromResult(s),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromSeconds(10),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(10), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
@@ -127,9 +119,7 @@ public class PipelinePollingHelperTests
             getRunStatusAsync: _ => Task.FromResult(runningStatus),
             enrichFailedJobsAsync: (s, _) => Task.FromResult(s),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromMilliseconds(80),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(80), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
@@ -157,9 +147,7 @@ public class PipelinePollingHelperTests
             },
             enrichFailedJobsAsync: (s, _) => Task.FromResult(s),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromSeconds(5),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(5), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
@@ -178,9 +166,7 @@ public class PipelinePollingHelperTests
             getRunStatusAsync: _ => Task.FromResult(MakeStatus(PipelineRunState.Running, "sha7")),
             enrichFailedJobsAsync: (s, _) => Task.FromResult(s),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: TimeSpan.FromMilliseconds(10),
-            timeout: TimeSpan.FromSeconds(5),
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(5), "CI"),
             ct: cts.Token,
             logger: SilentLogger);
 

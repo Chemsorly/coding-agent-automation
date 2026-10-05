@@ -89,7 +89,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         try
         {
             var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                request.AgentProvider,
+                new AgentMonitorContext(request.AgentProvider, request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger),
                 new AgentRequest
                 {
                     Prompt = request.Prompt,
@@ -99,7 +99,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                     ResumeSessionId = resumeSessionId,
                     EnvironmentVariables = request.EnvironmentVariables
                 },
-                request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
+                ct,
                 line => callbacks.EmitOutputLine(line),
                 reportStallEvent: request.ReportStallEvent,
                 phase: request.Phase);
@@ -151,7 +151,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         CancellationToken ct)
     {
         var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            request.AgentProvider,
+            new AgentMonitorContext(request.AgentProvider, request.Run, request.Config, request.Description, request.OnChange, request.Logger),
             new AgentRequest
             {
                 Prompt = request.Prompt,
@@ -160,7 +160,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 UseResume = false,
                 EnvironmentVariables = request.EnvironmentVariables
             },
-            request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
+            ct,
             request.OnOutputLine,
             reportStallEvent: request.ReportStallEvent,
             phase: request.Phase);

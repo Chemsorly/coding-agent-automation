@@ -364,10 +364,10 @@ public sealed partial class AgentHub
         return ExecuteWithIssueProviderAsync(jobId.Value, $"update comment '{commentId}' on issue '{issueId}'",
             (provider, ct) =>
             {
+                // No paramName: this lambda's parameters are (provider, ct); the message names the comment ID.
                 if (!long.TryParse(commentId, out var parsedCommentId))
                     throw new ArgumentException(
-                        $"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.",
-                        nameof(commentId));
+                        $"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.");
                 return provider.UpdateCommentAsync(issueId, parsedCommentId, body, ct);
             });
     }

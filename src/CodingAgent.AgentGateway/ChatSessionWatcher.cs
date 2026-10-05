@@ -74,6 +74,8 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         // Compute once — constant for the watcher's lifetime.
         // Wake up no later than idleTimeout/3 so we react promptly to window-close.
         var pollInterval = TimeSpan.FromSeconds(Math.Min(10, Math.Max(1, _options.ChatIdleTimeoutSeconds / 3)));
+        var idleKill = new IdleKillContext(
+            jobName, entry, selectorEncoded, idleTimeout, pollInterval, terminateCallback, cleanupCallback);
 
         try
         {
@@ -87,9 +89,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
                     continue;
                 }
 
-                var killResult = await TryTriggerIdleKillAsync(
-                    jobName, entry, selectorEncoded, lastHeartbeat.Value, idleTimeout, pollInterval,
-                    terminateCallback, cleanupCallback, ct).ConfigureAwait(false);
+                var killResult = await TryTriggerIdleKillAsync(idleKill, lastHeartbeat.Value, ct).ConfigureAwait(false);
                 if (killResult == IdleKillResult.KillTriggered) return;
                 if (killResult == IdleKillResult.GuardFired) continue;
 
@@ -167,16 +167,11 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
     /// termination if so — guarded by a <see cref="Interlocked.CompareExchange"/> single-fire lock.
     /// </summary>
     private async Task<IdleKillResult> TryTriggerIdleKillAsync(
-        string jobName,
-        ChatJobDispatcher.WatcherEntry entry,
-        string selectorEncoded,
+        IdleKillContext context,
         DateTimeOffset lastHeartbeat,
-        TimeSpan idleTimeout,
-        TimeSpan pollInterval,
-        Func<AgentId, CancellationToken, Task> terminateCallback,
-        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> cleanupCallback,
         CancellationToken ct)
     {
+        var (jobName, entry, selectorEncoded, idleTimeout, pollInterval, terminateCallback, cleanupCallback) = context;
         var idleSince = DateTimeOffset.UtcNow - lastHeartbeat;
         if (idleSince <= idleTimeout)
             return IdleKillResult.NotIdle;
@@ -194,7 +189,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
             // the current use but silently discarding OCE on an explicit ct parameter is a code smell.
             // See review finding: DotNetSpecialist WARNING @ ChatSessionWatcher.cs:161.
             // ct cancelled — let the while-condition exit the loop on the next iteration.
-            try { await Task.Delay(pollInterval, ct).ConfigureAwait(false); } catch (OperationCanceledException) { }
+            try { await Task.Delay(pollInterval, ct).ConfigureAwait(false); } catch (OperationCanceledException) { /* Expected on cancellation. */ }
             return IdleKillResult.GuardFired;
         }
 
@@ -262,6 +257,18 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
                     jobName, claimedPvc ?? "none");
         }
     }
+
+    /// <summary>
+    /// The per-session values one watcher loop computes once and hands to <see cref="TryTriggerIdleKillAsync"/>.
+    /// </summary>
+    private sealed record IdleKillContext(
+        string JobName,
+        ChatJobDispatcher.WatcherEntry Entry,
+        string SelectorEncoded,
+        TimeSpan IdleTimeout,
+        TimeSpan PollInterval,
+        Func<AgentId, CancellationToken, Task> TerminateCallback,
+        Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string> CleanupCallback);
 
     /// <summary>
     /// Tri-state result from <see cref="TryTriggerIdleKillAsync"/>.
