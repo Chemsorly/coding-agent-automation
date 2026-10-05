@@ -469,8 +469,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var current = HashToEntry(existing);
         var oldStatus = current?.Status ?? AgentStatus.Idle;
 
-        // Reject Disconnected → Busy: must re-register first
-        if (oldStatus == AgentStatus.Disconnected && newStatus == AgentStatus.Busy)
+        if (!AgentStatusTransition.IsAllowed(oldStatus, newStatus))
         {
             _logger.Warning(
                 "Agent {AgentId} invalid transition {Old} → {New} rejected (must re-register first)",
