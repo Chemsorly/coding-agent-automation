@@ -75,13 +75,10 @@ internal static class SharedPrOperations
     /// Uses the canonical <c>[bot]</c>-suffix convention shared by GitHub and GitLab.
     /// This is strictly an <c>EndsWith("[bot]")</c> check — names that merely contain
     /// "bot" (e.g. "robotnik") are NOT flagged.
+    /// GitHub App accounts whose login does not carry the [bot] suffix are handled at the
+    /// call site by OR-ing in the Octokit <c>AccountType.Bot</c> check before falling back
+    /// to this helper (see <c>GitHubRepositoryProvider.PullRequests.cs</c>).
     /// </summary>
-    // TODO [WARNING]: This helper uses EndsWith("[bot]") only. The original GitHub implementation
-    // also checked AccountType.Bot (c.User?.Type == AccountType.Bot), covering GitHub App accounts
-    // whose login name does not follow the [bot]-suffix convention (e.g. "copilot-for-prs",
-    // "my-deploy-bot"). Those accounts now return IsBot = false. If AccountType.Bot detection is
-    // needed for GitHub, the GitHub provider should OR in that condition before calling this helper,
-    // or this helper should gain an optional isSystemBot parameter.
     // Similarly, the original GitLab implementation used Contains("bot", OrdinalIgnoreCase), which
     // also flagged usernames like "gitlab-bot" or "ci-bot" that do not carry the [bot] suffix.
     // Those accounts are now treated as non-bot by this shared helper.

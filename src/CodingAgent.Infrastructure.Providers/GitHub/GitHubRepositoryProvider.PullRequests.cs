@@ -596,12 +596,7 @@ public partial class GitHubRepositoryProvider
                 Author = author,
                 CreatedAt = c.CreatedAt.UtcDateTime,
                 Body = c.Body ?? string.Empty,
-                // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
-                // checked c.User?.Type == AccountType.Bot, which covers GitHub App accounts whose
-                // login does not follow the [bot]-suffix convention. Those accounts now return
-                // IsBot = false. If AccountType.Bot detection is required here, add:
-                //   IsBot = c.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author)
-                IsBot = SharedPrOperations.IsBotAuthor(author),
+                IsBot = c.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author),
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
                 Line = null,
@@ -623,9 +618,7 @@ public partial class GitHubRepositoryProvider
                 Author = author,
                 CreatedAt = c.CreatedAt.UtcDateTime,
                 Body = c.Body ?? string.Empty,
-                // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
-                // checked c.User?.Type == AccountType.Bot. See the same comment on issueComments above.
-                IsBot = SharedPrOperations.IsBotAuthor(author),
+                IsBot = c.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author),
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = c.Path,
                 Line = c.OriginalPosition,
@@ -649,9 +642,7 @@ public partial class GitHubRepositoryProvider
                 Author = author,
                 CreatedAt = r.SubmittedAt.UtcDateTime,
                 Body = r.Body,
-                // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
-                // checked r.User?.Type == AccountType.Bot. See the same comment on issueComments above.
-                IsBot = SharedPrOperations.IsBotAuthor(author),
+                IsBot = r.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author),
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
                 Line = null,

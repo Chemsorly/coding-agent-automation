@@ -480,6 +480,35 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
     }
 
     [Fact]
+    public async Task ListPullRequestCommentsAsync_IsBotFlag_SetForGitHubAppBotWithoutSuffix()
+    {
+        // GitHub App installations can surface as accounts whose login does NOT end with [bot]
+        // (e.g. "my-deploy-bot") but whose Octokit AccountType is AccountType.Bot.
+        // These must be flagged IsBot=true even though IsBotAuthor("my-deploy-bot") returns false.
+        //
+        // TODO [WARNING]: This test only covers the issue-comment construction site
+        // (GET /issues/{n}/comments → c.User?.Type). The identical AccountType.Bot OR-fix was
+        // applied to two other construction sites in GitHubRepositoryProvider.PullRequests.cs:
+        //   1. Pull request review comments (GET /pulls/{n}/comments → c.User?.Type, ~line 621)
+        //   2. Pull request reviews          (GET /pulls/{n}/reviews  → r.User?.Type, ~line 645)
+        // Neither site has a test placing a non-[bot]-suffixed AccountType.Bot account in its
+        // stub collection. To add coverage, introduce BuildReviewCommentWithAccountType and
+        // BuildReviewWithAccountType helpers (analogous to BuildIssueCommentWithAccountType) and
+        // add two new tests that stub those endpoints with type="Bot" and assert IsBot=true.
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/66/comments"),
+            new[] { BuildIssueCommentWithAccountType(10, "automated comment", "my-deploy-bot", "Bot") });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/66/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/66/reviews"), Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListPullRequestCommentsAsync(66, "pr-author", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].IsBot.Should().BeTrue(
+            "accounts with AccountType.Bot but no [bot] suffix must still be flagged as bot");
+    }
+
+    [Fact]
     public async Task ListPullRequestCommentsAsync_IsAuthorFlag_SetForPrAuthor()
     {
         StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/63/comments"),
