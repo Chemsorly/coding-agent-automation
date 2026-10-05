@@ -194,9 +194,9 @@ internal sealed class DispatchStateBuilder
             return null;
         }
 
-        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+        var isKiroAgent = JobTemplateProviderType.IsKiro(template.ProviderType);
 
-        if (IsKiroAgentWithoutPvc(isKiroAgent, state.AvailablePvcs))
+        if (IsKiroWithoutPvc(isKiroAgent, state.AvailablePvcs))
         {
             Log.Information("{CallerName}: no PVC available for kiro agent, skipping WorkItem {WorkItemId}",
                 callerName, item.Id);
@@ -266,6 +266,6 @@ internal sealed class DispatchStateBuilder
     /// Returns true if the template targets a kiro agent but no PVCs are available.
     /// Non-kiro agents always return false (they do not require PVCs).
     /// </summary>
-    internal static bool IsKiroAgentWithoutPvc(bool isKiroAgent, List<string> availablePvcs)
+    internal static bool IsKiroWithoutPvc(bool isKiroAgent, List<string> availablePvcs)
         => isKiroAgent && availablePvcs.Count == 0;
 }

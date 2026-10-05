@@ -153,8 +153,9 @@ public class QualityGateCancellationLabelTests
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
-            .Returns(async (WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken ct, string? _) =>
+                It.IsAny<string?>(),
+                It.IsAny<Action<PipelineRunEventReport>?>()))
+            .Returns(async (WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken ct, string? _, Action<PipelineRunEventReport>? _) =>
             {
                 // Cancel while "validating"
                 await orchestratorCts.CancelAsync();
