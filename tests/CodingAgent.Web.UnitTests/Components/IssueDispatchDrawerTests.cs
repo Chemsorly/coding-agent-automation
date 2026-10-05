@@ -4,7 +4,7 @@ using CodingAgent.Web.Components.Pages;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
-public class IssueDispatchDrawerTests
+public partial class IssueDispatchDrawerTests
 {
     private static string InvokeGetBodyPreview(string body)
     {
@@ -80,7 +80,7 @@ public class IssueDispatchDrawerTests
     public void DrawerIssueBlockedRule_IsScopedToIssueDispatchDrawer_AndDoesNotFadeTheRow()
     {
         var drawerCss = File.ReadAllText(FindPagesFile("IssueDispatchDrawer.razor.css"));
-        var rule = Regex.Match(drawerCss, @"\.drawer-issue-blocked[^{]*\{(?<body>[^}]*)\}");
+        var rule = DrawerIssueBlockedRulePattern().Match(drawerCss);
         Assert.True(rule.Success, ".drawer-issue-blocked must be declared in IssueDispatchDrawer.razor.css");
         Assert.Contains("border-color: var(--error);", rule.Groups["body"].Value, StringComparison.Ordinal);
         Assert.DoesNotContain("opacity", rule.Groups["body"].Value, StringComparison.OrdinalIgnoreCase);
@@ -88,6 +88,9 @@ public class IssueDispatchDrawerTests
         var agentCodingCss = File.ReadAllText(FindPagesFile("AgentCoding.razor.css"));
         Assert.DoesNotContain(".drawer-issue-blocked", agentCodingCss, StringComparison.Ordinal);
     }
+
+    [GeneratedRegex(@"\.drawer-issue-blocked[^{]*\{(?<body>[^}]*)\}")]
+    private static partial Regex DrawerIssueBlockedRulePattern();
 
     private static string FindPagesFile(string fileName)
     {
