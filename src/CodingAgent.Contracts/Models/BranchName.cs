@@ -1,8 +1,4 @@
-// TODO [WARNING]: Namespace mismatch — this file is physically in src/CodingAgent.Contracts/Models/ but
-// declares namespace CodingAgent.Pipeline.Models. The convention used by WorkspacePath, JobId, RunId
-// and other types in this directory is CodingAgent.Pipeline.Models (the Contracts project shares that
-// namespace). Consumers expecting CodingAgent.Contracts.Models will not find this type without an
-// additional using directive.
+// Note: The CodingAgent.Pipeline.Models namespace declared here inside the Contracts assembly is intentional — the Contracts project deliberately shares the Pipeline.Models namespace (consistent with WorkspacePath, RunId, JobId, and other types in this directory).
 namespace CodingAgent.Pipeline.Models;
 
 /// <summary>
