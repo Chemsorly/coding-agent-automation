@@ -213,13 +213,13 @@ public sealed class ReconciliationLoop
             if (ageResult is not Enforceable enforceable) continue;
 
             // Not timed out yet — skip.
-            // TODO: [WARNING] The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
+            // NOTE (issue #3243): The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
             // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
             // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
             // use the same threshold, so the canary invariant provides no protection for items at
             // exactly that boundary — the item is immediately enforced on the first cycle it is
             // returned by the query. This is a gap in the canary design that was not present when
-            // the global timeout was always >> 60s. (DotNetSpecialist review [WARNING])
+            // the global timeout was always >> 60s. (DotNetSpecialist review finding)
             if (enforceable.AgeSeconds < item.TimeoutSeconds) continue;
 
             _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
@@ -487,23 +487,23 @@ public sealed class ReconciliationLoop
             // and a Warning is emitted so operators can identify stuck items.
             var createdAgeSeconds = item.CreatedAt.HasValue
                 ? (DateTimeOffset.UtcNow - item.CreatedAt.Value).TotalSeconds
-                // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely — same
+                // NOTE (issue #3243): null CreatedAt silently defers enforcement indefinitely — same
                 // class of bug as the original null DispatchedAt issue. The 0.0 fallback causes
                 // the grace-window check below to always fire and the item is permanently skipped
                 // with no log or metric. In production, CreatedAt should always be non-null
                 // (WorkItemEntity.CreatedAt is a non-null column), but if a backfill is missed or
                 // the DTO is constructed without the field the item becomes permanently stuck.
                 // At minimum emit a Log.Warning here so operators can detect the condition.
-                // (Correctness review [WARNING])
+                // (Correctness review finding)
                 : 0.0; // null CreatedAt (pre-dates this field in test code) → treat as just created
 
-            // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
+            // NOTE (issue #3243): strict less-than (<) means an item with createdAgeSeconds exactly
             // equal to NullDispatchedAtGraceWindowSeconds is skipped for another full cycle.
             // The requirement states "older than the grace window is force-failed", so the
             // boundary condition (age == graceWindow) should proceed to enforcement. Because
             // createdAgeSeconds is a double, exact equality is extremely rare in practice, but
             // semantically the condition should be <= to match the stated requirement boundary.
-            // (Correctness review [WARNING])
+            // (Correctness review finding)
             if (createdAgeSeconds < _options.NullDispatchedAtGraceWindowSeconds)
             {
                 // Within grace window — skip without recording any metrics.
@@ -604,18 +604,18 @@ public sealed class ReconciliationLoop
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
             case JobPhaseFailed:
-            {
-                var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
-                // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
-                // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
-                // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
-                using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
-                jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
-                jobFailedActivity?.SetTag("failure_reason", failureReason);
-                if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
-                    _reconciledTerminalIds.Add(workItemId.Value);
-                break;
-            }
+                {
+                    var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
+                    // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
+                    // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
+                    // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
+                    using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
+                    jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
+                    jobFailedActivity?.SetTag("failure_reason", failureReason);
+                    if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
+                        _reconciledTerminalIds.Add(workItemId.Value);
+                    break;
+                }
                 // Active/Unknown/Pending — no action needed
         }
     }
