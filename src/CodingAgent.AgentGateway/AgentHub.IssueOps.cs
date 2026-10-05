@@ -75,6 +75,11 @@ public sealed partial class AgentHub
 
         if (!string.IsNullOrEmpty(newLabel) && AgentLabels.DispatchGatedLabels.Contains(newLabel))
         {
+            // TODO (WARNING — Security): newLabel is agent-supplied external input and is logged raw here,
+            // matching the same omission fixed in RequestLabelChangeFallbackAsync. A crafted newLabel
+            // containing CR/LF (e.g. "agent:epic-approved\nINFO: auth=admin") would be written verbatim
+            // to structured log output. Wrap newLabel in SanitizeForLog here, consistent with the
+            // invalid-label branch above and the fallback path fix.
             _logger.Warning(
                 "Agent requested gated label '{Label}' for job {JobId} — requires human approval, ignoring",
                 newLabel, jobId.Value);
@@ -85,6 +90,10 @@ public sealed partial class AgentHub
         // This prevents a buggy or compromised agent from routing label operations to the wrong entity.
         // Note: the target kind is derived inside AgentIssueOperations.SwapLabelAsync from run.LabelTargetKind.
 
+        // TODO (WARNING — Security): newLabel is agent-supplied external input and is logged raw here
+        // alongside run.AgentId and run.CurrentStep. A crafted newLabel containing CR/LF characters would
+        // be written verbatim to log output. Wrap newLabel (and validate/sanitize AgentId/CurrentStep
+        // if they are also external-input derived) in SanitizeForLog, consistent with the fallback path fix.
         _logger.Information(
             "RequestLabelChange: job {JobId} requesting label {Label} for issue {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})",
             jobId.Value, newLabel, run.IssueIdentifier, run.AgentId, run.CurrentStep);
@@ -102,13 +111,6 @@ public sealed partial class AgentHub
     /// </summary>
     private async Task RequestLabelChangeFallbackAsync(string jobId, string newLabel)
     {
-        // TODO (WARNING — Security): jobId is logged verbatim via structured logging throughout
-        // this method. A crafted jobId containing newline characters or log-injection payloads
-        // (e.g. "legit-id\nINFO: auth=admin bypassed") would be embedded in log output, misleading
-        // operators reviewing audit logs. Exploitation requires a compromised agent credential.
-        // Mitigate by sanitising jobId before logging (e.g. replace control characters), or by
-        // ensuring the structured log sink strips newlines — verify the current sink configuration.
-
         // Validate the label before attempting the DB lookup — the same guards applied
         // in the in-memory path must apply here too to prevent invalid or gated labels
         // from being applied via the fallback path.
@@ -116,7 +118,7 @@ public sealed partial class AgentHub
         {
             _logger.Warning(
                 "RequestLabelChange fallback: invalid label '{Label}' for job {JobId}, ignoring",
-                SanitizeForLog(newLabel), jobId);
+                SanitizeForLog(newLabel), SanitizeForLog(jobId));
             return;
         }
 
@@ -124,7 +126,7 @@ public sealed partial class AgentHub
         {
             _logger.Warning(
                 "RequestLabelChange fallback: gated label '{Label}' for job {JobId} — requires human approval, ignoring",
-                newLabel, jobId);
+                SanitizeForLog(newLabel), SanitizeForLog(jobId));
             return;
         }
 
@@ -155,7 +157,7 @@ public sealed partial class AgentHub
                     // but guard defensively.
                     _logger.Warning(
                         "RequestLabelChange fallback: metadata disappeared for job {JobId}, label swap skipped",
-                        jobId);
+                        SanitizeForLog(jobId));
                     return;
                 }
 
@@ -163,7 +165,7 @@ public sealed partial class AgentHub
 
                 _logger.Information(
                     "RequestLabelChange fallback: swapping label to {Label} for issue {IssueIdentifier} (job {JobId})",
-                    newLabel, issueIdentifier, jobId);
+                    SanitizeForLog(newLabel), issueIdentifier, SanitizeForLog(jobId));
 
                 await AgentLabelOperations.SwapAsync(
                     removeLabel: (label, ct) => issueProvider.RemoveLabelAsync(issueIdentifier, label, ct),
@@ -181,7 +183,7 @@ public sealed partial class AgentHub
 
                 _logger.Information(
                     "RequestLabelChange fallback: label swap completed for issue {IssueIdentifier} (job {JobId})",
-                    issueIdentifier, jobId);
+                    issueIdentifier, SanitizeForLog(jobId));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -195,7 +197,7 @@ public sealed partial class AgentHub
             // connection-abort cancellation.
             _logger.Warning(
                 "RequestLabelChange fallback failed for job {JobId} (label={Label}): {Message} — label swap skipped",
-                jobId, newLabel, ex.Message);
+                SanitizeForLog(jobId), SanitizeForLog(newLabel), ex.Message);
         }
     }
 
