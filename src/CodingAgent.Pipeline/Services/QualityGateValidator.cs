@@ -35,11 +35,31 @@ public class QualityGateValidator : IQualityGateValidator
 
     /// <inheritdoc />
     public virtual async Task<QualityGateReport> ValidateAsync(
-        WorkspacePath workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
+        WorkspacePath workspacePath,
+        IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
+        CancellationToken ct,
+        string? baseBranch = null,
+        Action<PipelineRunEventReport>? reportEvent = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
+        // TODO [WARNING]: baseBranch is accepted on both the interface and this implementation but is
+        // never read inside the method body or forwarded to CleanWorkspacePrologue / RunAllQgcsAsync.
+        // It has been unused since before this refactor. Any caller relying on baseBranch to influence
+        // QGC behaviour (e.g. a coverage-diff gate that needs the base ref) will have the value silently
+        // discarded. Either thread the value through to the helpers that need it, or document explicitly
+        // why it is intentionally ignored. (DotNetSpecialist review finding)
+        CleanWorkspacePrologue(workspacePath);
+        return await RunAllQgcsAsync(workspacePath, qualityGateConfigs, reportEvent, ct);
+    }
+
+    /// <summary>
+    /// Deletes stale TestResults and quality-gates output directories so each run starts clean.
+    /// Errors are non-fatal and logged as warnings.
+    /// </summary>
+    private void CleanWorkspacePrologue(WorkspacePath workspacePath)
+    {
         // Clean up any leftover TestResults from previous quality gate iterations
         var testResultsRoot = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
         try
@@ -66,67 +86,17 @@ public class QualityGateValidator : IQualityGateValidator
         {
             _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
         }
-
-        var qgcResults = new List<QgcExecutionResult>();
-
-        foreach (var qgc in qualityGateConfigs)
-        {
-            var (result, shouldStop) = await RunSingleQgcAsync(workspacePath, qgc, ct, reportEvent: null);
-            qgcResults.Add(result);
-            if (shouldStop)
-                break;
-        }
-
-        return BuildAggregateReport(qgcResults);
     }
 
     /// <summary>
-    /// Same as <see cref="ValidateAsync"/> but also fires a server-side
-    /// <c>process_timeout</c> event via <paramref name="reportEvent"/> when a QGC process
-    /// exceeds its timeout (issue #2979). Called by <see cref="QualityGateExecutor"/> when a
-    /// <see cref="Models.QualityGateContext.ReportPipelineRunEvent"/> delegate is wired.
+    /// Iterates all QGCs in order, stopping on first failure, and returns the aggregate report.
     /// </summary>
-    // TODO [WARNING]: This method duplicates the full directory-cleanup prologue (TestResults +
-    // QualityGatesOutputDirectory deletion) from ValidateAsync. If the cleanup logic in ValidateAsync
-    // is changed (e.g. new directories added), this method will silently diverge. Refactor to extract
-    // the cleanup into a shared private helper (e.g. CleanWorkspacePrologueAsync) used by both paths,
-    // or add an optional reportEvent parameter to ValidateAsync and delegate the cleanup from there.
-    // (DotNetSpecialist #2979)
-    internal async Task<QualityGateReport> ValidateWithServerSideReportingAsync(
-        WorkspacePath workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
-        CancellationToken ct, Action<PipelineRunEventReport> reportEvent, string? baseBranch = null)
+    private async Task<QualityGateReport> RunAllQgcsAsync(
+        WorkspacePath workspacePath,
+        IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
+        Action<PipelineRunEventReport>? reportEvent,
+        CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
-        ArgumentNullException.ThrowIfNull(qualityGateConfigs);
-        ArgumentNullException.ThrowIfNull(reportEvent);
-
-        // Reuse cleanup logic by delegating to the base method would duplicate cleanup;
-        // instead call directly to avoid duplication.
-        var testResultsRoot = Path.GetFullPath(Path.Combine(workspacePath, "TestResults"));
-        try
-        {
-            if (Directory.Exists(testResultsRoot))
-            {
-                Directory.Delete(testResultsRoot, recursive: true);
-                _logger.Debug("Cleaned up previous test results at {TestResultsRoot}", testResultsRoot);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to clean up previous test results at {TestResultsRoot}", testResultsRoot);
-        }
-
-        var qualityGatesDir = Path.Combine(workspacePath, AgentWorkspacePaths.QualityGatesOutputDirectory);
-        try
-        {
-            if (Directory.Exists(qualityGatesDir))
-                Directory.Delete(qualityGatesDir, recursive: true);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
-        }
-
         var qgcResults = new List<QgcExecutionResult>();
 
         foreach (var qgc in qualityGateConfigs)
