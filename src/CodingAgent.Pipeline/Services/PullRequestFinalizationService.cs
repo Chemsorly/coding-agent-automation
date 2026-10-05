@@ -54,9 +54,6 @@ public sealed class PullRequestFinalizationService
         activity?.SetTag("pipeline.pr.is_draft", isDraft);
         PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
 
-        var finalStep = PipelineStep.Completed;
-        var prCreationSucceeded = false;
-
         try
         {
             // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
@@ -71,8 +68,18 @@ public sealed class PullRequestFinalizationService
             }
 
             var prUrl = await prOrchestrator.CreatePullRequestAsync(
-                run, isDraft, repoProvider, issue, issueComments, config, ct,
-                emitOutputLine, isRework: run.LinkedPullRequest is not null);
+                new PullRequestPublishRequest
+                {
+                    Run = run,
+                    IsDraft = isDraft,
+                    RepoProvider = repoProvider,
+                    Issue = issue,
+                    IssueComments = issueComments,
+                    Config = config,
+                    OnOutputLine = emitOutputLine
+                },
+                ct,
+                isRework: run.LinkedPullRequest is not null);
 
             if (prUrl is null)
             {
@@ -82,7 +89,6 @@ public sealed class PullRequestFinalizationService
                 return;
             }
 
-            finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
             if (isDraft)
             {
                 // Preserve a more specific failure reason if already set (e.g., "CI never started after N retries").
@@ -90,18 +96,17 @@ public sealed class PullRequestFinalizationService
                 run.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
             }
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
-
-            prCreationSucceeded = true;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        // Log-before-rethrow is the intended observability contract here (pinned by ThrowLoggingTests);
+        // the original exception type must propagate unchanged to the step runner.
+        catch (Exception ex) when (ex is not OperationCanceledException) // NOSONAR S2139 — logged here by design, see above
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             _logger.Error(ex, "Pipeline {RunId} PR creation failed", run.RunId);
             throw;
         }
 
-        if (!prCreationSucceeded)
-            return;
+        var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
 
         try
         {
@@ -407,15 +412,18 @@ public sealed class PullRequestFinalizationService
         {
             var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
             await feedbackService.CollectFeedbackCoreAsync(
-                run,
-                agentProvider,
-                historyService,
-                cats => FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
-                    run, elapsed, cats.HarnessCategories, cats.IssueCategories),
-                FeedbackOutcome.Success,
-                config.FeedbackTimeoutSeconds,
-                ct,
-                emitOutputLine);
+                new FeedbackCollectionRequest
+                {
+                    Run = run,
+                    AgentProvider = agentProvider,
+                    HistoryService = historyService,
+                    PromptFactory = cats => FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+                        run, elapsed, cats.HarnessCategories, cats.IssueCategories),
+                    Outcome = FeedbackOutcome.Success,
+                    FeedbackTimeoutSeconds = config.FeedbackTimeoutSeconds,
+                    EmitOutputLine = emitOutputLine
+                },
+                ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

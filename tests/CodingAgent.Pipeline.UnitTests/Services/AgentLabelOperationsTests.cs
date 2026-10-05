@@ -113,7 +113,10 @@ public class AgentLabelOperationsTests
             (label, ct) => { added.Add(label); return Task.CompletedTask; },
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: new[] { AgentLabels.Generated, AgentLabels.Next });
+            new LabelSwapOptions
+            {
+                CurrentLabels = new[] { AgentLabels.Generated, AgentLabels.Next }
+            });
 
         removed.Should().NotContain(AgentLabels.Generated,
             "agent:generated is a provenance label that must survive status swaps");
@@ -134,7 +137,10 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: null);
+            new LabelSwapOptions
+            {
+                CurrentLabels = null
+            });
 
         removed.Should().NotContain(AgentLabels.Generated,
             "agent:generated must not be removed even on the null-currentLabels fallback path");
@@ -177,8 +183,11 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,
             CancellationToken.None,
-            identifier: "GH-99",
-            logger: mockLogger.Object);
+            new LabelSwapOptions
+            {
+                Identifier = "GH-99",
+                Logger = mockLogger.Object
+            });
 
         // Must have logged at Warning level with an Exception, a message template, and the label name
         mockLogger.Verify(
@@ -214,7 +223,10 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,     // skipped in remove loop
             CancellationToken.None,
-            logger: Mock.Of<Serilog.ILogger>());
+            new LabelSwapOptions
+            {
+                Logger = Mock.Of<Serilog.ILogger>()
+            });
 
         // All distinct labels except newLabel (InProgress) should have been attempted
         var distinctAttempted = attempted.Distinct().ToList();
@@ -244,7 +256,10 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,
             CancellationToken.None,
-            logger: Mock.Of<Serilog.ILogger>());
+            new LabelSwapOptions
+            {
+                Logger = Mock.Of<Serilog.ILogger>()
+            });
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         callCount.Should().Be(1); // loop aborted — remaining labels not attempted
@@ -280,9 +295,12 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,          // skipped in the remove loop
             CancellationToken.None,
-            identifier: "GH-42",
-            logger: Mock.Of<Serilog.ILogger>(),
-            exhaustionCounter: counter);     // injected — captured by collector via factory
+            new LabelSwapOptions
+            {
+                Identifier = "GH-42",
+                Logger = Mock.Of<Serilog.ILogger>(),
+                ExhaustionCounter = counter
+            });     // injected — captured by collector via factory
 
         var snapshot = collector.GetMeasurementSnapshot();
         // AgentLabels.Error is the only label that exhausts retries — expect exactly one measurement.
@@ -313,7 +331,10 @@ public class AgentLabelOperationsTests
             (label, ct) => { added.Add(label); return Task.CompletedTask; },
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: new[] { AgentLabels.Next });
+            new LabelSwapOptions
+            {
+                CurrentLabels = new[] { AgentLabels.Next }
+            });
 
         // Only agent:next was on the issue — only agent:next should be removed.
         removed.Should().ContainSingle().Which.Should().Be(AgentLabels.Next);
@@ -330,7 +351,10 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: new[] { AgentLabels.Next });
+            new LabelSwapOptions
+            {
+                CurrentLabels = new[] { AgentLabels.Next }
+            });
 
         // Labels not in currentLabels must never be attempted.
         var unexpectedRemovals = AgentLabels.All
@@ -353,7 +377,10 @@ public class AgentLabelOperationsTests
             (label, ct) => Task.CompletedTask,
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: null);
+            new LabelSwapOptions
+            {
+                CurrentLabels = null
+            });
 
         // Null = full sweep: all swap-target labels except the new one are removed.
         // agent:generated is NOT a swap target — it survives status swaps (see AgentLabels.SwapTargets).
@@ -378,7 +405,10 @@ public class AgentLabelOperationsTests
             (label, ct) => { added.Add(label); return Task.CompletedTask; },
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: Array.Empty<string>());
+            new LabelSwapOptions
+            {
+                CurrentLabels = Array.Empty<string>()
+            });
 
         // No labels present on the issue — nothing to remove.
         removed.Should().BeEmpty();
@@ -397,7 +427,10 @@ public class AgentLabelOperationsTests
             (label, ct) => { added.Add(label); return Task.CompletedTask; },
             AgentLabels.InProgress,
             CancellationToken.None,
-            currentLabels: new[] { AgentLabels.InProgress });
+            new LabelSwapOptions
+            {
+                CurrentLabels = new[] { AgentLabels.InProgress }
+            });
 
         removed.Should().BeEmpty();
         added.Should().ContainSingle().Which.Should().Be(AgentLabels.InProgress);

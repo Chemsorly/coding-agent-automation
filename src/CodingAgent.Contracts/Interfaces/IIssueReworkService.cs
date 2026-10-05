@@ -11,29 +11,14 @@ namespace CodingAgent.Pipeline.Interfaces;
 public interface IIssueReworkService
 {
     /// <summary>
-    /// For each conflicted PR in <paramref name="sorted"/>, swaps the linked issue's label
-    /// to <c>agent:next</c> to trigger a rework dispatch run — unless the PR's branch has an
+    /// For each conflicted PR in <see cref="ConflictReworkRequest.Sorted"/>, swaps the linked issue's
+    /// label to <c>agent:next</c> to trigger a rework dispatch run — unless the PR's branch has an
     /// active run or active-run data was unavailable.
     /// </summary>
-    /// <param name="sorted">Ordered PR candidates (conflict check iterates this list).</param>
-    /// <param name="mergeabilityMap">Mergeability status keyed by PR number.</param>
-    /// <param name="activeRunBranches">Set of branch names currently occupied by active pipeline runs.</param>
-    /// <param name="activeRunBranchesUnavailable">
-    /// When true, active-run data was unavailable — all rework is skipped conservatively.
+    /// <param name="request">
+    /// The ordered PR candidates, their mergeability, the active-run branches (and whether that data
+    /// was available), the providers used to swap labels, and the telemetry tag.
     /// </param>
-    /// <param name="repoProvider">Repository provider used to extract linked issues.</param>
-    /// <param name="issueProvider">Issue provider used to get and mutate issue labels.</param>
-    /// <param name="issueProviderId">Issue provider ID for logging context.</param>
-    /// <param name="repoTag">OTel tag for telemetry emitted during this call.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task TriggerConflictReworkAsync(
-        IReadOnlyList<PullRequestSummary> sorted,
-        IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
-        IReadOnlySet<string> activeRunBranches,
-        bool activeRunBranchesUnavailable,
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        string issueProviderId,
-        KeyValuePair<string, object?> repoTag,
-        CancellationToken ct);
+    Task TriggerConflictReworkAsync(ConflictReworkRequest request, CancellationToken ct);
 }

@@ -62,18 +62,8 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
     ///   and <see cref="IHostApplicationLifetime.ApplicationStopping"/> for gate cancellation.
     ///   May be <see langword="null"/> in test contexts that run without a host.
     /// </param>
-    /// <param name="wireHandlers">
-    ///   Delegate called on every new <see cref="IHubConnectionManager"/> created during reconnection.
-    ///   Each outer class supplies its own <c>WireEventHandlers</c> method since the event sets differ.
-    /// </param>
-    /// <param name="registerAgent">
-    ///   Delegate that performs the <c>RegisterAgent</c> hub invocation on a given manager.
-    ///   Accepts a <see cref="CancellationToken"/> and may apply Polly resilience internally.
-    /// </param>
-    /// <param name="afterSuccessfulReconnect">
-    ///   Optional callback invoked after a successful reconnect and re-registration.
-    ///   <see cref="AgentConnectionLifecycle"/> passes <see langword="null"/> (chat pods no longer need a drain step);
-    ///   <see cref="AgentConnectionManager"/> passes <see langword="null"/>.
+    /// <param name="callbacks">
+    ///   The owner-specific delegates run during reconnection (see <see cref="ReconnectCallbacks"/>).
     /// </param>
     public ConnectionReconnectCoordinator(
         IHubConnectionManager initialHubManager,
@@ -81,24 +71,23 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
         IHubConnectionManagerFactory factory,
         Serilog.ILogger logger,
         IHostApplicationLifetime? lifetime,
-        Action<IHubConnectionManager> wireHandlers,
-        Func<IHubConnectionManager, CancellationToken, Task> registerAgent,
-        Func<Task>? afterSuccessfulReconnect = null)
+        ReconnectCallbacks callbacks)
     {
         ArgumentNullException.ThrowIfNull(initialHubManager);
         ArgumentNullException.ThrowIfNull(factory);
         ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(wireHandlers);
-        ArgumentNullException.ThrowIfNull(registerAgent);
+        ArgumentNullException.ThrowIfNull(callbacks);
+        ArgumentNullException.ThrowIfNull(callbacks.WireHandlers);
+        ArgumentNullException.ThrowIfNull(callbacks.RegisterAgent);
 
         _hubManager = initialHubManager;
         _agentId = agentId;
         _factory = factory;
         _logger = logger;
         _lifetime = lifetime;
-        _wireHandlers = wireHandlers;
-        _registerAgent = registerAgent;
-        _afterSuccessfulReconnect = afterSuccessfulReconnect;
+        _wireHandlers = callbacks.WireHandlers;
+        _registerAgent = callbacks.RegisterAgent;
+        _afterSuccessfulReconnect = callbacks.AfterSuccessfulReconnect;
     }
 
     // ── Hub manager access ────────────────────────────────────────────────
@@ -146,10 +135,8 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
         // TODO [WARNING]: Callers that captured the old gate reference before this assignment
         // (e.g. in WaitForRegistrationAsync) will now wait forever (or until their own timeout)
         // because the old TCS object will never be completed — only the new one will receive
-        // TrySetResult. Fix: cancel the old TCS before replacing it, e.g.:
-        //   var old = _registrationGate;
-        //   _registrationGate = new TaskCompletionSource(...);
-        //   old.TrySetCanceled();
+        // TrySetResult. Fix: keep a reference to the old TCS, install the new one, then cancel
+        // the old one (TrySetCanceled) so its waiters are released.
         // (ConnectionReconnectCoordinator.cs:168 — DotNetSpecialist review)
         _registrationGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     }
@@ -323,3 +310,24 @@ internal sealed class ConnectionReconnectCoordinator : IAsyncDisposable
         return tcs;
     }
 }
+
+/// <summary>
+/// The owner-specific delegates a <see cref="ConnectionReconnectCoordinator"/> runs while reconnecting.
+/// </summary>
+/// <param name="WireHandlers">
+///   Delegate called on every new <see cref="IHubConnectionManager"/> created during reconnection.
+///   Each outer class supplies its own <c>WireEventHandlers</c> method since the event sets differ.
+/// </param>
+/// <param name="RegisterAgent">
+///   Delegate that performs the <c>RegisterAgent</c> hub invocation on a given manager.
+///   Accepts a <see cref="CancellationToken"/> and may apply Polly resilience internally.
+/// </param>
+/// <param name="AfterSuccessfulReconnect">
+///   Optional callback invoked after a successful reconnect and re-registration.
+///   <see cref="AgentConnectionLifecycle"/> passes <see langword="null"/> (chat pods no longer need a drain step);
+///   <see cref="AgentConnectionManager"/> passes <see langword="null"/>.
+/// </param>
+internal sealed record ReconnectCallbacks(
+    Action<IHubConnectionManager> WireHandlers,
+    Func<IHubConnectionManager, CancellationToken, Task> RegisterAgent,
+    Func<Task>? AfterSuccessfulReconnect = null);

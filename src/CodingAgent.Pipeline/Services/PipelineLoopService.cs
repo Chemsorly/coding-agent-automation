@@ -156,7 +156,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             if (!IsLoopActive) return;
             _stopRequested = true;
             // Cancel the loop CTS so DelayOrStop returns immediately (review finding #2)
-            try { _loopCts?.Cancel(); } catch (ObjectDisposedException) { }
+            try { _loopCts?.Cancel(); } catch (ObjectDisposedException) { /* Already disposed. */ }
             // Unblock circuit breaker wait if paused
             _resumeSignal?.TrySetResult();
             StatusMessage = "⏹ Loop stopping… (finishing current run)";
@@ -215,24 +215,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
 
         // Validate before touching shared state — still outside the lock
         var enabledTemplates = templates.Where(t => t.Enabled).ToList();
-        var validationErrors = new List<string>();
-
-        if (enabledTemplates.Count == 0)
-            validationErrors.Add("No enabled pipeline job templates configured.");
-
-        if (validationErrors.Count == 0)
-        {
-            var issueProviderIds = issueProviders.Select(p => p.Id).ToHashSet();
-            var repoProviderIds = repoProviders.Select(p => p.Id).ToHashSet();
-
-            foreach (var template in enabledTemplates)
-            {
-                if (!issueProviderIds.Contains(template.IssueProviderId))
-                    validationErrors.Add($"Template '{template.Name}' references non-existent issue provider '{template.IssueProviderId}'.");
-                if (!repoProviderIds.Contains(template.RepoProviderId))
-                    validationErrors.Add($"Template '{template.Name}' references non-existent repo provider '{template.RepoProviderId}'.");
-            }
-        }
+        var validationErrors = ValidateEnabledTemplates(enabledTemplates, issueProviders, repoProviders);
 
         if (validationErrors.Count > 0)
         {
@@ -287,15 +270,37 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         }
     }
 
+    private static List<string> ValidateEnabledTemplates(
+        List<PipelineJobTemplate> enabledTemplates,
+        IReadOnlyList<ProviderConfig> issueProviders,
+        IReadOnlyList<ProviderConfig> repoProviders)
+    {
+        if (enabledTemplates.Count == 0)
+            return ["No enabled pipeline job templates configured."];
+
+        var validationErrors = new List<string>();
+        var issueProviderIds = issueProviders.Select(p => p.Id).ToHashSet();
+        var repoProviderIds = repoProviders.Select(p => p.Id).ToHashSet();
+
+        foreach (var template in enabledTemplates)
+        {
+            if (!issueProviderIds.Contains(template.IssueProviderId))
+                validationErrors.Add($"Template '{template.Name}' references non-existent issue provider '{template.IssueProviderId}'.");
+            if (!repoProviderIds.Contains(template.RepoProviderId))
+                validationErrors.Add($"Template '{template.Name}' references non-existent repo provider '{template.RepoProviderId}'.");
+        }
+
+        return validationErrors;
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
             // K8s mode: wait for leadership before entering the activation-wait loop.
             // _leaderGate is null when leader election is not configured (test environments)
-            // → this inner loop is skipped and the loop runs unconditionally.
-            while (!stoppingToken.IsCancellationRequested && (_leaderGate is { IsLeader: false }))
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            // → the wait is skipped and the loop runs unconditionally.
+            await WaitForLeadershipAsync(stoppingToken);
 
             if (stoppingToken.IsCancellationRequested) break;
 
@@ -344,14 +349,23 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
                 // Re-arm if: the linked token (leader + host) was cancelled for leadership loss,
                 // NOT for host stop. RunMultiTemplateLoopAsync may exit normally (not via OCE)
                 // when linked.Token fires — checking the token state here covers both paths.
-                var rearmForLeaderReacquisition = _leaderGate is not null
-                    && linked.Token.IsCancellationRequested
-                    && !stoppingToken.IsCancellationRequested;
+                var rearmForLeaderReacquisition = WasLeadershipLost(linked.Token, stoppingToken);
 
                 await CleanupAsync(rearmForLeaderReacquisition);
             }
         }
     }
+
+    private async Task WaitForLeadershipAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested && (_leaderGate is { IsLeader: false }))
+            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+    }
+
+    private bool WasLeadershipLost(CancellationToken linkedToken, CancellationToken stoppingToken)
+        => _leaderGate is not null
+           && linkedToken.IsCancellationRequested
+           && !stoppingToken.IsCancellationRequested;
 
     /// <param name="rearmForLeaderReacquisition">
     /// When <see langword="true"/> (leadership was lost mid-run), re-arms the activation signal

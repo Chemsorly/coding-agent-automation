@@ -152,78 +152,86 @@ public sealed class WorkItemDispatchLoop : BackgroundService
                 continue;
             }
 
-            // Acquire a rate-limit token before each dispatch call.
-            using var lease = await _rateLimiter.AcquireAsync(permitCount: 1, ct);
-            if (!lease.IsAcquired)
-            {
-                _logger.Warning(
-                    "WorkItemDispatchLoop: rate limiter rejected lease for {WorkItemId} — aborting cycle",
-                    item.Id);
+            if (!await DispatchItemAsync(item, stoppedSelectors, ct))
                 break;
-            }
-
-            DispatchPendingResult result;
-            // Emit a Dispatch.Attempt span for each item dispatched. The span wraps the
-            // dispatch call so the `result` tag is set before the span closes. Per-item only
-            // (idle ticks return early at the pending.Count == 0 guard above — no span emitted).
-            using var dispatchActivity = PipelineTelemetry.ActivitySource.StartActivity("Dispatch.Attempt");
-            dispatchActivity?.SetTag("work_item_id", item.Id);
-            dispatchActivity?.SetTag("agent_selector", item.AgentSelector);
-            try
-            {
-                result = await _workItemClient.DispatchPendingAsync(item.Id, ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                // TODO: The `result` tag is never set on the span for cancellation or exception paths —
-                // the `dispatchActivity?.SetTag("result", ...)` line below is skipped when we break here.
-                // The span is therefore emitted without a result tag, making it indistinguishable from a
-                // sampling/null issue. Fix: set dispatchActivity?.SetTag("result", "Cancelled") here (and
-                // "Exception" in the catch below) before breaking.
-                break;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "WorkItemDispatchLoop: unexpected error dispatching {WorkItemId} — aborting cycle",
-                    item.Id);
-                // TODO: Same as above — set dispatchActivity?.SetTag("result", "Exception") before breaking.
-                break;
-            }
-
-            dispatchActivity?.SetTag("result", result.ToString());
-
-            switch (result)
-            {
-                case DispatchPendingResult.Dispatched:
-                    _logger.Debug("WorkItemDispatchLoop: dispatched {WorkItemId}", item.Id);
-                    break;
-
-                case DispatchPendingResult.PermanentRejection:
-                    // 409 — item not Pending, concurrency limit, or no template.
-                    // Stop dispatching all items with this selector for the current cycle.
-                    stoppedSelectors.Add(item.AgentSelector);
-                    _logger.Debug(
-                        "WorkItemDispatchLoop: permanent rejection for {WorkItemId} (selector {AgentSelector}) — "
-                        + "selector blocked for this cycle",
-                        item.Id, item.AgentSelector);
-                    break;
-
-                case DispatchPendingResult.Transient:
-                    // 503 — PVC unavailable, advisory lock timeout, or K8s failure.
-                    // Abort the entire cycle; retry on the next tick.
-                    _logger.Warning(
-                        "WorkItemDispatchLoop: transient failure for {WorkItemId} — aborting cycle, will retry next interval",
-                        item.Id);
-                    goto exitLoop;
-            }
         }
 
-    exitLoop:
         // Record the epoch after each cycle (including cycles that were aborted mid-way).
         // The static call cannot be mocked by Moq — this is consistent with how WorkItemCountsService
         // calls WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback directly.
         WorkDistributionTelemetry.RecordLastPollEpoch();
+    }
+
+    /// <summary>
+    /// Dispatches a single pending item. Returns <c>false</c> when the current cycle must be aborted.
+    /// </summary>
+    private async Task<bool> DispatchItemAsync(
+        CodingAgent.Pipeline.Models.PendingWorkItemDto item, HashSet<string> stoppedSelectors, CancellationToken ct)
+    {
+        // Acquire a rate-limit token before each dispatch call.
+        using var lease = await _rateLimiter.AcquireAsync(permitCount: 1, ct);
+        if (!lease.IsAcquired)
+        {
+            _logger.Warning(
+                "WorkItemDispatchLoop: rate limiter rejected lease for {WorkItemId} — aborting cycle",
+                item.Id);
+            return false;
+        }
+
+        DispatchPendingResult result;
+        // Emit a Dispatch.Attempt span for each item dispatched. The span wraps the
+        // dispatch call so the `result` tag is set before the span closes. Per-item only
+        // (idle ticks return early at the pending.Count == 0 guard in PollAndDispatchAsync — no span emitted).
+        using var dispatchActivity = PipelineTelemetry.ActivitySource.StartActivity("Dispatch.Attempt");
+        dispatchActivity?.SetTag("work_item_id", item.Id);
+        dispatchActivity?.SetTag("agent_selector", item.AgentSelector);
+        try
+        {
+            result = await _workItemClient.DispatchPendingAsync(item.Id, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Tag the span here: the result tag below is skipped on this path.
+            dispatchActivity?.SetTag("result", "Cancelled");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "WorkItemDispatchLoop: unexpected error dispatching {WorkItemId} — aborting cycle",
+                item.Id);
+            dispatchActivity?.SetTag("result", "Exception");
+            return false;
+        }
+
+        dispatchActivity?.SetTag("result", result.ToString());
+
+        switch (result)
+        {
+            case DispatchPendingResult.Dispatched:
+                _logger.Debug("WorkItemDispatchLoop: dispatched {WorkItemId}", item.Id);
+                break;
+
+            case DispatchPendingResult.PermanentRejection:
+                // 409 — item not Pending, concurrency limit, or no template.
+                // Stop dispatching all items with this selector for the current cycle.
+                stoppedSelectors.Add(item.AgentSelector);
+                _logger.Debug(
+                    "WorkItemDispatchLoop: permanent rejection for {WorkItemId} (selector {AgentSelector}) — "
+                    + "selector blocked for this cycle",
+                    item.Id, item.AgentSelector);
+                break;
+
+            case DispatchPendingResult.Transient:
+                // 503 — PVC unavailable, advisory lock timeout, or K8s failure.
+                // Abort the entire cycle; retry on the next tick.
+                _logger.Warning(
+                    "WorkItemDispatchLoop: transient failure for {WorkItemId} — aborting cycle, will retry next interval",
+                    item.Id);
+                return false;
+        }
+
+        return true;
     }
 
     public override void Dispose()

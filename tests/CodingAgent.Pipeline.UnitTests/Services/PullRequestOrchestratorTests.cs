@@ -42,8 +42,16 @@ public class PullRequestOrchestratorTests
             .ReturnsAsync(false);
 
         var result = await _sut.CreatePullRequestAsync(
-            CreateRun(), false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = CreateRun(),
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         result.Should().BeNull();
         _mockRepo.Verify(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()), Times.Never);
@@ -57,8 +65,16 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
 
         var result = await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         result.Should().Be("https://github.com/org/repo/pull/99");
         run.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/99");
@@ -79,8 +95,16 @@ public class PullRequestOrchestratorTests
 
         var run = CreateRun();
         await _sut.CreatePullRequestAsync(
-            run, true, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = true,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         capturedInfo!.IsDraft.Should().BeTrue();
         run.IsDraftPr.Should().BeTrue();
@@ -96,8 +120,16 @@ public class PullRequestOrchestratorTests
             .ThrowsAsync(new InvalidOperationException("permission denied"));
 
         var act = () => _sut.CreatePullRequestAsync(
-            CreateRun(), false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = CreateRun(),
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("permission denied");
@@ -115,8 +147,16 @@ public class PullRequestOrchestratorTests
 
         var run = CreateRun();
         await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
         run.BlacklistedFilesDetected.Should().Contain(".agent/config.json");
@@ -139,8 +179,16 @@ public class PullRequestOrchestratorTests
 
         var run = CreateRun();
         await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         capturedInfo!.Body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
@@ -158,8 +206,16 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
 
         await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         capturedInfo!.Body.Should().Contain("## Issue Context");
     }
@@ -177,8 +233,17 @@ public class PullRequestOrchestratorTests
         run.PullRequestNumber = "55";
 
         await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None, isRework: true);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None,
+            isRework: true);
 
         // After #2735: mark-ready is deferred to RunPostPrSequenceAsync; orchestrator passes null (no state change)
         _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
@@ -198,8 +263,17 @@ public class PullRequestOrchestratorTests
         run.PullRequestNumber = "55";
 
         await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None, isRework: true);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None,
+            isRework: true);
 
         // After #2735: mark-ready is deferred to RunPostPrSequenceAsync; orchestrator must NOT pass true
         _mockRepo.Verify(r => r.UpdatePullRequestAsync(55, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
@@ -215,8 +289,16 @@ public class PullRequestOrchestratorTests
         // PullRequestNumber is null by default
 
         var result = await _sut.FinalizePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         result.Should().BeNull();
         _mockRepo.Verify(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(),
@@ -236,8 +318,16 @@ public class PullRequestOrchestratorTests
         var run = CreateRun();
 
         await _sut.CreatePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
         // TODO: [WARNING] Both `issue` and `issueComments` are null here, so issueTitle falls back to run.IssueTitle
         // ("Test Issue"). The `issue?.Title ?? run.IssueTitle` branch in BuildPrBodyAsync where a real IssueDetail
         // with a *different* title takes precedence over the run title is not exercised. Add a complementary test
@@ -261,8 +351,16 @@ public class PullRequestOrchestratorTests
         run.PullRequestUrl = "https://github.com/org/repo/pull/55";
 
         await _sut.FinalizePullRequestAsync(
-            run, false, _mockRepo.Object,
-            null, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = run,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = null,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         capturedBody.Should().NotBeNull();
         capturedBody!.Should().Contain("#42");
@@ -290,16 +388,32 @@ public class PullRequestOrchestratorTests
         // Run CreatePullRequestAsync
         var createRun = CreateRun();
         await _sut.CreatePullRequestAsync(
-            createRun, false, _mockRepo.Object,
-            issue, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = createRun,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = issue,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         // Run FinalizePullRequestAsync with identical inputs
         var finalizeRun = CreateRun();
         finalizeRun.PullRequestNumber = "88";
         finalizeRun.PullRequestUrl = "https://github.com/org/repo/pull/88";
         await _sut.FinalizePullRequestAsync(
-            finalizeRun, false, _mockRepo.Object,
-            issue, null, CreateConfig(), CancellationToken.None);
+            new PullRequestPublishRequest
+            {
+                Run = finalizeRun,
+                IsDraft = false,
+                RepoProvider = _mockRepo.Object,
+                Issue = issue,
+                IssueComments = null,
+                Config = CreateConfig()
+            },
+            CancellationToken.None);
 
         capturedPrInfo!.Body.Should().Be(capturedFinalizeBody);
         // TODO: [WARNING] This test uses two separate PipelineRun instances with different PullRequestNumber/PullRequestUrl

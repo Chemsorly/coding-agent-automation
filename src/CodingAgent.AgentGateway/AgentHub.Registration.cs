@@ -17,6 +17,49 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(message);
 
+        ValidateRegistrationIdentity(message);
+
+        var preserveExistingConnectionId = await EvictStaleConnectionAsync(message);
+
+        _facade.Register(message, Context.ConnectionId, preserveExistingConnectionId);
+
+        var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "unknown";
+        _logger.Information(
+            "Agent registered: AgentId={AgentId} ServiceName={ServiceName} ConnectionId={ConnectionId}",
+            message.AgentId, serviceName, Context.ConnectionId);
+
+        // Recovery accepts the reported active job only for the agent's own work item, and only
+        // then records the agent on the run (run.AgentId — in K8s dispatch mode AgentAcceptedRunAsync
+        // is not called, so registration is where a dispatched run gets its agent).
+        var recovery = await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId, Context.ConnectionAborted);
+
+        // First pickup: the agent has now actually picked up the dispatched run, so this is the
+        // moment to move the issue (or PR, for reviews) agent:next → agent:in-progress. Until now it
+        // stayed agent:next while the WorkItem sat Pending in the queue (DistributionResult.Queued
+        // contract). Recovery reports only a first pickup, so a pod-replacement reconnect does not
+        // re-swap. Best-effort: a label-swap failure must not break registration or force-disconnect
+        // the agent.
+        if (recovery.FirstPickupRun is { } pickedUpRun && Guid.TryParse(pickedUpRun.RunId, out _))
+        {
+            _logger.Debug("RegisterAgent: agent {AgentId} picked up run {RunId}", message.AgentId, pickedUpRun.RunId);
+            try
+            {
+                await SwapLabelAsync(pickedUpRun, AgentLabels.InProgress);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex,
+                    "RegisterAgent: failed to swap label to agent:in-progress for run {RunId} (non-fatal)", pickedUpRun.RunId);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rejects the registration with a <see cref="HubException"/> when the message's <c>agentId</c>
+    /// does not match the connection's <c>agentId</c> query parameter or the authenticated identity.
+    /// </summary>
+    private void ValidateRegistrationIdentity(AgentRegistrationMessage message)
+    {
         var queryAgentId = Context.GetHttpContext()?.Request.Query["agentId"].ToString();
         if (!string.Equals(message.AgentId.Value, queryAgentId, StringComparison.Ordinal))
         {
@@ -43,7 +86,14 @@ public sealed partial class AgentHub
                 SanitizeForLog(authenticatedAgentId), SanitizeForLog(message.AgentId.Value));
             throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{SanitizeForLog(message.AgentId.Value)}'");
         }
+    }
 
+    /// <returns>
+    /// <c>true</c> when the existing registry entry's connection must be preserved (mid-run
+    /// kiro-cli reconnect); otherwise <c>false</c>.
+    /// </returns>
+    private async Task<bool> EvictStaleConnectionAsync(AgentRegistrationMessage message)
+    {
         // If an agent with the same ID is already connected with a different connectionId,
         // force-disconnect the old connection before re-registering.
         // Exception: when the reconnecting agent has the SAME hostname as the existing entry
@@ -112,37 +162,7 @@ public sealed partial class AgentHub
             }
         }
 
-        _facade.Register(message, Context.ConnectionId, preserveExistingConnectionId);
-
-        var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "unknown";
-        _logger.Information(
-            "Agent registered: AgentId={AgentId} ServiceName={ServiceName} ConnectionId={ConnectionId}",
-            message.AgentId, serviceName, Context.ConnectionId);
-
-        // Recovery accepts the reported active job only for the agent's own work item, and only
-        // then records the agent on the run (run.AgentId — in K8s dispatch mode AgentAcceptedRunAsync
-        // is not called, so registration is where a dispatched run gets its agent).
-        var recovery = await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId, Context.ConnectionAborted);
-
-        // First pickup: the agent has now actually picked up the dispatched run, so this is the
-        // moment to move the issue (or PR, for reviews) agent:next → agent:in-progress. Until now it
-        // stayed agent:next while the WorkItem sat Pending in the queue (DistributionResult.Queued
-        // contract). Recovery reports only a first pickup, so a pod-replacement reconnect does not
-        // re-swap. Best-effort: a label-swap failure must not break registration or force-disconnect
-        // the agent.
-        if (recovery.FirstPickupRun is { } pickedUpRun && Guid.TryParse(pickedUpRun.RunId, out _))
-        {
-            _logger.Debug("RegisterAgent: agent {AgentId} picked up run {RunId}", message.AgentId, pickedUpRun.RunId);
-            try
-            {
-                await SwapLabelAsync(pickedUpRun, AgentLabels.InProgress);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "RegisterAgent: failed to swap label to agent:in-progress for run {RunId} (non-fatal)", pickedUpRun.RunId);
-            }
-        }
+        return preserveExistingConnectionId;
     }
 
     /// <summary>

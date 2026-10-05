@@ -169,8 +169,19 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
     /// <inheritdoc />
     public void Dispose()
     {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Kills the active process, if any, and disposes it.
+    /// </summary>
+    /// <param name="disposing"><see langword="true"/> when called from <see cref="Dispose()"/>.</param>
+    protected virtual void Dispose(bool disposing)
+    {
         if (_disposed) return;
         _disposed = true;
+        if (!disposing) return;
 
         if (IsExecuting)
         {
@@ -183,7 +194,5 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
             disposable.Dispose();
         }
         _activeProcess = null;
-
-        GC.SuppressFinalize(this);
     }
 }

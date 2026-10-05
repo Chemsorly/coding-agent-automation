@@ -31,7 +31,10 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
                 (label, c) => _issueProvider.AddLabelAsync(issueIdentifier, label, c),
                 newLabel,
                 ct,
-                identifier: issueIdentifier.Value);
+                new LabelSwapOptions
+                {
+                    Identifier = issueIdentifier.Value
+                });
         }
         catch (Exception ex)
         {

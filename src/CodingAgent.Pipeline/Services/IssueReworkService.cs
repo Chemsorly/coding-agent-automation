@@ -22,18 +22,14 @@ public sealed class IssueReworkService : IIssueReworkService
     }
 
     /// <inheritdoc />
-    public async Task TriggerConflictReworkAsync(
-        IReadOnlyList<PullRequestSummary> sorted,
-        IReadOnlyDictionary<int, PrMergeabilityStatus> mergeabilityMap,
-        IReadOnlySet<string> activeRunBranches,
-        bool activeRunBranchesUnavailable,
-        IRepositoryProvider repoProvider,
-        IIssueProvider issueProvider,
-        string issueProviderId,
-        KeyValuePair<string, object?> repoTag,
-        CancellationToken ct)
+    public async Task TriggerConflictReworkAsync(ConflictReworkRequest request, CancellationToken ct)
     {
-        foreach (var pr in sorted)
+        ArgumentNullException.ThrowIfNull(request);
+        var mergeabilityMap = request.MergeabilityMap;
+        var activeRunBranches = request.ActiveRunBranches;
+        var activeRunBranchesUnavailable = request.ActiveRunBranchesUnavailable;
+
+        foreach (var pr in request.Sorted)
         {
             if (mergeabilityMap[pr.Number] != PrMergeabilityStatus.Conflicted)
                 continue;
@@ -51,7 +47,7 @@ public sealed class IssueReworkService : IIssueReworkService
                 continue;
             }
 
-            await TriggerReworkAsync(repoProvider, issueProvider, issueProviderId, pr, repoTag, ct);
+            await TriggerReworkAsync(request.RepoProvider, request.IssueProvider, request.IssueProviderId, pr, request.RepoTag, ct);
         }
     }
 
@@ -150,9 +146,12 @@ public sealed class IssueReworkService : IIssueReworkService
                 addLabel: (label, c) => issueProvider.AddLabelAsync(issueId, label, c),
                 newLabel: AgentLabels.Next,
                 ct: ct,
-                expectedCurrentLabel: issue.Labels.FirstOrDefault(l => l.StartsWith("agent:", StringComparison.Ordinal)),
-                identifier: issueIdString,
-                currentLabels: issue.Labels);
+                options: new LabelSwapOptions
+                {
+                    ExpectedCurrentLabel = issue.Labels.FirstOrDefault(l => l.StartsWith("agent:", StringComparison.Ordinal)),
+                    Identifier = issueIdString,
+                    CurrentLabels = issue.Labels
+                });
 
             PipelineTelemetry.HousekeepingConflictReworkTriggered.Add(1, repoTag);
             // Emit Housekeeping.ConflictRework span for each issue successfully re-queued for rework.

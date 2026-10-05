@@ -79,17 +79,17 @@ public sealed class ApiBackedPipelineRunHistoryService : IPipelineRunHistoryServ
     /// <inheritdoc />
     public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
-        var result = await _client.GetRunHistoryAsync(page: 1, pageSize: 1000, ct: ct);
+        var result = await _client.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 1000), ct);
         return result.Items;
     }
 
     /// <inheritdoc />
     public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
-        => await _client.GetRunHistoryAsync(page: page, pageSize: pageSize, ct: ct);
+        => await _client.GetRunHistoryAsync(new RunHistoryQuery(Page: page, PageSize: pageSize), ct);
 
     /// <inheritdoc />
     public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, CancellationToken ct = default)
-        => await _client.GetRunHistoryAsync(page: page, pageSize: pageSize, feedbackOnly: feedbackOnly, ct: ct);
+        => await _client.GetRunHistoryAsync(new RunHistoryQuery(Page: page, PageSize: pageSize, FeedbackOnly: feedbackOnly), ct);
 
     /// <inheritdoc />
     public async Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default)

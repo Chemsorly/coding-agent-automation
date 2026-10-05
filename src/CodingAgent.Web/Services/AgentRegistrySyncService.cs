@@ -58,12 +58,11 @@ public sealed class AgentRegistrySyncService : BackgroundService
 
                 if (consecutiveFailures > 0)
                 {
+                    var agents = await _registry.GetAllAgentsAsync(stoppingToken);
                     _logger.Information(
                         "Agent registry sync recovered after {FailureCount} consecutive failure(s); " +
                         "{AgentCount} agent(s) visible.",
-                        // S6966 false positive: Web host binds ApiAgentRegistryService whose GetAllAgents()
-                        // is a pure in-memory read — no async Redis call underneath.
-                        consecutiveFailures, _registry.GetAllAgents().Count);
+                        consecutiveFailures, agents.Count);
                     consecutiveFailures = 0;
                 }
             }

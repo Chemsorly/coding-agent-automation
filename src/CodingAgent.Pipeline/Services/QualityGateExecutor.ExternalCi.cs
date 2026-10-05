@@ -12,7 +12,7 @@ public partial class QualityGateExecutor
     /// - Empty (none matched or none configured) → skip, return passing report
     /// </summary>
     private async Task<QualityGateReport> RunQualityGateValidationAsync(
-        QualityGateContext context, string workspacePath, PipelineConfiguration config, CancellationToken ct)
+        QualityGateContext context, string workspacePath, CancellationToken ct)
     {
         if (context.QualityGateConfigs.Count > 0)
         {
@@ -80,10 +80,10 @@ public partial class QualityGateExecutor
                 return BuildConflictRestartReport(context.Run, report, context.Callbacks);
 
             if (ciResult.ciStatus.State == PipelineRunState.PrMerged)
-                return BuildPrMergedReport(context.Run, report, context.Callbacks);
+                return BuildPrMergedReport(report);
 
             if (ciResult.ciStatus.State == PipelineRunState.PrClosed)
-                return BuildPrClosedReport(context.Run, report, context.Callbacks);
+                return BuildPrClosedReport(report);
 
             ciGate = CiPollingCoordinator.BuildCiGateResult(
                 ciResult.ciPassed, ciResult.ciStatus, ciResult.ciLogPaths, "CI", "External CI", context.Callbacks);
@@ -167,8 +167,8 @@ public partial class QualityGateExecutor
             // TODO: [WARNING] pipeline.ci_infra_retries is not set here, unlike the post-PR path in
             // CiPollingCoordinator.WaitForPostPrCiAsync. If the poll throws after some infra retries,
             // the WaitForCi span will be missing the retry count, making it inconsistent with the
-            // documented schema and the post-PR path behaviour. Add:
-            //   ciSpan?.SetTag("pipeline.ci_infra_retries", run.InfrastructureRetryCount);
+            // documented schema and the post-PR path behaviour. Set the pipeline.ci_infra_retries tag
+            // from run.InfrastructureRetryCount here as well.
             ciSpan?.SetTag("pipeline.ci_status", "error");
             throw;
         }
@@ -214,12 +214,10 @@ public partial class QualityGateExecutor
     /// Handles the PR-merged outcome from CI polling: the PR was already merged, so the run ends
     /// successfully with no further action. <see cref="PipelineStep.PrMerged"/> is a terminal step
     /// that maps to <see cref="WorkItemStatus.Succeeded"/> via <c>CompletionOutcomeResolver</c>.
+    /// The output line and TransitionTo call were already emitted by BuildPrMergedStatus in
+    /// <see cref="CiPollingCoordinator"/>, so only the report is built here.
     /// </summary>
-    // TODO [WARNING] (DotNetSpecialist): `run` and `callbacks` parameters are never used inside this method —
-    // the output line and TransitionTo call were already emitted by BuildPrMergedStatus in CiPollingCoordinator.
-    // Consider removing the unused parameters to make the contract explicit and avoid misleading future callers.
-    private static QualityGateReport BuildPrMergedReport(
-        PipelineRun run, QualityGateReport report, IPipelineCallbacks callbacks)
+    private static QualityGateReport BuildPrMergedReport(QualityGateReport report)
     {
         // run.CurrentStep is already set by BuildPrMergedStatus in CiPollingCoordinator.
         // This report is returned so ProceedToQualityGatesAsync can detect the terminal step
@@ -241,12 +239,10 @@ public partial class QualityGateExecutor
     /// Handles the PR-closed outcome from CI polling: the PR was closed without merging, so the
     /// run ends as Cancelled. <see cref="PipelineStep.PrClosed"/> is a terminal step that maps to
     /// <see cref="WorkItemStatus.Cancelled"/> via <c>CompletionOutcomeResolver</c>.
+    /// The output line and TransitionTo call were already emitted by BuildPrClosedStatus in
+    /// <see cref="CiPollingCoordinator"/>, so only the report is built here.
     /// </summary>
-    // TODO [WARNING] (DotNetSpecialist): `run` and `callbacks` parameters are never used inside this method —
-    // the output line and TransitionTo call were already emitted by BuildPrClosedStatus in CiPollingCoordinator.
-    // Consider removing the unused parameters to make the contract explicit and avoid misleading future callers.
-    private static QualityGateReport BuildPrClosedReport(
-        PipelineRun run, QualityGateReport report, IPipelineCallbacks callbacks)
+    private static QualityGateReport BuildPrClosedReport(QualityGateReport report)
     {
         // run.CurrentStep is already set by BuildPrClosedStatus in CiPollingCoordinator.
         return new QualityGateReport

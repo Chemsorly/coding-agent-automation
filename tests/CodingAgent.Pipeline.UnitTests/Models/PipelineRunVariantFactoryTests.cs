@@ -376,12 +376,8 @@ public class PipelineRunVariantFactoryTests
         });
 
         act.Should().Throw<ArgumentOutOfRangeException>()
-            // TODO: The ParamName value changed from "phaseType" (the old method parameter name) to
-            // "RunType" (the record property name, via nameof(p.RunType)) after the S107 refactor.
-            // Callers that catch ArgumentOutOfRangeException and inspect ParamName will observe a
-            // different string at runtime. The assertion is consistent with the current implementation,
-            // but be aware this is a subtle API surface change if callers rely on the exception ParamName.
-            .Which.ParamName.Should().Be("RunType");
+            // ParamName is the creation-params argument; the offending value is its RunType.
+            .Which.ParamName.Should().Be("p");
     }
 
     [Fact]
@@ -398,9 +394,7 @@ public class PipelineRunVariantFactoryTests
         });
 
         act.Should().Throw<ArgumentOutOfRangeException>()
-            // TODO: Same as above — ParamName is now "RunType" (record property) rather than the
-            // original method parameter name "phaseType". See comment on CreateDecomposition_RejectsInvalidRunType.
-            .Which.ParamName.Should().Be("RunType");
+            .Which.ParamName.Should().Be("p");
     }
 
     [Fact]

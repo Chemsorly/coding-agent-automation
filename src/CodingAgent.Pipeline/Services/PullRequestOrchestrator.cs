@@ -23,23 +23,27 @@ public sealed class PullRequestOrchestrator
     /// builds PR info, and creates the pull request.
     /// Returns the PR URL, or null if no commits ahead of base.
     /// </summary>
+    /// <param name="request">The run, draft flag, providers, issue context, configuration and output sink.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <param name="isRework">
+    /// True when the run reworks an existing PR: its body is updated instead of creating a new PR.
+    /// </param>
     public async Task<string?> CreatePullRequestAsync(
-        PipelineRun run,
-        bool isDraft,
-        IRepositoryProvider repoProvider,
-        IssueDetail? issue,
-        IReadOnlyList<IssueComment>? issueComments,
-        PipelineConfiguration config,
+        PullRequestPublishRequest request,
         CancellationToken ct,
-        Action<string>? onOutputLine = null,
-        bool isRework = false,
-        string? issueReference = null)
+        bool isRework = false)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var run = request.Run;
+        var isDraft = request.IsDraft;
+        var repoProvider = request.RepoProvider;
+        var config = request.Config;
+        var onOutputLine = request.OnOutputLine;
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
 
-        var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
+        var effectiveIssueRef = request.IssueReference ?? $"#{run.IssueIdentifier}";
         var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
 
         // Commit and push
@@ -64,7 +68,7 @@ public sealed class PullRequestOrchestrator
         // Build PR info
         var prTitle = PipelineFormatting.GeneratePrTitle(run.IssueTitle, effectiveIssueRef);
 
-        var prBody = BuildPrBody(run, isDraft, issue, issueComments, effectiveIssueRef, closeRef);
+        var prBody = BuildPrBody(run, isDraft, request.Issue, request.IssueComments, effectiveIssueRef, closeRef);
         run.PullRequestBody = prBody;
 
         if (isRework || !string.IsNullOrEmpty(run.PullRequestNumber))
@@ -243,9 +247,11 @@ public sealed class PullRequestOrchestrator
                 return run.PullRequestUrl;
             }
 
-            // Couldn't find it — let the error propagate
-            _logger.Warning(ex, "Pipeline {RunId} PR already exists but couldn't find it via API", run.RunId);
-            throw;
+            // Couldn't find it — let the error propagate with context; the caller
+            // (PipelineCallbacksBase.CreateDraftPrIfNotExists) logs it.
+            throw new InvalidOperationException(
+                $"Pipeline {run.RunId}: a pull request already exists for branch '{run.BranchName}' but it could not be found via the API.",
+                ex);
         }
 
         run.PullRequestUrl = prUrl;
@@ -262,22 +268,21 @@ public sealed class PullRequestOrchestrator
     /// Finalizes an existing pull request: updates the body with quality gate results
     /// and optionally marks it ready for review.
     /// </summary>
-    public async Task<string?> FinalizePullRequestAsync(
-        PipelineRun run,
-        bool isDraft,
-        IRepositoryProvider repoProvider,
-        IssueDetail? issue,
-        IReadOnlyList<IssueComment>? issueComments,
-        PipelineConfiguration config,
-        CancellationToken ct,
-        Action<string>? onOutputLine = null,
-        string? issueReference = null)
+    /// <param name="request">The run, draft flag, providers, issue context, configuration and output sink.</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task<string?> FinalizePullRequestAsync(PullRequestPublishRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var run = request.Run;
+        var isDraft = request.IsDraft;
+        var repoProvider = request.RepoProvider;
+        var config = request.Config;
+        var onOutputLine = request.OnOutputLine;
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(repoProvider);
         ArgumentNullException.ThrowIfNull(config);
 
-        var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
+        var effectiveIssueRef = request.IssueReference ?? $"#{run.IssueIdentifier}";
         var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
 
         if (string.IsNullOrEmpty(run.PullRequestNumber))
@@ -295,7 +300,7 @@ public sealed class PullRequestOrchestrator
         onOutputLine?.Invoke($"🔀 Pushed final changes to origin/{run.BranchName}");
 
         // Build the full PR body
-        var prBody = BuildPrBody(run, isDraft, issue, issueComments, effectiveIssueRef, closeRef);
+        var prBody = BuildPrBody(run, isDraft, request.Issue, request.IssueComments, effectiveIssueRef, closeRef);
         run.PullRequestBody = prBody;
 
         // Update PR body and mark ready (or leave as draft)

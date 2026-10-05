@@ -176,7 +176,7 @@ app.MapApplicationEndpoints();
 // increase() sees the first real increment after a deploy.
 MetricPreInitialization.Run(app.Services, () => GitHubTelemetry.PreInitialize());
 
-app.Run();
+await app.RunAsync();
 
 // Make Program class accessible for WebApplicationFactory in tests
-public partial class Program { }
+public partial class Program { } // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests

@@ -456,49 +456,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
                 // pattern applied in Pass 1, consider adding the cheap in-memory WasRecentlyCompleted check
                 // here to avoid the GetIssueAsync round-trip for issues in the grace period.
 
-                // Skip if a live agent is actively processing this issue (Defense 3).
-                // Fail-safe: skip on API error to avoid interfering with a legitimate run.
-                bool isDistributed;
-                try
-                {
-                    isDistributed = await _workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex,
-                        "Dual-label recovery: IsIssueDistributed check failed for issue {Identifier}, skipping",
-                        issue.Identifier);
-                    continue;
-                }
-
-                if (isDistributed)
-                {
-                    _logger.Debug("Dual-label recovery: issue {Identifier} has an active WorkItem, skipping", issue.Identifier);
-                    continue;
-                }
-
-                // Defense 1: re-fetch to avoid acting on stale list data.
-                // TODO: Every agent:done issue returned by ListOpenIssuesAsync incurs a GetIssueAsync
-                // call even if it only has a single label (the common steady-state for completed work).
-                // TryResolveDualLabelIssueAsync does guard with agentLabels.Count < 2, but the API
-                // round-trip happens unconditionally. Under load (many agent:done issues), this generates
-                // avoidable API traffic. Consider pre-filtering in the list result using the summary labels
-                // before calling GetIssueAsync: skip if the summary shows only one agent:* label
-                // (accepting that this is a best-effort optimisation subject to stale list data).
-                IssueDetail currentIssue;
-                try
-                {
-                    currentIssue = await issueProvider.GetIssueAsync(issue.Identifier, ct);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Dual-label recovery: failed to fetch current labels for issue {Identifier}, skipping", issue.Identifier);
-                    continue;
-                }
-
-                if (await TryResolveDualLabelIssueAsync(currentIssue, issue, providerConfigId, ct))
+                if (await TryResolveSingleDualLabelIssueAsync(issue, issueProvider, providerConfigId, ct))
                     resolved++;
             }
 
@@ -509,6 +467,54 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         }
 
         return resolved;
+    }
+
+    private async Task<bool> TryResolveSingleDualLabelIssueAsync(
+        IssueSummary issue, IIssueProvider issueProvider, string providerConfigId, CancellationToken ct)
+    {
+        // Skip if a live agent is actively processing this issue (Defense 3).
+        // Fail-safe: skip on API error to avoid interfering with a legitimate run.
+        bool isDistributed;
+        try
+        {
+            isDistributed = await _workItemClient.IsIssueDistributedAsync(issue.Identifier, providerConfigId, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "Dual-label recovery: IsIssueDistributed check failed for issue {Identifier}, skipping",
+                issue.Identifier);
+            return false;
+        }
+
+        if (isDistributed)
+        {
+            _logger.Debug("Dual-label recovery: issue {Identifier} has an active WorkItem, skipping", issue.Identifier);
+            return false;
+        }
+
+        // Defense 1: re-fetch to avoid acting on stale list data.
+        // TODO: Every agent:done issue returned by ListOpenIssuesAsync incurs a GetIssueAsync
+        // call even if it only has a single label (the common steady-state for completed work).
+        // TryResolveDualLabelIssueAsync does guard with agentLabels.Count < 2, but the API
+        // round-trip happens unconditionally. Under load (many agent:done issues), this generates
+        // avoidable API traffic. Consider pre-filtering in the list result using the summary labels
+        // before calling GetIssueAsync: skip if the summary shows only one agent:* label
+        // (accepting that this is a best-effort optimisation subject to stale list data).
+        IssueDetail currentIssue;
+        try
+        {
+            currentIssue = await issueProvider.GetIssueAsync(issue.Identifier, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Dual-label recovery: failed to fetch current labels for issue {Identifier}, skipping", issue.Identifier);
+            return false;
+        }
+
+        return await TryResolveDualLabelIssueAsync(currentIssue, issue, providerConfigId, ct);
     }
 
     /// <summary>

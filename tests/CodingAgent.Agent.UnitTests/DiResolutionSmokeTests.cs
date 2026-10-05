@@ -337,7 +337,6 @@ public class DiResolutionSmokeTests
         services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
             sp.GetRequiredService<IHubConnectionManager>(),
             sp.GetRequiredService<IHubConnectionManagerFactory>(),
-            sp.GetRequiredService<ChatSlotManager>(),
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));

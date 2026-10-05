@@ -74,24 +74,19 @@ public sealed class FeedbackService
     /// The preamble output line ("📋 Collecting …") is caller-specific and is NOT emitted here —
     /// emit it at the call site before invoking this method.
     /// Real agent providers absorb their own timeouts via <c>TimeoutHelper.ExecuteWithTimeoutAsync</c>
-    /// and return <c>AgentResult</c> rather than throwing. The <paramref name="feedbackTimeoutSeconds"/>
-    /// parameter / linked CTS is retained as defence in depth for providers that do not use that helper.
+    /// and return <c>AgentResult</c> rather than throwing. The
+    /// <see cref="FeedbackCollectionRequest.FeedbackTimeoutSeconds"/> linked CTS is retained as
+    /// defence in depth for providers that do not use that helper.
     /// </remarks>
-    // TODO: The CancellationToken parameter ct is positioned 7th (before emitOutputLine) rather than last.
-    // .NET convention for async methods places CancellationToken as the final parameter.
-    // Non-conventional ordering increases argument-transposition risk at call sites.
-    // Reorder to (run, agentProvider, historyService, promptFactory, outcome, feedbackTimeoutSeconds, emitOutputLine, ct)
-    // when making a future breaking-change pass on this internal API.
-    internal async Task CollectFeedbackCoreAsync(
-        PipelineRun run,
-        IAgentProvider agentProvider,
-        IPipelineRunHistoryService? historyService,
-        Func<(IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories), string> promptFactory,
-        FeedbackOutcome outcome,
-        int feedbackTimeoutSeconds,
-        CancellationToken ct,
-        Action<string> emitOutputLine)
+    internal async Task CollectFeedbackCoreAsync(FeedbackCollectionRequest request, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var run = request.Run;
+        var agentProvider = request.AgentProvider;
+        var promptFactory = request.PromptFactory;
+        var emitOutputLine = request.EmitOutputLine;
+        var outcome = request.Outcome;
+        var feedbackTimeoutSeconds = request.FeedbackTimeoutSeconds;
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(agentProvider);
         ArgumentNullException.ThrowIfNull(promptFactory);
@@ -99,7 +94,7 @@ public sealed class FeedbackService
 
         try
         {
-            var categories = await LoadPreviousCategoriesAsync(historyService, ct).ConfigureAwait(false);
+            var categories = await LoadPreviousCategoriesAsync(request.HistoryService, ct).ConfigureAwait(false);
             var feedbackPrompt = promptFactory(categories);
 
             // Create a timeout-linked CTS as defence in depth for providers that do not handle
@@ -261,40 +256,27 @@ public sealed class FeedbackService
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
 
-            string? category = null;
-            string? stuckReason = null;
-            List<string> missingContext = [];
-            List<string> missingCapabilities = [];
-            List<string> promptIssues = [];
-            List<string> suggestions = [];
+            // Try to extract harness fields; they might also be at root level
+            var harnessSource =
+                root.TryGetProperty("harness", out var harnessElement) ||
+                root.TryGetProperty("Harness", out harnessElement)
+                    ? harnessElement
+                    : root;
+            var harness = new HarnessFeedback
+            {
+                Category = TryGetString(harnessSource, "category", "Category"),
+                StuckReason = TryGetString(harnessSource, "stuckReason", "StuckReason", "stuck_reason"),
+                MissingContext = TryGetStringList(harnessSource, "missingContext", "MissingContext", "missing_context"),
+                MissingCapabilities = TryGetStringList(harnessSource, "missingCapabilities", "MissingCapabilities", "missing_capabilities"),
+                PromptIssues = TryGetStringList(harnessSource, "promptIssues", "PromptIssues", "prompt_issues"),
+                Suggestions = TryGetStringList(harnessSource, "suggestions", "Suggestions")
+            };
 
             string? issueCategory = null;
             string? issueDescription = null;
             List<string> affectedFiles = [];
             string? humanActionNeeded = null;
             var hasIssue = false;
-
-            // Try to extract harness fields
-            if (root.TryGetProperty("harness", out var harnessElement) ||
-                root.TryGetProperty("Harness", out harnessElement))
-            {
-                category = TryGetString(harnessElement, "category", "Category");
-                stuckReason = TryGetString(harnessElement, "stuckReason", "StuckReason", "stuck_reason");
-                missingContext = TryGetStringList(harnessElement, "missingContext", "MissingContext", "missing_context");
-                missingCapabilities = TryGetStringList(harnessElement, "missingCapabilities", "MissingCapabilities", "missing_capabilities");
-                promptIssues = TryGetStringList(harnessElement, "promptIssues", "PromptIssues", "prompt_issues");
-                suggestions = TryGetStringList(harnessElement, "suggestions", "Suggestions");
-            }
-            else
-            {
-                // Fields might be at root level
-                category = TryGetString(root, "category", "Category");
-                stuckReason = TryGetString(root, "stuckReason", "StuckReason", "stuck_reason");
-                missingContext = TryGetStringList(root, "missingContext", "MissingContext", "missing_context");
-                missingCapabilities = TryGetStringList(root, "missingCapabilities", "MissingCapabilities", "missing_capabilities");
-                promptIssues = TryGetStringList(root, "promptIssues", "PromptIssues", "prompt_issues");
-                suggestions = TryGetStringList(root, "suggestions", "Suggestions");
-            }
 
             // Try to extract issue fields
             if (root.TryGetProperty("issue", out var issueElement) ||
@@ -307,16 +289,6 @@ public sealed class FeedbackService
                 hasIssue = issueCategory is not null || issueDescription is not null ||
                            affectedFiles.Count > 0 || humanActionNeeded is not null;
             }
-
-            var harness = new HarnessFeedback
-            {
-                Category = category,
-                StuckReason = stuckReason,
-                MissingContext = missingContext,
-                MissingCapabilities = missingCapabilities,
-                PromptIssues = promptIssues,
-                Suggestions = suggestions
-            };
 
             IssueFeedback? issue = hasIssue
                 ? new IssueFeedback
@@ -489,28 +461,22 @@ public sealed class FeedbackService
 
     /// <summary>
     /// Internal DTO for lenient deserialization of the agent's JSON feedback block.
+    /// Positional records: System.Text.Json binds the JSON properties to the constructor parameters
+    /// (case-insensitively via <see cref="PipelineJsonOptions.Lenient"/>), so no setters are needed.
     /// </summary>
-    private sealed class FeedbackDto
-    {
-        public HarnessDto? Harness { get; set; }
-        public IssueDto? Issue { get; set; }
-    }
+    private sealed record FeedbackDto(HarnessDto? Harness, IssueDto? Issue);
 
-    private sealed class HarnessDto
-    {
-        public string? Category { get; set; }
-        public string? StuckReason { get; set; }
-        public List<string>? MissingContext { get; set; }
-        public List<string>? MissingCapabilities { get; set; }
-        public List<string>? PromptIssues { get; set; }
-        public List<string>? Suggestions { get; set; }
-    }
+    private sealed record HarnessDto(
+        string? Category,
+        string? StuckReason,
+        List<string>? MissingContext,
+        List<string>? MissingCapabilities,
+        List<string>? PromptIssues,
+        List<string>? Suggestions);
 
-    private sealed class IssueDto
-    {
-        public string? Category { get; set; }
-        public string? Description { get; set; }
-        public List<string>? AffectedFiles { get; set; }
-        public string? HumanActionNeeded { get; set; }
-    }
+    private sealed record IssueDto(
+        string? Category,
+        string? Description,
+        List<string>? AffectedFiles,
+        string? HumanActionNeeded);
 }

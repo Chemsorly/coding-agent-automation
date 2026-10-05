@@ -304,10 +304,10 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             _logger,
             "Failed to send output lines batch via SignalR");
 
-        var completion = await AgentJobRunner.ExecuteAsync(
-            _workItemExecutor, assignment, _connectionManager.Connection, outputBatcher,
+        var completion = await AgentJobRunner.ExecuteAsync(new AgentJobExecutionRequest(
+            _workItemExecutor.ExecuteAsync, assignment, _connectionManager.Connection, outputBatcher,
             step => _connectionManager.UpdateCurrentStep(step),
-            rethrowOnSigterm: ct, ct: pipelineCt);
+            Ct: pipelineCt, RethrowOnSigterm: ct));
 
         // Step 5: Report completion via unified reporter. Once the outcome is recorded the pod exits 0,
         // whatever the outcome was, so the Job starts no further pod. Failing to record it exits

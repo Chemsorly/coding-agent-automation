@@ -97,17 +97,7 @@ public sealed class BlockedIssuesService
         IReadOnlyList<ProviderConfig> issueConfigs;
         try
         {
-            var templates = await _config.GetAllTemplatesAsync(ct);
-            enabled = templates.Where(t => t.Enabled).ToList();
-
-            if (!string.IsNullOrEmpty(projectId))
-            {
-                var project = await _config.GetProjectByIdAsync(projectId, ct);
-                var templateIds = project?.TemplateIds is { } ids
-                    ? new HashSet<string>(ids, StringComparer.Ordinal)
-                    : new HashSet<string>(StringComparer.Ordinal);
-                enabled = enabled.Where(t => templateIds.Contains(t.Id)).ToList();
-            }
+            enabled = await GetEnabledTemplatesAsync(projectId, ct);
 
             // Secrets are required so the created provider can authenticate against the issue API.
             issueConfigs = await _config.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
@@ -145,53 +135,8 @@ public sealed class BlockedIssuesService
             try
             {
                 await using var provider = _providerFactory.CreateIssueProvider(cfg);
-
-                // stateCache is at provider scope (outside the page loop) so IsIssueClosedAsync
-                // responses are memoized across all pages — cross-page dependencies don't re-fetch.
-                var stateCache = new Dictionary<int, bool>();
-                var page = 1;
-                var providerFetched = 0;
-
-                while (true)
-                {
-                    var pageResult = await provider.ListOpenIssuesAsync(page, PageSize, ct);
-
-                    foreach (var issue in pageResult.Items)
-                    {
-                        if (!seen.Add((providerId, issue.Identifier)))
-                            continue;
-                        // TODO: [WARNING] Cancellation is not checked between per-issue dependency
-                        // checks within a page. With PageSize=50 and a slow provider, a cancellation
-                        // request (e.g. component disposed) may not be honoured for up to 50× the
-                        // per-issue check latency. Consider adding ct.ThrowIfCancellationRequested()
-                        // at the top of this inner loop.
-                        var check = await _dependencyChecker.CheckAsync(
-                            issue.Identifier, issue.Description ?? string.Empty, provider, stateCache, ct);
-                        // Delegate label filter to the shared evaluator using NotReadyLabels.
-                        // Override IsReady=false when the issue carries a lifecycle label that precludes
-                        // dispatch readiness, regardless of what the dependency checker returned.
-                        var labelResult = _eligibilityEvaluator.EvaluateLabelFilter(
-                            issue.Labels ?? Array.Empty<string>(), NotReadyLabels);
-                        var isReady = check.IsReady && labelResult.IsEligible;
-                        backlog.Add(new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors, check.BlockedByUrls));
-                        providerFetched++;
-                    }
-
-                    if (!pageResult.HasMore || providerFetched >= MaxIssuesPerProvider)
-                    {
-                        // Truncated when we stopped because we hit the cap and more pages still exist.
-                        // TODO: [WARNING] providerFetched can exceed MaxIssuesPerProvider by up to
-                        // PageSize-1 (49 extra issues) because the cap check fires after processing
-                        // all items in the current page, not before each item. The constant's doc
-                        // comment says "200 is a pragmatic balance" but up to 249 can be fetched.
-                        // Consider breaking the inner foreach early once providerFetched >= MaxIssuesPerProvider
-                        // to enforce the cap precisely.
-                        if (pageResult.HasMore && providerFetched >= MaxIssuesPerProvider)
-                            isTruncated = true;
-                        break;
-                    }
-                    page++;
-                }
+                if (await AddProviderBacklogAsync(providerId, provider, backlog, seen, ct))
+                    isTruncated = true;
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex)
@@ -201,5 +146,86 @@ public sealed class BlockedIssuesService
         }
 
         return new BacklogResult(backlog, isTruncated);
+    }
+
+    private async Task<List<PipelineJobTemplate>> GetEnabledTemplatesAsync(string? projectId, CancellationToken ct)
+    {
+        var templates = await _config.GetAllTemplatesAsync(ct);
+        var enabled = templates.Where(t => t.Enabled).ToList();
+
+        if (!string.IsNullOrEmpty(projectId))
+        {
+            var project = await _config.GetProjectByIdAsync(projectId, ct);
+            var templateIds = project?.TemplateIds is { } ids
+                ? new HashSet<string>(ids, StringComparer.Ordinal)
+                : new HashSet<string>(StringComparer.Ordinal);
+            enabled = enabled.Where(t => templateIds.Contains(t.Id)).ToList();
+        }
+
+        return enabled;
+    }
+
+    /// <summary>
+    /// Pages through one provider's open issues, appending each issue not yet <paramref name="seen"/> to
+    /// <paramref name="backlog"/>. Returns true when fetching stopped at <see cref="MaxIssuesPerProvider"/>
+    /// while more pages still existed.
+    /// </summary>
+    private async Task<bool> AddProviderBacklogAsync(
+        string providerId,
+        IIssueProvider provider,
+        List<BacklogIssue> backlog,
+        HashSet<(string ProviderId, string Identifier)> seen,
+        CancellationToken ct)
+    {
+        // stateCache is at provider scope (outside the page loop) so IsIssueClosedAsync
+        // responses are memoized across all pages — cross-page dependencies don't re-fetch.
+        var stateCache = new Dictionary<int, bool>();
+        var page = 1;
+        var providerFetched = 0;
+
+        while (true)
+        {
+            var pageResult = await provider.ListOpenIssuesAsync(page, PageSize, ct);
+
+            foreach (var issue in pageResult.Items)
+            {
+                if (!seen.Add((providerId, issue.Identifier)))
+                    continue;
+                // TODO: [WARNING] Cancellation is not checked between per-issue dependency
+                // checks within a page. With PageSize=50 and a slow provider, a cancellation
+                // request (e.g. component disposed) may not be honoured for up to 50× the
+                // per-issue check latency. Consider adding ct.ThrowIfCancellationRequested()
+                // at the top of this inner loop.
+                backlog.Add(await ToBacklogIssueAsync(issue, provider, stateCache, ct));
+                providerFetched++;
+            }
+
+            if (!pageResult.HasMore || providerFetched >= MaxIssuesPerProvider)
+            {
+                // Truncated when we stopped because we hit the cap and more pages still exist.
+                // TODO: [WARNING] providerFetched can exceed MaxIssuesPerProvider by up to
+                // PageSize-1 (49 extra issues) because the cap check fires after processing
+                // all items in the current page, not before each item. The constant's doc
+                // comment says "200 is a pragmatic balance" but up to 249 can be fetched.
+                // Consider breaking the inner foreach early once providerFetched >= MaxIssuesPerProvider
+                // to enforce the cap precisely.
+                return pageResult.HasMore && providerFetched >= MaxIssuesPerProvider;
+            }
+            page++;
+        }
+    }
+
+    private async Task<BacklogIssue> ToBacklogIssueAsync(
+        IssueSummary issue, IIssueProvider provider, Dictionary<int, bool> stateCache, CancellationToken ct)
+    {
+        var check = await _dependencyChecker.CheckAsync(
+            issue.Identifier, issue.Description ?? string.Empty, provider, stateCache, ct);
+        // Delegate label filter to the shared evaluator using NotReadyLabels.
+        // Override IsReady=false when the issue carries a lifecycle label that precludes
+        // dispatch readiness, regardless of what the dependency checker returned.
+        var labelResult = _eligibilityEvaluator.EvaluateLabelFilter(
+            issue.Labels ?? Array.Empty<string>(), NotReadyLabels);
+        var isReady = check.IsReady && labelResult.IsEligible;
+        return new BacklogIssue(issue.Identifier, issue.Title, issue.Url, isReady, check.BlockedBy, issue.Labels, issue.LabelColors, check.BlockedByUrls);
     }
 }
