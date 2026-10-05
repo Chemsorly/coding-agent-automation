@@ -161,31 +161,6 @@ public class OpenCodeOutputDeduplicationTests
     }
 
     /// <summary>
-    /// When SSE already streamed assistant content (sseEmitted=true), the onOutputLine callback
-    /// should NOT be invoked again for HTTP response lines.
-    /// </summary>
-    [Fact]
-    public async Task ParseAndEmitResponseAsync_WhenSseAlreadyEmitted_DoesNotDuplicateOutput()
-    {
-        var ctx = OpenCodeTestHelpers.CreateTestContext();
-
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-dedup");
-        ctx.Handler.ForUrlPattern("/session/.+/message", new SendMessageResponse
-        {
-            Parts = [new MessagePart { Type = "text", Text = "HTTP line" }]
-        });
-
-        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
-
-        var outputLines = new List<string>();
-        var request = OpenCodeTestHelpers.CreateRequest("test prompt");
-        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None, line => outputLines.Add(line));
-
-        result.Should().NotBeNull();
-        result.ExitCode.Should().Be(0);
-    }
-
-    /// <summary>
     /// Normal success response: text parts are joined and returned as output lines.
     /// </summary>
     [Fact]

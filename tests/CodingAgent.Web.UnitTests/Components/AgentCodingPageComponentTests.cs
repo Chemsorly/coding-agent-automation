@@ -1846,128 +1846,89 @@ public class AgentCodingPageComponentTests : BunitContext
         Assert.NotNull(component.Markup);
     }
 
-    // ── SwitchTo*Drawer error paths ───────────────────────────────────────────
+    // ── Drawer load failures ──────────────────────────────────────────────────
+    // The page preselects the only enabled template on first render, so each handler loads its drawer
+    // through the template's provider. A provider failure must end up in the page's error message.
 
     [Fact]
-    public async Task SwitchToIssueDrawer_WhenNoTemplateSelected_SetsErrorMessage()
+    public async Task SwitchToIssueDrawer_WhenIssueLoadFails_SetsErrorMessage()
     {
-        var component = Render<AgentCoding>();
+        var component = RenderWithFailingProviders();
 
-        // _manualDispatchTemplateId is "" — TemplateId implicit conversion throws ArgumentException
-        // The PageService returns an error string for empty template ID; the component sets _errorMessage
-        await component.InvokeAsync(async () =>
-        {
-            try
-            {
-                var method = typeof(AgentCoding).GetMethod("SwitchToIssueDrawer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                await (Task)method!.Invoke(component.Instance, null)!;
-            }
-            catch (ArgumentException)
-            {
-                // Expected — TemplateId rejects empty string before service is called
-            }
-        });
+        await InvokeDrawerHandlerAsync(component, "SwitchToIssueDrawer");
 
-        Assert.NotNull(component.Markup);
+        ErrorMessageOf(component).Should().Be("Failed to load issues: tracker unavailable");
     }
 
     [Fact]
-    public async Task SwitchToPrDrawer_WhenNoTemplateSelected_SetsErrorMessage()
+    public async Task SwitchToPrDrawer_WhenPullRequestLoadFails_SetsErrorMessage()
     {
-        var component = Render<AgentCoding>();
+        var component = RenderWithFailingProviders();
 
-        await component.InvokeAsync(async () =>
-        {
-            try
-            {
-                var method = typeof(AgentCoding).GetMethod("SwitchToPrDrawer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                await (Task)method!.Invoke(component.Instance, null)!;
-            }
-            catch (ArgumentException) { }
-        });
+        await InvokeDrawerHandlerAsync(component, "SwitchToPrDrawer");
 
-        Assert.NotNull(component.Markup);
+        ErrorMessageOf(component).Should().Be("Failed to load pull requests: repository unavailable");
     }
 
     [Fact]
-    public async Task SwitchToEpicDrawer_WhenNoTemplateSelected_SetsErrorMessage()
+    public async Task SwitchToEpicDrawer_WhenEpicLoadFails_SetsErrorMessage()
     {
-        var component = Render<AgentCoding>();
+        var component = RenderWithFailingProviders();
 
-        await component.InvokeAsync(async () =>
-        {
-            try
-            {
-                var method = typeof(AgentCoding).GetMethod("SwitchToEpicDrawer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                await (Task)method!.Invoke(component.Instance, null)!;
-            }
-            catch (ArgumentException) { }
-        });
+        await InvokeDrawerHandlerAsync(component, "SwitchToEpicDrawer");
 
-        Assert.NotNull(component.Markup);
-    }
-
-    // ── OpenDrawer / OpenPrDrawer / OpenEpicDrawer error paths ───────────────
-
-    [Fact]
-    public async Task OpenDrawer_WhenNoTemplateSelected_SetsErrorMessage()
-    {
-        var component = Render<AgentCoding>();
-
-        await component.InvokeAsync(async () =>
-        {
-            try
-            {
-                var method = typeof(AgentCoding).GetMethod("OpenDrawer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                await (Task)method!.Invoke(component.Instance, null)!;
-            }
-            catch (ArgumentException) { }
-        });
-
-        Assert.NotNull(component.Markup);
+        ErrorMessageOf(component).Should().Be("Failed to load epics: tracker unavailable");
     }
 
     [Fact]
-    public async Task OpenPrDrawer_WhenNoTemplateSelected_SetsErrorMessage()
+    public async Task OpenDrawer_WhenIssueLoadFails_SetsErrorMessage()
     {
-        var component = Render<AgentCoding>();
+        var component = RenderWithFailingProviders();
 
-        await component.InvokeAsync(async () =>
-        {
-            try
-            {
-                var method = typeof(AgentCoding).GetMethod("OpenPrDrawer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                await (Task)method!.Invoke(component.Instance, null)!;
-            }
-            catch (ArgumentException) { }
-        });
+        await InvokeDrawerHandlerAsync(component, "OpenDrawer");
 
-        Assert.NotNull(component.Markup);
+        ErrorMessageOf(component).Should().Be("Failed to load issues: tracker unavailable");
     }
 
     [Fact]
-    public async Task OpenEpicDrawer_WhenNoTemplateSelected_SetsErrorMessage()
+    public async Task OpenPrDrawer_WhenPullRequestLoadFails_SetsErrorMessage()
     {
-        var component = Render<AgentCoding>();
+        var component = RenderWithFailingProviders();
 
-        await component.InvokeAsync(async () =>
-        {
-            try
-            {
-                var method = typeof(AgentCoding).GetMethod("OpenEpicDrawer",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                await (Task)method!.Invoke(component.Instance, null)!;
-            }
-            catch (ArgumentException) { }
-        });
+        await InvokeDrawerHandlerAsync(component, "OpenPrDrawer");
 
-        Assert.NotNull(component.Markup);
+        ErrorMessageOf(component).Should().Be("Failed to load pull requests: repository unavailable");
     }
+
+    [Fact]
+    public async Task OpenEpicDrawer_WhenEpicLoadFails_SetsErrorMessage()
+    {
+        var component = RenderWithFailingProviders();
+
+        await InvokeDrawerHandlerAsync(component, "OpenEpicDrawer");
+
+        ErrorMessageOf(component).Should().Be("Failed to load epics: tracker unavailable");
+    }
+
+    private IRenderedComponent<AgentCoding> RenderWithFailingProviders()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("tracker unavailable"));
+        _mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("repository unavailable"));
+        return Render<AgentCoding>();
+    }
+
+    private static async Task InvokeDrawerHandlerAsync(IRenderedComponent<AgentCoding> component, string handlerName)
+    {
+        var handler = typeof(AgentCoding).GetMethod(handlerName,
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        await component.InvokeAsync(() => (Task)handler.Invoke(component.Instance, null)!);
+    }
+
+    private static string? ErrorMessageOf(IRenderedComponent<AgentCoding> component) =>
+        (string?)typeof(AgentCoding).GetField("_errorMessage",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(component.Instance);
 
     // ── CloseDrawer / ClosePrDrawer / CloseEpicDrawer ─────────────────────────
 

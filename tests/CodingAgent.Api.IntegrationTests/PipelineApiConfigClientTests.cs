@@ -399,13 +399,14 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     [Fact]
     public async Task GetProjectByIdAsync_EncodesIdInPath()
     {
-        var project = new PipelineProject { Id = "id/with/slash", Name = "Encoded" };
-        // HttpClient encodes "/" as "%2F". WireMock matches the decoded path "/api/config/projects/id/with/slash"
-        StubGet("/api/config/projects/id/with/slash", project);
+        // The stub handler sees the raw request URI; WireMock would match the decoded path whatever the encoding.
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse(new PipelineProject { Id = "id/with/slash", Name = "Encoded" });
 
-        var result = await _client.GetProjectByIdAsync("id/with/slash");
+        var result = await client.GetProjectByIdAsync("id/with/slash");
 
         result.Should().NotBeNull();
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be("/api/config/projects/id%2Fwith%2Fslash");
     }
 
     // ── GetAllTemplatesAsync ───────────────────────────────────────────────────
@@ -469,16 +470,14 @@ public sealed class PipelineApiConfigClientTests : IAsyncDisposable
     [Fact]
     public async Task GetKeyValueAsync_EncodesKeyInPath()
     {
-        // HttpClient encodes spaces as %20, WireMock matches the decoded path
-        _server.Given(Request.Create().WithPath("/api/config/key-value/has space").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody("\"ok\""));
+        // The stub handler sees the raw request URI; WireMock would match the decoded path whatever the encoding.
+        var (client, handler) = CreateWithStubHandler();
+        handler.Respond = _ => JsonResponse("ok");
 
-        var result = await _client.GetKeyValueAsync("has space");
+        var result = await client.GetKeyValueAsync("has space");
 
         result.Should().Be("ok");
+        handler.LastRequest!.RequestUri!.PathAndQuery.Should().Be("/api/config/key-value/has%20space");
     }
 
     // ── HasEnabledTemplatesAsync ───────────────────────────────────────────────
