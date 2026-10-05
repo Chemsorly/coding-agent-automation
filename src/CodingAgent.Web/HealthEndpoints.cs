@@ -21,15 +21,19 @@ public static class HealthEndpoints
     /// </summary>
     public static IEndpointRouteBuilder MapHealthEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        // GET and HEAD alike: uptime monitors probe with HEAD, and without a HEAD mapping the
+        // fallback "authenticated user" policy would answer with a login redirect.
+        string[] probeMethods = [HttpMethods.Get, HttpMethods.Head];
+
         // Liveness: Is the process alive? Never check dependencies here.
-        endpoints.MapGet("/healthz", () =>
+        endpoints.MapMethods("/healthz", probeMethods, () =>
         {
             return Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow });
         }).AllowAnonymous();
 
         // Readiness: Can this pod serve traffic?
         // 503 during graceful shutdown drain or database unreachable.
-        endpoints.MapGet("/readyz", (HttpContext httpContext) =>
+        endpoints.MapMethods("/readyz", probeMethods, (HttpContext httpContext) =>
         {
             var readiness = httpContext.RequestServices.GetRequiredService<ReadinessState>();
             var dbHealth = httpContext.RequestServices.GetService<CodingAgent.Infrastructure.DatabaseHealthState>();

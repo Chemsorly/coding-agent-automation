@@ -1,19 +1,18 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace CodingAgent.Infrastructure.Persistence.Migrations
 {
-    /// <inheritdoc />
-    public partial class InitialCreate : Migration
+    /// <summary>
+    /// The whole schema. In October 2026 the 23 original migrations were squashed into this baseline. It
+    /// reuses the ID of the newest original migration (20260930213632_DropConsolidationRuns), so a database that
+    /// applied every original migration has nothing pending, and a build from before the squash still finds its
+    /// migrations applied. DatabaseStartupService refuses a database that stopped before that migration.
+    /// </summary>
+    public partial class Baseline : Migration
     {
-        private static readonly string[] FinalStepCompletedAtColumns = ["FinalStep", "CompletedAt"];
-        private static readonly string[] IssueIdentifierProviderColumns = ["IssueIdentifier", "IssueProviderConfigId"];
-        private static readonly string[] IssueIdentifierProviderStatusColumns = ["IssueIdentifier", "IssueProviderConfigId", "Status"];
-
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -32,16 +31,40 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "ConsolidationRuns",
+                name: "FeedbackCommentOutbox",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    Data = table.Column<string>(type: "jsonb", nullable: true),
+                    RunId = table.Column<string>(type: "text", nullable: false),
+                    IssueProviderConfigId = table.Column<string>(type: "text", nullable: false),
+                    IssueIdentifier = table.Column<string>(type: "text", nullable: false),
+                    RepoProviderConfigId = table.Column<string>(type: "text", nullable: false),
+                    PullRequestNumber = table.Column<string>(type: "text", nullable: true),
+                    FeedbackJson = table.Column<string>(type: "text", nullable: false),
+                    Status = table.Column<string>(type: "text", nullable: false),
+                    AttemptCount = table.Column<int>(type: "integer", nullable: false),
+                    CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
+                    LastAttemptAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    CompletedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    ErrorMessage = table.Column<string>(type: "text", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_ConsolidationRuns", x => x.Id);
+                    table.PrimaryKey("PK_FeedbackCommentOutbox", x => x.Id);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "KeyValueStore",
+                columns: table => new
+                {
+                    Key = table.Column<string>(type: "text", nullable: false),
+                    Value = table.Column<string>(type: "jsonb", nullable: true),
+                    xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_KeyValueStore", x => x.Key);
                 });
 
             migrationBuilder.CreateTable(
@@ -90,7 +113,9 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                     ProjectId = table.Column<string>(type: "text", nullable: true),
                     ProjectName = table.Column<string>(type: "text", nullable: true),
                     RunType = table.Column<int>(type: "integer", nullable: false),
+                    IssueProviderConfigId = table.Column<string>(type: "text", nullable: true),
                     SummaryJson = table.Column<string>(type: "jsonb", nullable: true),
+                    HarnessVersion = table.Column<string>(type: "text", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -107,7 +132,6 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                     Enabled = table.Column<bool>(type: "boolean", nullable: false),
                     Description = table.Column<string>(type: "text", nullable: true),
                     Settings = table.Column<string>(type: "jsonb", nullable: true),
-                    TemplateIds = table.Column<List<string>>(type: "text[]", nullable: false),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -181,14 +205,37 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                     RetryCount = table.Column<int>(type: "integer", nullable: false),
                     TimeoutSeconds = table.Column<int>(type: "integer", nullable: false),
                     Result = table.Column<string>(type: "jsonb", nullable: true),
-                    ProjectId = table.Column<string>(type: "text", nullable: true),
+                    ProjectId = table.Column<Guid>(type: "uuid", nullable: true),
+                    OriginalEnqueuedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    LastProgressAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
                     ClaimedPvcName = table.Column<string>(type: "text", nullable: true),
-                    xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
+                    TraceParent = table.Column<string>(type: "text", nullable: true),
+                    BranchName = table.Column<string>(type: "text", nullable: true),
+                    xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false),
+                    FirstAssignmentAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
+                    PriorityWeight = table.Column<int>(type: "integer", nullable: false)
                 },
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_WorkItems", x => x.Id);
+                    table.ForeignKey(
+                        name: "FK_WorkItems_Projects_ProjectId",
+                        column: x => x.ProjectId,
+                        principalTable: "Projects",
+                        principalColumn: "Id",
+                        onDelete: ReferentialAction.SetNull);
                 });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_FeedbackCommentOutbox_RunId",
+                table: "FeedbackCommentOutbox",
+                column: "RunId",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
+                name: "IX_FeedbackCommentOutbox_Status_AttemptCount_CreatedAt",
+                table: "FeedbackCommentOutbox",
+                columns: new[] { "Status", "AttemptCount", "CreatedAt" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_PipelineRuns_AgentId",
@@ -196,27 +243,41 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                 column: "AgentId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_PipelineRuns_FinalStep_CompletedAt",
+                table: "PipelineRuns",
+                columns: new[] { "FinalStep", "CompletedAt" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_PipelineRuns_ProjectId_StartedAt",
+                table: "PipelineRuns",
+                columns: new[] { "ProjectId", "StartedAt" },
+                descending: new[] { false, true },
+                filter: "\"ProjectId\" IS NOT NULL AND \"CompletedAt\" IS NOT NULL");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_PipelineRuns_StartedAt",
                 table: "PipelineRuns",
                 column: "StartedAt",
-                descending: Array.Empty<bool>());
-
-            migrationBuilder.CreateIndex(
-                name: "IX_PipelineRuns_FinalStep_CompletedAt",
-                table: "PipelineRuns",
-                columns: FinalStepCompletedAtColumns);
+                descending: new bool[0]);
 
             migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_IssueIdentifier_IssueProviderConfigId",
                 table: "WorkItems",
-                columns: IssueIdentifierProviderColumns,
+                columns: new[] { "IssueIdentifier", "IssueProviderConfigId" },
                 unique: true,
                 filter: "\"Status\" NOT IN (3, 4, 5)");
 
             migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_IssueIdentifier_IssueProviderConfigId_Status",
                 table: "WorkItems",
-                columns: IssueIdentifierProviderStatusColumns);
+                columns: new[] { "IssueIdentifier", "IssueProviderConfigId", "Status" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_WorkItems_ProjectId_CompletedAt_Terminal",
+                table: "WorkItems",
+                columns: new[] { "ProjectId", "CompletedAt" },
+                descending: new[] { false, true },
+                filter: "\"ProjectId\" IS NOT NULL AND \"Status\" IN (3, 4, 5) AND \"CompletedAt\" IS NOT NULL");
 
             migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_Status",
@@ -231,7 +292,10 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
                 name: "AgentProfiles");
 
             migrationBuilder.DropTable(
-                name: "ConsolidationRuns");
+                name: "FeedbackCommentOutbox");
+
+            migrationBuilder.DropTable(
+                name: "KeyValueStore");
 
             migrationBuilder.DropTable(
                 name: "PipelineConfig");
@@ -241,9 +305,6 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "PipelineRuns");
-
-            migrationBuilder.DropTable(
-                name: "Projects");
 
             migrationBuilder.DropTable(
                 name: "ProviderConfigs");
@@ -256,6 +317,9 @@ namespace CodingAgent.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "WorkItems");
+
+            migrationBuilder.DropTable(
+                name: "Projects");
         }
     }
 }

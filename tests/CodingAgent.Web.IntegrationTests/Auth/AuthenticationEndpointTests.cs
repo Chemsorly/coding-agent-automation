@@ -46,6 +46,59 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
         response.StatusCode.Should().NotBe(HttpStatusCode.Unauthorized);
     }
 
+    [Theory]
+    [InlineData("/healthz")]
+    [InlineData("/readyz")]
+    public async Task HealthEndpoints_AnswerHeadLikeGet_WithoutAuth(string path)
+    {
+        var client = NoRedirectClient();
+
+        var head = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, path));
+
+        head.StatusCode.Should().Be((await client.GetAsync(path)).StatusCode);
+    }
+
+    [Fact]
+    public async Task Healthz_Head_ReturnsOk()
+    {
+        var response = await NoRedirectClient().SendAsync(new HttpRequestMessage(HttpMethod.Head, "/healthz"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Theory]
+    [InlineData("/login")]
+    [InlineData("/login?returnUrl=%2Fruns")]
+    public async Task LoginPage_Head_ReturnsOk_WithoutRedirectingToItself(string path)
+    {
+        var response = await NoRedirectClient().SendAsync(new HttpRequestMessage(HttpMethod.Head, path));
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task UnauthenticatedHead_OnAPage_EndsOnTheLoginPage()
+    {
+        var client = NoRedirectClient();
+
+        var page = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, "/overview"));
+        page.StatusCode.Should().Be(HttpStatusCode.Redirect);
+        page.Headers.Location!.AbsolutePath.Should().Be("/login");
+
+        var login = await client.SendAsync(new HttpRequestMessage(HttpMethod.Head, page.Headers.Location));
+        login.StatusCode.Should().Be(HttpStatusCode.OK, "a HEAD probe that follows redirects must not loop");
+    }
+
+    [Theory]
+    [InlineData("PUT")]
+    [InlineData("DELETE")]
+    public async Task LoginPath_UnmappedMethod_IsRejectedWithoutRedirect(string method)
+    {
+        var response = await NoRedirectClient().SendAsync(new HttpRequestMessage(new HttpMethod(method), "/login"));
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized, "a redirect from the login page to itself would loop");
+    }
+
     [Fact]
     public async Task LoginPage_IsAnonymous_AndShowsPasswordForm()
     {
@@ -75,11 +128,27 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
     [Fact]
     public async Task Login_BehindTlsIngress_SetsSecureSessionCookie()
     {
-        var client = NoRedirectClient();
+        // The client passes the antiforgery cookie itself: it is Secure behind the TLS ingress, and
+        // a cookie container would not send it back to the test server's http:// address.
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
         client.DefaultRequestHeaders.Add("X-Forwarded-For", "203.0.113.40");
         client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
+        var page = await client.GetAsync("/login");
+        var antiforgeryCookie = page.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith(".AspNetCore.Antiforgery.", StringComparison.Ordinal));
+        var token = AuthTestEnvironment.ReadAntiforgeryToken(await page.Content.ReadAsStringAsync(), "/login");
 
-        var response = await AuthTestEnvironment.PostLoginAsync(client, "admin", AuthTestEnvironment.AdminPassword, "/runs");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["__RequestVerificationToken"] = token,
+                ["Username"] = "admin",
+                ["Password"] = AuthTestEnvironment.AdminPassword,
+                ["ReturnUrl"] = "/runs",
+            }),
+        };
+        request.Headers.Add("Cookie", antiforgeryCookie.Split(';')[0]);
+        var response = await client.SendAsync(request);
 
         response.Headers.GetValues("Set-Cookie").Should().Contain(c => c.StartsWith("ca_session") && c.Contains("secure", StringComparison.OrdinalIgnoreCase));
     }
