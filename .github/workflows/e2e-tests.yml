@@ -12,7 +12,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e:
+  # The suite runs one test at a time (the factories share process-global environment
+  # variables), so it is split across separate jobs instead: each shard is its own process with
+  # its own hosts on free ports. The shard count is the length of the matrix.
+  e2e-shard:
+    name: e2e (shard ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -20,6 +24,11 @@ jobs:
       pull-requests: write
     container:
       image: mcr.microsoft.com/playwright/dotnet:v1.63.0-noble
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -42,6 +51,25 @@ jobs:
       - name: Build
         run: dotnet build tests/CodingAgent.Web.E2ETests/ -c Debug -p:IsTestProject=true
 
+      # The sorted list of E2E test methods is dealt round-robin across the shards, so browser
+      # and headless tests spread evenly and a new test class needs no shard assignment. Every
+      # shard lists the same build, so the shards are disjoint and together run the whole suite.
+      # Splitting a class across shards is safe: every test resets the shared fixture first.
+      # The filter grows by about 125 bytes per test; Linux caps a single argument at 128 KB.
+      - name: Select shard tests
+        run: |
+          dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=E2E" --ListFullyQualifiedTests --ListTestsTargetPath:"$RUNNER_TEMP/e2e-listed.txt"
+          LC_ALL=C sort -u "$RUNNER_TEMP/e2e-listed.txt" | awk 'NF' > "$RUNNER_TEMP/e2e-all.txt"
+          awk -v total="${{ strategy.job-total }}" -v shard="${{ strategy.job-index }}" '(NR - 1) % total == shard' "$RUNNER_TEMP/e2e-all.txt" > "$RUNNER_TEMP/e2e-shard.txt"
+          ALL=$(wc -l < "$RUNNER_TEMP/e2e-all.txt")
+          SELECTED=$(wc -l < "$RUNNER_TEMP/e2e-shard.txt")
+          if [ "$SELECTED" -eq 0 ]; then
+            echo "::error::Shard ${{ matrix.shard }} selected no tests out of ${ALL} E2E test methods"
+            exit 1
+          fi
+          echo "Shard ${{ matrix.shard }}/${{ strategy.job-total }}: ${SELECTED} of ${ALL} E2E test methods"
+          echo "E2E_FILTER=Category=E2E&($(sed 's/^/FullyQualifiedName=/' "$RUNNER_TEMP/e2e-shard.txt" | paste -sd '|' -))" >> "$GITHUB_ENV"
+
       # vstest against the built DLL, not `dotnet test` on the project: with IsTestProject=false
       # the VSTest MSBuild target is a no-op and `dotnet test` exits 0 having discovered zero
       # tests, which is how this job passed for the whole 041–045 arc without running anything.
@@ -51,7 +79,7 @@ jobs:
       # runs silently into timeout-minutes, GitHub reports the job as cancelled with no test
       # name, and agents fixing E2E tests get nothing to work from.
       - name: Run E2E Tests
-        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"Category=E2E" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:TestResults
+        run: dotnet vstest tests/CodingAgent.Web.E2ETests/bin/Debug/net10.0/CodingAgent.Web.E2ETests.dll --TestCaseFilter:"$E2E_FILTER" --Blame:"CollectHangDump;HangDumpType=None;TestTimeout=5m" --logger:trx --ResultsDirectory:TestResults
         env:
           ASPNETCORE_ENVIRONMENT: Development
 
@@ -80,7 +108,7 @@ jobs:
       #   uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       #   if: failure()
       #   with:
-      #     name: playwright-screenshots
+      #     name: playwright-screenshots-${{ matrix.shard }}
       #     path: TestResults/screenshots/
 
       # TODO: Reactivate on next billing cycle (storage budget exhausted)
@@ -88,5 +116,20 @@ jobs:
       #   uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       #   if: always()
       #   with:
-      #     name: e2e-test-results
+      #     name: e2e-test-results-${{ matrix.shard }}
       #     path: TestResults/
+
+  # Gate for branch protection: the shards report as "e2e (shard N/M)", and this job keeps the
+  # single "e2e" check the suite reported before it was split.
+  e2e:
+    needs: [e2e-shard]
+    runs-on: ubuntu-latest
+    if: always()
+    permissions:
+      contents: read
+    steps:
+      - run: |
+          if [ "${{ needs.e2e-shard.result }}" != "success" ]; then
+            echo "::error::E2E shards did not all pass (result: ${{ needs.e2e-shard.result }})"
+            exit 1
+          fi

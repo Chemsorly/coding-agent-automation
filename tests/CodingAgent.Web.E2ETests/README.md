@@ -72,9 +72,14 @@ The `--ipc=host` flag is required for Chromium shared-memory stability.
 ## CI
 
 The workflow (`.github/workflows/e2e-tests.yml`) runs on `push` to `main` and on all pull requests.
-The job has `timeout-minutes: 30`. GitHub reports a job that hits this limit as cancelled, not
-failed, and its log ends without a test summary. The 5-minute hang timeout fails the run first and
-names the hung test.
+It splits the suite across three matrix jobs, `e2e (shard N/3)`: the sorted list of E2E test
+methods is dealt round-robin, so each shard runs about a third of the browser and the headless
+tests. A gate job named `e2e` passes only when every shard passes. To find a failed test, open the
+failed shard's log; the `e2e` job only reports that a shard failed.
+
+Each shard job has `timeout-minutes: 30`. GitHub reports a job that hits this limit as cancelled,
+not failed, and its log ends without a test summary. The 5-minute hang timeout fails the run first
+and names the hung test.
 
 ## Infrastructure
 

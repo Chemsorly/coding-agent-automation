@@ -53,6 +53,8 @@ For Kubernetes deployments, a Helm chart is provided at `helm/coding-agent-autom
 
 > **Upgrading to the release with sign-in (Spec 049):** every page of the web UI now requires a signed-in user. Serve the UI at the root of its own host (`web.ingress`, or `kubectl port-forward` for the local admin) before you upgrade; path-prefix proxies such as the Rancher service proxy stop working. Read the generated admin password as shown in [Authentication](authentication.md#local-admin-password), then configure OIDC and role bindings.
 
+> **Upgrading from v0.4.8 or older:** releases after v0.4.10 replace the database migrations with one baseline. Upgrade to v0.4.9 or v0.4.10 first so the Pipeline API applies the original migrations; a database that stopped before them makes the newer API refuse to start, with a message that says so.
+
 ```bash
 # 1. Install the chart
 helm install coding-agent ./helm/coding-agent-automation \
@@ -95,7 +97,8 @@ The chart deploys:
 | Path | Description |
 |------|-------------|
 | `web.image.repository/tag` | Web container image |
-| `web.replicas` | Number of web replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below). |
+| `web.replicas` | Number of web replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below), and sticky sessions at the ingress (see `web.service.annotations`). |
+| `web.service.annotations` | Annotations on the web Service. With Traefik and more than one web replica, enable sticky sessions here (`traefik.ingress.kubernetes.io/service.sticky.cookie: "true"`): a Blazor Server circuit lives in one pod, and its connection and reconnects must reach that pod. See [Authentication](authentication.md#exposing-the-ui). |
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |

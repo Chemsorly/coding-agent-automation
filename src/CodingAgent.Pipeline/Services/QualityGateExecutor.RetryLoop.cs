@@ -50,12 +50,12 @@ public partial class QualityGateExecutor
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
                 _logger.Information(ex, "Pipeline {RunId} was cancelled during quality gates", run.RunId);
-                // TODO: [WARNING] Lambda parameter `ct` shadows the method-level `ct` parameter of
+                // NOTE (issue #3243): Lambda parameter `ct` shadows the method-level `ct` parameter of
                 // ProceedToQualityGatesAsync. This is intentional — the outer token may already be
                 // cancelled and CancellationToken.None is passed as the argument — but the shadowing
                 // is a latent maintenance hazard. Consider renaming the lambda parameter (e.g., `token`)
                 // to make the shadowing explicit and self-documenting.
-                // TODO: [WARNING] Partial-finalization risk: if SwapAgentLabel throws (e.g., transient
+                // NOTE (issue #3243): Partial-finalization risk: if SwapAgentLabel throws (e.g., transient
                 // HttpRequestException), run.MarkCompleted() will already have set CompletedAt, but
                 // TransitionTo and AddRunToHistoryAsync will not have been called, leaving the run
                 // half-finalized with the exception swallowed by the finally block. Consider wrapping
@@ -70,7 +70,7 @@ public partial class QualityGateExecutor
         }
         catch (Exception ex)
         {
-            // TODO: [WARNING] The guard only checks Failed and Cancelled. Other terminal states
+            // NOTE (issue #3243): The guard only checks Failed and Cancelled. Other terminal states
             // (e.g. ConflictRestart) are not included. If a future inner call sets CurrentStep to
             // another terminal value and then throws a non-OCE exception, FinalizeRunAsync will
             // still be re-entered. Consider extending the guard to cover all terminal states, or
@@ -82,9 +82,9 @@ public partial class QualityGateExecutor
                 "Pipeline {RunId} QualityGateExecutor swapping label to agent:error for issue {IssueIdentifier} (reason=quality gate validation error)",
                 run.RunId, run.IssueIdentifier);
             var failureOutputLine = $"❌ Pipeline failed: {run.FailureReason}";
-            // TODO: [WARNING] Lambda parameter `ct` shadows the method-level `ct` parameter of
+            // NOTE (issue #3243): Lambda parameter `ct` shadows the method-level `ct` parameter of
             // ProceedToQualityGatesAsync. See the same note on the cancellation arm above.
-            // TODO: [WARNING] Partial-finalization risk: if SwapLabelAsync throws, MarkCompleted()
+            // NOTE (issue #3243): Partial-finalization risk: if SwapLabelAsync throws, MarkCompleted()
             // will already have been called but TransitionTo and AddRunToHistoryAsync will not run.
             // See the note on the cancellation arm above for the suggested mitigation.
             await FinalizeRunAsync(context, run,
@@ -114,7 +114,7 @@ public partial class QualityGateExecutor
         PipelineStep step,
         CancellationToken ct)
     {
-        // TODO: [WARNING] The `ct` parameter is only forwarded to the swapLabel delegate;
+        // NOTE (issue #3243): The `ct` parameter is only forwarded to the swapLabel delegate;
         // AddRunToHistoryAsync is called without any cancellation token. This is intentional
         // (the incoming token may already be cancelled), but if AddRunToHistoryAsync is ever
         // changed to accept a CancellationToken, the partial propagation gap will be silently
@@ -186,7 +186,7 @@ public partial class QualityGateExecutor
             // and is preferred by HandlePostPrCiAsync when non-null. This fallback anchors
             // only against CI runs started before FinalizePullRequest was called — a weaker
             // guard than the actual mark-ready time but never worse than the pre-fix behavior.
-            // TODO [WARNING] (DotNetSpecialist): prReadyFallback is captured here, before the
+            // NOTE (issue #3243): prReadyFallback is captured here, before the
             // FinalizePullRequest await. FinalizePullRequest is async and runs brain sync,
             // reflection, the mark-ready API call, and PR description generation — all of which
             // execute after this timestamp. The fallback therefore precedes all of that work by

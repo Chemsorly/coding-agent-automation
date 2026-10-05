@@ -30,6 +30,9 @@ internal static class AuthEndpoints
 
         app.MapPost(LogoutEndpoint, LogoutAsync).AllowAnonymous();
 
+        // The login page component maps only GET and POST; HEAD (uptime monitors) gets a plain 200.
+        app.MapMethods(AuthPaths.Login, [HttpMethods.Head], () => Results.Ok()).AllowAnonymous();
+
         return app;
     }
 
