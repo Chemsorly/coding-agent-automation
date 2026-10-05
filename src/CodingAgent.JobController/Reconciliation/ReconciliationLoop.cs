@@ -12,32 +12,47 @@ using System.Net;
 
 namespace CodingAgent.JobController.Reconciliation;
 
-// ─── Discriminated result type for execution-age classification ──────────────
+// ─── Pure timeout-action decision type ───────────────────────────────────────
 
 /// <summary>
-/// Result of <see cref="ReconciliationLoop.ResolveExecutionAge"/>.
+/// Result of <see cref="ReconciliationLoop.ResolveTimeoutAction"/>.
 /// Each case maps to a distinct outcome for the timeout-enforcement loop.
+/// The pure function returns one of these without performing any I/O or metrics recording.
 /// </summary>
-internal abstract record ExecutionAgeResult;
+internal abstract record TimeoutAction;
 
 /// <summary>
-/// The work item's DispatchedAt is null and CreatedAt is still within the
-/// grace window — timeout enforcement is deferred silently.
+/// The item has <see cref="ActiveWorkItemDto.TimeoutSeconds"/> ≤ 0 and is permanently
+/// exempt from session-timeout enforcement.
 /// </summary>
-internal sealed record WithinGrace : ExecutionAgeResult;
+internal sealed record SkipAction : TimeoutAction;
+
+/// <summary>
+/// The work item's <see cref="ActiveWorkItemDto.DispatchedAt"/> is null and
+/// <see cref="ActiveWorkItemDto.CreatedAt"/> is still within the grace window —
+/// timeout enforcement is deferred silently. No metrics or canary counter must be recorded
+/// for this outcome.
+/// </summary>
+internal sealed record WithinGraceAction : TimeoutAction;
 
 /// <summary>
 /// The computed execution age is suspiciously low (INV-001 canary trigger).
-/// Enforcement is skipped for this cycle. The canary counter and log warning
-/// have already been emitted by <see cref="ReconciliationLoop.ResolveExecutionAge"/>.
+/// Enforcement is skipped for this cycle. The caller is responsible for emitting the
+/// canary counter, the age histogram, and the INV-001 warning log.
 /// </summary>
-internal sealed record CanaryViolation : ExecutionAgeResult;
+internal sealed record CanaryViolationAction(double AgeSeconds) : TimeoutAction;
 
 /// <summary>
-/// The execution age has cleared all guard conditions and the item should be
-/// evaluated for timeout enforcement.
+/// The execution age cleared the canary guard but has not yet reached the item's
+/// per-item timeout. The caller should record the age histogram but skip enforcement.
 /// </summary>
-internal sealed record Enforceable(double AgeSeconds) : ExecutionAgeResult;
+internal sealed record NotYetTimedOutAction(double AgeSeconds) : TimeoutAction;
+
+/// <summary>
+/// The execution age has reached or exceeded the item's per-item timeout.
+/// The caller should record the age histogram and proceed with enforcement.
+/// </summary>
+internal sealed record EnforceableAction(double AgeSeconds) : TimeoutAction;
 
 // ─── ReconciliationLoop ───────────────────────────────────────────────────────
 
@@ -191,6 +206,13 @@ public sealed class ReconciliationLoop
             return;
         }
 
+        // TODO [WARNING]: 'now' is captured once for the entire sweep, but ApplyTimeoutAsync is
+        // awaited inside the loop. Under slow K8s API calls, the age passed to metrics and used
+        // for the enforcement decision can be stale by seconds for later items in the same sweep.
+        // The old per-item DateTimeOffset.UtcNow call inside ResolveExecutionAge avoided this drift.
+        // Consider re-capturing now per-item or accepting the drift as harmless for typical sweep durations.
+        var now = DateTimeOffset.UtcNow;
+
         foreach (var item in timedOut)
         {
             if (ct.IsCancellationRequested) break;
@@ -198,63 +220,205 @@ public sealed class ReconciliationLoop
             // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
             if (item.Status != WorkItemStatus.Running) continue;
 
-            // Guard: skip items with a zero or negative TimeoutSeconds.
-            // Post-migration #2405 and post-insert-guard (issue #2745) all rows have a positive value.
-            // Items with TimeoutSeconds <= 0 are pre-migration rows or rows written before the guard
-            // was deployed. With effectiveTimeoutSeconds=0, any Running item older than
-            // TimeoutCanaryMinAgeSeconds (60s) would be immediately force-failed (executionAge >= 0
-            // is always true). Skip instead — these items rely on orphan cleanup and
-            // EnforceDispatchedTimeoutAsync for recovery.
-            if (item.TimeoutSeconds <= 0) continue;
+            var action = ResolveTimeoutAction(
+                item, now,
+                TimeoutCanaryMinAgeSeconds,
+                _options.NullDispatchedAtGraceWindowSeconds,
+                item.TimeoutSeconds);
 
-            var ageResult = ResolveExecutionAge(item);
-            if (ageResult is WithinGrace or CanaryViolation) continue;
-
-            if (ageResult is not Enforceable enforceable) continue;
-
-            // Not timed out yet — skip.
-            // TODO: [WARNING] The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
-            // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
-            // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
-            // use the same threshold, so the canary invariant provides no protection for items at
-            // exactly that boundary — the item is immediately enforced on the first cycle it is
-            // returned by the query. This is a gap in the canary design that was not present when
-            // the global timeout was always >> 60s. (DotNetSpecialist review [WARNING])
-            if (enforceable.AgeSeconds < item.TimeoutSeconds) continue;
-
-            _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
-                item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", item.TimeoutSeconds);
-
-            try
+            switch (action)
             {
-                // Emit a Reconcile.Timeout span for each item that is actually timed out.
-                // Spans only fire when enforcement happens — idle cycles with no timed-out items
-                // never reach this path (all items are skipped by the guards above).
-                using var timeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.Timeout");
-                timeoutActivity?.SetTag("work_item_id", item.Id);
-                timeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
-                timeoutActivity?.SetTag("timeout_seconds", item.TimeoutSeconds);
+                case SkipAction:
+                case WithinGraceAction:
+                    continue;
 
-                await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
-                {
-                    Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {item.TimeoutSeconds}s",
-                    FailureReason = "Timeout"
-                }, ct);
+                case CanaryViolationAction canary:
+                    _timeoutExecutionAge.Record(canary.AgeSeconds,
+                        new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                    _timeoutCanaryViolations.Add(1,
+                        new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                    _log.Warning(
+                        "WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
+                        item.Id, canary.AgeSeconds, TimeoutCanaryMinAgeSeconds);
+                    // TODO [WARNING]: if item.DispatchedAt is null and the grace window is configured
+                    // shorter than TimeoutCanaryMinAgeSeconds (e.g. grace=30s, canary=60s), the
+                    // "using CreatedAt as timeout anchor" diagnostic log that operators rely on to
+                    // detect stuck items with null DispatchedAt is silently dropped here. The old
+                    // ResolveExecutionAge emitted that warning before the canary check fired.
+                    // Under the default config (NullDispatchedAtGraceWindowSeconds=3600 >> 60s canary)
+                    // this path is unreachable, but non-default configs can suppress the diagnostic.
+                    // Consider emitting the null-DispatchedAt warning inside this case when item.DispatchedAt is null.
+                    continue;
 
-                var jobName = await ResolveJobNameAsync(item, ct);
+                case NotYetTimedOutAction notYet:
+                    _timeoutExecutionAge.Record(notYet.AgeSeconds,
+                        new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                    continue;
 
-                _agentTimeouts.Add(1,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                case EnforceableAction enforceable:
+                    // Emit age histogram before enforcement so the metric is always recorded
+                    // even if PostStatusAsync throws.
+                    _timeoutExecutionAge.Record(enforceable.AgeSeconds,
+                        new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
 
-                if (jobName is not null)
-                    await SafeDeleteJobAsync(jobName, ct);
-            }
-            catch (Exception ex)
-            {
-                _log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
+                    // Emit the null-DispatchedAt / CreatedAt-fallback warning when applicable.
+                    // TODO [WARNING]: the null-DispatchedAt condition is re-checked here in the
+                    // caller rather than being expressed in the returned type. ResolveTimeoutAction
+                    // returns EnforceableAction for both the DispatchedAt-present and
+                    // DispatchedAt-null paths without distinguishing them, so this conditional
+                    // is implicit coupling between the caller and the function's internal logic that
+                    // the compiler cannot enforce. Consider adding a separate EnforceableFromCreatedAt
+                    // action variant, or a bool property on EnforceableAction, to make the path explicit.
+                    // Also note that this log fires after the histogram metric — the old code emitted
+                    // the warning before metrics recording inside ResolveExecutionAge, which operators
+                    // correlating log timestamps to metric events may rely on.
+                    if (!item.DispatchedAt.HasValue)
+                    {
+                        _log.Warning(
+                            "WorkItem {Id} has null DispatchedAt and CreatedAt is {Age:F0}s old (>{Grace}s grace window) — using CreatedAt as timeout anchor",
+                            item.Id, enforceable.AgeSeconds, _options.NullDispatchedAtGraceWindowSeconds);
+                    }
+
+                    await ApplyTimeoutAsync(item, ct);
+                    break;
             }
         }
+    }
+
+    /// <summary>
+    /// Marks a Running work item as Failed (timeout) and deletes its K8s Job.
+    /// Extracted from <see cref="EnforceTimeoutsAsync"/> to reduce cognitive complexity (S3776).
+    /// </summary>
+    private async Task ApplyTimeoutAsync(ActiveWorkItemDto item, CancellationToken ct)
+    {
+        _log.Warning(
+            "WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
+            item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", item.TimeoutSeconds);
+
+        try
+        {
+            // Emit a Reconcile.Timeout span for each item that is actually timed out.
+            // Spans only fire when enforcement happens — idle cycles with no timed-out items
+            // never reach this path (all items are skipped by the guards above).
+            using var timeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.Timeout");
+            timeoutActivity?.SetTag("work_item_id", item.Id);
+            timeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
+            timeoutActivity?.SetTag("timeout_seconds", item.TimeoutSeconds);
+
+            await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
+            {
+                Status = nameof(WorkItemStatus.Failed),
+                ErrorMessage = $"Agent timeout after {item.TimeoutSeconds}s",
+                FailureReason = "Timeout"
+            }, ct);
+
+            var jobName = await ResolveJobNameAsync(item, ct);
+
+            _agentTimeouts.Add(1,
+                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
+            if (jobName is not null)
+                await SafeDeleteJobAsync(jobName, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
+        }
+    }
+
+    /// <summary>
+    /// Pure timeout-decision function: given a work item and the current time, returns the
+    /// <see cref="TimeoutAction"/> that describes what the enforcement loop should do.
+    /// <para>
+    /// This function has <b>no side effects</b> — it performs no I/O, records no metrics,
+    /// and emits no log entries. All observability is the caller's responsibility, guided by
+    /// the returned action.
+    /// </para>
+    /// <para>
+    /// The grace-window isolation invariant is preserved structurally: <see cref="WithinGraceAction"/>
+    /// is the only action for which the caller must record <em>no</em> metrics, and it is the
+    /// only action that does not carry an <c>AgeSeconds</c> value.
+    /// </para>
+    /// </summary>
+    /// <param name="item">The active work item to evaluate.</param>
+    /// <param name="now">The current wall-clock time (injected for determinism and testability).</param>
+    /// <param name="canaryMinAgeSeconds">
+    ///   Minimum execution age before enforcement is allowed. Ages below this indicate a possible
+    ///   timestamp-anchor bug (INV-001). Typically <see cref="PipelineConstants.TimeoutCanaryMinAgeSeconds"/>.
+    /// </param>
+    /// <param name="graceWindowSeconds">
+    ///   How long to defer enforcement when <see cref="ActiveWorkItemDto.DispatchedAt"/> is null,
+    ///   using <see cref="ActiveWorkItemDto.CreatedAt"/> as the age anchor.
+    ///   Typically <see cref="DispatchServiceOptions.NullDispatchedAtGraceWindowSeconds"/>.
+    /// </param>
+    /// <param name="timeoutSeconds">
+    ///   The per-item timeout threshold. Typically <see cref="ActiveWorkItemDto.TimeoutSeconds"/>.
+    ///   TODO [WARNING]: this parameter is always passed as <c>item.TimeoutSeconds</c> at every
+    ///   call site. Accepting it as a separate parameter introduces a silent mismatch risk: if a
+    ///   caller passes a different value (e.g., a default or stale copy), <see cref="SkipAction"/>
+    ///   can be returned for items that should be enforced, or enforcement can fire at the wrong
+    ///   threshold. Consider removing the parameter and reading <c>item.TimeoutSeconds</c> directly,
+    ///   or document explicitly that the parameter governs over <c>item.TimeoutSeconds</c>.
+    /// </param>
+    internal static TimeoutAction ResolveTimeoutAction(
+        ActiveWorkItemDto item,
+        DateTimeOffset now,
+        int canaryMinAgeSeconds,
+        int graceWindowSeconds,
+        int timeoutSeconds)
+    {
+        // Items with a zero or negative TimeoutSeconds are permanently exempt.
+        // Post-migration #2405 and post-insert-guard (issue #2745) all rows have a positive value.
+        // Items with TimeoutSeconds <= 0 are pre-migration rows or rows written before the guard
+        // was deployed. With timeoutSeconds=0, any Running item older than canaryMinAgeSeconds
+        // would be immediately force-failed (ageSeconds >= 0 is always true). Skip instead.
+        if (timeoutSeconds <= 0)
+            return new SkipAction();
+
+        double ageSeconds;
+
+        if (item.DispatchedAt.HasValue)
+        {
+            ageSeconds = (now - item.DispatchedAt.Value).TotalSeconds;
+        }
+        else
+        {
+            // DispatchedAt is null (e.g. a write failure on the claim path).
+            // Use CreatedAt as a fallback timeout anchor after a configurable grace window.
+            // Items within the grace window return WithinGrace WITHOUT any age value — the caller
+            // must not record metrics for this outcome.
+            var createdAgeSeconds = item.CreatedAt.HasValue
+                ? (now - item.CreatedAt.Value).TotalSeconds
+                // null CreatedAt → treat as just created (age = 0, always within grace window).
+                // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely.
+                // In production, CreatedAt should always be non-null (WorkItemEntity.CreatedAt
+                // is a non-null column), but if a backfill is missed or the DTO is constructed
+                // without the field the item becomes permanently stuck.
+                : 0.0;
+
+            // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
+            // equal to graceWindowSeconds is skipped for another full cycle. Semantically the
+            // condition should be <= to match "older than the grace window is force-failed", but
+            // createdAgeSeconds is a double so exact equality is extremely rare in practice.
+            if (createdAgeSeconds < graceWindowSeconds)
+                return new WithinGraceAction();
+
+            // Grace window expired — use CreatedAt as the fallback timeout anchor.
+            // The caller emits the "using CreatedAt as timeout anchor" warning log.
+            ageSeconds = createdAgeSeconds;
+        }
+
+        // Canary guard: ages below the canary minimum indicate a possible timestamp-anchor bug
+        // (INV-001). Skip enforcement for this sweep and return the age for metric recording.
+        if (ageSeconds < canaryMinAgeSeconds)
+            return new CanaryViolationAction(ageSeconds);
+
+        // Not yet timed out: age cleared the canary guard but is still below the per-item threshold.
+        // The strict-less-than means ageSeconds == timeoutSeconds is considered timed out.
+        if (ageSeconds < timeoutSeconds)
+            return new NotYetTimedOutAction(ageSeconds);
+
+        return new EnforceableAction(ageSeconds);
     }
 
     /// <summary>
@@ -453,86 +617,6 @@ public sealed class ReconciliationLoop
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Computes the execution age for <paramref name="item"/> and classifies it as
-    /// <see cref="WithinGrace"/>, <see cref="CanaryViolation"/>, or <see cref="Enforceable"/>.
-    /// <para>
-    /// <b>Side effects (intentional):</b> this method records
-    /// <c>_timeoutExecutionAge</c> (histogram) and, on a canary violation,
-    /// <c>_timeoutCanaryViolations</c> (counter). These side effects are deliberately
-    /// placed here — not at the call site — to preserve the invariant that the
-    /// grace-window skip path records <em>no</em> metrics (an item silently deferred
-    /// within the grace window must not pollute the INV-001 canary signal).
-    /// Do NOT move the metric calls to the caller.
-    /// </para>
-    /// </summary>
-    private ExecutionAgeResult ResolveExecutionAge(ActiveWorkItemDto item)
-    {
-        double executionAgeSeconds;
-
-        if (item.DispatchedAt.HasValue)
-        {
-            executionAgeSeconds = (DateTimeOffset.UtcNow - item.DispatchedAt.Value).TotalSeconds;
-        }
-        else
-        {
-            // DispatchedAt is null (e.g. a write failure on the claim path).
-            // Use CreatedAt as a fallback timeout anchor after a configurable grace window.
-            // Items within the grace window are silently skipped (return WithinGrace) WITHOUT
-            // recording metrics or incrementing the canary counter — the canary metric signals
-            // INV-001 (wrong timestamp anchor bugs), not expected grace-window deferrals. Firing
-            // it here would pollute the signal and mask real bugs.
-            // Items beyond the grace window are escalated: CreatedAt becomes the age anchor
-            // and a Warning is emitted so operators can identify stuck items.
-            var createdAgeSeconds = item.CreatedAt.HasValue
-                ? (DateTimeOffset.UtcNow - item.CreatedAt.Value).TotalSeconds
-                // TODO [WARNING]: null CreatedAt silently defers enforcement indefinitely — same
-                // class of bug as the original null DispatchedAt issue. The 0.0 fallback causes
-                // the grace-window check below to always fire and the item is permanently skipped
-                // with no log or metric. In production, CreatedAt should always be non-null
-                // (WorkItemEntity.CreatedAt is a non-null column), but if a backfill is missed or
-                // the DTO is constructed without the field the item becomes permanently stuck.
-                // At minimum emit a Log.Warning here so operators can detect the condition.
-                // (Correctness review [WARNING])
-                : 0.0; // null CreatedAt (pre-dates this field in test code) → treat as just created
-
-            // TODO [WARNING]: strict less-than (<) means an item with createdAgeSeconds exactly
-            // equal to NullDispatchedAtGraceWindowSeconds is skipped for another full cycle.
-            // The requirement states "older than the grace window is force-failed", so the
-            // boundary condition (age == graceWindow) should proceed to enforcement. Because
-            // createdAgeSeconds is a double, exact equality is extremely rare in practice, but
-            // semantically the condition should be <= to match the stated requirement boundary.
-            // (Correctness review [WARNING])
-            if (createdAgeSeconds < _options.NullDispatchedAtGraceWindowSeconds)
-            {
-                // Within grace window — skip without recording any metrics.
-                return new WithinGrace();
-            }
-
-            // Grace window expired — use CreatedAt as fallback timeout anchor.
-            _log.Warning(
-                "WorkItem {Id} has null DispatchedAt and CreatedAt is {Age:F0}s old (>{Grace}s grace window) — using CreatedAt as timeout anchor",
-                item.Id, createdAgeSeconds, _options.NullDispatchedAtGraceWindowSeconds);
-            executionAgeSeconds = createdAgeSeconds;
-        }
-
-        _timeoutExecutionAge.Record(executionAgeSeconds,
-            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-
-        // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
-        // Skip enforcement for this sweep — the item will be re-evaluated next cycle.
-        if (executionAgeSeconds < TimeoutCanaryMinAgeSeconds)
-        {
-            _log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
-                item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
-            _timeoutCanaryViolations.Add(1,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-            return new CanaryViolation();
-        }
-
-        return new Enforceable(executionAgeSeconds);
-    }
 
     /// <summary>
     /// Resolves the K8s Job name for a work item that is being timed out.

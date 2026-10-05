@@ -33,13 +33,10 @@ public sealed class KeycloakFixture : IAsyncLifetime
     // Pinned like every other image in CI; bump deliberately.
     private const string KeycloakImage = "quay.io/keycloak/keycloak:26.3";
 
-    private readonly KeycloakContainer _keycloak = new KeycloakBuilder()
-        .WithImage(KeycloakImage)
-        .WithResourceMapping(
-            new FileInfo(Path.Combine(AppContext.BaseDirectory, "Auth", "Keycloak", $"{Realm}-realm.json")),
-            "/opt/keycloak/data/import/")
-        .WithCommand("--import-realm")
-        .Build();
+    // Built lazily in InitializeAsync so that the class constructor does not throw
+    // DockerUnavailableException when Docker is absent. Tests are skipped via
+    // [DockerAvailableFact] before InitializeAsync runs in that case.
+    private KeycloakContainer? _keycloak;
 
     public string Issuer { get; private set; } = "";
 
@@ -47,6 +44,14 @@ public sealed class KeycloakFixture : IAsyncLifetime
 
     public async Task InitializeAsync()
     {
+        _keycloak = new KeycloakBuilder()
+            .WithImage(KeycloakImage)
+            .WithResourceMapping(
+                new FileInfo(Path.Combine(AppContext.BaseDirectory, "Auth", "Keycloak", $"{Realm}-realm.json")),
+                "/opt/keycloak/data/import/")
+            .WithCommand("--import-realm")
+            .Build();
+
         await _keycloak.StartAsync();
         Issuer = new Uri(new Uri(_keycloak.GetBaseAddress()), $"realms/{Realm}").ToString();
         Factory = new OidcWebApplicationFactory(Issuer);
@@ -56,7 +61,8 @@ public sealed class KeycloakFixture : IAsyncLifetime
     {
         if (Factory is not null)
             await Factory.DisposeAsync();
-        await _keycloak.DisposeAsync();
+        if (_keycloak is not null)
+            await _keycloak.DisposeAsync();
     }
 }
 
