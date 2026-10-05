@@ -15,6 +15,8 @@ namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 /// </summary>
 public class DispatchTemplateResolverTests
 {
+    private readonly Mock<IAgentProfileStore> _mockProfileStore = new();
+
     // ── null profile store ──────────────────────────────────────────────────
 
     [Fact]
@@ -158,5 +160,76 @@ public class DispatchTemplateResolverTests
         template.Should().NotBeNull();
         template!.ProviderType.Should().Be("kiro");
         selector.Should().Be("dotnet,kiro");
+    }
+
+    // ── selector and profile label normalization ────────────────────
+
+    [Fact]
+    public async Task ResolveTemplateViaProfileAsync_SelectorLabelsAreTrimmedAndEmptyRemoved()
+    {
+        // Arrange
+        var profiles = new List<AgentProfile>
+        {
+            CreateProfile("profile-dotnet", ["kiro", "dotnet", "dotnet10"])
+        };
+        _mockProfileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(profiles);
+
+        var templateProvider = BuildTemplateProvider("kiro,dotnet,dotnet10");
+        var resolver = new DispatchTemplateResolver(_mockProfileStore.Object, templateProvider);
+
+        // Act — whitespace around labels and empty segments
+        var (template, resolvedSelector) = await resolver.ResolveTemplateViaProfileAsync(" dotnet , dotnet10 ,", "TestCaller", CancellationToken.None);
+
+        // Assert — should still resolve correctly
+        template.Should().NotBeNull();
+        resolvedSelector.Should().Be("dotnet,dotnet10,kiro");
+    }
+
+    [Fact]
+    public async Task ResolveTemplateViaProfileAsync_ProfileMatchLabelsAreSortedAndJoinedWithComma()
+    {
+        // Arrange — profile labels in non-sorted order
+        var profiles = new List<AgentProfile>
+        {
+            CreateProfile("profile-dotnet", ["dotnet10", "kiro", "dotnet"]) // intentionally unsorted
+        };
+        _mockProfileStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(profiles);
+
+        var templateProvider = BuildTemplateProvider("dotnet,dotnet10,kiro"); // sorted key
+        var resolver = new DispatchTemplateResolver(_mockProfileStore.Object, templateProvider);
+
+        // Act
+        var (template, resolvedSelector) = await resolver.ResolveTemplateViaProfileAsync("dotnet10,kiro", "TestCaller", CancellationToken.None);
+
+        // Assert — should resolve with sorted selector regardless of profile label order
+        template.Should().NotBeNull();
+        resolvedSelector.Should().Be("dotnet,dotnet10,kiro");
+    }
+
+    // ── Helpers ────────────────────────────────────────────────────────
+
+    private static JobTemplateStore BuildTemplateProvider(string labels)
+    {
+        var templates = new List<JobTemplate>
+        {
+            new() { Labels = labels, Image = "ghcr.io/agent:latest", ProviderType = "kiro" }
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(templates);
+        return JobTemplateStore.LoadFromJson(json);
+    }
+
+    private static AgentProfile CreateProfile(string id, IReadOnlyList<string> matchLabels)
+    {
+        return new AgentProfile
+        {
+            Id = id,
+            DisplayName = $"Profile {id}",
+            MatchLabels = matchLabels,
+            AgentProviderConfigId = $"ap-{id}",
+            Enabled = true,
+            Priority = 0
+        };
     }
 }

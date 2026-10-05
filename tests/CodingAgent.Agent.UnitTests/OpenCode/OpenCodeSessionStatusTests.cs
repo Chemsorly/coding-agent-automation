@@ -11,7 +11,7 @@ namespace CodingAgent.Agent.UnitTests.OpenCode;
 
 /// <summary>
 /// Tests for PollAllSessionStatusesAsync, TryRefreshAllSessionStatusSummaryAsync,
-/// and BuildSessionStatusSummary in OpenCodeAgentProvider.Session.cs.
+/// and BuildSessionStatusSummary in OpenCodeAgentProvider.Session.cs, and for the HandleSessionStatusEvent SSE handler.
 ///
 /// These methods were previously present in OpenCodeAgentProvider.cs and are
 /// now in the partial file OpenCodeAgentProvider.Session.cs. Coverage is needed
@@ -278,6 +278,96 @@ public class OpenCodeSessionStatusTests
             "at least one /session/status call must have been made before cancellation");
     }
 
+    // ── HandleSessionStatusEvent ─────────────────────────────────────────
+
+    /// <summary>
+    /// session.status with null Status field — no state change should occur.
+    /// Exercised via ConnectAndProcessSseAsync with a null-status SSE event.
+    /// </summary>
+    [Fact]
+    public async Task HandleSessionStatusEvent_NullStatus_NoStateChange()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        var sseEvent = new SseEvent
+        {
+            Type = "session.status",
+            SessionId = "sess-null-status",
+            Status = null
+        };
+
+        var sseContent = BuildSseStream(sseEvent);
+        using var handler = new SseStreamMockHandler(sseContent);
+        var factory = new SseStreamClientFactory(handler);
+        var provider = new OpenCodeAgentProvider(factory, new Mock<ILogger>().Object);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var act = async () => await provider.ConnectAndProcessSseAsync("sess-null-status", null, cts.Token);
+        await act.Should().NotThrowAsync("null Status field must not throw");
+    }
+
+    /// <summary>
+    /// session.status with type="retry" — sets session status message and emits to output.
+    /// </summary>
+    [Fact]
+    public async Task HandleSessionStatusEvent_RetryStatus_EmitsRetryLine()
+    {
+        var sseEvent = new SseEvent
+        {
+            Type = "session.status",
+            SessionId = "sess-retry",
+            Status = new SseSessionStatus
+            {
+                Type = "retry",
+                Message = "rate limit exceeded",
+                Attempt = 2,
+                Action = new SseSessionStatusAction { Provider = "anthropic" }
+            }
+        };
+
+        var sseStream = BuildSseStream(sseEvent);
+        using var handler = new SseStreamMockHandler(sseStream);
+        var factory = new SseStreamClientFactory(handler);
+        var loggerMock = new Mock<ILogger>();
+        var provider = new OpenCodeAgentProvider(factory, loggerMock.Object);
+
+        var outputLines = new List<string>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await provider.ConnectAndProcessSseAsync("sess-retry", line => outputLines.Add(line), cts.Token);
+
+        outputLines.Should().ContainMatch("*retry*",
+            "retry status should emit a [session.status] retry line to output");
+    }
+
+    /// <summary>
+    /// session.status with type="busy" (non-retry) — sets session status, clears message.
+    /// </summary>
+    [Fact]
+    public async Task HandleSessionStatusEvent_NonRetryStatus_ClearsMessageField()
+    {
+        var sseEvent = new SseEvent
+        {
+            Type = "session.status",
+            SessionId = "sess-busy",
+            Status = new SseSessionStatus
+            {
+                Type = "busy",
+                Message = "should be cleared"
+            }
+        };
+
+        var sseStream = BuildSseStream(sseEvent);
+        using var handler = new SseStreamMockHandler(sseStream);
+        var factory = new SseStreamClientFactory(handler);
+        var provider = new OpenCodeAgentProvider(factory, new Mock<ILogger>().Object);
+
+        var outputLines = new List<string>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        await provider.ConnectAndProcessSseAsync("sess-busy", line => outputLines.Add(line), cts.Token);
+
+        // Non-retry status should not emit a retry line
+        outputLines.Should().NotContainMatch("*retry*");
+    }
+
     // ── Infrastructure ────────────────────────────────────────────────────
 
     private sealed class SessionStatusMockHandler : HttpMessageHandler
@@ -334,5 +424,11 @@ public class OpenCodeSessionStatusTests
                 BaseAddress = new Uri(AgentDefaults.OpenCodeBaseUrl)
             };
         }
+    }
+
+    private static string BuildSseStream(SseEvent sseEvent)
+    {
+        var json = JsonSerializer.Serialize(sseEvent, OpenCodeJson.JsonOptions);
+        return $"data: {json}\n\n";
     }
 }

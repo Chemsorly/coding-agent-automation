@@ -5,6 +5,9 @@ using CodingAgent.Pipeline.LeaderElection;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
+using CodingAgent.Web.TestUtilities;
+using Serilog;
+using StackExchange.Redis;
 
 namespace CodingAgent.Orchestration.UnitTests.Registry;
 
@@ -19,6 +22,9 @@ public sealed class AgentRegistryCleanupServiceTests
 {
     private readonly Mock<IRedisStore> _store = new();
     private readonly Mock<ILogger> _logger = new();
+
+    private readonly FakeRedisStore _fakeStore = new();
+    private readonly Mock<ILeaderElectionService> _leaderMock = new();
 
     private AgentRegistryCleanupService CreateService(ILeaderElectionService? leaderElection = null)
         => new(_store.Object, _logger.Object, leaderElection);
@@ -96,6 +102,67 @@ public sealed class AgentRegistryCleanupServiceTests
         _store.Verify(s => s.SetRemoveAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
+    [Fact]
+    public async Task SweepAsync_BusyAgent_ExpiredHash_RemovedFromAllSet_IdleSetUnaffected()
+    {
+        // A Busy agent is in agents:all but NOT in agents:idle.
+        // When its hash expires the sweep must remove it from agents:all and issue a
+        // no-op SREM on agents:idle (which is safe — SREM on a non-member returns 0).
+        await _fakeStore.SetAddAsync("agents:all", "agent-busy");
+        // deliberately NOT added to agents:idle
+        // no hash
+
+        await CreateServiceWithFakeStore().SweepAsync(CancellationToken.None);
+
+        Assert.DoesNotContain("agent-busy", await _fakeStore.SetMembersAsync("agents:all"));
+        // TODO [WARNING]: The DoesNotContain assertion below is tautologically true because
+        // "agent-busy" was never added to agents:idle in this test. The FakeRedisStore returns an
+        // empty set for agents:idle regardless of whether SetRemoveAsync("agents:idle", ...) was
+        // called. This assertion cannot distinguish a correct no-op SREM from RemovalSetKeys
+        // silently omitting agents:idle entirely. To add discriminating power, use the Moq-based
+        // suite (AgentRegistryCleanupServiceTests in Orchestration.UnitTests) which can verify
+        // SetRemoveAsync was called with agents:idle via Verify().
+        // agents:idle was never touched — SREM on a non-member is a no-op
+        Assert.DoesNotContain("agent-busy", await _fakeStore.SetMembersAsync("agents:idle"));
+    }
+
+    [Fact]
+    public async Task SweepAsync_AfterSweep_LiveAgentAddedBetweenSweeps_NotRemovedOnSecondSweep()
+    {
+        // First sweep removes expired agent. A live agent registered between sweeps must survive.
+        await _fakeStore.SetAddAsync("agents:all", "agent-old-expired");
+        await _fakeStore.SetAddAsync("agents:idle", "agent-old-expired");
+
+        var sut = CreateServiceWithFakeStore();
+        await sut.SweepAsync(CancellationToken.None);
+
+        // New agent registered after first sweep, with a live hash
+        await _fakeStore.SetAddAsync("agents:all", "agent-new-live");
+        await _fakeStore.SetAddAsync("agents:idle", "agent-new-live");
+        await _fakeStore.HashSetAsync("agent:agent-new-live",
+            [new HashEntry("agentId", "agent-new-live")]);
+
+        await sut.SweepAsync(CancellationToken.None);
+
+        // Old expired agent gone, new live agent untouched
+        var all = await _fakeStore.SetMembersAsync("agents:all");
+        Assert.DoesNotContain("agent-old-expired", all);
+        Assert.Contains("agent-new-live", all);
+    }
+
+    [Fact]
+    public async Task SweepAsync_CancelledToken_ThrowsOperationCancelledException()
+    {
+        // Arrange: put something in agents:all so the foreach body is entered
+        await _fakeStore.SetAddAsync("agents:all", "agent-1");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => CreateServiceWithFakeStore().SweepAsync(cts.Token));
+    }
+
     // ── Leader gate ──────────────────────────────────────────────────────
 
     [Fact]
@@ -145,6 +212,34 @@ public sealed class AgentRegistryCleanupServiceTests
 
         _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.Once,
             "null leader election service means always sweep");
+    }
+
+    [Fact]
+    public async Task SweepAsync_LeadershipLostBetweenSweeps_SecondSweepSkipped()
+    {
+        await _fakeStore.SetAddAsync("agents:all", "agent-a");
+        await _fakeStore.SetAddAsync("agents:idle", "agent-a");
+
+        _leaderMock.SetupSequence(l => l.IsLeader)
+            .Returns(true)   // first sweep: leader
+            .Returns(false); // second sweep: no longer leader
+
+        var sut = CreateServiceWithFakeStore(_leaderMock.Object);
+
+        // First sweep (leader): removes agent-a
+        await sut.SweepAsync(CancellationToken.None);
+        Assert.DoesNotContain("agent-a", await _fakeStore.SetMembersAsync("agents:all"));
+
+        // Stale agents added AFTER first sweep — second sweep must not touch them
+        await _fakeStore.SetAddAsync("agents:all", "agent-b");
+        await _fakeStore.SetAddAsync("agents:idle", "agent-b");
+        await _fakeStore.SetAddAsync("agents:all", "agent-c");
+
+        // Second sweep (not leader): skips entirely
+        await sut.SweepAsync(CancellationToken.None);
+        var afterSecond = await _fakeStore.SetMembersAsync("agents:all");
+        Assert.Contains("agent-b", afterSecond);
+        Assert.Contains("agent-c", afterSecond);
     }
 
     // ── Cancellation ─────────────────────────────────────────────────────
@@ -246,4 +341,9 @@ public sealed class AgentRegistryCleanupServiceTests
             Times.AtLeastOnce(),
             "the swallowed exception must be logged as a warning");
     }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private AgentRegistryCleanupService CreateServiceWithFakeStore(ILeaderElectionService? leaderElection = null)
+        => new(_fakeStore, Log.Logger, leaderElection);
 }

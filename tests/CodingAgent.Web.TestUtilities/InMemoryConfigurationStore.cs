@@ -5,9 +5,8 @@ using CodingAgent.Pipeline.Models;
 namespace CodingAgent.Web.TestUtilities;
 
 /// <summary>
-/// In-memory implementation of <c>IConfigurationStore</c> for use as a test double.
-/// Promoted from <c>tests/CodingAgent.Web.E2ETests/Fakes/InMemoryConfigurationStore.cs</c>
-/// by Spec 041 so that test projects no longer depend on <c>JsonConfigurationStore</c>.
+/// In-memory implementation of <c>IConfigurationStore</c> for use as a test double, shared by the
+/// unit, integration and E2E test projects.
 /// Pre-seeded with default pipeline config and provider configs via <see cref="SeedDefaults"/>.
 /// </summary>
 public sealed class InMemoryConfigurationStore : IConfigurationStore
@@ -28,9 +27,19 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     private readonly List<PipelineJobTemplate> _templates = new();
     private readonly Dictionary<string, string> _templateProjects = new();
     private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly Func<IEnumerable<ProviderConfig>> _extraProviderConfigs;
 
-    public InMemoryConfigurationStore()
+    public InMemoryConfigurationStore() : this(() => [])
     {
+    }
+
+    /// <summary>
+    /// Seeds the defaults plus the provider configs <paramref name="extraProviderConfigs"/> returns.
+    /// It is called again on every <see cref="Reset"/>, so each reseed gets fresh instances.
+    /// </summary>
+    public InMemoryConfigurationStore(Func<IEnumerable<ProviderConfig>> extraProviderConfigs)
+    {
+        _extraProviderConfigs = extraProviderConfigs;
         SeedDefaults();
     }
 
@@ -65,6 +74,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
             new ProviderConfig { Id = "agent-e2e", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "E2E Agent Provider",
                 Settings = new Dictionary<string, string> { [ProviderSettingKeys.Model] = "test-model" } }
         });
+        _providerConfigs.AddRange(_extraProviderConfigs());
 
         _qualityGateConfigs.Add(new QualityGateConfiguration
         {

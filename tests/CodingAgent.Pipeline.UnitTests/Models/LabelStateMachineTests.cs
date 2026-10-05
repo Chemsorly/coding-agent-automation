@@ -190,6 +190,22 @@ public class LabelStateMachineTests
             .Should().BeFalse();
     }
 
+    [Fact]
+    public void IsValidTransition_InProgress_ToSelf_IsInvalid()
+    {
+        LabelStateMachine.IsValidTransition(AgentLabels.InProgress, AgentLabels.InProgress).Should().BeFalse();
+    }
+    [Fact]
+    public void IsValidTransition_Error_ToDone_IsInvalid()
+    {
+        LabelStateMachine.IsValidTransition(AgentLabels.Error, AgentLabels.Done).Should().BeFalse();
+    }
+    [Fact]
+    public void IsValidTransition_EpicReview_ToDone_IsInvalid()
+    {
+        LabelStateMachine.IsValidTransition(AgentLabels.EpicReview, AgentLabels.Done).Should().BeFalse();
+    }
+
     // ── Edge Cases ─────────────────────────────────────────────────────────
 
     [Fact]
@@ -222,6 +238,21 @@ public class LabelStateMachineTests
             .Should().BeFalse();
     }
 
+    [Fact]
+    public void IsValidTransition_NullCurrentLabel_AlwaysTrue()
+    {
+        LabelStateMachine.IsValidTransition(null, AgentLabels.InProgress).Should().BeTrue();
+        LabelStateMachine.IsValidTransition(null, AgentLabels.Done).Should().BeTrue();
+        LabelStateMachine.IsValidTransition(null, "any-label").Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsValidTransition_EmptyTarget_AlwaysTrue()
+    {
+        LabelStateMachine.IsValidTransition(AgentLabels.Next, string.Empty).Should().BeTrue();
+        LabelStateMachine.IsValidTransition(AgentLabels.InProgress, "").Should().BeTrue();
+    }
+
     // ── ValidateTransition ─────────────────────────────────────────────────
 
     [Fact]
@@ -247,6 +278,12 @@ public class LabelStateMachineTests
         // agent:done → agent:in-progress is now valid; use agent:next → agent:done as example.
         LabelStateMachine.ValidateTransition(AgentLabels.Next, AgentLabels.Done)
             .Should().BeFalse();
+    }
+
+    [Fact]
+    public void ValidateTransition_NullCurrent_ReturnsTrue()
+    {
+        LabelStateMachine.ValidateTransition(null, AgentLabels.Next).Should().BeTrue();
     }
 
     // ── Transition Map Coverage ────────────────────────────────────────────
@@ -285,6 +322,14 @@ public class LabelStateMachineTests
             targets.Should().NotContain(source,
                 because: $"'{source}' should not have a self-transition");
         }
+    }
+
+    [Fact]
+    public void ValidTransitions_ContainsExpectedKeys()
+    {
+        LabelStateMachine.ValidTransitions.Keys.Should().Contain(AgentLabels.Next);
+        LabelStateMachine.ValidTransitions.Keys.Should().Contain(AgentLabels.InProgress);
+        LabelStateMachine.ValidTransitions.Keys.Should().Contain(AgentLabels.Epic);
     }
 
     // ── Production Code Path Coverage ──────────────────────────────────────

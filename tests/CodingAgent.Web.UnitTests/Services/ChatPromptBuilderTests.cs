@@ -54,6 +54,21 @@ public class ChatPromptBuilderTests
             ResolvedMcpConfigPath: mcpConfigPath ?? "/home/ubuntu/.kiro/settings/mcp.json"
         );
 
+    /// <summary>Parameters as given, without the default MCP config path.</summary>
+    private static ChatPromptParameters RawParams(
+        bool isFirstPrompt = true,
+        AgentProfile? profile = null,
+        PipelineProject? project = null,
+        string? mcpConfigPath = null) =>
+        new(
+            SessionId: "session-1",
+            Prompt: "Write me a test",
+            IsFirstPrompt: isFirstPrompt,
+            ChatWindowId: "window-1",
+            ResolvedProfile: profile,
+            SelectedProject: project,
+            ResolvedMcpConfigPath: mcpConfigPath);
+
     // ── 1. First prompt — ProjectSecrets, SteeringContent, ProjectId, ProjectName populated ──
 
     [Fact]
@@ -195,5 +210,14 @@ public class ChatPromptBuilderTests
         var msg = _sut.Build(p);
 
         msg.McpConfigPath.Should().Be("/home/ubuntu/.claude.json");
+    }
+
+    // ── McpConfigPath default ─────────────────────────────────────────────
+
+    [Fact]
+    public void Build_NoMcpConfigPath_UsesKiroDefault()
+    {
+        var msg = _sut.Build(RawParams(mcpConfigPath: null));
+        msg.McpConfigPath.Should().Be("/home/ubuntu/.kiro/settings/mcp.json");
     }
 }
