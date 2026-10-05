@@ -2,8 +2,17 @@ using System.Text.RegularExpressions;
 
 namespace CodingAgent.Web.UnitTests.Components;
 
-public class AgentCodingScopedCssTests
+public partial class AgentCodingScopedCssTests
 {
+    [GeneratedRegex(@"/\*.*?\*/", RegexOptions.Singleline)]
+    private static partial Regex CssCommentPattern();
+
+    [GeneratedRegex(@"(?<selector>[^{}]+)\{")]
+    private static partial Regex SelectorPattern();
+
+    [GeneratedRegex(@"\.(?<name>-?[A-Za-z_][\w-]*)")]
+    private static partial Regex ClassNamePattern();
+
     // CSS regression guard: bUnit does not evaluate CSS. AgentCoding.razor.css is CSS-isolated, so
     // its rules only match elements authored in AgentCoding.razor. Rules for markup rendered by
     // child components (the dispatch drawers' rows, toggle switches, ...) silently never apply and
@@ -12,15 +21,15 @@ public class AgentCodingScopedCssTests
     [Fact]
     public void ScopedCss_OnlyTargetsClassesAuthoredInAgentCodingMarkup()
     {
-        var css = Regex.Replace(File.ReadAllText(FindPagesFile("AgentCoding.razor.css")), @"/\*.*?\*/", "", RegexOptions.Singleline);
+        var css = CssCommentPattern().Replace(File.ReadAllText(FindPagesFile("AgentCoding.razor.css")), "");
         var markup = File.ReadAllText(FindPagesFile("AgentCoding.razor"));
 
-        var classes = Regex.Matches(css, @"(?<selector>[^{}]+)\{")
+        var classes = SelectorPattern().Matches(css)
             .Select(m => m.Groups["selector"].Value)
             .Where(selector => !selector.TrimStart().StartsWith('@'))
             .SelectMany(selector => selector.Split(','))
             .Select(selector => selector.Split("::deep")[0])
-            .SelectMany(selector => Regex.Matches(selector, @"\.(?<name>-?[A-Za-z_][\w-]*)").Select(m => m.Groups["name"].Value))
+            .SelectMany(selector => ClassNamePattern().Matches(selector).Select(m => m.Groups["name"].Value))
             .Distinct()
             .ToList();
         Assert.NotEmpty(classes);
