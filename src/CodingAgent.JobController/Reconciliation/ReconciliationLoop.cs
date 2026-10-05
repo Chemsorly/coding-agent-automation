@@ -195,65 +195,12 @@ public sealed class ReconciliationLoop
         {
             if (ct.IsCancellationRequested) break;
 
-            // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
-            if (item.Status != WorkItemStatus.Running) continue;
-
-            // Guard: skip items with a zero or negative TimeoutSeconds.
-            // Post-migration #2405 and post-insert-guard (issue #2745) all rows have a positive value.
-            // Items with TimeoutSeconds <= 0 are pre-migration rows or rows written before the guard
-            // was deployed. With effectiveTimeoutSeconds=0, any Running item older than
-            // TimeoutCanaryMinAgeSeconds (60s) would be immediately force-failed (executionAge >= 0
-            // is always true). Skip instead — these items rely on orphan cleanup and
-            // EnforceDispatchedTimeoutAsync for recovery.
-            if (item.TimeoutSeconds <= 0) continue;
-
-            var ageResult = ResolveExecutionAge(item);
-            if (ageResult is WithinGrace or CanaryViolation) continue;
-
-            if (ageResult is not Enforceable enforceable) continue;
-
-            // Not timed out yet — skip.
-            // NOTE (issue #3243): The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
-            // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
-            // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
-            // use the same threshold, so the canary invariant provides no protection for items at
-            // exactly that boundary — the item is immediately enforced on the first cycle it is
-            // returned by the query. This is a gap in the canary design that was not present when
-            // the global timeout was always >> 60s. (DotNetSpecialist review finding)
-            if (enforceable.AgeSeconds < item.TimeoutSeconds) continue;
+            if (!IsTimedOut(item)) continue;
 
             _log.Warning("WorkItem {Id} timed out (status={Status}, job={K8sJobName}, issue={IssueIdentifier}) after {Seconds}s — marking Failed",
                 item.Id, item.Status, item.K8sJobName ?? "none", item.IssueIdentifier ?? "unknown", item.TimeoutSeconds);
 
-            try
-            {
-                // Emit a Reconcile.Timeout span for each item that is actually timed out.
-                // Spans only fire when enforcement happens — idle cycles with no timed-out items
-                // never reach this path (all items are skipped by the guards above).
-                using var timeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.Timeout");
-                timeoutActivity?.SetTag("work_item_id", item.Id);
-                timeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
-                timeoutActivity?.SetTag("timeout_seconds", item.TimeoutSeconds);
-
-                await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
-                {
-                    Status = nameof(WorkItemStatus.Failed),
-                    ErrorMessage = $"Agent timeout after {item.TimeoutSeconds}s",
-                    FailureReason = "Timeout"
-                }, ct);
-
-                var jobName = await ResolveJobNameAsync(item, ct);
-
-                _agentTimeouts.Add(1,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-
-                if (jobName is not null)
-                    await SafeDeleteJobAsync(jobName, ct);
-            }
-            catch (Exception ex)
-            {
-                _log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
-            }
+            await FailTimedOutItemAsync(item, ct);
         }
     }
 
@@ -413,46 +360,121 @@ public sealed class ReconciliationLoop
             var jobName = job.Metadata?.Name;
             if (string.IsNullOrEmpty(jobName)) continue;
 
-            // Determine orphan reason for the log so debugging doesn't require re-running
-            var orphanReason = !workItemId.HasValue
-                ? "no caa/work-item-id label"
-                : $"workItem {workItemId.Value} not in active set (terminal or missing)";
+            if (IsWithinOrphanRetentionWindow(job, jobName)) continue;
 
-            // Respect a minimum retention window before deleting orphaned/stale jobs.
-            // This lets kubectl logs remain readable after a job completes/fails
-            // and prevents the orphan sweep from racing with the K8s TTL controller.
-            // A job with no StartTime yet is brand-new (the K8s job controller has not had its
-            // first sync), NOT "never started properly" — its WorkItem may still be committing
-            // Pending → Dispatched. CreationTimestamp covers this window: it is set by the API
-            // server at object-creation time (1s resolution), providing the same 600s protection
-            // as StartTime. Jobs with no timestamps at all (hand-built objects) have no anchor
-            // and are deleted immediately.
-            var completionTime = job.Status?.CompletionTime
-                ?? job.Status?.StartTime              // fallback: use start time if no completion recorded
-                ?? job.Metadata?.CreationTimestamp;   // fallback: brand-new job whose startTime not yet set
-            const int LogRetentionSeconds = 600; // 10 minutes
-            if (completionTime.HasValue &&
-                (DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds < LogRetentionSeconds)
-            {
-                _log.Debug("Skipping orphan/stale K8s Job {JobName} — completed/created {Age}s ago, within {Retention}s retention window",
-                    jobName,
-                    (int)(DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds,
-                    LogRetentionSeconds);
-                continue;
-            }
-
-            _log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
-            // Emit Reconcile.OrphanCleanup per job actually deleted (not per idle cycle iteration).
-            using var orphanActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.OrphanCleanup");
-            orphanActivity?.SetTag("job_name", jobName);
-            orphanActivity?.SetTag("orphan_reason", orphanReason);
-            if (workItemId.HasValue)
-                orphanActivity?.SetTag("work_item_id", workItemId.Value);
-            await SafeDeleteJobAsync(jobName, ct);
+            await DeleteOrphanJobAsync(jobName, workItemId, ct);
         }
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
+
+    private bool IsTimedOut(ActiveWorkItemDto item)
+    {
+        // Only time out Running items here; Dispatched items are handled by EnforceDispatchedTimeoutAsync
+        if (item.Status != WorkItemStatus.Running) return false;
+
+        // Guard: skip items with a zero or negative TimeoutSeconds.
+        // Post-migration #2405 and post-insert-guard (issue #2745) all rows have a positive value.
+        // Items with TimeoutSeconds <= 0 are pre-migration rows or rows written before the guard
+        // was deployed. With effectiveTimeoutSeconds=0, any Running item older than
+        // TimeoutCanaryMinAgeSeconds (60s) would be immediately force-failed (executionAge >= 0
+        // is always true). Skip instead — these items rely on orphan cleanup and
+        // EnforceDispatchedTimeoutAsync for recovery.
+        if (item.TimeoutSeconds <= 0) return false;
+
+        var ageResult = ResolveExecutionAge(item);
+        if (ageResult is WithinGrace or CanaryViolation) return false;
+
+        if (ageResult is not Enforceable enforceable) return false;
+
+        // Not timed out yet (age < timeout) — skip.
+        // NOTE (issue #3243): The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
+        // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
+        // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
+        // use the same threshold, so the canary invariant provides no protection for items at
+        // exactly that boundary — the item is immediately enforced on the first cycle it is
+        // returned by the query. This is a gap in the canary design that was not present when
+        // the global timeout was always >> 60s. (DotNetSpecialist review finding)
+        return enforceable.AgeSeconds >= item.TimeoutSeconds;
+    }
+
+    private async Task FailTimedOutItemAsync(ActiveWorkItemDto item, CancellationToken ct)
+    {
+        try
+        {
+            // Emit a Reconcile.Timeout span for each item that is actually timed out.
+            // Spans only fire when enforcement happens — idle cycles with no timed-out items
+            // never reach this path (all items are skipped by the guards in IsTimedOut).
+            using var timeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.Timeout");
+            timeoutActivity?.SetTag("work_item_id", item.Id);
+            timeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
+            timeoutActivity?.SetTag("timeout_seconds", item.TimeoutSeconds);
+
+            await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
+            {
+                Status = nameof(WorkItemStatus.Failed),
+                ErrorMessage = $"Agent timeout after {item.TimeoutSeconds}s",
+                FailureReason = "Timeout"
+            }, ct);
+
+            var jobName = await ResolveJobNameAsync(item, ct);
+
+            _agentTimeouts.Add(1,
+                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
+            if (jobName is not null)
+                await SafeDeleteJobAsync(jobName, ct);
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "Failed to process timeout for WorkItem {Id}", item.Id);
+        }
+    }
+
+    private bool IsWithinOrphanRetentionWindow(V1Job job, string jobName)
+    {
+        // Respect a minimum retention window before deleting orphaned/stale jobs.
+        // This lets kubectl logs remain readable after a job completes/fails
+        // and prevents the orphan sweep from racing with the K8s TTL controller.
+        // A job with no StartTime yet is brand-new (the K8s job controller has not had its
+        // first sync), NOT "never started properly" — its WorkItem may still be committing
+        // Pending → Dispatched. CreationTimestamp covers this window: it is set by the API
+        // server at object-creation time (1s resolution), providing the same 600s protection
+        // as StartTime. Jobs with no timestamps at all (hand-built objects) have no anchor
+        // and are deleted immediately.
+        var completionTime = job.Status?.CompletionTime
+            ?? job.Status?.StartTime              // fallback: use start time if no completion recorded
+            ?? job.Metadata?.CreationTimestamp;   // fallback: brand-new job whose startTime not yet set
+        const int LogRetentionSeconds = 600; // 10 minutes
+        if (completionTime.HasValue &&
+            (DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds < LogRetentionSeconds)
+        {
+            _log.Debug("Skipping orphan/stale K8s Job {JobName} — completed/created {Age}s ago, within {Retention}s retention window",
+                jobName,
+                (int)(DateTimeOffset.UtcNow - new DateTimeOffset(completionTime.Value, TimeSpan.Zero)).TotalSeconds,
+                LogRetentionSeconds);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task DeleteOrphanJobAsync(string jobName, Guid? workItemId, CancellationToken ct)
+    {
+        // Determine orphan reason for the log so debugging doesn't require re-running
+        var orphanReason = !workItemId.HasValue
+            ? "no caa/work-item-id label"
+            : $"workItem {workItemId.Value} not in active set (terminal or missing)";
+
+        _log.Information("Deleting orphan/stale K8s Job {JobName} (reason={OrphanReason})", jobName, orphanReason);
+        // Emit Reconcile.OrphanCleanup per job actually deleted (not per idle cycle iteration).
+        using var orphanActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.OrphanCleanup");
+        orphanActivity?.SetTag("job_name", jobName);
+        orphanActivity?.SetTag("orphan_reason", orphanReason);
+        if (workItemId.HasValue)
+            orphanActivity?.SetTag("work_item_id", workItemId.Value);
+        await SafeDeleteJobAsync(jobName, ct);
+    }
 
     /// <summary>
     /// Computes the execution age for <paramref name="item"/> and classifies it as

@@ -126,6 +126,38 @@ public sealed class ModelFetchJobService
         }
 
         // ── 4b. Issue the job's agent key ─────────────────────────────────
+        var agentKeyError = await IssueJobAgentKeyAsync(jobName, ct);
+        if (agentKeyError is not null)
+            return ([], agentKeyError);
+
+        // ── 5. Wait for agent to connect and report results via SignalR ──
+        var (models, fetchError) = await WaitForAgentModelsAsync(jobName, pollTimeoutSeconds, progress, ct);
+
+        // ── 6. Cleanup (best-effort) ─────────────────────────────────────
+        try
+        {
+            await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+            Log.Debug("ModelFetchJobService: deleted job {JobName}", jobName);
+        }
+        catch (Exception ex)
+        {
+            // Don't propagate — a cleanup failure must not hide a successful result.
+            Log.Warning(ex, "ModelFetchJobService: cleanup failed for job {JobName} — will be GC'd by TTL",
+                jobName);
+        }
+
+        if (fetchError is not null)
+            Log.Warning("ModelFetchJobService: fetch failed — {Error}", LogSanitizer.SanitizeForLog(fetchError));
+        else
+            Log.Information("ModelFetchJobService: fetched {Count} model(s) via job {JobName}",
+                models.Count, jobName);
+
+        return (models, fetchError);
+    }
+
+    // Returns null on success, otherwise the error to report (the job has then been deleted).
+    private async Task<string?> IssueJobAgentKeyAsync(string jobName, CancellationToken ct)
+    {
         // Created after the job so the job owns it. Without it the pod cannot authenticate, so on
         // failure the job is deleted rather than left waiting until its deadline.
         try
@@ -135,6 +167,7 @@ public sealed class ModelFetchJobService
                 Log.Warning("ModelFetchJobService: creating the agent key Secret for job {JobName} without OwnerReference — it will not be deleted with the job", jobName);
             await AgentJobKeySecret.CreateForJobAsync(
                 _kubeClient, _options.Namespace, jobName, jobUid, _options.AgentApiKeyValue, ct);
+            return null;
         }
         catch (Exception ex)
         {
@@ -147,12 +180,15 @@ public sealed class ModelFetchJobService
             {
                 Log.Warning(deleteEx, "ModelFetchJobService: failed to delete job {JobName} after its agent key Secret could not be created", jobName);
             }
-            return ([], ct.IsCancellationRequested
+            return ct.IsCancellationRequested
                 ? "Fetch models was cancelled before the job's agent key could be created."
-                : $"Failed to create the fetch-models job's agent key: {ex.Message}");
+                : $"Failed to create the fetch-models job's agent key: {ex.Message}";
         }
+    }
 
-        // ── 5. Wait for agent to connect and report results via SignalR ──
+    private async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> WaitForAgentModelsAsync(
+        string jobName, int pollTimeoutSeconds, IProgress<string>? progress, CancellationToken ct)
+    {
         // AGENT_ID is the job name (JobSpecBuilder), the identity the job's agent key is issued for.
         // ModelFetchService.WaitAndFetchAsync polls the registry until that agent appears,
         // then sends RequestFetchModels and awaits ReportFetchModelsResult — all over the
@@ -177,25 +213,6 @@ public sealed class ModelFetchJobService
             fetchError = $"Unexpected error waiting for fetch-models agent: {ex.Message}";
             Log.Warning(ex, "ModelFetchJobService: unexpected error for job {JobName}", jobName);
         }
-
-        // ── 6. Cleanup (best-effort) ─────────────────────────────────────
-        try
-        {
-            await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-            Log.Debug("ModelFetchJobService: deleted job {JobName}", jobName);
-        }
-        catch (Exception ex)
-        {
-            // Don't propagate — a cleanup failure must not hide a successful result.
-            Log.Warning(ex, "ModelFetchJobService: cleanup failed for job {JobName} — will be GC'd by TTL",
-                jobName);
-        }
-
-        if (fetchError is not null)
-            Log.Warning("ModelFetchJobService: fetch failed — {Error}", LogSanitizer.SanitizeForLog(fetchError));
-        else
-            Log.Information("ModelFetchJobService: fetched {Count} model(s) via job {JobName}",
-                models.Count, jobName);
 
         return (models, fetchError);
     }

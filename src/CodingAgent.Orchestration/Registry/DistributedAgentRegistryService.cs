@@ -519,41 +519,44 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         // The busySinceValue and disconnectedAtValue computations are inside the factory so that
         // any internal retry by AddOrUpdate under contention uses the current live value.
         if (_localSnapshot.ContainsKey(agentId.Value))
-        {
-            // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
-            // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
-            // causing addValueFactory to fire. The addValueFactory must NOT throw — concurrent
-            // deregistration mid-async-await is a normal production event (agent disconnects while
-            // orphan recovery is calling TransitionStatusAsync). Instead, we return a no-op
-            // AgentEntry and immediately remove it so we don't re-insert a deregistered agent.
-            // The snapshot omission is safe: the agent is being removed from the system anyway.
-            // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
-            // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
-            // NOTE: the sentinel is momentarily visible in _localSnapshot between AddOrUpdate return
-            // and TryRemove. A concurrent GetByConnectionId or GetAllAgents reader in that window
-            // would see a sentinel AgentEntry (RegisteredAt=MinValue, Status=default, ActiveJobId=null,
-            // ConnectionId=""). GetByConnectionId would not match it (ConnectionId is empty), so the
-            // practical risk is low, but the window is real. Full atomicity would require a dedicated
-            // per-agent lock around AddOrUpdate+TryRemove, which is out of scope for this fix. (.NET specialist WARNING, issue #2873)
-            var committed = _localSnapshot.AddOrUpdate(
-                agentId.Value,
-                addValueFactory: CreateDeregistrationRaceSentinel,
-                updateValueFactory: (_, current) =>
-                {
-                    var bs = newStatus == AgentStatus.Busy ? (current.BusySince ?? now) : (DateTimeOffset?)null;
-                    var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
-                    return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
-                });
-            if (!RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId.Value, committed,
-                    "TransitionStatusAsync", _logger))
-            {
-                // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
-                // return up-to-date status without hitting Redis.
-                UpdateAllAgentsCache(committed);
-            }
-        }
+            SyncLocalSnapshotStatus(agentId.Value, newStatus, now);
 
         _logger.Information("Agent {AgentId} status transitioned {Old} → {New}", agentId, oldStatus, newStatus);
+    }
+
+    private void SyncLocalSnapshotStatus(string agentId, AgentStatus newStatus, DateTimeOffset now)
+    {
+        // TODO (WARNING issue #2873 review): ContainsKey + AddOrUpdate is not atomic.
+        // A concurrent DeregisterAsync can remove the key between ContainsKey and AddOrUpdate,
+        // causing addValueFactory to fire. The addValueFactory must NOT throw — concurrent
+        // deregistration mid-async-await is a normal production event (agent disconnects while
+        // orphan recovery is calling TransitionStatusAsync). Instead, we return a no-op
+        // AgentEntry and immediately remove it so we don't re-insert a deregistered agent.
+        // The snapshot omission is safe: the agent is being removed from the system anyway.
+        // Sentinel is detected by RegisteredAt == DateTimeOffset.MinValue (never valid for a
+        // real registration) so we avoid a captured-nullable pattern that Sonar flags as S2583.
+        // NOTE: the sentinel is momentarily visible in _localSnapshot between AddOrUpdate return
+        // and TryRemove. A concurrent GetByConnectionId or GetAllAgents reader in that window
+        // would see a sentinel AgentEntry (RegisteredAt=MinValue, Status=default, ActiveJobId=null,
+        // ConnectionId=""). GetByConnectionId would not match it (ConnectionId is empty), so the
+        // practical risk is low, but the window is real. Full atomicity would require a dedicated
+        // per-agent lock around AddOrUpdate+TryRemove, which is out of scope for this fix. (.NET specialist WARNING, issue #2873)
+        var committed = _localSnapshot.AddOrUpdate(
+            agentId,
+            addValueFactory: CreateDeregistrationRaceSentinel,
+            updateValueFactory: (_, current) =>
+            {
+                var bs = newStatus == AgentStatus.Busy ? (current.BusySince ?? now) : (DateTimeOffset?)null;
+                var da = newStatus == AgentStatus.Disconnected ? now : (DateTimeOffset?)null;
+                return current with { Status = newStatus, BusySince = bs, DisconnectedAt = da };
+            });
+        if (!RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId, committed,
+                "TransitionStatusAsync", _logger))
+        {
+            // Keep all-agents cache in sync so GetIdleAgents()/GetAllAgents() sync overloads
+            // return up-to-date status without hitting Redis.
+            UpdateAllAgentsCache(committed);
+        }
     }
 
     // ── Lookups ───────────────────────────────────────────────────────
@@ -795,14 +798,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                     agentId.Value,
                     addValueFactory: _ => throw new InvalidOperationException(
                         $"DistributedAgentRegistryService.UpdateAgentFieldAsync: unexpected add path for agent {agentId.Value} — key was present at ContainsKey check"),
-                    updateValueFactory: (_, current) => field switch
-                    {
-                        "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                        "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                        "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
-                        "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? current with { OrphanRestoredAt = ora } : current,
-                        _ => current
-                    });
+                    updateValueFactory: (_, current) => WithAgentField(current, field, value));
             }
             // TODO: _allAgentsCache is NOT updated here. Fields written via this method (e.g. disabled,
             // activeJobId) will not be reflected in GetAllAgents() / GetBusyAgentCount() sync reads until
@@ -818,6 +814,15 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
                 field, agentId.Value);
         }
     }
+
+    private static AgentEntry WithAgentField(AgentEntry current, string field, string? value) => field switch
+    {
+        "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+        "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+        "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+        "orphanRestoredAt" => DateTimeOffset.TryParse(value, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+        _ => current
+    };
 
     // ── SetLocalSnapshotField ─────────────────────────────────────────
 
@@ -1000,20 +1005,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         if (!dict.TryGetValue("registeredAt", out var registeredAtStr) || string.IsNullOrEmpty(registeredAtStr))
             return null;
 
-        List<string> labels;
-        if (dict.TryGetValue("labels", out var labelsJson) && !string.IsNullOrEmpty(labelsJson))
-            labels = JsonSerializer.Deserialize<List<string>>(labelsJson) ?? new List<string>();
-        else
-            labels = new List<string>();
+        var labels = ParseLabels(dict);
 
         _ = Enum.TryParse<AgentStatus>(dict.GetValueOrDefault("status") ?? "Idle", out var status);
         _ = DateTimeOffset.TryParse(registeredAtStr, out var registeredAt);
         _ = DateTimeOffset.TryParse(dict.GetValueOrDefault("lastHeartbeatAt"), out var lastHeartbeat);
 
-        DateTimeOffset? lastJobCompleted = DateTimeOffset.TryParse(dict.GetValueOrDefault("lastJobCompletedAt"), out var ljc) ? ljc : null;
-        DateTimeOffset? disconnectedAt = DateTimeOffset.TryParse(dict.GetValueOrDefault("disconnectedAt"), out var da) ? da : null;
-        DateTimeOffset? busySince = DateTimeOffset.TryParse(dict.GetValueOrDefault("busySince"), out var bs) ? bs : null;
-        DateTimeOffset? orphanRestoredAt = DateTimeOffset.TryParse(dict.GetValueOrDefault("orphanRestoredAt"), out var ora) ? ora : null;
+        var lastJobCompleted = ParseOptionalTimestamp(dict, "lastJobCompletedAt");
+        var disconnectedAt = ParseOptionalTimestamp(dict, "disconnectedAt");
+        var busySince = ParseOptionalTimestamp(dict, "busySince");
+        var orphanRestoredAt = ParseOptionalTimestamp(dict, "orphanRestoredAt");
 
         _ = bool.TryParse(dict.GetValueOrDefault("disabled") ?? "false", out var disabled);
 
@@ -1035,6 +1036,16 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             Disabled = disabled
         };
     }
+
+    private static List<string> ParseLabels(Dictionary<string, string?> dict)
+    {
+        if (dict.TryGetValue("labels", out var labelsJson) && !string.IsNullOrEmpty(labelsJson))
+            return JsonSerializer.Deserialize<List<string>>(labelsJson) ?? new List<string>();
+        return new List<string>();
+    }
+
+    private static DateTimeOffset? ParseOptionalTimestamp(Dictionary<string, string?> dict, string key)
+        => DateTimeOffset.TryParse(dict.GetValueOrDefault(key), out var value) ? value : null;
 
     private static HashEntry[] AgentEntryToHashEntries(
         string agentId, string connectionId, string hostname,
