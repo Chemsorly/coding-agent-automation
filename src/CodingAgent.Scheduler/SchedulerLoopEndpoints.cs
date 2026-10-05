@@ -112,7 +112,7 @@ public static class SchedulerLoopEndpoints
         private readonly string _expectedKey;
         public ApiKeyFilter(string expectedKey) => _expectedKey = expectedKey;
 
-        public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext ctx, EndpointFilterDelegate next)
+        public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
         {
             if (string.IsNullOrEmpty(_expectedKey))
             {
@@ -125,12 +125,12 @@ public static class SchedulerLoopEndpoints
                     statusCode: StatusCodes.Status503ServiceUnavailable);
             }
 
-            if (!ctx.HttpContext.Request.Headers.TryGetValue("X-Api-Key", out var provided)
+            if (!context.HttpContext.Request.Headers.TryGetValue("X-Api-Key", out var provided)
                 || provided != _expectedKey)
             {
                 return Results.Unauthorized();
             }
-            return await next(ctx);
+            return await next(context);
         }
     }
 }

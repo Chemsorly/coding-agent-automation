@@ -99,7 +99,7 @@ public static class FeedbackCommentFormatter
     }
 
     private static string Unescape(string value) => value
-        .Replace("@​", "@")
+        .Replace("@\u200B", "@")
         .Replace("&lt;", "<")
         .Replace("&gt;", ">");
 

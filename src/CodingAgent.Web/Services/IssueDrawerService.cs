@@ -128,8 +128,8 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
 
     public async Task CheckDrawerDependenciesAsync(
         PipelineJobTemplate template,
-        Action? onProgress = null,
-        CancellationToken cancellationToken = default)
+        Action? onProgress,
+        CancellationToken cancellationToken)
     {
         var providerConfig = _cachedIssueProviders?.FirstOrDefault(p => p.Id == template.IssueProviderId);
         if (providerConfig == null) return;
