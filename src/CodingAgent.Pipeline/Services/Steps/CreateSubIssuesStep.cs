@@ -231,12 +231,6 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             if (!string.IsNullOrWhiteSpace(label) &&
                 !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
             {
-                // TODO: AgentLabels.All uses StringComparer.Ordinal (HashSet default), so a mixed-case
-                // agent label (e.g. "Agent:Epic-Approved") would not be found here and would bypass the
-                // filter, being forwarded to the provider as a non-agent label. The deduplication guard
-                // above already uses OrdinalIgnoreCase. Consider constructing All / AllowedOnCreation
-                // with OrdinalIgnoreCase and updating FilterForIssueCreation to match so that the gate
-                // is robust against non-canonical casing from agent-authored JSON files.
                 // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
                 if (!AgentLabels.All.Contains(label))
                     labels.Add(label);
