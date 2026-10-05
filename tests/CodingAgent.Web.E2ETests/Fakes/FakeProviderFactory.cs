@@ -23,6 +23,15 @@ public sealed class FakeProviderFactory : IProviderFactory
     /// </summary>
     public const string SecondaryIssueProviderConfigId = "issue-e2e-2";
 
+    /// <summary>
+    /// The provider configs the E2E hosts seed on top of the shared config-store defaults:
+    /// the config for <see cref="SecondaryIssueProvider"/>.
+    /// </summary>
+    public static IEnumerable<ProviderConfig> ExtraProviderConfigs() =>
+    [
+        new ProviderConfig { Id = SecondaryIssueProviderConfigId, Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "E2E Secondary Issue Provider" },
+    ];
+
     public InMemoryIssueProvider IssueProvider { get; } = new();
 
     /// <summary>

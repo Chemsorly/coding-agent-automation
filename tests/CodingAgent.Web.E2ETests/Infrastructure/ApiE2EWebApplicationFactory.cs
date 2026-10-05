@@ -12,7 +12,6 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
-using InMemoryConfigurationStore = CodingAgent.Web.E2ETests.Fakes.InMemoryConfigurationStore;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
