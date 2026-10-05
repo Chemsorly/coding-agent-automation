@@ -200,7 +200,8 @@ public static class GitHubTelemetry
     ///   </description></item>
     /// </list>
     ///
-    /// Call this at process startup after the OTel meter is registered (after <c>app.Build()</c>).
+    /// Call this at process startup through <c>MetricPreInitialization.Run</c>, which builds the
+    /// MeterProvider first: measurements made before that are dropped.
     /// This ensures Prometheus <c>increase()</c> can detect the first real increment — without
     /// pre-initialization, a series that has never been incremented does not exist in the
     /// TSDB and <c>increase()</c> over the first window returns no data.

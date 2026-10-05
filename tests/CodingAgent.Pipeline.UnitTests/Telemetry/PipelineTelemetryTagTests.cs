@@ -65,35 +65,6 @@ public class PipelineTelemetryTagTests : IDisposable
     }
 
     [Fact]
-    public void BuildTags_IncludesProjectNameButNotProjectId()
-    {
-        var tags = PipelineTelemetry.BuildTags(PipelineRunType.Implementation, "proj-123", "MyProject");
-
-        _capturedTags.Clear();
-        PipelineTelemetry.RunOutcomes.Add(1, tags);
-
-        // pipeline.project_name must be present
-        _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "MyProject"));
-        // pipeline.project_id must NOT be a metric tag (issue #2980 — it's 1:1 with project_name
-        // and was redundant cardinality; it is still set on spans via SetProjectTags)
-        _capturedTags.Should().NotContain(t => t.Key == "pipeline.project_id",
-            "pipeline.project_id must not appear in metric tags after issue #2980; use pipeline.project_name instead");
-    }
-
-    [Fact]
-    public void BuildTags_NullProjectId_EmitsUnknownProjectName()
-    {
-        var tags = PipelineTelemetry.BuildTags(PipelineRunType.Implementation, null, null);
-
-        _capturedTags.Clear();
-        PipelineTelemetry.RunOutcomes.Add(1, tags);
-
-        _capturedTags.Should().Contain(new KeyValuePair<string, object?>("pipeline.project_name", "unknown"));
-        _capturedTags.Should().NotContain(t => t.Key == "pipeline.project_id",
-            "pipeline.project_id must not appear in metric tags after issue #2980");
-    }
-
-    [Fact]
     public void SetProjectTags_SetsTagsOnActivity()
     {
         using var source = new ActivitySource("test.telemetry.projects");

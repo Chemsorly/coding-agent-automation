@@ -19,9 +19,8 @@ public static class SerilogOtlpExtensions
     /// <c>"coding-agent-api"</c>) so it is used in local/test environments where the env var is absent.
     /// </param>
     /// <param name="environmentName">
-    /// The deployment environment name. If null, reads from <c>OTEL_RESOURCE_ATTRIBUTES</c>
-    /// (key <c>deployment.environment</c>) first, then from <c>ASPNETCORE_ENVIRONMENT</c>
-    /// or <c>DOTNET_ENVIRONMENT</c>, defaulting to "Production".
+    /// The host's environment name, used for <c>deployment.environment</c> when
+    /// <c>OTEL_RESOURCE_ATTRIBUTES</c> carries none. See <see cref="ResolveDeploymentEnvironment"/>.
     /// </param>
     public static LoggerConfiguration WriteToOtlpIfConfigured(
         this LoggerConfiguration loggerConfiguration,
@@ -35,28 +34,9 @@ public static class SerilogOtlpExtensions
             return loggerConfiguration;
 
         // OTEL_SERVICE_NAME env var takes precedence; fallbackServiceName is used when it is absent.
-        // TODO: The Web process hardcodes service.name in OpenTelemetryRegistration.cs (not driven by
-        // OTEL_SERVICE_NAME), so setting otel.webServiceName to a non-default value causes the OTel SDK
-        // traces/metrics to keep "coding-agent-web" while the log sink picks up the override — logs and
-        // traces diverge by service.name for that host. Fix: either stop reading OTEL_SERVICE_NAME here
-        // for the Web sink (use fallbackServiceName directly) or make the SDK registration also read
-        // OTEL_SERVICE_NAME. See review finding (issue #2969).
+        // Every host's tracer and meter provider reads the same variable, so logs and traces agree.
         var resolvedServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? fallbackServiceName;
-
-        // Resolve deployment.environment: prefer the value in OTEL_RESOURCE_ATTRIBUTES (same source
-        // as the OTel SDK's traces/metrics) so logs and traces carry the same value and casing.
-        // TODO: This OTEL_RESOURCE_ATTRIBUTES lookup is bypassed for the four long-lived hosts
-        // (API, Web, JobController, Scheduler) because they all pass a non-null environmentName
-        // (ctx.HostingEnvironment.EnvironmentName). Consequence: if OTEL_RESOURCE_ATTRIBUTES contains
-        // "deployment.environment=production" but ASPNETCORE_ENVIRONMENT is "Production" (different
-        // casing), logs and traces still disagree. Fix: have each host pass null as environmentName
-        // and rely on this resolution chain, or consult ParseDeploymentEnvironment before the
-        // caller-supplied value. See review finding (issue #2969).
-        var resolvedEnvironment = environmentName
-            ?? ParseDeploymentEnvironment(Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES"))
-            ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
-            ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
-            ?? "Production";
+        var resolvedEnvironment = ResolveDeploymentEnvironment(environmentName);
 
         // ignoreEnvironment: true because we read OTEL env vars ourselves with URL-decoding and validation
         return loggerConfiguration.WriteTo.OpenTelemetry(options =>
@@ -73,6 +53,20 @@ public static class SerilogOtlpExtensions
             ApplyOtlpHeaders(options);
         }, ignoreEnvironment: true);
     }
+
+    /// <summary>
+    /// Resolves the <c>deployment.environment</c> attribute for the log sink. The value in
+    /// <c>OTEL_RESOURCE_ATTRIBUTES</c> wins, because the OTel SDK puts that same value on traces and
+    /// metrics; otherwise <paramref name="environmentName"/>, then <c>ASPNETCORE_ENVIRONMENT</c> or
+    /// <c>DOTNET_ENVIRONMENT</c>, defaulting to "Production".
+    /// </summary>
+    /// <param name="environmentName">The host's environment name, or <c>null</c>.</param>
+    internal static string ResolveDeploymentEnvironment(string? environmentName) =>
+        ParseDeploymentEnvironment(Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES"))
+        ?? environmentName
+        ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+        ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
+        ?? "Production";
 
     /// <summary>
     /// Parses the <c>deployment.environment</c> key-value pair from an

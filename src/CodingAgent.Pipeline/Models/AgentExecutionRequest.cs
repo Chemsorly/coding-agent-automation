@@ -26,9 +26,8 @@ internal sealed record AgentExecutionRequest
     public IReadOnlyDictionary<string, string>? EnvironmentVariables { get; init; }
 
     /// <summary>
-    /// Optional stall monitor metrics to record when the agent stalls or is killed during this execution.
-    /// Set for QGC retry agent calls and all other agent phase calls (codegen, analysis, code_review,
-    /// decomposition) to enable server-side recording of <c>pipeline.run.agent_stalls</c> (issue #2979).
+    /// Optional callback that reports a stall <c>(phase, kind)</c> to the API when the agent is killed
+    /// for silence or its process dies, so the API records <c>pipeline.run.agent_stalls</c> (issue #2979).
     /// </summary>
-    public StallMonitorMetrics? StallMetrics { get; init; }
+    public Action<string, string>? ReportStallEvent { get; init; }
 }

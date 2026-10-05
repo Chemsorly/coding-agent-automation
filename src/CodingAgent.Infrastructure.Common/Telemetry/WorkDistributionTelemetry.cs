@@ -1,6 +1,4 @@
 using System.Diagnostics.Metrics;
-using System.Text.RegularExpressions;
-using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Pipeline.Telemetry;
 
@@ -27,18 +25,6 @@ public static class WorkDistributionTelemetry
             advice: new InstrumentAdvice<double>
             {
                 HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 43200, 86400]
-            });
-
-    /// <summary>
-    /// Histogram: total execution duration of dispatched jobs (Dispatched → terminal).
-    /// Matches PipelineTelemetry.JobDuration buckets — same underlying job lifecycle.
-    /// </summary>
-    public static readonly Histogram<double> JobExecutionDuration =
-        Meter.CreateHistogram<double>("workdistribution.job_execution_duration_seconds", "s",
-            "Total execution duration of dispatched jobs",
-            advice: new InstrumentAdvice<double>
-            {
-                HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
             });
 
     /// <summary>
@@ -129,14 +115,6 @@ public static class WorkDistributionTelemetry
             },
             unit: "{pvc}",
             description: "Number of claimed credential PVCs");
-
-    /// <summary>
-    /// Counter: work items transitioned to terminal states.
-    /// Tags: status (succeeded/failed/cancelled), failure_reason.
-    /// </summary>
-    public static readonly Counter<long> WorkItemsTerminated =
-        Meter.CreateCounter<long>("workdistribution.workitems_terminated", "{item}",
-            "Work items reaching terminal status");
 
     /// <summary>
     /// Counter: agent jobs killed by the session timeout enforcer.
@@ -400,66 +378,4 @@ public static class WorkDistributionTelemetry
         }
     }
 
-    /// <summary>
-    /// Emits a structured Information-level log for terminal work item transitions and records
-    /// <see cref="WorkItemsTerminated"/> and <see cref="JobExecutionDuration"/>.
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <strong>Recording point:</strong> run-level metrics (<c>pipeline.run.outcomes</c>,
-    /// <c>pipeline.run.duration</c>) are recorded once per terminal transition in
-    /// <c>WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync</c> in the long-lived
-    /// API process — not here and not in agent pods. This avoids the first-series-zero problem
-    /// that affects ephemeral pods and the double-counting that occurred when the Job Controller
-    /// also recorded metrics after POSTing status to the API. See issue #2967.
-    /// </para>
-    /// <para>
-    /// <strong>Tag conventions:</strong> <c>failure_reason</c> values are snake_case
-    /// (e.g. <c>"agent_error"</c>, <c>"timeout"</c>). This changed from PascalCase in issue #2967.
-    /// Grafana queries filtering on <c>failure_reason</c> must be updated accordingly.
-    /// </para>
-    /// </remarks>
-    public static void LogTerminalStatus(
-        Guid workItemId,
-        WorkItemStatus status,
-        TimeSpan? duration,
-        string? agentId,
-        FailureReason? failureReason)
-    {
-        Serilog.Log.Information(
-            "WorkItem terminal: {WorkItemId} → {Status}, duration={DurationSeconds:F1}s, agent={AgentId}, reason={FailureReason}",
-            workItemId,
-            status,
-            duration?.TotalSeconds ?? -1,
-            agentId ?? "unknown",
-            failureReason?.ToString() ?? "none");
-
-        // Normalize failure_reason to snake_case so that pre-initialized series labels match.
-        // Breaking change from issue #2967: was PascalCase (e.g. "Timeout"), now snake_case ("timeout").
-        var failureReasonTag = failureReason.HasValue
-            ? PascalToSnakeCase(failureReason.Value.ToString())
-            : "none";
-
-        WorkItemsTerminated.Add(1,
-            new KeyValuePair<string, object?>("status", status.ToString()),
-            new KeyValuePair<string, object?>("failure_reason", failureReasonTag));
-
-        // Record job execution duration (Dispatched → terminal)
-        if (duration.HasValue && duration.Value.TotalSeconds >= 0)
-        {
-            JobExecutionDuration.Record(duration.Value.TotalSeconds,
-                new KeyValuePair<string, object?>("status", status.ToString()));
-        }
-    }
-
-    // Converts a PascalCase string to snake_case lowercase.
-    // E.g. "AgentError" → "agent_error", "Timeout" → "timeout", "QualityGateExhausted" → "quality_gate_exhausted".
-    // Mirrors ToFailureReasonTag() in PipelineRunInstrumentation (private partial class method) so that
-    // the failure_reason tag on pipeline.jobs.failed carries consistent values from both emitters.
-    // Uses a pre-compiled Regex to avoid repeated compilation; matchTimeout satisfies Sonar S6444.
-    private static readonly Regex PascalCaseBoundaryRegex =
-        new("(?<=[a-z0-9])([A-Z])", RegexOptions.None, matchTimeout: TimeSpan.FromSeconds(1));
-
-    private static string PascalToSnakeCase(string pascalCase) =>
-        PascalCaseBoundaryRegex.Replace(pascalCase, "_$1").ToLowerInvariant();
 }

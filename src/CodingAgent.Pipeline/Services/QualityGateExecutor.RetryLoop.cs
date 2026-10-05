@@ -10,13 +10,6 @@ public partial class QualityGateExecutor
     /// <summary>Maximum consecutive transient provider errors before the retry loop is aborted.</summary>
     private const int MaxConsecutiveTransientRetries = 10;
 
-    // Outcome tag values for the quality_gate.retries counter.
-    // These match the per-branch semantics of RunFixAgentIterationAsync.
-    private const string OutcomeTransient = "transient";
-    private const string OutcomeAuthAbort = "auth_abort";
-    private const string OutcomeSessionRestart = "session_restart";
-    private const string OutcomeRetry = "retry";
-
     /// <summary>
     /// Runs quality gate validation with retry logic and PR creation.
     /// </summary>
@@ -29,7 +22,6 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
 
-        var qgStopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
             using var linkedCts = context.OrchestratorCts != null
@@ -100,12 +92,6 @@ public partial class QualityGateExecutor
                 failureOutputLine,
                 PipelineStep.Failed,
                 CancellationToken.None);
-        }
-        finally
-        {
-            _qualityGateDuration.Record(
-                qgStopwatch.Elapsed.TotalSeconds,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
     }
 
@@ -488,12 +474,10 @@ public partial class QualityGateExecutor
                     Config = config,
                     Description = $"{retryAgentDescription} (attempt {pendingAttemptNum})",
                     Logger = _logger,
-                    Phase = null,
+                    // Counts the fix agent's sessions, time and tokens under the quality_gate phase.
+                    Phase = PipelineTelemetry.RunPhases.QualityGate,
                     EnvironmentVariables = context.InjectedSecrets,
-                    // Wire stall metrics with server-side event reporting (issue #2979).
-                    // The Warnings counter stays agent-side (warnings are not in the server-side requirements).
-                    // Kills and ProcessDeaths fire the ReportStallEvent delegate which calls back to the API.
-                    StallMetrics = BuildStallMetricsWithServerSideReporting(context)
+                    ReportStallEvent = AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent)
                 },
                 callbacks, ct,
                 resumeSessionId: run.CodegenSessionId);
@@ -524,16 +508,10 @@ public partial class QualityGateExecutor
             // broken, or if code is added between the agent call and the switch in the future,
             // this catch provides a safety net.
             //
-            // The outcome is classified as OutcomeTransient because: (a) ExecuteAgentAndRecordAsync
-            // returning null (the absorbed-exception path) maps to ClassifyRetryOutcome(null) →
-            // RetryOutcome.TransientWait → OutcomeTransient; this catch must be consistent with
-            // that contract so dashboards see the same dimension regardless of whether the exception
-            // is absorbed upstream or propagates here.
-            //
             // IMPORTANT: This catch block must NOT delegate to HandleTransientAsync. HandleTransientAsync
             // returns ShouldContinue: true (skip QG validation), but the catch path must return
-            // ShouldContinue: false (proceed to QG validation). The telemetry call and asymmetric
-            // ConsecutiveTransientRetries treatment (no increment in the catch path) are intentional.
+            // ShouldContinue: false (proceed to QG validation). The asymmetric
+            // ConsecutiveTransientRetries treatment (no increment in the catch path) is intentional.
             //
             // NOTE: If ExecuteAgentAndRecordAsync's exception-absorption contract changes, revisit
             // whether ShouldBreak/ShouldContinue semantics here still match TransientWait.
@@ -543,7 +521,6 @@ public partial class QualityGateExecutor
                 Role = ChatRole.System,
                 Content = $"Agent error during retry fix: {ex.Message}"
             });
-            _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
             return new RetryDecision(
                 ShouldBreak: false,
                 ShouldContinue: false,
@@ -563,7 +540,6 @@ public partial class QualityGateExecutor
         int consecutiveTransientRetries,
         CancellationToken ct)
     {
-        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeTransient));
         consecutiveTransientRetries++;
 
         if (consecutiveTransientRetries >= MaxConsecutiveTransientRetries)
@@ -600,7 +576,6 @@ public partial class QualityGateExecutor
     /// </summary>
     private Task<RetryDecision> HandleAuthAbortAsync(PipelineRun run, int consecutiveTransientRetries)
     {
-        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeAuthAbort));
         _logger.Error(
             "Pipeline {RunId} retry {RetryCount}: permanent auth failure, aborting retry loop",
             run.RunId, run.RetryCount);
@@ -624,7 +599,6 @@ public partial class QualityGateExecutor
     /// </remarks>
     private Task<RetryDecision> HandleSessionRestartAsync(PipelineRun run, int consecutiveTransientRetries)
     {
-        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeSessionRestart));
         _logger.Warning(
             "Pipeline {RunId} retry {RetryCount}: agent returned empty response (0 tokens), " +
             "clearing session affinity for next attempt",
@@ -647,7 +621,6 @@ public partial class QualityGateExecutor
         AgentResult? agentResult,
         IRepositoryProvider repoProvider)
     {
-        _qualityGateRetries.Add(1, BuildRetryTags(run, OutcomeRetry));
         if (agentResult != null)
             await _prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
         return new RetryDecision(
@@ -708,17 +681,5 @@ public partial class QualityGateExecutor
         _logger.Information("Pipeline {RunId} {Phase}: AllPassed={AllPassed}, Compilation={CompilationPassed}, Tests={TestsPassed}, ExternalCi={ExternalCiResult}",
             run.RunId, phase, report.AllPassed, report.Compilation.Passed, FormatGateLogValue(report.Tests),
             FormatGateLogValue(report.ExternalCi));
-
-        EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Compilation, report.Compilation.Passed);
-        if (report.Tests is not null)
-            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.Tests, report.Tests.Passed);
-        if (report.ExternalCi is not null)
-            EmitGateEvaluation(PipelineTelemetry.QualityGateNames.ExternalCi, report.ExternalCi.Passed);
-
-        void EmitGateEvaluation(string gateName, bool passed)
-        {
-            _qualityGateEvaluations.Add(1,
-                new("gate_name", gateName), new("result", passed ? "pass" : "fail"));
-        }
     }
 }
