@@ -55,8 +55,7 @@ public class AgentSessionSpanTests : IDisposable
             "Codegen agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
             phase: uniquePhase);
 
-        var span = _stoppedActivities.Should()
-            .Contain(a => a.OperationName == $"invoke_agent {uniquePhase}").Which;
+        var span = SpanFor(uniquePhase);
         span.GetTagItem("gen_ai.provider.name").Should().Be("claude");
         span.GetTagItem("gen_ai.usage.reasoning_tokens").Should().Be(5L);
         span.GetTagItem("gen_ai.usage.cache_read_input_tokens").Should().Be(300L);
@@ -70,7 +69,7 @@ public class AgentSessionSpanTests : IDisposable
     [Fact]
     public async Task ExecuteWithMonitoringAsync_KiroProvider_CreatesSpanWithGenAiAttributes()
     {
-        var uniquePhase = $"analysis_{_testRunTag}";
+        var uniquePhase = $"review_{_testRunTag}";
         var agentResult = new AgentResult
         {
             ExitCode = 0,
@@ -83,15 +82,16 @@ public class AgentSessionSpanTests : IDisposable
 
         await AgentStallMonitor.ExecuteWithMonitoringAsync(
             provider.Object, CreateRequest(), run, config,
-            "Analysis agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
+            "Review agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
             phase: uniquePhase);
 
-        var span = _stoppedActivities.Should()
-            .Contain(a => a.OperationName == $"invoke_agent {uniquePhase}").Which;
+        var span = SpanFor(uniquePhase);
+        span.OperationName.Should().Be("invoke_agent review", "the span name carries the normalized phase, not the raw key");
         span.GetTagItem("gen_ai.operation.name").Should().Be("invoke_agent");
         span.GetTagItem("gen_ai.provider.name").Should().Be("kiro");
         span.GetTagItem("gen_ai.request.model").Should().Be("claude-sonnet-4-5");
-        span.GetTagItem("pipeline.phase").Should().Be(uniquePhase);
+        span.GetTagItem("pipeline.phase").Should().Be("review");
+        span.GetTagItem("pipeline.phase_key").Should().Be(uniquePhase);
         span.GetTagItem("agent.session.resumed").Should().Be(false);
         span.GetTagItem("agent.exit_code").Should().Be(0);
         span.GetTagItem("gen_ai.usage.input_tokens").Should().Be(150L);
@@ -116,8 +116,7 @@ public class AgentSessionSpanTests : IDisposable
             "Code generation", onChange: null, Serilog.Log.Logger, CancellationToken.None,
             phase: uniquePhase);
 
-        var span = _stoppedActivities.Should()
-            .Contain(a => a.OperationName == $"invoke_agent {uniquePhase}").Which;
+        var span = SpanFor(uniquePhase);
         span.GetTagItem("gen_ai.provider.name").Should().Be("opencode");
     }
 
@@ -140,8 +139,7 @@ public class AgentSessionSpanTests : IDisposable
             "QGC retry agent", onChange: null, Serilog.Log.Logger, CancellationToken.None,
             phase: uniquePhase);
 
-        var span = _stoppedActivities.Should()
-            .Contain(a => a.OperationName == $"invoke_agent {uniquePhase}").Which;
+        var span = SpanFor(uniquePhase);
         span.GetTagItem("agent.session.resumed").Should().Be(true);
     }
 
@@ -231,12 +229,15 @@ public class AgentSessionSpanTests : IDisposable
             "Reflection", onChange: null, Serilog.Log.Logger, CancellationToken.None,
             phase: uniquePhase);
 
-        var span = _stoppedActivities.Should()
-            .Contain(a => a.OperationName == $"invoke_agent {uniquePhase}").Which;
+        var span = SpanFor(uniquePhase);
         span.GetTagItem("gen_ai.request.model").Should().BeNull("model tag must be absent when provider.Model is null");
     }
 
     // ── Static helpers ─────────────────────────────────────────────────────────────────────────
+
+    private Activity SpanFor(string phaseKey) =>
+        _stoppedActivities.Should()
+            .Contain(a => (string?)a.GetTagItem("pipeline.phase_key") == phaseKey).Which;
 
     private static AgentRequest CreateRequest() => new()
     {

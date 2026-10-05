@@ -1213,21 +1213,11 @@ public class QualityGateExecutorEdgeCaseTests
 }
 
 /// <summary>
-/// Verifies that WaitForPostPrCiAsync emits into the PostPrCiDuration histogram (not ExternalCiDuration).
-/// Uses a MeterListener to capture live metric measurements during a real ProceedToQualityGatesAsync
-/// execution — exercises the production call site rather than calling PipelineTelemetry directly.
+/// Verifies that WaitForPostPrCiAsync reports a post-PR <c>CiWait</c> event to the API during a real
+/// ProceedToQualityGatesAsync execution — exercises the production call site.
 /// </summary>
-public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
+public class QualityGateExecutorPostPrCiTelemetryTests
 {
-    private readonly TestMeterFactory _meterFactory = new();
-    private readonly MetricCollector<double> _histogramCollector;
-    private readonly MetricCollector<long> _counterCollector;
-
-    // Compatibility shim — existing test bodies use _instrumentNames.Should().Contain(name)
-    private IEnumerable<string> _instrumentNames =>
-        _histogramCollector.GetMeasurementSnapshot().Select(_ => _histogramCollector.Instrument!.Name)
-            .Concat(_counterCollector.GetMeasurementSnapshot().Select(_ => _counterCollector.Instrument!.Name));
-
     private readonly Mock<IQualityGateValidator> _mockValidator = new();
     private readonly Mock<IAgentProvider> _mockAgent = new();
     private readonly Mock<IPipelineCallbacks> _mockCallbacks = new();
@@ -1241,9 +1231,6 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
 
     public QualityGateExecutorPostPrCiTelemetryTests()
     {
-        _histogramCollector = new MetricCollector<double>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.post_pr_ci.duration");
-        _counterCollector = new MetricCollector<long>(_meterFactory, PipelineTelemetry.SourceName, "quality_gate.evaluations");
-
         _run = new PipelineRun
         {
             RunId = "telemetry-post-pr-ci-test",
@@ -1261,29 +1248,20 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
             new CiLogWriter(_mockLogger.Object),
             new FeedbackService(_mockLogger.Object),
             _mockLogger.Object,
-            _mockHistoryService.Object,
-            _meterFactory);
+            _mockHistoryService.Object);
 
         SetupDefaultMocks();
     }
 
-    public void Dispose()
-    {
-        _histogramCollector.Dispose();
-        _counterCollector.Dispose();
-        _meterFactory.Dispose();
-    }
-
     /// <summary>
-    /// Regression test for issue #2220: WaitForPostPrCiAsync must emit into
-    /// PostPrCiDuration, not ExternalCiDuration.
+    /// Regression test for issue #2220 (moved API-side in #2979): WaitForPostPrCiAsync must report
+    /// the post-PR CI wait as a <c>CiWait</c> event with <c>stage=post_pr</c>.
     ///
     /// Exercises the production call site by running ProceedToQualityGatesAsync through
-    /// the skipCiIfNoChanges path (which triggers WaitForPostPrCiAsync), then asserts
-    /// via MeterListener that quality_gate.post_pr_ci.duration was recorded.
+    /// the skipCiIfNoChanges path (which triggers WaitForPostPrCiAsync).
     /// </summary>
     [Fact]
-    public async Task WaitForPostPrCiAsync_EmitsPostPrCiDuration_NotExternalCiDuration()
+    public async Task WaitForPostPrCiAsync_ReportsPostPrCiWaitEvent()
     {
         // Arrange: local gates pass; cleanup commit throws "no changes" → skipCiIfNoChanges
         // path fires → FinalizePullRequest called → WaitForPostPrCiAsync runs
@@ -1331,7 +1309,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests : IDisposable
             BuildContext(reportedEvents.Add), CancellationToken.None);
 
         // Assert: a CiWait event with stage=post_pr was reported server-side (issue #2979).
-        // quality_gate.post_pr_ci.duration is no longer recorded agent-side — the API records it.
+        // The API records it as pipeline.run.ci.wait{stage=post_pr}.
         var postPrCiEvent = reportedEvents.FirstOrDefault(e =>
             e.Kind == PipelineRunEventKind.CiWait &&
             e.Stage == PipelineTelemetry.CiWaitStages.PostPr);

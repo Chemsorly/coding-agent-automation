@@ -90,6 +90,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** Agents and control plane share MessagePack wire types, so building them together removes version skew; a wire-contract snapshot test is unnecessary.
 **Revisit when:** agent images are pinned or released separately; then add a wire-contract snapshot test.
 
+### One agent image per agent tool, with every tech stack
+<!-- 2026-10-04 -->
+**Rule:** Each agent tool (Kiro, OpenCode, Claude Code) has one image, a target of `dockerfiles/agent.Dockerfile`, that carries every supported stack: .NET 10 SDK, JDK 21 + Maven and Python 3.12. Labels still pick the agent profile and job template; templates of different stacks point at the same image.
+**Why:** The agent worker needs the .NET SDK in every image anyway, so per-stack images saved little, while nine near-copies of the Dockerfile drifted apart, CI built eighteen agent images per run, and no image could run a polyglot repository. **Accepting:** a larger image and a slower first pull on a new node, every stack's CVE findings in every agent image, and one version per stack.
+**Not:** one image per agent tool and stack.
+**Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.
+
 ### MessagePack int ordinals for SignalR — homogeneous deployment assumed
 <!-- 2026-07-04 -->
 **Rule:** Hub messages use MessagePack with integer enum ordinals and numbered keys, so member order and key numbers are a wire contract. Never reorder enum members in hub types. A retired key stays tombstoned; never reuse its number.

@@ -101,7 +101,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 },
                 request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
                 line => callbacks.EmitOutputLine(line),
-                stallMetrics: request.StallMetrics,
+                reportStallEvent: request.ReportStallEvent,
                 phase: request.Phase);
 
             request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
@@ -162,7 +162,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
             },
             request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
             request.OnOutputLine,
-            stallMetrics: request.StallMetrics,
+            reportStallEvent: request.ReportStallEvent,
             phase: request.Phase);
 
         request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
@@ -192,27 +192,18 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     }
 
     /// <summary>
-    /// Builds a <see cref="StallMonitorMetrics"/> instance that fires a server-side event
-    /// via <paramref name="reportAction"/> for stall_kill and process_death events (issue #2979).
-    /// The Warnings counter remains agent-side (not in server requirements).
-    /// When <paramref name="reportAction"/> is null (test/orchestrator path), <see cref="StallMonitorMetrics.ReportStallEvent"/>
-    /// is left null so no server-side call is attempted.
+    /// Builds the stall callback for <see cref="AgentStallMonitor"/>: it sends each stall
+    /// <c>(phase, kind)</c> to the API as an <see cref="PipelineRunEventKind.AgentStall"/> event via
+    /// <paramref name="reportAction"/> (issue #2979). Returns null when <paramref name="reportAction"/>
+    /// is null (test/orchestrator path), so no server-side call is attempted.
     /// </summary>
-    internal static StallMonitorMetrics BuildStallMetricsWithServerSideReporting(
-        Action<PipelineRunEventReport>? reportAction)
-    {
-        return new StallMonitorMetrics(
-            PipelineTelemetry.StallWarnings,
-            PipelineTelemetry.StallKills,
-            PipelineTelemetry.StallProcessDeaths)
-        {
-            ReportStallEvent = reportAction is null ? null : (phase, kind) =>
-                reportAction(new PipelineRunEventReport
-                {
-                    Kind = PipelineRunEventKind.AgentStall,
-                    Stage = phase,
-                    Result = kind
-                })
-        };
-    }
+    internal static Action<string, string>? BuildStallEventReporter(Action<PipelineRunEventReport>? reportAction) =>
+        reportAction is null
+            ? null
+            : (phase, kind) => reportAction(new PipelineRunEventReport
+            {
+                Kind = PipelineRunEventKind.AgentStall,
+                Stage = phase,
+                Result = kind
+            });
 }

@@ -102,11 +102,8 @@ builder.Services.AddOpenTelemetry()
         .AddAspNetCoreInstrumentation(opts =>
             opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
         .AddHttpClientInstrumentation(opts =>
-        {
-            opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
-            opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
-        })
-        .AddProcessor(new OtelNoiseSpanDropProcessor())
+            opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
+        .AddProcessor(new OtelNoiseSpanProcessor())
         .AddOtlpExporter())
     .WithMetrics(m => m
         .AddAspNetCoreInstrumentation()
@@ -124,9 +121,9 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
-// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
-// on first increment. Must run after builder.Build() so the MeterProvider is active.
-GitHubTelemetry.PreInitialize();
+// Seed the github.api.requests and pipeline.pull_requests.closed series with 0 so Prometheus
+// increase() sees the first real increment after a deploy.
+MetricPreInitialization.Run(app.Services, () => GitHubTelemetry.PreInitialize());
 
 // ── Health probes ─────────────────────────────────────────────────────────
 // /healthz — startup/liveness, /readyz — readiness, /health — Dockerfile HEALTHCHECK compat.

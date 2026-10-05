@@ -1,0 +1,70 @@
+# helm unittest suite for the web host's HTTP-to-HTTPS redirect.
+# Run with: helm unittest helm/coding-agent-automation
+#
+# Covers:
+#   1. Off without an ingress
+#   2. Off for an ingress without a tls section (no HTTPS URL to redirect to)
+#   3. On for an ingress with a tls section
+#   4. web.ingress.httpsRedirect: false turns it off (TLS ends in front of the ingress)
+
+suite: web https redirect
+
+templates:
+  - templates/web-env-configmap.yaml
+
+# Required values to avoid render failures in dependent templates
+set:
+  database.host: "pg-host"
+  database.auth.existingSecret: "my-secret"
+  signalr.redis.connectionString: "redis:6379"
+
+tests:
+
+  - it: is off without an ingress
+    asserts:
+      - equal:
+          path: data.WebUI__HttpsRedirect
+          value: "false"
+
+  - it: is off for an ingress without tls
+    set:
+      web.ingress.enabled: true
+      web.ingress.hosts:
+        - host: coding-agent.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+    asserts:
+      - equal:
+          path: data.WebUI__HttpsRedirect
+          value: "false"
+
+  - it: is on for an ingress with tls
+    set:
+      web.ingress.enabled: true
+      web.ingress.hosts:
+        - host: coding-agent.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+      web.ingress.tls:
+        - secretName: coding-agent-tls
+          hosts:
+            - coding-agent.example.com
+    asserts:
+      - equal:
+          path: data.WebUI__HttpsRedirect
+          value: "true"
+
+  - it: can be turned off for an ingress with tls
+    set:
+      web.ingress.enabled: true
+      web.ingress.httpsRedirect: false
+      web.ingress.tls:
+        - secretName: coding-agent-tls
+          hosts:
+            - coding-agent.example.com
+    asserts:
+      - equal:
+          path: data.WebUI__HttpsRedirect
+          value: "false"

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Telemetry;
 using Microsoft.AspNetCore.Http;
@@ -31,7 +30,7 @@ public sealed class OpenTelemetryRegistrationTests
     }
 
     [Fact]
-    public void AddApplicationTelemetry_FiltersAndEnrichesHttpClientRequestsThroughOtelNoiseFilter()
+    public void AddApplicationTelemetry_FiltersHttpClientRequestsThroughOtelNoiseFilter()
     {
         using var provider = BuildProvider();
 
@@ -41,9 +40,6 @@ public sealed class OpenTelemetryRegistrationTests
         options.FilterHttpRequestMessage.Should().Be(
             new Func<HttpRequestMessage, bool>(OtelNoiseFilter.FilterHttpClientRequest),
             "Kubernetes API server calls must not produce client spans");
-        options.EnrichWithHttpRequestMessage.Should().Be(
-            new Action<Activity, HttpRequestMessage>(OtelNoiseFilter.EnrichHttpClientRequest),
-            "outbound spans must be named by method and host");
     }
 
     private static ServiceProvider BuildProvider()

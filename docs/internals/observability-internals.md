@@ -1,16 +1,16 @@
 # Observability — Internal Details
 
-Internal reference for telemetry implementation specifics.
+Internal reference for telemetry implementation specifics. The full metric and span inventory is in [Observability](../observability.md).
 
 ## Internal-Only Metrics
 
-These metrics are primarily useful for pipeline developers debugging infrastructure:
+These metrics are primarily useful for pipeline developers debugging infrastructure. All are recorded by the API.
 
 | Metric | Type | Description |
 |--------|------|-------------|
 | `token_vending.failures` | Counter | Token vending operation failures |
-| `agent.heartbeat.failures` | Counter | Agent heartbeat send failures (API-side) |
-| `agent.reconnections` | Counter | Agent reconnection events (API-side) |
+| `agent.hub.auth_rejections` | Counter | Hub calls rejected by the auth checks (`reason`) |
+| `workdistribution.progress_write_failures` | Counter | Failed `LastProgressAt` writes |
 
 ## Internal Trace Spans
 
@@ -18,10 +18,8 @@ These spans represent internal plumbing and are unlikely to be queried by operat
 
 | Span Name | Description |
 |-----------|-------------|
-| `Hub.ReportJobCompleted` | Hub business logic for job completion |
-| `TokenVending.GenerateToken` | Token generation HTTP call |
-| `Agent.ReceiveJob` | Agent job receipt and acceptance/rejection decision |
-| `Agent.ReportCompletion` | Reporting job completion to Pipeline API |
+| `Hub.ReportJobCompleted` | Hub business logic for job completion (API) |
+| `TokenVending.GenerateToken` | Token generation HTTP call (API) |
 
 ## Resilience Retry Events
 
@@ -42,26 +40,15 @@ Event tags:
 
 Metric `run_type` values are lowercased (`implementation`), while span `pipeline.run_type` values are PascalCase (`Implementation`). Use the appropriate casing when querying.
 
-## QGC Process and Stall Metrics
+## Quality Gate Processes and Agent Stalls
 
-These metrics cover individual QGC process invocations and agent silence detection. All defined in `PipelineTelemetry` (`CodingAgent.Pipeline` meter).
+Agent pods export no metrics, so quality gate processes and agent stalls reach Prometheus only through what the agent reports to the API:
 
-| Metric | Type | Tags | Description |
-|--------|------|------|-------------|
-| `quality_gate.process.timeout` | Counter | `gate_name`, `qgc_name` | QGC process (compilation or test command) killed for exceeding `processTimeoutSeconds` |
-| `quality_gate.process.duration` | Histogram | `gate_name`, `qgc_name` | Single-invocation duration. Distinct from `quality_gate.duration` (entire retry phase) |
-| `quality_gate.stall.warnings` | Counter | `phase` | Agent silence warning — fires after each `stallWarningInterval` with no output. `phase` uses a closed-set constant from `PipelineTelemetry.StallPhases` |
-| `quality_gate.stall.kills` | Counter | `phase` | Agent process killed due to stall timeout |
-| `quality_gate.stall.process_deaths` | Counter | `phase` | Agent process exited unexpectedly (not stall-killed) |
-| `quality_gate.post_pr_ci.duration` | Histogram | — | Time waiting for post-PR CI to complete. Recorded by `QualityGateExecutor` on the post-PR finalization path |
+- Each gate result (`ReportQualityGateResult`) → `pipeline.run.quality_gate.results`.
+- A stall kill or process death detected by `AgentStallMonitor`, or a gate process timeout in `QualityGateValidator`, is reported as an `AgentStall` pipeline event → `pipeline.run.agent_stalls{phase, kind}`. The API maps the reported phase onto the closed `phase` set (`PipelineTelemetry.NormalizeRunPhase`) and drops events whose kind is not `stall_kill`, `process_death` or `process_timeout`.
+- CI waits (`CiWait` events) → `pipeline.run.ci.wait{stage}`.
 
-The `phase` tag uses a closed set to prevent unbounded cardinality:
-- `qgc_retry_agent` — quality gate retry, pre-PR cleanup, final QG, post-PR CI
-- `codegen` — code generation / rework
-- `analysis` — analysis agent
-- `code_review` — review agents, acceptance criteria, review summary
-- `decomposition` — decomposition phases
-- `unknown` — unmapped phases
+Per-invocation detail stays in the trace: `invoke_agent {phase}` spans carry `agent.stall_warning`, `agent.stall_kill` and `agent.process_death` events, and `QualityGate.Compilation` / `QualityGate.Tests` spans cover each gate process.
 
 ## Grafana Faro Frontend Observability
 
@@ -71,19 +58,21 @@ Data collected includes: page load timing, Blazor circuit errors, unhandled JS e
 
 ## Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgent.Pipeline`, namespace `CodingAgent.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. Ownership by process (issue #2980):
+The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgent.Infrastructure.Common`, namespace `CodingAgent.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. Ownership by process (issue #2980):
 
-- **API** (`service.name=coding-agent-api` or `coding-agent-web`): `workdistribution.dispatch_latency_seconds`, `workdistribution.credential_pool_available`, `workdistribution.credential_pool_claimed`, `workdistribution.dispatch.attempts`, `workdistribution.workitems_terminated` — recorded when the API dispatches work items or transitions them to terminal states.
+- **API** (`service.name=coding-agent-api`): `workdistribution.dispatch_latency_seconds`, `workdistribution.credential_pool_available`, `workdistribution.credential_pool_claimed`, `workdistribution.dispatch.attempts`, `workdistribution.pod_start_seconds`, `workdistribution.pvc_pool_exhaustions` — recorded when the API dispatches work items and agents fetch their assignment.
 - **Scheduler** (`service.name=coding-agent-scheduler`): `workdistribution.dispatcher_last_poll_epoch_seconds`, `workdistribution.dispatcher_polls` (via `WorkItemDispatchLoop`), and `workdistribution.workitems_by_status` (via `WorkItemCountsService`). The `workitems_by_status` gauge is only emitted by the leader Scheduler replica.
 - **Job Controller** (`service.name=coding-agent-jobcontroller`): `workdistribution.timeout_execution_age_seconds`, `workdistribution.timeout_canary_violations`, `workdistribution.agent_timeouts` — recorded by `ReconciliationLoop` when enforcing session timeouts.
 
+Terminal transitions are counted by `pipeline.run.outcomes` (API) only.
+
 The credential pool and dispatcher gauges use owner-only empty-measurement guards: non-owning processes emit no measurement, preventing spurious 0 series that would corrupt the `CredentialPoolExhausted` and `DispatcherStalled` Prometheus alerts.
 
-See [Observability — Work Distribution Metrics](../observability.md#work-distribution-metrics) for the full metric table.
+See [Observability — Dispatch and work distribution](../observability.md#dispatch-and-work-distribution) for the full metric table.
 
 ## CriticalMessageBuffer (Chat Pod Agent-Side)
 
-`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. It is used by **chat pods** (ephemeral K8s Jobs spawned without `--work-item-id`) which run `AgentWorkerService` and communicate with the orchestrator hub over SignalR. Failed deliveries are buffered silently — there is no dedicated metric counter for individual send failures; instead monitor `agent.reconnections` for connection instability.
+`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. It is used by **chat pods** (ephemeral K8s Jobs spawned without `--work-item-id`) which run `AgentWorkerService` and communicate with the orchestrator hub over SignalR. Failed deliveries are buffered silently and there is no metric for them (agent pods export no metrics); the agent logs each failed send and each reconnect.
 
 Drain behavior:
 - On reconnection, buffered messages are replayed (max 3 drain attempts per message)

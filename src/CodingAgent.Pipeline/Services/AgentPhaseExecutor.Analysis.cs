@@ -238,7 +238,7 @@ public partial class AgentPhaseExecutor
             },
             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine(line),
-            stallMetrics: BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+            reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
             phase: "analysis");
 
         run.AccumulateTokenUsage(analysisResult, phase: "analysis");
