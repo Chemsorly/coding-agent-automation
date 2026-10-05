@@ -87,6 +87,12 @@ internal readonly struct RedisHashReader
     /// Parses a <see cref="DateTimeOffset"/> for <paramref name="key"/>.
     /// Returns <c>default</c> when the key is absent or the value cannot be parsed.
     /// </summary>
+    // TODO: the method name "DateTimeOffset" shadows the return type System.DateTimeOffset within
+    // this method body, which is why internal calls are qualified as System.DateTimeOffset.TryParse.
+    // A future maintainer adding an overload or a local variable named DateTimeOffset will get a
+    // confusing compile error, and IDE rename refactors may behave unexpectedly. Rename to
+    // GetDateTimeOffset (or similar) when next editing this file.
+    // Tracked: DotNetSpecialist review warning — RedisHashReader.cs:88
     public DateTimeOffset DateTimeOffset(string key)
     {
         _d.TryGetValue(key, out var val);
@@ -123,13 +129,7 @@ internal readonly struct RedisHashReader
     public decimal? Decimal(string key)
     {
         _d.TryGetValue(key, out var val);
-        // TODO: decimal.TryParse uses the current thread culture. On hosts where the OS locale
-        // uses "," as the decimal separator, a stored value like "1.2345" silently fails to parse
-        // and returns null (zeroing TotalCost). Switch to decimal.TryParse(val,
-        // NumberStyles.Any, CultureInfo.InvariantCulture, out var result) and update the writer
-        // (ToHashEntries) to use ToString(CultureInfo.InvariantCulture) consistently.
-        // Tracked: DotNetSpecialist review warning — RedisHashReader.cs:125
-        return decimal.TryParse(val, out var result) ? result : null;
+        return decimal.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out var result) ? result : null;
     }
 
     // ── Boolean accessors ─────────────────────────────────────────────
@@ -173,6 +173,12 @@ internal readonly struct RedisHashReader
     /// Returns <c>null</c> when the key is absent, the value is empty, or parsing fails.
     /// Used for nullable enum fields that are serialised as a plain enum-name string (not wrapped in JSON).
     /// </summary>
+    // TODO: JsonEnumOrNull has no callers in src/ — only called from RedisHashReaderTests.cs.
+    // Its behaviour is identical to EnumOrNull<T>. Either remove this method (and update the three
+    // tests to call EnumOrNull instead) or add a production caller to justify its existence.
+    // Keeping two methods with the same semantics creates a maintenance hazard: if enum-parse
+    // behaviour changes, both must be kept in sync.
+    // Tracked: DotNetSpecialist review warning — RedisHashReader.cs:170
     public T? JsonEnumOrNull<T>(string key) where T : struct, System.Enum
     {
         if (!_d.TryGetValue(key, out var val) || string.IsNullOrEmpty(val)) return null;

@@ -238,6 +238,23 @@ public class RedisHashReaderTests
         r.Decimal("cost").Should().BeNull();
     }
 
+    [Fact]
+    public void Decimal_UsesInvariantCulture_ParsesPeriodSeparator()
+    {
+        // TODO: this test is functionally identical to Decimal_ValidString_ReturnsParsedValue:
+        // both construct a reader with ("cost", "1.2345") and assert the result is 1.2345m.
+        // To actually verify locale independence, set Thread.CurrentThread.CurrentCulture to a
+        // comma-decimal locale (e.g. CultureInfo.GetCultureInfo("de-DE")) before parsing, or
+        // use a value that would parse differently under a non-invariant culture (e.g. "1,2345"
+        // should return null under InvariantCulture). Update or merge this test accordingly.
+        // Tracked: TestQualityReviewer warning — RedisHashReaderTests.cs:218
+        // Decimal values are stored and parsed with InvariantCulture (period as decimal separator).
+        // A value like "1.2345" must parse correctly regardless of the host OS locale.
+        var r = new RedisHashReader(H(("cost", "1.2345")));
+        r.Decimal("cost").Should().Be(1.2345m,
+            "decimal parsing uses CultureInfo.InvariantCulture so '.' is always the decimal separator");
+    }
+
     // ── Bool ──────────────────────────────────────────────────────────
 
     [Fact]

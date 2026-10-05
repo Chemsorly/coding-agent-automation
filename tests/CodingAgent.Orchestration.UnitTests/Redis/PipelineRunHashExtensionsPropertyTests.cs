@@ -254,6 +254,12 @@ public class PipelineRunHashExtensionsPropertyTests
         result.Should().BeNull("missing required runId must return null");
     }
 
+    // TODO: the three tests below (MissingIssueIdentifier, MissingIssueProviderConfigId,
+    // MissingRepoProviderConfigId) all follow the same pattern and could be collapsed into a single
+    // [Theory] with [InlineData] rows alongside the existing FromHash_MissingRequiredField_ReturnsNull
+    // (which covers "runId"). Unifying them would make it easier to add future required fields and
+    // remove the structural inconsistency where "runId" is tested separately from the other three.
+    // Tracked: TestQualityReviewer warning — PipelineRunHashExtensionsPropertyTests.cs:254
     [Fact]
     public void FromHash_MissingIssueIdentifier_ReturnsNull()
     {

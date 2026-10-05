@@ -970,58 +970,53 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     private static AgentEntry? HashToEntry(HashEntry[] hash)
     {
-        var dict = hash.ToDictionary(e => (string)e.Name!, e => (string?)e.Value);
+        var r = new RedisHashReader(hash);
 
-        if (!dict.TryGetValue("agentId", out var agentId) || string.IsNullOrEmpty(agentId))
-            return null;
-        if (!dict.TryGetValue("connectionId", out var connectionId) || string.IsNullOrEmpty(connectionId))
-            return null;
-        if (!dict.TryGetValue("hostname", out var hostname)) hostname = "";
-        var hostnameNonNull = hostname ?? "";
-        if (!dict.TryGetValue("registeredAt", out var registeredAtStr) || string.IsNullOrEmpty(registeredAtStr))
-            return null;
+        var agentId = r.RequiredString("agentId"); if (agentId is null) return null;
+        var connectionId = r.RequiredString("connectionId"); if (connectionId is null) return null;
+        var registeredAtStr = r.RequiredString("registeredAt"); if (registeredAtStr is null) return null;
 
-        var labels = ParseLabels(dict);
+        // hostname falls back to "" (not null) — use ?? "" at the call site
+        var hostname = r.OptionalString("hostname") ?? "";
 
-        _ = Enum.TryParse<AgentStatus>(dict.GetValueOrDefault("status") ?? "Idle", out var status);
-        _ = DateTimeOffset.TryParse(registeredAtStr, CultureInfo.InvariantCulture, out var registeredAt);
-        _ = DateTimeOffset.TryParse(dict.GetValueOrDefault("lastHeartbeatAt"), CultureInfo.InvariantCulture, out var lastHeartbeat);
+        // TODO: r.Json<T> swallows JsonException and returns null (yielding [] here), whereas the
+        // original ParseLabels called JsonSerializer.Deserialize without a try/catch and would throw
+        // on a malformed labels value, propagating the failure to the caller. The new behaviour is
+        // consistent with how FromHash treats all JSON fields, but it is a semantic change: a corrupt
+        // "labels" field now silently produces an agent entry with Labels=[] instead of surfacing the
+        // parse failure. If strict failure propagation for corrupt labels is required, replace with
+        // JsonSerializer.Deserialize<List<string>> directly (without try/catch) and add a test asserting
+        // that a malformed stored value causes GetByAgentId to throw.
+        // Tracked: Correctness review warning — DistributedAgentRegistryService.cs:982
+        var labels = r.Json<List<string>>("labels") ?? [];
 
-        var lastJobCompleted = ParseOptionalTimestamp(dict, "lastJobCompletedAt");
-        var disconnectedAt = ParseOptionalTimestamp(dict, "disconnectedAt");
-        var busySince = ParseOptionalTimestamp(dict, "busySince");
-        var orphanRestoredAt = ParseOptionalTimestamp(dict, "orphanRestoredAt");
+        // Explicit defaultValue: AgentStatus.Idle documents the intent — do not rely on
+        // default(AgentStatus) coincidentally equalling Idle.
+        var status = r.Enum<AgentStatus>("status", defaultValue: AgentStatus.Idle);
 
-        _ = bool.TryParse(dict.GetValueOrDefault("disabled") ?? "false", out var disabled);
+        _ = System.DateTimeOffset.TryParse(registeredAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var registeredAt);
+
+        // Bool("disabled") returns false on absent/unparseable — equivalent to ?? "false" before TryParse.
+        var disabled = r.Bool("disabled");
 
         return new AgentEntry
         {
             AgentId = new AgentId(agentId),
             ConnectionId = connectionId,
-            Hostname = hostnameNonNull,
+            Hostname = hostname,
             Labels = labels!,
             Status = status,
             RegisteredAt = registeredAt,
-            LastHeartbeatAt = lastHeartbeat,
-            LastJobCompletedAt = lastJobCompleted,
-            DisconnectedAt = disconnectedAt,
-            BusySince = busySince,
-            OrphanRestoredAt = orphanRestoredAt,
-            ActiveJobId = dict.GetValueOrDefault("activeJobId") is { Length: > 0 } aj ? aj : null,
-            ActiveChatSessionId = dict.GetValueOrDefault("activeChatSessionId") is { Length: > 0 } acs ? acs : null,
+            LastHeartbeatAt = r.DateTimeOffset("lastHeartbeatAt"),
+            LastJobCompletedAt = r.DateTimeOffsetOrNull("lastJobCompletedAt"),
+            DisconnectedAt = r.DateTimeOffsetOrNull("disconnectedAt"),
+            BusySince = r.DateTimeOffsetOrNull("busySince"),
+            OrphanRestoredAt = r.DateTimeOffsetOrNull("orphanRestoredAt"),
+            ActiveJobId = r.OptionalString("activeJobId"),
+            ActiveChatSessionId = r.OptionalString("activeChatSessionId"),
             Disabled = disabled
         };
     }
-
-    private static List<string> ParseLabels(Dictionary<string, string?> dict)
-    {
-        if (dict.TryGetValue("labels", out var labelsJson) && !string.IsNullOrEmpty(labelsJson))
-            return JsonSerializer.Deserialize<List<string>>(labelsJson) ?? new List<string>();
-        return new List<string>();
-    }
-
-    private static DateTimeOffset? ParseOptionalTimestamp(Dictionary<string, string?> dict, string key)
-        => DateTimeOffset.TryParse(dict.GetValueOrDefault(key), CultureInfo.InvariantCulture, out var value) ? value : null;
 
     private static HashEntry[] AgentEntryToHashEntries(AgentEntry entry)
     {
