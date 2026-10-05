@@ -180,6 +180,13 @@ public class DecompositionPromptBuilderTests
     }
 
     [Fact]
+    public void BuildReviewPrompt_RestrictsMarkersToSingleFindingLines()
+    {
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        prompt.Should().Contain("Start a line with a severity marker only when the line is a finding");
+    }
+
+    [Fact]
     public void BuildReviewPrompt_WithNullProjectContext_ReturnsSameAsWithout()
     {
         var without = DecompositionPromptBuilder.BuildReviewPrompt(12);

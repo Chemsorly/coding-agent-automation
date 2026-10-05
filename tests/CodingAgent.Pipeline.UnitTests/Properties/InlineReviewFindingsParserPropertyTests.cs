@@ -207,7 +207,8 @@ public class InlineReviewFindingsParserPropertyTests
 
     /// <summary>
     /// P3: For any multi-line input, the number of findings returned by FindingsParser.Parse
-    /// equals the number of input lines that contain at least one severity marker.
+    /// equals the number of input lines that start with a severity marker. A marker later in
+    /// the line (prose that names a severity) is not a finding.
     /// **Validates: Requirements 2.8**
     /// </summary>
     [Property(MaxTest = 20)]
@@ -217,6 +218,11 @@ public class InlineReviewFindingsParserPropertyTests
             from marker in GenSeverityMarker()
             from message in GenMessage()
             select $"{marker} {message}";
+
+        var genLineWithMarkerInProse =
+            from marker in GenSeverityMarker()
+            from message in GenMessage()
+            select $"No {marker} issue: {message}";
 
         var genLineWithoutMarker =
             Gen.Elements(
@@ -228,6 +234,7 @@ public class InlineReviewFindingsParserPropertyTests
 
         var genLine = Gen.Frequency(
             (3, genLineWithMarker),
+            (1, genLineWithMarkerInProse),
             (2, genLineWithoutMarker));
 
         var genLines =
@@ -238,10 +245,7 @@ public class InlineReviewFindingsParserPropertyTests
         return Prop.ForAll(genLines.ToArbitrary(), lines =>
         {
             var input = string.Join("\n", lines);
-            var expectedCount = lines.Count(line =>
-                line.Contains("[CRITICAL]", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("[WARNING]", StringComparison.OrdinalIgnoreCase) ||
-                line.Contains("[SUGGESTION]", StringComparison.OrdinalIgnoreCase));
+            var expectedCount = lines.Count(line => line.StartsWith('['));
 
             var findings = FindingsParser.Parse(input, "TestAgent");
 
@@ -252,12 +256,13 @@ public class InlineReviewFindingsParserPropertyTests
     // ─── P9: Cross-Parser Invariant ─────────────────────────────────────────────
 
     /// <summary>
-    /// P9: For any input, FindingsParser.Parse(input).Count ≤ SeverityParser.Parse(input.Split('\n')).Total
-    /// because FindingsParser uses first marker per line, while SeverityParser counts all markers.
+    /// P9: For any input, SeverityParser.Parse(input.Split('\n')) counts exactly the findings
+    /// FindingsParser.Parse(input) returns, per severity. Both take one finding per line, from the
+    /// marker that starts the line, so the review's severity table always matches its findings.
     /// **Validates: Requirements 14.1, 14.2**
     /// </summary>
     [Property(MaxTest = 20)]
-    public Property P9_CrossParserInvariant_FindingsCountLessOrEqualSeverityCount()
+    public Property P9_CrossParserInvariant_SeverityCountsMatchFindings()
     {
         var genLineWithMultipleMarkers =
             from marker1 in GenSeverityMarker()
@@ -270,12 +275,18 @@ public class InlineReviewFindingsParserPropertyTests
             from message in GenMessage()
             select $"{marker} {message}";
 
+        var genLineWithMarkerInProse =
+            from marker in GenSeverityMarker()
+            from message in GenMessage()
+            select $"Nothing rises to {marker} severity: {message}";
+
         var genLineWithoutMarker =
             Gen.Elements("plain text", "no markers here", "var x = 1;");
 
         var genLine = Gen.Frequency(
             (2, genLineWithMultipleMarkers),
             (3, genLineWithSingleMarker),
+            (2, genLineWithMarkerInProse),
             (2, genLineWithoutMarker));
 
         var genLines =
@@ -286,14 +297,13 @@ public class InlineReviewFindingsParserPropertyTests
         return Prop.ForAll(genLines.ToArbitrary(), lines =>
         {
             var input = string.Join("\n", lines);
-            var inputLines = input.Split('\n');
 
-            var findingsCount = FindingsParser.Parse(input, "TestAgent").Count;
-            var severityCounts = SeverityParser.Parse(inputLines);
-            var severityTotal = severityCounts.Critical + severityCounts.Warning + severityCounts.Suggestion;
+            var findings = FindingsParser.Parse(input, "TestAgent");
+            var severityCounts = SeverityParser.Parse(input.Split('\n'));
 
-            findingsCount.Should().BeLessThanOrEqualTo(severityTotal,
-                "FindingsParser uses first marker per line, SeverityParser counts all markers");
+            severityCounts.Critical.Should().Be(findings.Count(f => f.Severity == FindingSeverity.Critical));
+            severityCounts.Warning.Should().Be(findings.Count(f => f.Severity == FindingSeverity.Warning));
+            severityCounts.Suggestion.Should().Be(findings.Count(f => f.Severity == FindingSeverity.Suggestion));
         });
     }
 

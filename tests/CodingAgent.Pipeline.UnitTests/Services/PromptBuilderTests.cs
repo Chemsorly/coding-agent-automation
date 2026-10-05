@@ -976,6 +976,16 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void BuildReviewPrompt_CalibrationRestrictsMarkersToSingleFindingLines()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("FINDING LINES:");
+        result.Should().Contain("Start a line with a severity marker only when the line is a finding");
+        result.Should().Contain("keep each finding on that one line");
+    }
+
+    [Fact]
     public void BuildReviewPrompt_CalibrationContainsConcurrencyCarveOut()
     {
         var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");

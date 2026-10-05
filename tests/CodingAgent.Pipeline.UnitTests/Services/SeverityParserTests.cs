@@ -52,13 +52,13 @@ public class SeverityParserTests
     }
 
     [Fact]
-    public void Parse_WithMultipleMarkersOnSameLine_CountsEach()
+    public void Parse_WithMultipleMarkersOnSameLine_CountsTheLineOnce()
     {
         var lines = new[] { "[CRITICAL] issue A [CRITICAL] issue B on same line" };
 
         var result = SeverityParser.Parse(lines);
 
-        result.Critical.Should().Be(2);
+        result.Critical.Should().Be(1);
     }
 
     [Fact]

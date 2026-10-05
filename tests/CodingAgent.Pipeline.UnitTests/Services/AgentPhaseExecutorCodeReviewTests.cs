@@ -330,6 +330,27 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task CodeReview_FindingsThatOnlyNameSeverities_CountNoCriticalAndStartNoSecondIteration()
+    {
+        // Issue #3369: a reviewer's summary named the markers in prose, was counted as a CRITICAL finding,
+        // and the loop sent a CRITICAL fix prompt and reviewed again.
+        SetupAgentWritingFindings("correctness",
+            "No issues were found in the changed code that rise to [CRITICAL] or [WARNING] severity under the\n" +
+            "stated checklist. One [SUGGESTION] is noted below.\n" +
+            "[SUGGESTION] src/Service.cs:12 — Rename the helper");
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 2, FixPrompt = "Fix it" } };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        _run.CodeReviewCriticalCount.Should().Be(0);
+        _run.CodeReviewWarningCount.Should().Be(0);
+        _run.CodeReviewSuggestionCount.Should().Be(1);
+        // Review agent + one fix prompt for the suggestion + summary agent = 3 calls; no second review iteration.
+        _run.CodeReviewIterationsCompleted.Should().Be(1);
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
+    }
+
+    [Fact]
     public async Task CodeReview_SequentialException_SingleAgent_IterationCompletesWithFailureResult()
     {
         // When all agents in an iteration crash, the all-crash guard fires and returns early from

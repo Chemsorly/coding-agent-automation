@@ -187,6 +187,79 @@ public sealed class FindingsParserTests
         result[0].FilePath.Should().Be("src/New.cs");
     }
 
+    [Fact]
+    public void Parse_FindingMarkedResolvedByStatusWord_IsSkipped()
+    {
+        var result = FindingsParser.Parse("[WARNING] src/Foo.cs:42 — RESOLVED: the guard was added", AgentName);
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Parse_FindingWithLowercaseResolvedInDescription_IsParsed()
+    {
+        // A real finding from production: the word "resolved" in the description used to drop the whole line.
+        var input =
+            "[WARNING] tests/CodingAgent.Web.E2ETests/Tests/RunDetailCancelAndRedispatchTests.cs:468 — " +
+            "IDispatchOrchestrationService and IWorkDistributor are resolved directly from the root IServiceProvider.";
+
+        var result = FindingsParser.Parse(input, AgentName);
+
+        result.Should().ContainSingle();
+        result[0].Severity.Should().Be(FindingSeverity.Warning);
+        result[0].LineNumber.Should().Be(468);
+    }
+
+    // ── Only finding lines are findings ───────────────────────────────────
+
+    [Fact]
+    public void Parse_HardWrappedFindingThatQuotesMarkers_ReturnsOnlyTheFinding()
+    {
+        // The Correctness findings of the PR #3363 review. The quoted `[CRITICAL]` on a wrapped line
+        // became a CRITICAL finding without a location, which no reader could find in the review.
+        var input =
+            "[SUGGESTION] tests/CodingAgent.Pipeline.UnitTests/CodeReview/SeverityParserTests.cs:74 — The removed\n" +
+            "test `Parse_CaseInsensitive_MatchesAllVariants` exercised case-insensitive marker matching for all\n" +
+            "three severities (Critical/Warning/Suggestion). The claimed survivor `Parse_CriticalCaseInsensitive_CountsOne`\n" +
+            "only covers case variants of `[CRITICAL]`. Lowercase `[warning]`/`[suggestion]` matching is no\n" +
+            "longer directly asserted (only `[WARNING]` appears via the RESOLVED-exclusion test). This is a minor";
+
+        var result = FindingsParser.Parse(input, AgentName);
+
+        result.Should().ContainSingle();
+        result[0].Severity.Should().Be(FindingSeverity.Suggestion);
+        result[0].FilePath.Should().Be("tests/CodingAgent.Pipeline.UnitTests/CodeReview/SeverityParserTests.cs");
+        result[0].LineNumber.Should().Be(74);
+    }
+
+    [Theory]
+    [InlineData("No issues were found in the changed code that rise to [CRITICAL] or [WARNING] severity")]
+    [InlineData("stated checklist. One [SUGGESTION] is noted below.")]
+    [InlineData("        // TODO [WARNING]: This PVC availability snapshot is taken OUTSIDE _pvcSelectLock.")]
+    [InlineData("| [CRITICAL] | 1 |")]
+    [InlineData("> [CRITICAL] src/Auth.cs:10 — quoted from the previous review")]
+    public void Parse_MarkerThatDoesNotStartTheLine_ProducesNoFinding(string line)
+    {
+        var result = FindingsParser.Parse(line, AgentName);
+        result.Should().BeEmpty();
+    }
+
+    [Theory]
+    [InlineData("   [WARNING] src/Foo.cs:12 — message")]
+    [InlineData("1. [WARNING] src/Foo.cs:12 — message")]
+    [InlineData("- [WARNING] src/Foo.cs:12 — message")]
+    [InlineData("**[WARNING]** src/Foo.cs:12 — message")]
+    [InlineData("### [WARNING] src/Foo.cs:12 — message")]
+    public void Parse_FindingLineFormats_ExtractTheFinding(string line)
+    {
+        var result = FindingsParser.Parse(line, AgentName);
+
+        result.Should().ContainSingle();
+        result[0].Severity.Should().Be(FindingSeverity.Warning);
+        result[0].FilePath.Should().Be("src/Foo.cs");
+        result[0].LineNumber.Should().Be(12);
+        result[0].Message.Should().Be("message");
+    }
+
     // ── Code fence stripping ──────────────────────────────────────────────
 
     [Fact]
