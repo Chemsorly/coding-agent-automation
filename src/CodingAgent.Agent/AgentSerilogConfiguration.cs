@@ -29,10 +29,9 @@ namespace CodingAgent.Agent;
 /// the entrypoint script, producing non-JSON prefixed output. Those lines will still
 /// produce JSONParserErr in Loki. Only Kiro CLI agent pods are fully fixed by this change.</para>
 ///
-/// <para><b>Known gap:</b> Pipeline progress lines emitted via <c>EmitOutputLine</c>
-/// bypass Serilog entirely (streamed to the UI only) and do not appear in Loki.
-/// Only structural lifecycle events (startup, SIGTERM, errors) are observable via Loki.
-/// See issue #2178.</para>
+/// <para><b>Output lines:</b> pipeline progress lines emitted via <c>EmitOutputLine</c> are logged
+/// as <c>[output] {Line}</c> (with <c>PipelineRunId</c> and <c>StepName</c>) by
+/// <c>PipelineSignalRReporter</c>, so they reach Loki as well as the UI.</para>
 /// </remarks>
 internal static class AgentSerilogConfiguration
 {

@@ -99,6 +99,7 @@ The chart deploys:
 | `web.image.repository/tag` | Web container image |
 | `web.replicas` | Number of web replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set for correct chat keepalive behavior (see Redis note below), and sticky sessions at the ingress (see `web.service.annotations`). |
 | `web.service.annotations` | Annotations on the web Service. With Traefik and more than one web replica, enable sticky sessions here (`traefik.ingress.kubernetes.io/service.sticky.cookie: "true"`): a Blazor Server circuit lives in one pod, and its connection and reconnects must reach that pod. See [Authentication](authentication.md#exposing-the-ui). |
+| `web.ingress.httpsRedirect` | With a `tls` section on the Ingress, redirect clients that reached it over plain HTTP to HTTPS (default: `true`). Set `false` when TLS ends in front of the ingress. See [Authentication](authentication.md#exposing-the-ui). |
 | `api.replicas` | Number of Pipeline API replicas (default: `2`). Values > 1 require `signalr.redis.connectionString` to be set — the chart fails at render time otherwise, since without Redis in-memory state cannot be shared across replicas. |
 | `jobTemplates[]` | List of K8s Job templates defining pod specs per label set. Each entry controls which image, resources, securityContext, initContainers, and `maxConcurrent` to use when dispatching work-item pods. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
@@ -141,7 +142,7 @@ All agent pod specs are defined in `jobTemplates[]`. Each entry produces a K8s J
 ```yaml
 jobTemplates:
   - labels: "kiro,dotnet,dotnet10"
-    image: "chemsorly/coding-agent:kiro-dotnet10"
+    image: "chemsorly/coding-agent:coding-agent-kiro-latest"
     providerType: kiro
     maxConcurrent: 3
     resources:
@@ -166,6 +167,8 @@ jobTemplates:
         operator: Exists
         effect: NoSchedule
 ```
+
+Each agent tool has one image with every tech stack (`coding-agent-kiro`, `coding-agent-opencode`, `coding-agent-claude`), so the templates of one tool's stacks use the same image and differ in `labels`, `maxConcurrent` and resources. See [Label Routing — Agent Images](label-routing.md#agent-images).
 
 ### Leader Election Without Kubernetes
 
@@ -308,7 +311,7 @@ PVCs **must** use `ReadWriteOnce` or `ReadWriteOncePod` to prevent concurrent ac
 
 ```bash
 kubectl run kiro-auth-1 -n coding-agent \
-  --image=chemsorly/coding-agent:coding-agent-kiro-dotnet10-latest \
+  --image=chemsorly/coding-agent:coding-agent-kiro-latest \
   --restart=Never \
   --overrides='{
     "spec": {
@@ -316,7 +319,7 @@ kubectl run kiro-auth-1 -n coding-agent \
       "securityContext": {"runAsUser": 1000, "fsGroup": 1000},
       "containers": [{
         "name": "kiro-auth-1",
-        "image": "chemsorly/coding-agent:coding-agent-kiro-dotnet10-latest",
+        "image": "chemsorly/coding-agent:coding-agent-kiro-latest",
         "command": ["sleep", "3600"],
         "volumeMounts": [{"name": "creds", "mountPath": "/home/ubuntu/.local/share/kiro-cli"}]
       }],

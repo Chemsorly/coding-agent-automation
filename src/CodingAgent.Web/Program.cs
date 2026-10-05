@@ -172,9 +172,9 @@ app.ValidateShutdownBudget();
 app.ValidateDiWiring();
 app.MapApplicationEndpoints();
 
-// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
-// on first increment. Must run after builder.Build() so the MeterProvider is active.
-GitHubTelemetry.PreInitialize();
+// Seed the github.api.requests and pipeline.pull_requests.closed series with 0 so Prometheus
+// increase() sees the first real increment after a deploy.
+MetricPreInitialization.Run(app.Services, () => GitHubTelemetry.PreInitialize());
 
 app.Run();
 

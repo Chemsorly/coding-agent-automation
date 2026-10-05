@@ -1,7 +1,5 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using System.Diagnostics.Metrics;
-using CodingAgent.Pipeline.Telemetry;
 
 namespace CodingAgent.Pipeline.Services;
 
@@ -22,29 +20,13 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     // infra retry, post-PR wait). Constructed inline — not DI-registered.
     private readonly CiPollingCoordinator _ciPollingCoordinator;
 
-    // quality_gate.duration and quality_gate.retries/evaluations are still recorded agent-side
-    // (they were not moved to server-side in issue #2979; only the CI wait and stall metrics were).
-    private readonly Histogram<double> _qualityGateDuration;
-    private readonly Counter<long> _qualityGateRetries;
-    private readonly Counter<long> _qualityGateEvaluations;
-    // quality_gate.stall.warnings stays agent-side (not in the deprecated set from issue #2979).
-    private readonly Counter<long> _stallWarnings;
-    // TODO [WARNING]: quality_gate.stall.kills and quality_gate.stall.process_deaths were deprecated
-    // in issue #2979 in favour of pipeline.run.agent_stalls (recorded server-side). These fields and
-    // their recording calls should be removed once the team confirms server-side reporting is working
-    // correctly for all phases (codegen, analysis, code-review, decomposition, qgc_retry_agent).
-    // Server-side reporting is now wired for all phases via BuildStallMetricsWithServerSideReporting.
-    private readonly Counter<long> _stallKills;
-    private readonly Counter<long> _stallProcessDeaths;
-
     public QualityGateExecutor(
         IQualityGateValidator qualityGateValidator,
         PullRequestOrchestrator prOrchestrator,
         CiLogWriter ciLogWriter,
         FeedbackService feedbackService,
         Serilog.ILogger logger,
-        IPipelineRunHistoryService? historyService = null,
-        IMeterFactory? meterFactory = null)
+        IPipelineRunHistoryService? historyService = null)
     {
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(prOrchestrator);
@@ -58,27 +40,6 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         _feedbackService = feedbackService;
         _logger = logger;
 
-        if (meterFactory is not null)
-        {
-            var meter = meterFactory.Create(new MeterOptions(PipelineTelemetry.SourceName));
-            _qualityGateDuration = meter.CreateHistogram<double>("quality_gate.duration", "s", "Total time in quality gate phase");
-            _qualityGateRetries = meter.CreateCounter<long>("quality_gate.retries", "{retry}", "Quality gate retry attempts");
-            _qualityGateEvaluations = meter.CreateCounter<long>("quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
-            _stallWarnings = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}", "Agent stall silence warnings by phase");
-            _stallKills = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}", "Agent stall kill events by phase");
-            _stallProcessDeaths = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}", "Agent stall process death events by phase");
-        }
-        else
-        {
-            _qualityGateDuration = PipelineTelemetry.QualityGateDuration;
-            _qualityGateRetries = PipelineTelemetry.QualityGateRetries;
-            _qualityGateEvaluations = PipelineTelemetry.QualityGateEvaluations;
-            _stallWarnings = PipelineTelemetry.StallWarnings;
-            _stallKills = PipelineTelemetry.StallKills;
-            _stallProcessDeaths = PipelineTelemetry.StallProcessDeaths;
-        }
-
-
         _ciPollingCoordinator = new CiPollingCoordinator(
             logger,
             ciLogWriter);
@@ -87,41 +48,8 @@ public partial class QualityGateExecutor : IQualityGateExecutor
     private const string GateStatusPassed = "PASSED";
     private const string GateStatusFailed = "FAILED";
 
-    /// <summary>
-    /// Builds a <see cref="StallMonitorMetrics"/> instance that also fires a server-side event
-    /// via <see cref="QualityGateContext.ReportPipelineRunEvent"/> for stall_kill and process_death
-    /// events (issue #2979). The Warnings counter remains agent-side (not in server requirements).
-    /// Returns null when <paramref name="context.ReportPipelineRunEvent"/> is null (test/orchestrator path).
-    /// </summary>
-    private StallMonitorMetrics BuildStallMetricsWithServerSideReporting(QualityGateContext context)
-    {
-        var reportAction = context.ReportPipelineRunEvent;
-        return new StallMonitorMetrics(_stallWarnings, _stallKills, _stallProcessDeaths)
-        {
-            ReportStallEvent = reportAction is null ? null : (phase, kind) =>
-                reportAction(new PipelineRunEventReport
-                {
-                    Kind = PipelineRunEventKind.AgentStall,
-                    Stage = phase,
-                    Result = kind
-                })
-        };
-    }
-
     internal static string FormatGateLogValue(GateResult? gate) =>
         gate is null ? "N/A" : gate.Passed.ToString();
-
-    /// <summary>
-    /// Builds a <see cref="TagList"/> for quality gate retry metrics, including run_type, project context,
-    /// and an <c>outcome</c> tag distinguishing the type of retry (<c>transient</c>, <c>auth_abort</c>,
-    /// <c>session_restart</c>, <c>retry</c>).
-    /// </summary>
-    private static System.Diagnostics.TagList BuildRetryTags(PipelineRun run, string outcome)
-    {
-        var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
-        tags.Add(new KeyValuePair<string, object?>("outcome", outcome));
-        return tags;
-    }
 
     private static string BuildQualityGateErrorSummary(QualityGateReport report)
     {

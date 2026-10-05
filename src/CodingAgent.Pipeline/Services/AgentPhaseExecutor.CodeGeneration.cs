@@ -49,7 +49,7 @@ public partial class AgentPhaseExecutor
                 },
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
                 line => context.Callbacks.EmitOutputLine(line),
-                stallMetrics: BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "codegen");
 
             run.AccumulateTokenUsage(agentResult, phase: "codegen");

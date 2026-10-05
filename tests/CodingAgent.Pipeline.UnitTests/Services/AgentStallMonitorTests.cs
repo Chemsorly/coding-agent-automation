@@ -6,7 +6,6 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Web.TestUtilities;
-using Microsoft.Extensions.Diagnostics.Metrics.Testing;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -303,77 +302,14 @@ public class AgentStallMonitorTests
             c.Content.Contains("agent process is no longer alive"));
     }
 
-    // ── Metrics counters ───────────────────────────────────────────────────────
+    // ── Stall reporting to the API ─────────────────────────────────────────────
 
     [Fact]
-    public async Task HandleSilenceWarning_EmitsStallWarningsCounter()
+    public async Task HandleKillTimeoutAsync_ReportsStallKillWithDescriptionPhase()
     {
         var fakeTime = new FakeTimeProvider();
         var signalingTime = new SignalingFakeTimeProvider(fakeTime);
-        var factory = new TestMeterFactory();
-        var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
-        var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
-        var killsCounter = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}");
-        var deathsCounter = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}");
-        var stallMetrics = new StallMonitorMetrics(warningsCounter, killsCounter, deathsCounter);
-
-        using var warningCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.stall.warnings");
-
-        var config = new PipelineConfiguration
-        {
-            StallPollInterval = TimeSpan.FromMinutes(1),
-            StallWarningInterval = TimeSpan.FromMinutes(2),
-            AgentTimeout = TimeSpan.FromHours(1)
-        };
-
-        _mockAgent.Setup(a => a.GetHealthStatus())
-            .Returns(new AgentHealthStatus
-            {
-                IsExecuting = true,
-                ProcessId = 1,
-                IsProcessAlive = true,
-                LastOutputTime = fakeTime.GetUtcNow().UtcDateTime.AddMinutes(-3)
-            });
-
-        var tcs = new TaskCompletionSource<AgentResult>();
-        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(tcs.Task);
-
-        var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
-            new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Quality gate retry agent (attempt 1)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: signalingTime);
-
-        await signalingTime.FirstTimerRegistered;
-        fakeTime.Advance(TimeSpan.FromMinutes(2));
-        await WaitForMetricAsync(warningCollector, fakeTime, TimeSpan.FromMinutes(1));
-
-        tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        await task;
-
-        var snapshot = warningCollector.GetMeasurementSnapshot();
-        snapshot.Should().NotBeEmpty("at least one stall warning should have been emitted");
-        snapshot.Should().Contain(m =>
-            m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
-            "phase tag should be normalized to qgc_retry_agent");
-
-        factory.Dispose();
-    }
-
-    [Fact]
-    public async Task HandleKillTimeoutAsync_EmitsStallKillsCounter()
-    {
-        var fakeTime = new FakeTimeProvider();
-        var signalingTime = new SignalingFakeTimeProvider(fakeTime);
-        var factory = new TestMeterFactory();
-        var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
-        var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
-        var killsCounter = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}");
-        var deathsCounter = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}");
-        var stallMetrics = new StallMonitorMetrics(warningsCounter, killsCounter, deathsCounter);
-
-        using var killCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.stall.kills");
+        var reported = new System.Collections.Concurrent.ConcurrentQueue<(string Phase, string Kind)>();
 
         var config = new PipelineConfiguration
         {
@@ -396,41 +332,31 @@ public class AgentStallMonitorTests
             .Returns(tcs.Task);
         _mockAgent.Setup(a => a.KillAsync()).Returns(Task.CompletedTask);
 
+        // No phase key: the reported phase comes from the description.
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
             _run, config, "Quality gate retry agent (attempt 2)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: signalingTime);
+            CancellationToken.None, reportStallEvent: (phase, kind) => reported.Enqueue((phase, kind)),
+            timeProvider: signalingTime);
 
         await signalingTime.FirstTimerRegistered;
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(killCollector, fakeTime, TimeSpan.FromMinutes(1));
+        await WaitForAsync(() => !reported.IsEmpty, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
 
-        var snapshot = killCollector.GetMeasurementSnapshot();
-        snapshot.Should().ContainSingle("exactly one kill event should have been emitted");
-        snapshot.Should().Contain(m =>
-            m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
-            "phase tag should be normalized to qgc_retry_agent");
-
-        factory.Dispose();
+        reported.Should().ContainSingle().Which.Should().Be(
+            (PipelineTelemetry.RunPhases.QualityGate, PipelineTelemetry.AgentStallKinds.StallKill));
     }
 
     [Fact]
-    public async Task HandleProcessDeath_EmitsStallProcessDeathsCounter()
+    public async Task HandleProcessDeath_ReportsProcessDeathWithNormalizedPhaseKey()
     {
         var fakeTime = new FakeTimeProvider();
         var signalingTime = new SignalingFakeTimeProvider(fakeTime);
-        var factory = new TestMeterFactory();
-        var meter = factory.Create(new System.Diagnostics.Metrics.MeterOptions(PipelineTelemetry.SourceName));
-        var warningsCounter = meter.CreateCounter<long>("quality_gate.stall.warnings", "{warning}");
-        var killsCounter = meter.CreateCounter<long>("quality_gate.stall.kills", "{kill}");
-        var deathsCounter = meter.CreateCounter<long>("quality_gate.stall.process_deaths", "{process_death}");
-        var stallMetrics = new StallMonitorMetrics(warningsCounter, killsCounter, deathsCounter);
-
-        using var deathCollector = new MetricCollector<long>(factory, PipelineTelemetry.SourceName, "quality_gate.stall.process_deaths");
+        var reported = new System.Collections.Concurrent.ConcurrentQueue<(string Phase, string Kind)>();
 
         var config = new PipelineConfiguration
         {
@@ -446,26 +372,23 @@ public class AgentStallMonitorTests
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(tcs.Task);
 
+        // A per-reviewer phase key is reported as the normalized "review" phase.
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             _mockAgent.Object,
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Quality gate retry agent (attempt 3)", null, _mockLogger.Object,
-            CancellationToken.None, stallMetrics: stallMetrics, timeProvider: signalingTime);
+            _run, config, "Code review agent", null, _mockLogger.Object,
+            CancellationToken.None, reportStallEvent: (phase, kind) => reported.Enqueue((phase, kind)),
+            timeProvider: signalingTime, phase: "review_correctness");
 
         await signalingTime.FirstTimerRegistered;
         fakeTime.Advance(TimeSpan.FromMinutes(1));
-        await WaitForMetricAsync(deathCollector, fakeTime, TimeSpan.FromMinutes(1));
+        await WaitForAsync(() => !reported.IsEmpty, fakeTime, TimeSpan.FromMinutes(1));
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
 
-        var snapshot = deathCollector.GetMeasurementSnapshot();
-        snapshot.Should().ContainSingle("exactly one process death event should have been emitted");
-        snapshot.Should().Contain(m =>
-            m.Tags.Contains(new KeyValuePair<string, object?>("phase", PipelineTelemetry.StallPhases.QgcRetryAgent)),
-            "phase tag should be normalized to qgc_retry_agent");
-
-        factory.Dispose();
+        reported.Should().ContainSingle().Which.Should().Be(
+            (PipelineTelemetry.RunPhases.Review, PipelineTelemetry.AgentStallKinds.ProcessDeath));
     }
 
     // ── Polling helpers ────────────────────────────────────────────────────────
@@ -480,7 +403,7 @@ public class AgentStallMonitorTests
     /// the clock is periodically re-advanced while waiting — recovering from the race where
     /// the initial <c>fakeTime.Advance</c> fired before the monitor's Task.Run loop had
     /// registered its first <c>timeProvider.Delay</c>. Mirrors the pattern in
-    /// <see cref="WaitForMetricAsync{T}"/>.
+    /// <see cref="WaitForAsync"/>.
     /// </para>
     /// </summary>
     private static async Task WaitForChatHistoryAsync(
@@ -498,24 +421,23 @@ public class AgentStallMonitorTests
     }
 
     /// <summary>
-    /// Waits up to 15 seconds for at least one measurement to appear in the collector.
+    /// Waits up to 15 seconds for <paramref name="condition"/> to hold.
     /// Periodically re-advances the fake clock by <paramref name="advancePerTick"/> to
     /// recover from the race where the initial <c>fakeTime.Advance</c> fired before the
     /// monitor's Task.Run loop had registered its first <c>timeProvider.Delay</c>. Without
-    /// re-advancing, a single missed advance means the metric is never emitted and the test
+    /// re-advancing, a single missed advance means the event never fires and the test
     /// spins to the 15-second deadline — a flaky failure. (test quality review CRITICAL)
     /// </summary>
-    private static async Task WaitForMetricAsync<T>(
-        MetricCollector<T> collector,
+    private static async Task WaitForAsync(
+        Func<bool> condition,
         FakeTimeProvider fakeTime,
         TimeSpan advancePerTick)
-        where T : struct
     {
         var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (collector.GetMeasurementSnapshot().Count == 0 && DateTime.UtcNow < deadline)
+        while (!condition() && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);
-            if (collector.GetMeasurementSnapshot().Count == 0)
+            if (!condition())
                 fakeTime.Advance(advancePerTick);
         }
     }

@@ -61,9 +61,12 @@ public static partial class AuthTestEnvironment
     }
 
     /// <summary>Reads the hidden antiforgery field of a server-rendered form.</summary>
-    public static async Task<string> GetAntiforgeryTokenAsync(HttpClient client, string path)
+    public static async Task<string> GetAntiforgeryTokenAsync(HttpClient client, string path) =>
+        ReadAntiforgeryToken(await client.GetStringAsync(path), path);
+
+    /// <summary>Reads the hidden antiforgery field from the HTML of <paramref name="path"/>.</summary>
+    public static string ReadAntiforgeryToken(string html, string path)
     {
-        var html = await client.GetStringAsync(path);
         var match = AntiforgeryField().Match(html);
         if (!match.Success)
             throw new InvalidOperationException($"No antiforgery token on {path}");

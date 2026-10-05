@@ -21,6 +21,9 @@ internal static class EndpointRegistration
         // First, so the OIDC redirect URI and the Secure cookie flag see the client's https.
         app.UseForwardedHeaders();
 
+        // HTTPS redirect, HSTS and security headers: before static files, so every response has them.
+        app.UseSecurityHeaders();
+
         // Kubernetes-style health probes — anonymous, no auth required
         app.MapHealthEndpoints();
 
@@ -92,8 +95,9 @@ internal static class EndpointRegistration
 
         // Config import/export endpoints now served by CodingAgent.Api.
 
+        // frame-ancestors is part of the policy UseSecurityHeaders sends on every response.
         app.MapRazorComponents<App>()
-            .AddInteractiveServerRenderMode();
+            .AddInteractiveServerRenderMode(options => options.ContentSecurityFrameAncestorsPolicy = null);
 
         return app;
     }

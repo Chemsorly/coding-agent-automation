@@ -60,4 +60,59 @@ public class AgentLabelsTests
     public void DualLabelResolutionPrecedence_DoesNotContainGenerated() =>
         AgentLabels.DualLabelResolutionPrecedence.Should().NotContain(AgentLabels.Generated,
             because: "agent:generated is orthogonal and must not be treated as a status label by the dual-label sweep");
+
+    // ── FilterForIssueCreation case-insensitivity (issue #3337) ───────────
+
+    /// <summary>
+    /// A mixed-case gated label must be recognised as an agent label and dropped.
+    /// Before the fix: All uses an ordinal List, so "Agent:Epic-Approved" is not found
+    /// and passes through — this test was failing.
+    /// After the fix: All uses OrdinalIgnoreCase, so the label is correctly dropped.
+    /// </summary>
+    [Fact]
+    public void FilterForIssueCreation_MixedCaseGatedLabel_IsDropped()
+    {
+        var result = AgentLabels.FilterForIssueCreation(["Agent:Epic-Approved", "backend"]);
+        result.Should().NotContain("Agent:Epic-Approved",
+            because: "mixed-case gated labels must be treated as agent labels and dropped");
+        result.Should().Contain("backend");
+    }
+
+    [Fact]
+    public void FilterForIssueCreation_MixedCaseTerminalLabel_IsDropped()
+    {
+        var result = AgentLabels.FilterForIssueCreation(["Agent:Done", "feature"]);
+        result.Should().NotContain("Agent:Done",
+            because: "mixed-case terminal labels must be treated as agent labels and dropped");
+        result.Should().Contain("feature");
+    }
+
+    /// <summary>
+    /// agent:next in any casing must be kept — it is in AllowedOnCreation.
+    /// </summary>
+    [Fact]
+    public void FilterForIssueCreation_MixedCaseAllowedLabel_IsKept()
+    {
+        var result = AgentLabels.FilterForIssueCreation(["AGENT:NEXT", "backend"]);
+        result.Should().Contain("AGENT:NEXT",
+            because: "mixed-case agent:next is allowed on creation and must be forwarded");
+        result.Should().Contain("backend");
+        // TODO: This test does not assert that the original label casing is preserved in the output.
+        // FilterForIssueCreation returns the input string as-is (no normalisation), so the returned
+        // list contains "AGENT:NEXT" — not "agent:next". An explicit string-identity assertion
+        // (e.g. result.Should().ContainSingle(l => l == "AGENT:NEXT")) would pin this contract so a
+        // future refactor that normalises casing does not silently break callers.
+    }
+
+    /// <summary>
+    /// agent:generated in any casing must be kept — it is in AllowedOnCreation.
+    /// </summary>
+    [Fact]
+    public void FilterForIssueCreation_MixedCaseGeneratedLabel_IsKept()
+    {
+        var result = AgentLabels.FilterForIssueCreation(["Agent:Generated", "backend"]);
+        result.Should().Contain("Agent:Generated",
+            because: "mixed-case agent:generated is allowed on creation and must be forwarded");
+        result.Should().Contain("backend");
+    }
 }

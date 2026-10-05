@@ -212,8 +212,8 @@ public sealed class WorkItemEndpointTests
     /// Regression test for issue #2202 Fix C (primary).
     /// PostStatus with failureReason="Timeout" must return 200 and persist FailureReason.Timeout.
     /// The fix ensures EmitTerminalStatusTelemetryAsync parses request.FailureReason and passes it
-    /// to LogTerminalStatus instead of null, so workdistribution_workitems_terminated emits
-    /// failure_reason="Timeout" instead of "none".
+    /// to the outcome derivation instead of null, so pipeline_run_outcomes_total emits
+    /// failure_reason="timeout" instead of "none".
     /// </summary>
     [Fact]
     public async Task PostStatus_FailedWithTimeoutReason_Returns200AndPersistsFailureReason()
