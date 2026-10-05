@@ -35,17 +35,16 @@ public static class PipelineRunFactory
         if (request.TaskType == WorkItemTaskType.Consolidation ||
             request.RunType == PipelineRunType.Consolidation)
         {
-            // TODO: PipelineRun.CreateImplementation is semantically misnamed for consolidation usage. It works
-            // today because CreateImplementation has no RunType guard, but if a guard is ever added to reject
-            // non-Implementation run types, this call site will throw at runtime. Consider introducing a
-            // CreateConsolidation factory method mirroring CreateDecomposition. See review warning (issue #3023).
-            var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            var consolidationRun = PipelineRun.CreateForRunType(new PipelineRunCreationParams
             {
                 RunId = workItemId.ToString(),
                 IssueIdentifier = request.IssueIdentifier,
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title)
                     ? request.IssueIdentifier.Value
                     : request.IssueDetail.Title,
+                // IssueProviderConfigId must be the sentinel so that AgentJobLifecycleService
+                // routes completion to ConsolidationJobCompletionStrategy (which checks
+                // run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId).
                 IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = PipelineRunType.Consolidation,

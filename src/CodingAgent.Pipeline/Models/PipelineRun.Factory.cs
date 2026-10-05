@@ -13,25 +13,29 @@ public sealed partial class PipelineRun
     /// <see cref="PipelineRunCreationParams.IssueProviderConfigId"/>; callers that need the
     /// consolidation sentinel must set it themselves (e.g. <c>FromDistributionRequest</c>).
     /// </para>
+    /// <para>
+    /// Consolidation routing note: completion-strategy selection in <c>AgentJobLifecycleService</c>
+    /// keys on <c>IssueProviderConfigId == ConsolidationConstants.ProviderConfigId</c>, not on
+    /// <c>RunType</c>. Callers that need the sentinel (e.g. <c>FromDistributionRequest</c>) must
+    /// set it before calling this method; this factory passes it through unchanged.
+    /// </para>
     /// </remarks>
-    // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(p) before the switch expression.
-    // CreateForRunType is public static and currently accepts null without a clear error — callers
-    // receive a NullReferenceException inside CreateCore instead of an ArgumentNullException at
-    // the entry point. Pattern used throughout the codebase: ArgumentNullException.ThrowIfNull(p).
-    // TODO: [WARNING] CreateForRunType does NOT inject ConsolidationConstants.ProviderConfigId for
-    // Consolidation runs — completion-strategy selection in AgentJobLifecycleService keys on that
-    // sentinel IssueProviderConfigId, not on RunType. Callers that need the sentinel (e.g.
-    // FromDistributionRequest) must set it themselves before calling this method. This means the
-    // shared factory alone cannot route a Consolidation run to ConsolidationJobCompletionStrategy;
-    // correct routing depends on call-site discipline. Consider documenting this contract more
-    // prominently or injecting the sentinel here and removing the caller-side responsibility.
-    public static PipelineRun CreateForRunType(PipelineRunCreationParams p) => p.RunType switch
+    public static PipelineRun CreateForRunType(PipelineRunCreationParams p)
     {
-        PipelineRunType.Review => CreateReview(p),
-        PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => CreateDecomposition(p),
-        PipelineRunType.Consolidation => CreateImplementation(p), // p.RunType == Consolidation; CreateCore passes it through
-        _ => CreateImplementation(p)
-    };
+        ArgumentNullException.ThrowIfNull(p);
+        // TODO: [WARNING] The explicit PipelineRunType.Consolidation arm below is redundant — it
+        // produces exactly the same result as the _ arm. Its sole purpose is to document that
+        // Consolidation intentionally routes through CreateImplementation. A future maintainer
+        // adding a new PipelineRunType value cannot distinguish "deliberate default" from "forgot
+        // to add an arm" for Consolidation. Consider replacing it with a comment on the _ arm.
+        return p.RunType switch
+        {
+            PipelineRunType.Review => CreateReview(p),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => CreateDecomposition(p),
+            PipelineRunType.Consolidation => CreateImplementation(p), // intentional: Consolidation uses the implementation pipeline; RunType is passed through by CreateCore
+            _ => CreateImplementation(p)
+        };
+    }
 
     /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
