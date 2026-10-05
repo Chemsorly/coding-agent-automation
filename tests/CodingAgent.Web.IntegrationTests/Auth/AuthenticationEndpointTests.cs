@@ -128,11 +128,27 @@ public class AuthenticationEndpointTests : IClassFixture<CustomWebApplicationFac
     [Fact]
     public async Task Login_BehindTlsIngress_SetsSecureSessionCookie()
     {
-        var client = NoRedirectClient();
+        // The client passes the antiforgery cookie itself: it is Secure behind the TLS ingress, and
+        // a cookie container would not send it back to the test server's http:// address.
+        var client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
         client.DefaultRequestHeaders.Add("X-Forwarded-For", "203.0.113.40");
         client.DefaultRequestHeaders.Add("X-Forwarded-Proto", "https");
+        var page = await client.GetAsync("/login");
+        var antiforgeryCookie = page.Headers.GetValues("Set-Cookie").Single(c => c.StartsWith(".AspNetCore.Antiforgery.", StringComparison.Ordinal));
+        var token = AuthTestEnvironment.ReadAntiforgeryToken(await page.Content.ReadAsStringAsync(), "/login");
 
-        var response = await AuthTestEnvironment.PostLoginAsync(client, "admin", AuthTestEnvironment.AdminPassword, "/runs");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/auth/login")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["__RequestVerificationToken"] = token,
+                ["Username"] = "admin",
+                ["Password"] = AuthTestEnvironment.AdminPassword,
+                ["ReturnUrl"] = "/runs",
+            }),
+        };
+        request.Headers.Add("Cookie", antiforgeryCookie.Split(';')[0]);
+        var response = await client.SendAsync(request);
 
         response.Headers.GetValues("Set-Cookie").Should().Contain(c => c.StartsWith("ca_session") && c.Contains("secure", StringComparison.OrdinalIgnoreCase));
     }

@@ -675,7 +675,7 @@ public sealed record PipelineRunEventReport
 
     /// <summary>
     /// For <see cref="PipelineRunEventKind.CiWait"/>: CI polling stage (pre_pr or post_pr).
-    /// For <see cref="PipelineRunEventKind.AgentStall"/>: normalized stall phase (see PipelineTelemetry.StallPhases).
+    /// For <see cref="PipelineRunEventKind.AgentStall"/>: stall phase (a PipelineTelemetry.RunPhases value).
     /// Not used for other event kinds.
     /// </summary>
     [Key(2)]

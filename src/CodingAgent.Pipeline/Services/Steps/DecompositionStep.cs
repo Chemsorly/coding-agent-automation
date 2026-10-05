@@ -102,7 +102,7 @@ public sealed class DecompositionStep : IPipelineStep
                 },
                 run, config, "Decomposition agent", context.Callbacks.NotifyChange, logger, ct,
                 line => context.Callbacks.EmitOutputLine(line),
-                stallMetrics: AgentPhaseExecutor.BuildStallMetricsWithServerSideReporting(context.ReportPipelineRunEvent),
+                reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "decomposition");
         }
         catch (OperationCanceledException) when (context.Cts?.IsCancellationRequested == true)

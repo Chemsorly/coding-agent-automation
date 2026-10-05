@@ -1409,19 +1409,12 @@ public class QualityGateExecutorCiNotStartedExhaustionTests
 }
 
 /// <summary>
-/// Regression test for issue #3046: <c>_externalCiDuration</c> histogram must be recorded on
-/// all exit paths from <c>RunExternalCiPollAsync</c>, including when
-/// <c>PollAndHandleInfraRetryAsync</c> throws an unhandled provider exception.
-///
-/// Before the fix, the <c>_externalCiDuration.Record</c> call was placed after the await without
-/// a try/finally wrapper, so any exception from <c>PollAndHandleInfraRetryAsync</c> silently
-/// dropped the duration sample, biasing P99 downward.
+/// Exception path of <c>RunExternalCiPollAsync</c> (issue #3046): when
+/// <c>PollAndHandleInfraRetryAsync</c> throws an unhandled provider exception, the CI gate fails
+/// and no <c>CiWait</c> event is reported to the API (the duration is not meaningful).
 /// </summary>
-public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
+public class QualityGateExecutorExternalCiDurationTelemetryTests
 {
-    private readonly TestMeterFactory _meterFactory = new();
-    private readonly MetricCollector<double> _externalCiCollector;
-
     private readonly Mock<IQualityGateValidator> _mockValidator = new();
     private readonly Mock<IAgentProvider> _mockAgent = new();
     private readonly Mock<IPipelineCallbacks> _mockCallbacks = new();
@@ -1441,9 +1434,6 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
 
     public QualityGateExecutorExternalCiDurationTelemetryTests()
     {
-        _externalCiCollector = new MetricCollector<double>(
-            _meterFactory, PipelineTelemetry.SourceName, "quality_gate.external_ci.duration");
-
         _run = new PipelineRun
         {
             RunId = "telemetry-ext-ci-duration-3046",
@@ -1461,25 +1451,12 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
             new CiLogWriter(_mockLogger.Object),
             new FeedbackService(_mockLogger.Object),
             _mockLogger.Object,
-            _mockHistoryService.Object,
-            _meterFactory);
+            _mockHistoryService.Object);
 
         SetupDefaultMocks();
     }
 
-    public void Dispose()
-    {
-        _externalCiCollector.Dispose();
-        _meterFactory.Dispose();
-    }
-
     /// <summary>
-    /// Regression test for issue #3046: when <c>PollAndHandleInfraRetryAsync</c> throws an
-    /// unhandled provider exception, <c>_externalCiDuration.Record</c> MUST still be called.
-    ///
-    /// Before the fix, the histogram received zero measurements on the exception path.
-    /// After the fix (wrapping the await in try/finally), it receives exactly one measurement.
-    ///
     /// The exception propagates from <c>WaitForCompletionAsync</c> through
     /// <c>PollAndHandleInfraRetryAsync</c> → <c>RunExternalCiPollAsync</c>, then is caught by
     /// <c>AppendExternalCiIfNeededAsync</c>'s outer <c>catch (Exception ex)</c> block which
@@ -1492,7 +1469,7 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
     /// throws the provider exception we want to exercise.
     /// </summary>
     [Fact]
-    public async Task RunExternalCiPollAsync_WhenPollAndHandleThrows_StillRecordsExternalCiDuration()
+    public async Task RunExternalCiPollAsync_WhenPollAndHandleThrows_FailsGateWithoutCiWaitEvent()
     {
         // Arrange: CI appears to be running (so we reach WaitForCompletionAsync)
         _mockPipelineProvider
@@ -1526,23 +1503,10 @@ public class QualityGateExecutorExternalCiDurationTelemetryTests : IDisposable
         // Assert: No CiWait event is reported on exception path (issue #2979).
         // The server-side CiWait event is only fired on the successful poll path; on exception,
         // the CI gate result is an error, and the duration is not meaningful.
-        // Agent-side histogram recording (quality_gate.external_ci.duration) was removed (issue #2979).
         var ciWaitEvents = reportedEvents.Where(e => e.Kind == PipelineRunEventKind.CiWait).ToList();
         ciWaitEvents.Should().BeEmpty(
             "CiWait events are only reported on the successful CI polling path, not on exception paths (issue #2979)");
-
-        // Agent-side histogram is no longer recorded at all (removed in issue #2979 migration)
-        _externalCiCollector.GetMeasurementSnapshot().Should().BeEmpty(
-            "quality_gate.external_ci.duration is no longer recorded agent-side — the API records it via ReportPipelineRunEvent (issue #2979)");
     }
-
-    // TODO [WARNING]: Only the exception path through RunExternalCiPollAsync is tested here.
-    // The fix (wrapping the await in try/finally) affects both success and exception exit paths,
-    // but only the exception path is exercised by the test above. A complementary test verifying
-    // that _externalCiDuration is also recorded on the normal-return path would make coverage
-    // symmetric and guard against a regression where the finally is replaced by two separate
-    // Record calls (one in try, one in catch). The success path was presumably covered by
-    // pre-existing tests, but a dedicated test here would make the regression guard explicit.
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

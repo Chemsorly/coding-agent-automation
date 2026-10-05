@@ -20,6 +20,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
     private readonly string? _originalAspNetEnv;
     private readonly string? _originalOtelServiceName;
     private readonly string? _originalOtelResourceAttributes;
+    private readonly string? _originalDotnetEnv;
 
     public SerilogOtlpExtensionsTests()
     {
@@ -28,6 +29,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
         _originalAspNetEnv = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT");
         _originalOtelServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME");
         _originalOtelResourceAttributes = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
+        _originalDotnetEnv = Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT");
     }
 
     public void Dispose()
@@ -37,6 +39,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
         SetEnvVar("ASPNETCORE_ENVIRONMENT", _originalAspNetEnv);
         SetEnvVar("OTEL_SERVICE_NAME", _originalOtelServiceName);
         SetEnvVar("OTEL_RESOURCE_ATTRIBUTES", _originalOtelResourceAttributes);
+        SetEnvVar("DOTNET_ENVIRONMENT", _originalDotnetEnv);
     }
 
     [Theory]
@@ -273,12 +276,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
         SetEnvVar("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=staging");
         SetEnvVar("ASPNETCORE_ENVIRONMENT", "Production");
 
-        // TODO: Only asserts the logger is non-null — does not verify that "staging" (from
-        // OTEL_RESOURCE_ATTRIBUTES) was used instead of "Production" (ASPNETCORE_ENVIRONMENT).
-        // This is the primary test for AC "logs and traces carry the same deployment.environment"
-        // yet the actual behavior is completely unverified. A broken ParseDeploymentEnvironment
-        // integration would still pass. Fix: inspect ResourceAttributes["deployment.environment"]
-        // via reflection and assert it equals "staging". See review finding (issue #2969).
+        // The resolved value is asserted by the ResolveDeploymentEnvironment tests below.
         // Should build without error — deployment.environment from OTEL_RESOURCE_ATTRIBUTES is used
         var logger = new LoggerConfiguration()
             .WriteToOtlpIfConfigured("test-service")
@@ -295,11 +293,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
         SetEnvVar("OTEL_RESOURCE_ATTRIBUTES", "k8s.namespace.name=prod-ns");
         SetEnvVar("ASPNETCORE_ENVIRONMENT", null);
 
-        // TODO: Only asserts the logger is non-null — does not verify that "my-environment" (the
-        // explicit environmentName parameter) ended up in ResourceAttributes["deployment.environment"].
-        // The fallback priority chain is not validated. Fix: inspect the sink's ResourceAttributes
-        // via reflection and assert deployment.environment equals "my-environment".
-        // See review finding (issue #2969).
+        // The resolved value is asserted by the ResolveDeploymentEnvironment tests below.
         // Should build without error — explicit environmentName parameter is used
         var logger = new LoggerConfiguration()
             .WriteToOtlpIfConfigured("test-service", "my-environment")
@@ -307,6 +301,39 @@ public class SerilogOtlpExtensionsTests : IDisposable
 
         Assert.NotNull(logger);
         logger.Dispose();
+    }
+
+    // ── ResolveDeploymentEnvironment unit tests ───────────────────────────────
+
+    [Fact]
+    public void ResolveDeploymentEnvironment_OtelResourceAttributesWinOverHostEnvironmentName()
+    {
+        // The hosts pass their hosting environment ("Production") while the OTel SDK puts the value
+        // from OTEL_RESOURCE_ATTRIBUTES on traces and metrics — logs must carry that same value.
+        SetEnvVar("OTEL_RESOURCE_ATTRIBUTES", "k8s.namespace.name=prod-ns,deployment.environment=production");
+
+        Assert.Equal("production", SerilogOtlpExtensions.ResolveDeploymentEnvironment("Production"));
+    }
+
+    [Fact]
+    public void ResolveDeploymentEnvironment_WithoutOtelResourceAttributeValue_UsesHostEnvironmentName()
+    {
+        SetEnvVar("OTEL_RESOURCE_ATTRIBUTES", "k8s.namespace.name=prod-ns");
+        SetEnvVar("ASPNETCORE_ENVIRONMENT", "Staging");
+
+        Assert.Equal("my-environment", SerilogOtlpExtensions.ResolveDeploymentEnvironment("my-environment"));
+    }
+
+    [Fact]
+    public void ResolveDeploymentEnvironment_WithNothingSet_FallsBackToAspNetCoreEnvironmentThenProduction()
+    {
+        SetEnvVar("OTEL_RESOURCE_ATTRIBUTES", null);
+        SetEnvVar("ASPNETCORE_ENVIRONMENT", "Staging");
+        Assert.Equal("Staging", SerilogOtlpExtensions.ResolveDeploymentEnvironment(null));
+
+        SetEnvVar("ASPNETCORE_ENVIRONMENT", null);
+        SetEnvVar("DOTNET_ENVIRONMENT", null);
+        Assert.Equal("Production", SerilogOtlpExtensions.ResolveDeploymentEnvironment(null));
     }
 
     // ── ParseDeploymentEnvironment unit tests ─────────────────────────────────

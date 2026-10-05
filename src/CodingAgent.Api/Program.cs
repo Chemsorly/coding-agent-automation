@@ -94,38 +94,31 @@ builder.Services.AddOpenTelemetry()
         t.AddAspNetCoreInstrumentation(opts =>
             opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
          .AddHttpClientInstrumentation(opts =>
-         {
-             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
-             opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
-         })
+             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
          // AgentHub lives in the API process (moved from monolith in Spec 041).
          // Without this source, RegisterAgent / JobAccepted / JobCompleted hub invocations
          // produce no spans — agent lifecycle events are invisible in traces.
          .AddSource("Microsoft.AspNetCore.SignalR.Server")
-         // Subscribe to the pipeline activity source so orchestrator-side ExecutePipeline spans
-         // are exported to Tempo. These spans are started by PipelineRunFactory.CreateFromWorkItem
-         // and stopped by RunLifecycleManager when the run reaches a terminal state (issue #2255).
+         // The pipeline activity source carries the API's own spans (Hub.ReportJobCompleted,
+         // TokenVending.GenerateToken).
          .AddSource(PipelineTelemetry.SourceName)
          // Npgsql database query spans — the API is the only host with a database connection.
          // Requires Npgsql.OpenTelemetry package in CodingAgent.Api.csproj to activate
          // Npgsql's ActivitySource emission via assembly-load hooks.
          .AddSource("Npgsql")
-         .AddProcessor(new OtelNoiseSpanDropProcessor())
+         .AddProcessor(new OtelNoiseSpanProcessor())
          .AddOtlpExporter();
     })
     .WithMetrics(m =>
     {
         m.AddAspNetCoreInstrumentation()
          .AddHttpClientInstrumentation()
-         // WorkDistributionTelemetry.MeterName is exported here because the API owns some
-         // work-distribution instruments: WorkItemEndpoints records terminal statuses and
-         // dispatch latency via LogTerminalStatus/RecordDispatchLatency. (The workitems-by-status
-         // gauges are fed by WorkItemCountsService in the Scheduler — a separate process — not here.)
-         // NOTE: The epoch/credential-pool gauges (DispatcherLastPollEpoch, CredentialPoolAvailable,
-         // CredentialPoolClaimed) are written ONLY by the Job Controller's DispatchService — the
-         // API's DispatchStateBuilder does NOT call RecordLastPollEpoch or UpdateCredentialPoolMetrics.
-         // This ensures the DispatcherStalled / CredentialPoolExhausted Helm alert rules evaluate
-         // a single authoritative series from the Job Controller, not a conflicting API series.
+         // WorkDistributionTelemetry.MeterName is exported here because the API owns the dispatch
+         // instruments: dispatch latency, dispatch attempts, pod start time, PVC pool exhaustions and
+         // the credential-pool gauges (DispatchWorkItemService). The dispatcher poll epoch and the
+         // workitems-by-status gauges belong to the Scheduler; DispatchStateBuilder does NOT call
+         // RecordLastPollEpoch, so the DispatcherStalled / CredentialPoolExhausted alert rules each
+         // evaluate a single authoritative series.
          .AddMeter(WorkDistributionTelemetry.MeterName)
          // The API hosts AgentRegistryService and registers agent.jobs.active /
          // agent.connections.total ObservableGauges on PipelineTelemetry.Meter via
@@ -154,10 +147,6 @@ await app.RunApiMigrationsAsync(builder.Configuration);
 
 app.MapApiHealthEndpoints();
 app.RegisterApiObservableGauges();
-
-// Pre-initialize github.api.requests counter tag combinations so Prometheus increase() works
-// on first increment. Must run after builder.Build() so the MeterProvider is active.
-GitHubTelemetry.PreInitialize();
 
 // Log every 4xx/5xx response as a structured Serilog event. This runs under the Serilog
 // category (not Microsoft.AspNetCore), so it is NOT suppressed by the Warning override in
@@ -200,54 +189,22 @@ app.MapApiSchedulerEndpoints();
 _ = app.Services.GetRequiredService<AssignmentEnricher>();
 
 // ── Counter pre-initialization ────────────────────────────────────────────────
-// Pre-initializing all closed-tag series to 0 before the first real event means that
-// Prometheus increase() is visible from the very first increment after a deploy.
-// Each Add(0) creates the series; a single ForceFlush exports them to the OTLP endpoint.
-// Histograms are intentionally excluded — see issue #2967.
-PreInitializeMetrics(app.Services);
+// Seeds every closed-tag counter series with 0 so Prometheus increase() sees the first real
+// increment after a deploy. Histograms are intentionally excluded — see issue #2967.
+MetricPreInitialization.Run(app.Services, () =>
+{
+    Program.EmitPreInitCounters();
+    GitHubTelemetry.PreInitialize();
+});
 
 await app.RunAsync();
-
-// ── Pre-initialization helper ─────────────────────────────────────────────────
-
-/// <summary>
-/// Pre-initializes all closed-tag combinations for counters that would otherwise lose their
-/// first increment to the Prometheus <c>increase()</c> gap on new series.
-/// </summary>
-/// <remarks>
-/// TODO: [WARNING] This function writes directly to shared static instrument instances
-/// (<see cref="PipelineTelemetry.RunOutcomes"/>, <see cref="WorkDistributionTelemetry.WorkItemsTerminated"/>).
-/// If the application startup path is exercised more than once in the same process (e.g. in an integration
-/// test suite using <c>WebApplicationFactory&lt;Program&gt;</c> with multiple test server instances), the
-/// <c>Add(0)</c> calls execute multiple times — which is safe for counters (adding 0 is idempotent) — but
-/// <c>ForceFlush()</c> is also invoked once per test host start, potentially causing unexpected OTLP export
-/// side effects if a real OTLP endpoint is configured in CI. The <c>meterProvider?.ForceFlush()</c> null-check
-/// silently skips the flush when OTLP is not configured, limiting the blast radius in practice.
-/// </remarks>
-static void PreInitializeMetrics(IServiceProvider services)
-{
-    // Emit all Add(0) series via the shared helper (also callable from tests to verify coverage).
-    Program.EmitPreInitCounters();
-
-    // Flush all pre-initialized series to the OTLP endpoint immediately.
-    // TODO: [WARNING] meterProvider?.ForceFlush() silently skips the flush when GetService returns null.
-    // This happens when metrics are wired without registering MeterProvider in DI (e.g. OTLP export is
-    // not configured, or a future refactor removes the explicit AddOpenTelemetry().WithMetrics() call).
-    // If the flush is skipped, the pre-initialized Add(0) series are never exported to the OTLP endpoint
-    // before the first real event, defeating the pre-init goal. Add a log warning when meterProvider is
-    // null so a misconfigured API startup is observable rather than silent.
-    var meterProvider = services.GetService<OpenTelemetry.Metrics.MeterProvider>();
-    meterProvider?.ForceFlush();
-}
 
 // Make Program accessible for WebApplicationFactory in integration tests
 public partial class Program // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
 {
-    private const string FailureReasonKey = "failure_reason";
-
     /// <summary>
     /// Emits <c>Add(0)</c> for all closed-tag combinations of the counters that must be pre-initialized.
-    /// Callable from both the API startup path (via <c>PreInitializeMetrics</c>) and integration tests
+    /// Callable from both the API startup path (via <c>MetricPreInitialization.Run</c>) and integration tests
     /// that need to verify pre-initialization coverage without re-implementing the logic.
     /// </summary>
     /// <remarks>
@@ -255,10 +212,6 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// <strong>pipeline.run.outcomes:</strong> 75 series —
     /// 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
     /// <c>pipeline.project_name</c> is intentionally excluded (unbounded cardinality, Requirement 7).
-    /// </para>
-    /// <para>
-    /// <strong>workdistribution.workitems_terminated:</strong> 24 series —
-    /// 3 statuses × (1 none + 7 failure_reasons).
     /// </para>
     /// <para>
     /// TODO: [WARNING] (run_type, "failed", "none") is NOT included. DeriveOutcome priority 9 returns
@@ -271,10 +224,11 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     internal static void EmitPreInitCounters()
     {
         string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
-        string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
 
-        EmitRunOutcomePreInitCounters(runTypes, failureReasons);
-        EmitWorkItemsTerminatedPreInitCounters(failureReasons);
+        EmitRunOutcomePreInitCounters(runTypes);
+
+        // workdistribution.dispatch.attempts: 7 result × reason series
+        WorkDistributionTelemetry.PreInitializeDispatchAttempts();
 
         // pipeline.run.sub_issues: 2 series (result=created / result=failed)
         foreach (var result in new[] { "created", "failed" })
@@ -297,9 +251,12 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     }
 
     /// <summary>pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7).</summary>
-    private static void EmitRunOutcomePreInitCounters(string[] runTypes, string[] failureReasons)
+    private static void EmitRunOutcomePreInitCounters(string[] runTypes)
     {
+        const string FailureReasonKey = "failure_reason";
+
         string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
+        string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
 
         foreach (var runType in runTypes)
         {
@@ -323,26 +280,6 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 PipelineTelemetry.RunOutcomes.Add(0,
                     new KeyValuePair<string, object?>("run_type", runType),
                     new KeyValuePair<string, object?>("outcome", "failed"),
-                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
-            }
-        }
-    }
-
-    /// <summary>workdistribution.workitems_terminated: 24 series.</summary>
-    private static void EmitWorkItemsTerminatedPreInitCounters(string[] failureReasons)
-    {
-        string[] terminalStatuses = ["Succeeded", "Failed", "Cancelled"];
-
-        foreach (var status in terminalStatuses)
-        {
-            WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
-                new KeyValuePair<string, object?>("status", status),
-                new KeyValuePair<string, object?>(FailureReasonKey, "none"));
-
-            foreach (var failureReason in failureReasons)
-            {
-                WorkDistributionTelemetry.WorkItemsTerminated.Add(0,
-                    new KeyValuePair<string, object?>("status", status),
                     new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
             }
         }
@@ -388,17 +325,9 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// <summary>pipeline.run.agent_stalls: run_type × phase × kind (issue #2979).</summary>
     private static void EmitAgentStallPreInitCounters(string[] runTypes)
     {
-        string[] stallPhases = [
-            PipelineTelemetry.StallPhases.QgcRetryAgent,
-            PipelineTelemetry.StallPhases.CodeGen,
-            PipelineTelemetry.StallPhases.Analysis,
-            PipelineTelemetry.StallPhases.CodeReview,
-            PipelineTelemetry.StallPhases.Decomposition,
-            PipelineTelemetry.StallPhases.Unknown
-        ];
         foreach (var runType in runTypes)
         {
-            foreach (var phase in stallPhases)
+            foreach (var phase in PipelineTelemetry.RunPhases.All)
             {
                 foreach (var kind in PipelineTelemetry.AgentStallKinds.All)
                 {
@@ -417,8 +346,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// </summary>
     private static void EmitRunPhasePreInitCounters(string[] runTypes)
     {
-        // 5 run_types × 9 phases × 3 providers = 135 series per metric (< ~100-per-series limit accepted
-        // since we have 4 metrics × 135 = 540 total pre-init Add calls, all idempotent Add(0)).
+        // 5 run_types × 10 phases × 4 providers = 200 series per metric, 4 metrics.
         // model is excluded from pre-initialization (unbounded cardinality per Req 7 additional comment).
         // TODO: run_type="unknown" can be emitted at runtime when ResolveRunContextAsync cannot resolve
         // the WorkItem (e.g. missing DB row, null dbFactory). That series is not pre-initialized here,

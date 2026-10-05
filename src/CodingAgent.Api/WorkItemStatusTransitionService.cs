@@ -283,9 +283,10 @@ public sealed partial class WorkItemStatusTransitionService
             if (payload?.RateLimits is { Count: > 0 })
                 RecordRateLimitMetrics(payload.RateLimits);
 
-            WorkDistributionTelemetry.LogTerminalStatus(
-                id, request.Status, duration, request.AgentId,
-                failureReason);
+            Serilog.Log.Information(
+                "WorkItem terminal: {WorkItemId} → {Status}, duration={DurationSeconds:F1}s, agent={AgentId}, reason={FailureReason}",
+                id, request.Status, duration?.TotalSeconds ?? -1, request.AgentId ?? UnknownTag,
+                failureReason?.ToString() ?? "none");
         }
         catch (Exception ex)
         {
@@ -419,8 +420,8 @@ public sealed partial class WorkItemStatusTransitionService
 
         // LEFT JOIN WorkItems → PipelineRuns to get run type and project context.
         // PipelineRunEntity.WorkItemId is nullable — the join may yield null.
-        // ProjectId and ProjectName come from PipelineRunEntity (string?), NOT from
-        // WorkItemEntity.ProjectId (which is Guid? and lacks ProjectName).
+        // ProjectId and ProjectName come from PipelineRunEntity (string?) when the row exists;
+        // otherwise from WorkItemEntity.ProjectId and the Projects table (below).
         // TODO: [WARNING] If a WorkItem has multiple PipelineRunEntity rows (e.g. a retry scenario
         // where the agent creates a second PipelineRun for the same WorkItem), this query returns
         // an arbitrary row because there is no ORDER BY. The resolved run_type and project context
@@ -442,6 +443,7 @@ public sealed partial class WorkItemStatusTransitionService
                     x.w.DispatchedAt,
                     x.w.CompletedAt,
                     x.w.TaskType,
+                    WorkItemProjectId = x.w.ProjectId,
                     RunType = pr != null ? pr.RunType : (PipelineRunType?)null,
                     ProjectId = pr != null ? pr.ProjectId : null,
                     ProjectName = pr != null ? pr.ProjectName : null
@@ -450,6 +452,18 @@ public sealed partial class WorkItemStatusTransitionService
 
         if (row is null)
             return (null, UnknownTag, null, null);
+
+        // The PipelineRuns row is often not written yet when the terminal status arrives, so fall back
+        // to the project the WorkItem was dispatched for; without it most runs are tagged "unknown".
+        var projectId = row.ProjectId ?? row.WorkItemProjectId?.ToString();
+        var projectName = row.ProjectName;
+        if (projectName is null && row.WorkItemProjectId is { } workItemProjectId)
+        {
+            projectName = await db.Projects.AsNoTracking()
+                .Where(p => p.Id == workItemProjectId)
+                .Select(p => p.Name)
+                .FirstOrDefaultAsync(ct);
+        }
 
         // TODO: [WARNING] This reads row.CompletedAt from the DB. CompletedAt is set by
         // ApplyStatusMutation (synchronously, before the DB commit) and EmitTerminalStatusTelemetryAsync
@@ -468,7 +482,7 @@ public sealed partial class WorkItemStatusTransitionService
             ? resolvedRunType.Value.ToString().ToLowerInvariant()
             : UnknownTag;
 
-        return (duration, runTypeTag, row.ProjectId, row.ProjectName);
+        return (duration, runTypeTag, projectId, projectName);
     }
 
     /// <summary>
@@ -594,7 +608,7 @@ public sealed partial class WorkItemStatusTransitionService
     /// <para>
     /// <strong>Tag set for pipeline.run.outcomes:</strong> <c>run_type</c>, <c>outcome</c>,
     /// <c>failure_reason</c>, and <c>pipeline.project_name</c> (Requirement 1).
-    /// The pre-initialization in <c>Program.PreInitializeMetrics</c> emits only the 3-tag combination
+    /// The pre-initialization in <c>Program.EmitPreInitCounters</c> emits only the 3-tag combination
     /// (without <c>pipeline.project_name</c>) per Requirement 7, which says to leave
     /// <c>pipeline.project_name</c> out of pre-initialization because it has unbounded cardinality.
     /// This means pre-initialized series (3 tags) and live series (4 tags) have different Prometheus

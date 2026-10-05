@@ -4,7 +4,6 @@ using CodingAgent.Infrastructure.Resilience;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Hosting;
 using Polly;
@@ -258,7 +257,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             }
             catch (Exception ex)
             {
-                PipelineTelemetry.AgentHeartbeatFailures.Add(1);
                 _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
             }
         }
@@ -337,7 +335,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         // the reconnect window are held until re-registration succeeds.
         _coordinator.ResetRegistrationGate();
 
-        PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
             _agentId, connectionId);
 

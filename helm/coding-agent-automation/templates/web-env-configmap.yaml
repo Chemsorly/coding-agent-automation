@@ -18,6 +18,8 @@ data:
   LOG_LEVEL: {{ $web.env.logLevel | quote }}
   Faro__CollectorUrl: {{ $web.env.faroCollectorUrl | quote }}
   WebUI__BasePath: {{ $web.env.basePath | default "./" | quote }}
+  # Only an ingress with a tls section has an HTTPS URL to redirect to.
+  WebUI__HttpsRedirect: {{ if and $web.ingress.enabled $web.ingress.tls $web.ingress.httpsRedirect }}"true"{{ else }}"false"{{ end }}
   # LeaderElection__Namespace is injected as a direct env var (fieldRef) in the deployment —
   # it cannot be set here in a ConfigMap as fieldRef is not available in ConfigMap data.
   # WorkDistribution env vars — used by ChatJobDispatcher and KubernetesJobCleanup.
