@@ -43,9 +43,9 @@ public static class CompletionOutcomeResolver
         // This class was promoted from internal (CodingAgent.AgentGateway) to public (CodingAgent.Pipeline)
         // as part of issue #2956, making it a cross-assembly API. A caller passing null for failureFallback
         // when status == Failed and failureReason is also null produces a null ErrorMessage with no diagnostic.
-        // All current call sites pass string literals, so no regression today, but add:
-        //   ArgumentNullException.ThrowIfNull(failureFallback);
-        // as per the documented convention for public method parameters. (Review finding: DotNetSpecialist [WARNING])
+        // All current call sites pass string literals, so no regression today, but a ThrowIfNull guard on
+        // failureFallback should be added as per the documented convention for public method parameters.
+        // (Review finding: DotNetSpecialist [WARNING])
         var status = finalStep switch
         {
             PipelineStep.Completed => WorkItemStatus.Succeeded,

@@ -31,8 +31,9 @@ internal static class ConsolidationRunHistoryContext
         IPipelineRunHistoryService history, IssueIdentifier scopeKey, CancellationToken ct)
     {
         var runs = await history.GetRunHistoryAsync(
-            1, ConsolidationHistoryPageSize, feedbackOnly: false, finalStep: PipelineStep.Completed,
-            projectId: null, since: null, runType: PipelineRunType.Consolidation, ct);
+            new RunHistoryQuery(Page: 1, PageSize: ConsolidationHistoryPageSize, FinalStep: PipelineStep.Completed,
+                RunType: PipelineRunType.Consolidation),
+            ct);
 
         return runs.Items
             .Where(r => r.IssueIdentifier == scopeKey)
@@ -47,8 +48,8 @@ internal static class ConsolidationRunHistoryContext
         IPipelineRunHistoryService history, DateTimeOffset? since, CancellationToken ct)
     {
         var runs = await history.GetRunHistoryAsync(
-            1, MaxFeedbackEntries, feedbackOnly: true, finalStep: null,
-            projectId: null, since: since, runType: null, ct);
+            new RunHistoryQuery(Page: 1, PageSize: MaxFeedbackEntries, FeedbackOnly: true, Since: since),
+            ct);
 
         var feedback = runs.Items
             .Where(r => r.Feedback is not null)

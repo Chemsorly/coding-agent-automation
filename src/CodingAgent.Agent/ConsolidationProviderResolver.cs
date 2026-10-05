@@ -67,7 +67,7 @@ internal sealed class ConsolidationProviderResolver
 
             return ProviderResolutionResult<BrainConsolidationProviders>.Succeed(
                 new BrainConsolidationProviders(brainProvider, agentProvider));
-        }, ct);
+        });
     }
 
     public Task<ProviderResolutionResult<RefactoringProviders>> ResolveRefactoringProvidersAsync(
@@ -117,7 +117,7 @@ internal sealed class ConsolidationProviderResolver
 
             return ProviderResolutionResult<RefactoringProviders>.Succeed(
                 new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider));
-        }, ct);
+        });
     }
 
     /// <summary>
@@ -172,7 +172,7 @@ internal sealed class ConsolidationProviderResolver
             await agentProvider.ValidateAsync(ct);
 
             return ProviderResolutionResult<HarnessProviders>.Succeed(new HarnessProviders(agentProvider));
-        }, ct);
+        });
     }
 
     /// <summary>
@@ -183,8 +183,7 @@ internal sealed class ConsolidationProviderResolver
     private async Task<ProviderResolutionResult<T>> ResolveAsync<T>(
         ConsolidationJobMessage job,
         OrchestratorProxy? orchestratorProxy,
-        Func<AgentProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver,
-        CancellationToken ct) where T : IAsyncDisposable
+        Func<AgentProviderFactory, List<IAsyncDisposable>, Task<ProviderResolutionResult<T>>> resolver) where T : IAsyncDisposable
     {
         var factory = new AgentProviderFactory(_orchestrator, _httpClientFactory, job.PipelineConfiguration, orchestratorProxy);
         var disposables = new List<IAsyncDisposable>();

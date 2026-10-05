@@ -49,12 +49,9 @@
             }
         </select>
     </div>
-    @if (!string.IsNullOrEmpty(Form.RepoProviderId))
+    @if (!string.IsNullOrEmpty(Form.RepoProviderId) && LabelPreview.Labels.Count > 0)
     {
-        @if (LabelPreview.Labels.Count > 0)
-        {
-            <LabelPreviewInline Preview="LabelPreview" IsFormContext="true" />
-        }
+        <LabelPreviewInline Preview="LabelPreview" IsFormContext="true" />
     }
     <div class="form-group">
         <label>Brain Provider (optional)</label>

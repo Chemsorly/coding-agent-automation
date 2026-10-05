@@ -144,9 +144,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             enrichFailedJobsAsync: (status, ct2) => PipelinePollingHelper.EnrichFailedJobsWithLogsAsync(
                 status, GetJobLogsAsync, "job", ct2, _logger),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            pollInterval: _pollInterval,
-            timeout: timeout,
-            logPrefix: "CI",
+            settings: new PipelinePollingSettings(_pollInterval, timeout, "CI"),
             ct: ct,
             logger: _logger);
     }

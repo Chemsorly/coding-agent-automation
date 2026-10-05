@@ -60,13 +60,23 @@ public static class PrConversationContextFormatter
         foreach (var comment in reviewThreads)
         {
             var resolved = comment.IsResolved == true ? " (RESOLVED)" : "";
-            var location = comment.FilePath is not null
-                ? $" — {comment.FilePath}{(comment.Line.HasValue ? $":{comment.Line}" : "")}"
-                : "";
+            var location = FormatLocation(comment);
             sb.AppendLine($"### {FormatAttribution(comment)} @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC){location}{resolved}");
             sb.AppendLine(comment.Body);
             sb.AppendLine();
         }
+    }
+
+    /// <summary>
+    /// Formats the " — path[:line]" suffix for a review-thread comment, or an empty string when the
+    /// comment is not anchored to a file.
+    /// </summary>
+    private static string FormatLocation(PrConversationComment comment)
+    {
+        if (comment.FilePath is null)
+            return "";
+        var line = comment.Line.HasValue ? $":{comment.Line}" : "";
+        return $" — {comment.FilePath}{line}";
     }
 
     internal static string FormatAttribution(PrConversationComment comment)

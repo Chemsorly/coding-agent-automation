@@ -1590,12 +1590,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                     .Returns(mockRepoProvider.Object);
 
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -1637,11 +1632,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         // Without the dedup, 2 templates × 1 cycle = 2 calls. With dedup = 1 call.
         // We stop after the first "Cycle complete" so the assertion is for one cycle.
         housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(),
-            It.Is<string>(id => id == sharedRepoId),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
+            It.Is<HousekeepingRequest>(r =>
+                (r.RepoProviderId == sharedRepoId)),
             It.IsAny<CancellationToken>()),
             Times.Once,
             "ExecuteAsync must be called exactly once per cycle for a shared repo — dedup guard prevents double-invocation");
@@ -1731,12 +1723,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public async Task RunHousekeepingAsync_SkipsTemplateWhenHousekeepingDisabled()
     {
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         var template = new PipelineJobTemplate
@@ -1752,24 +1739,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), new Dictionary<string, bool>(), CancellationToken.None);
 
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
     public async Task RunHousekeepingAsync_SkipsTemplateWhenRepoProviderNotInCache()
     {
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var svc = CreateServiceWithHousekeeping(housekeepingMock.Object);
         // Do NOT seed RepoProviders — simulate cache miss
@@ -1786,12 +1763,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), new Dictionary<string, bool>(), CancellationToken.None);
 
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // TODO: Add RunHousekeepingAsync_SkipsTemplateWhenIssueProviderNotInCache test. The guard
@@ -1802,12 +1774,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public async Task RunHousekeepingAsync_SkipsTemplateWhenRepoProviderDoesNotSupportServerSideBranchUpdate()
     {
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
         mockRepoProvider.Setup(r => r.SupportsServerSideBranchUpdate).Returns(false);
@@ -1829,12 +1796,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         await svc.RunHousekeepingAsync(snapshot, new Dictionary<string, List<PullRequestSummary>>(), new Dictionary<string, bool>(), CancellationToken.None);
 
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -1842,15 +1804,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         int? capturedLimit = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, bool, int, bool, int, int, CancellationToken>(
-                (_, _, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<HousekeepingRequest, CancellationToken>(
+                (request, _) => capturedLimit = request.EffectiveConcurrencyLimit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1882,15 +1838,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         int? capturedLimit = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, bool, int, bool, int, int, CancellationToken>(
-                (_, _, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<HousekeepingRequest, CancellationToken>(
+                (request, _) => capturedLimit = request.EffectiveConcurrencyLimit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1923,15 +1873,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     {
         int? capturedLimit = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, bool, int, bool, int, int, CancellationToken>(
-                (_, _, _, _, _, _, limit, _, _, _, _) => capturedLimit = limit)
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<HousekeepingRequest, CancellationToken>(
+                (request, _) => capturedLimit = request.EffectiveConcurrencyLimit)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -1970,15 +1914,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         // for the template — the eviction pass must run per IHousekeepingService XML doc.
         IReadOnlyList<PullRequestSummary>? capturedDonePrs = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, bool, int, bool, int, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _, _, _) => capturedDonePrs = donePrs)
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<HousekeepingRequest, CancellationToken>(
+                (request, _) => capturedDonePrs = request.AgentDonePrs)
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
@@ -2004,12 +1942,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.RunHousekeepingAsync(snapshot, emptyQueues, new Dictionary<string, bool>(), CancellationToken.None);
 
         // ExecuteAsync must be called (eviction pass) even with empty PR list
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Once);
         Assert.NotNull(capturedDonePrs);
         Assert.Empty(capturedDonePrs!);
     }
@@ -2092,15 +2025,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         IReadOnlyList<PullRequestSummary>? capturedDonePrs = null;
         var housekeepingMock = new Mock<IHousekeepingService>();
-        housekeepingMock.Setup(h => h.ExecuteAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-                It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
-            .Callback<IRepositoryProvider, string, IIssueProvider, string,
-                IReadOnlyList<PullRequestSummary>, bool, int, bool, int, int, CancellationToken>(
-                (_, _, _, _, donePrs, _, _, _, _, _, _) => capturedDonePrs = donePrs)
+        housekeepingMock.Setup(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<HousekeepingRequest, CancellationToken>(
+                (request, _) => capturedDonePrs = request.AgentDonePrs)
             .Returns(Task.CompletedTask);
 
         _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
@@ -2136,12 +2063,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         try { await _loopService.StopAsync(CancellationToken.None); } catch { }
 
         // ExecuteAsync must have been called with the agent PR in the donePrs list
-        housekeepingMock.Verify(h => h.ExecuteAsync(
-            It.IsAny<IRepositoryProvider>(), It.IsAny<string>(),
-            It.IsAny<IIssueProvider>(), It.IsAny<string>(),
-            It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(), It.IsAny<int>(),
-            It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Once);
+        housekeepingMock.Verify(h => h.ExecuteAsync(It.IsAny<HousekeepingRequest>(), It.IsAny<CancellationToken>()), Times.Once);
 
         Assert.NotNull(capturedDonePrs);
         Assert.Single(capturedDonePrs!);

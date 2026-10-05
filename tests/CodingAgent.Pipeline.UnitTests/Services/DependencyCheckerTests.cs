@@ -335,11 +335,14 @@ public sealed class DependencyCheckerCrossTrackerTests
         return checker.CheckAsync(
             issueIdentifier,
             issueBody,
-            defaultProvider,
-            defaultProviderId,
-            allProviders,
-            providerUrlPrefixes,
-            new Dictionary<string, Dictionary<int, bool>>(),
+            new DependencyRoutingContext
+            {
+                DefaultProvider = defaultProvider,
+                DefaultProviderId = defaultProviderId,
+                AllProviders = allProviders,
+                ProviderUrlPrefixes = providerUrlPrefixes,
+                StateCaches = new Dictionary<string, Dictionary<int, bool>>()
+            },
             ct);
     }
 
@@ -476,10 +479,15 @@ public sealed class DependencyCheckerCrossTrackerTests
         var checker = new DependencyChecker(Logger);
 
         var act = () => checker.CheckAsync(
-            "1", "body", null!, "pid",
-            new Dictionary<string, IIssueProvider>(),
-            new Dictionary<string, string>(),
-            new Dictionary<string, Dictionary<int, bool>>(),
+            "1", "body",
+            new DependencyRoutingContext
+            {
+                DefaultProvider = null!,
+                DefaultProviderId = "pid",
+                AllProviders = new Dictionary<string, IIssueProvider>(),
+                ProviderUrlPrefixes = new Dictionary<string, string>(),
+                StateCaches = new Dictionary<string, Dictionary<int, bool>>()
+            },
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentNullException>();

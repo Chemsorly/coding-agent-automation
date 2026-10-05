@@ -32,7 +32,7 @@ internal static class EndpointRegistration
         // No alias redirect from /agent-coding to /overview (or vice versa) was added. If existing
         // bookmarks, CI health checks, or external links target /agent-coding expecting the Overview
         // page, they will land on the Pipelines page instead (AgentCoding.razor is still at /agent-coding).
-        // Add: app.MapGet("/agent-coding-redirect", () => Results.Redirect("overview")).AllowAnonymous();
+        // Either add an anonymous alias endpoint that redirects to the Overview page,
         // or confirm that /agent-coding intentionally continues to render the Pipelines page.
         app.MapGet("/", () => Results.Redirect("overview"))
             .AllowAnonymous();

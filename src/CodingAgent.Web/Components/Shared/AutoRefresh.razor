@@ -36,13 +36,13 @@
                 await OnTick.InvokeAsync();
             }
         }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     public ValueTask DisposeAsync()
     {
-        try { _cts?.Cancel(); } catch (ObjectDisposedException) { }
+        try { _cts?.Cancel(); } catch (ObjectDisposedException) { /* Already disposed. */ }
         _timer?.Dispose();
         _cts?.Dispose();
         return ValueTask.CompletedTask;

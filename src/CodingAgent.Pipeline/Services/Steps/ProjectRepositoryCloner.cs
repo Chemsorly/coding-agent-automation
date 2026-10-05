@@ -193,8 +193,9 @@ internal static class ProjectRepositoryCloner
     internal static string UniqueFolderName(string folderName, HashSet<string> usedFolderNames)
     {
         var candidate = folderName;
-        for (var suffix = 2; !usedFolderNames.Add(candidate); suffix++)
-            candidate = $"{folderName}_{suffix}";
+        var suffix = 2;
+        while (!usedFolderNames.Add(candidate))
+            candidate = $"{folderName}_{suffix++}";
         return candidate;
     }
 }

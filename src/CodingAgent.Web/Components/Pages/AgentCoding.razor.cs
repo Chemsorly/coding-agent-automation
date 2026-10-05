@@ -703,14 +703,25 @@ public partial class AgentCoding : IDisposable
         await Task.Delay(3000, CancellationToken.None);
         _recentlyToggled.Remove(templateId);
         try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task ClearSuccessAfterDelay()
     {
         await Task.Delay(3000, CancellationToken.None);
-        try { await InvokeAsync(() => { if (_disposed) return; _successMessage = null; StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+                _successMessage = null;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private void DismissAgentSummary() => _showAgentSummary = false;
@@ -720,8 +731,19 @@ public partial class AgentCoding : IDisposable
     private async Task AutoDismissAgentSummary()
     {
         await Task.Delay(8000, CancellationToken.None);
-        try { await InvokeAsync(() => { if (_disposed) return; _showAgentSummary = false; StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+                _showAgentSummary = false;
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // ── Event Handlers ──
@@ -747,15 +769,24 @@ public partial class AgentCoding : IDisposable
                 StateHasChanged();
             });
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     public void Dispose()
     {
-        _disposed = true;
-        LoopService.OnChange -= HandleStateChanged;
-        if (Layout is not null)
-            Layout.OnEscapePressed -= HandleGlobalEscape;
+        Dispose(true);
         GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        _disposed = true;
+        if (disposing)
+        {
+            LoopService.OnChange -= HandleStateChanged;
+            if (Layout is not null)
+                Layout.OnEscapePressed -= HandleGlobalEscape;
+        }
     }
 }

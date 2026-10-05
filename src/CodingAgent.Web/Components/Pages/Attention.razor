@@ -126,6 +126,12 @@
 
     private static string AttentionItemsLabel(int count) => count == 1 ? "1 item" : $"{count} items";
 
+    private static string FailedRunSubline(PipelineRunSummary run)
+    {
+        if (!string.IsNullOrEmpty(run.FailureReason)) return run.FailureReason;
+        return run.RetryCount > 0 ? $"Failed after {run.RetryCount} retries" : "Failed";
+    }
+
     private readonly CancellationTokenSource _cts = new();
     private bool _loading = true;
     private string? _error;
@@ -157,7 +163,7 @@
             await InvokeAsync(StateHasChanged);
             await LoadBlockedIssuesAsync();
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // Reload both sections — used by the RefreshBar OnRefresh callback.
@@ -181,12 +187,12 @@
         {
             _blockedIssues = await BlockedIssues.GetBlockedIssuesAsync(State.SelectedProjectId, _cts.Token);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* the service already degrades to empty on provider errors */ }
         finally
         {
             _blockedLoading = false;
-            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { /* Already disposed. */ }
         }
     }
 
@@ -196,7 +202,7 @@
         _error = null;
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId), _cts.Token);
             var items = runs.Items;
 
             // TODO: [WARNING] items is passed directly to AttentionAggregator.Aggregate. The aggregator
@@ -213,16 +219,14 @@
                 new("alert-triangle", "#B45309", "var(--warning-bg)", "Needs refinement", attn.NeedsRefinement.ToList(),
                     _ => "Confidence gate: scope not ready — refine on the issue", "needs-refinement"),
                 new("x-circle", "#DC2626", "var(--error-bg)", "Failed runs", attn.FailedRuns.ToList(),
-                    r => string.IsNullOrEmpty(r.FailureReason)
-                        ? (r.RetryCount > 0 ? $"Failed after {r.RetryCount} retries" : "Failed")
-                        : r.FailureReason, "failed-runs"),
+                    FailedRunSubline, "failed-runs"),
                 new("puzzle", "#4F46E5", "var(--bg-active)", "Decomposition plans posted", attn.PlansToApprove.ToList(),
                     _ => "Plan posted — approve by adding agent:epic-approved on the issue", "plans-posted"),
             };
 
             State.SetAttentionCount(_sections.Sum(s => s.Rows.Count));
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load attention items: {ex.Message}";

@@ -102,9 +102,7 @@ public class BasepathNavigationTests : BunitContext
     public void Overview_DoesNotRenderAbsoluteInternalHrefs()
     {
         var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
-        mockRunHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
         var mockAgents = new Mock<IPipelineApiAgentClient>();
@@ -181,9 +179,7 @@ public class BasepathNavigationTests : BunitContext
     public void Attention_DoesNotRenderAbsoluteInternalHrefs()
     {
         var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
-        mockRunHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
@@ -232,9 +228,7 @@ public class BasepathNavigationTests : BunitContext
         var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
         mockRunHistory.Setup(c => c.GetRunAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((PipelineRunSummary?)null);
-        mockRunHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
         var mockConfigClient = new Mock<IPipelineApiConfigClient>();
@@ -297,9 +291,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(true);
 
         var mockRunHistory = new Mock<IPipelineApiRunHistoryClient>();
-        mockRunHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(),
-                It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        mockRunHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyHistory());
 
         Services.AddSingleton(mockConfigClient.Object);

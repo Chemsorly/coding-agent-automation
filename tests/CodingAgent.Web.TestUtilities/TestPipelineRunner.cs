@@ -343,11 +343,20 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
                 }
 
-                var prUrl = await prOrchestrator.CreatePullRequestAsync(run, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
-                    ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
-                    line => lifecycle.EmitOutputLine(line),
-                    isRework: run.LinkedPullRequest != null,
-                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
+                var prUrl = await prOrchestrator.CreatePullRequestAsync(
+                    new PullRequestPublishRequest
+                    {
+                        Run = run,
+                        IsDraft = isDraft,
+                        RepoProvider = providerManager.ActiveRepoProvider!,
+                        Issue = ctxAccessor()?.Issue,
+                        IssueComments = ctxAccessor()?.IssueComments,
+                        Config = ctxAccessor()?.Config ?? new PipelineConfiguration(),
+                        OnOutputLine = line => lifecycle.EmitOutputLine(line),
+                        IssueReference = providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier)
+                    },
+                    ct,
+                    isRework: run.LinkedPullRequest != null);
 
                 if (prUrl == null)
                 {
@@ -393,10 +402,19 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     return;
                 }
 
-                var prUrl = await prOrchestrator.FinalizePullRequestAsync(run, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
-                    ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
-                    line => lifecycle.EmitOutputLine(line),
-                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
+                var prUrl = await prOrchestrator.FinalizePullRequestAsync(
+                    new PullRequestPublishRequest
+                    {
+                        Run = run,
+                        IsDraft = isDraft,
+                        RepoProvider = providerManager.ActiveRepoProvider!,
+                        Issue = ctxAccessor()?.Issue,
+                        IssueComments = ctxAccessor()?.IssueComments,
+                        Config = ctxAccessor()?.Config ?? new PipelineConfiguration(),
+                        OnOutputLine = line => lifecycle.EmitOutputLine(line),
+                        IssueReference = providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier)
+                    },
+                    ct);
 
                 if (prUrl == null && run.PullRequestUrl == null)
                 {

@@ -38,9 +38,11 @@ public sealed record AgentHealthStatus
     public string? AllSessionsSummary { get; init; }
 
     /// <summary>Human-readable summary of the current status.</summary>
-    public string Summary =>
-        !IsExecuting ? "Idle"
-        : IsProcessAlive == true ? $"Running (PID {ProcessId})"
-        : IsProcessAlive == false ? $"Process exited (PID {ProcessId})"
-        : "Executing (process state unknown)";
+    public string Summary => (IsExecuting, IsProcessAlive) switch
+    {
+        (false, _) => "Idle",
+        (true, true) => $"Running (PID {ProcessId})",
+        (true, false) => $"Process exited (PID {ProcessId})",
+        (true, null) => "Executing (process state unknown)",
+    };
 }

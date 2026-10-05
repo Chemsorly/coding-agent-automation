@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Octokit;
 using CodingAgent.Infrastructure.Git;
@@ -394,38 +395,7 @@ public partial class GitHubRepositoryProvider
 
         // apiOptions are no longer used — fetching is done in the loop below.
         // The PageSize+1 overfetch is now handled per-PR, not per-issue.
-
-        // GitHub's Issues API mixes PRs and plain issues. We need pageSize+1 PRs to detect
-        // HasMore, but fetching pageSize+1 issues is insufficient when many issues are not PRs.
-        // Strategy: fetch batches of issues (up to 100 per GitHub page) and collect PRs until
-        // we have pageSize+1 or exhaust all issues. Skip (page-1)*pageSize PRs to implement
-        // server-side pagination entirely client-side over the sequential issue stream.
-        const int FetchMultiplier = 3;
-        var fetchSize = Math.Min(pageSize * FetchMultiplier, 100);
-        var target = pageSize + 1; // one extra to detect HasMore
-        var prsToSkip = (page - 1) * pageSize;
-        var prsSkipped = 0;
-        var prsFetched = new List<Octokit.Issue>();
-
-        for (var attempt = 0; attempt < 10 && prsFetched.Count < target; attempt++)
-        {
-            var batch = await ExecuteWithResilienceAsync(
-                client => client.Issue.GetAllForRepository(Owner, Repo, request,
-                    new ApiOptions { PageSize = fetchSize, StartPage = attempt + 1, PageCount = 1 }),
-                "ListOpenPullRequests", ct);
-
-            if (batch.Count == 0) break;
-
-            foreach (var issue in batch)
-            {
-                if (issue.PullRequest == null) continue;
-                if (prsSkipped < prsToSkip) { prsSkipped++; continue; }
-                prsFetched.Add(issue);
-                if (prsFetched.Count >= target) break;
-            }
-
-            if (batch.Count < fetchSize) break; // last page of issues from GitHub
-        }
+        var prsFetched = await FetchOpenPullRequestIssuesAsync(request, page, pageSize, ct);
 
         var hasMore = prsFetched.Count > pageSize;
         var prIssues = prsFetched.Take(pageSize).ToList();
@@ -475,6 +445,54 @@ public partial class GitHubRepositoryProvider
         }
 
         return SharedPrOperations.BuildPagedResult(items, page, pageSize, hasMore);
+    }
+
+    private async Task<List<Octokit.Issue>> FetchOpenPullRequestIssuesAsync(
+        RepositoryIssueRequest request, int page, int pageSize, CancellationToken ct)
+    {
+        // GitHub's Issues API mixes PRs and plain issues. We need pageSize+1 PRs to detect
+        // HasMore, but fetching pageSize+1 issues is insufficient when many issues are not PRs.
+        // Strategy: fetch batches of issues (up to 100 per GitHub page) and collect PRs until
+        // we have pageSize+1 or exhaust all issues. Skip (page-1)*pageSize PRs to implement
+        // server-side pagination entirely client-side over the sequential issue stream.
+        const int FetchMultiplier = 3;
+        var fetchSize = Math.Min(pageSize * FetchMultiplier, 100);
+        var target = pageSize + 1; // one extra to detect HasMore
+        var prsToSkip = (page - 1) * pageSize;
+        var prsSkipped = 0;
+        var prsFetched = new List<Octokit.Issue>();
+
+        for (var attempt = 0; attempt < 10 && prsFetched.Count < target; attempt++)
+        {
+            var batch = await ExecuteWithResilienceAsync(
+                client => client.Issue.GetAllForRepository(Owner, Repo, request,
+                    new ApiOptions { PageSize = fetchSize, StartPage = attempt + 1, PageCount = 1 }),
+                "ListOpenPullRequests", ct);
+
+            if (batch.Count == 0) break;
+
+            prsSkipped = CollectPullRequestIssues(batch, prsFetched, prsSkipped, prsToSkip, target);
+
+            if (batch.Count < fetchSize) break; // last page of issues from GitHub
+        }
+
+        return prsFetched;
+    }
+
+    // Appends the pull requests in batch to prsFetched (after skipping prsToSkip of them overall)
+    // until target is reached; returns the updated skipped count.
+    private static int CollectPullRequestIssues(
+        IReadOnlyList<Octokit.Issue> batch, List<Octokit.Issue> prsFetched, int prsSkipped, int prsToSkip, int target)
+    {
+        foreach (var issue in batch)
+        {
+            if (issue.PullRequest == null) continue;
+            if (prsSkipped < prsToSkip) { prsSkipped++; continue; }
+            prsFetched.Add(issue);
+            if (prsFetched.Count >= target) break;
+        }
+
+        return prsSkipped;
     }
 
     /// <inheritdoc />
@@ -599,8 +617,8 @@ public partial class GitHubRepositoryProvider
                 // TODO [WARNING]: IsBotAuthor only checks the [bot] suffix. The original code also
                 // checked c.User?.Type == AccountType.Bot, which covers GitHub App accounts whose
                 // login does not follow the [bot]-suffix convention. Those accounts now return
-                // IsBot = false. If AccountType.Bot detection is required here, add:
-                //   IsBot = c.User?.Type == AccountType.Bot || SharedPrOperations.IsBotAuthor(author)
+                // IsBot = false. If AccountType.Bot detection is required here, OR an
+                // AccountType.Bot check on c.User?.Type into the IsBotAuthor result.
                 IsBot = SharedPrOperations.IsBotAuthor(author),
                 IsAuthor = SharedPrOperations.IsCommentAuthor(author, prAuthor),
                 FilePath = null,
@@ -696,7 +714,11 @@ public partial class GitHubRepositoryProvider
     // These capture only the fields we need, avoiding a dependency on Octokit's
     // typed PullRequest model while still benefiting from its SimpleJsonSerializer
     // (PascalCase → ruby_case mapping is automatic via ToRubyCase()).
+    // The property setters are only ever invoked by that serializer via reflection, so each DTO is
+    // annotated with [DynamicallyAccessedMembers(PublicProperties)] to declare the reflection usage
+    // (keeps the setters under trimming and tells analyzers they are not dead code).
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrDetailDto
     {
         public int Number { get; set; }
@@ -721,16 +743,19 @@ public partial class GitHubRepositoryProvider
         public string? State { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrRefDto
     {
         public string? Ref { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrUserDto
     {
         public string? Login { get; set; }
     }
 
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrLabelDto
     {
         public string? Name { get; set; }

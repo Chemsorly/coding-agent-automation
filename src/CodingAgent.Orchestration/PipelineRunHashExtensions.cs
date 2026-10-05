@@ -1,5 +1,7 @@
 #pragma warning disable CS0618 // Obsolete StartedAt used intentionally for round-trip
 
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Pipeline.Models;
 using StackExchange.Redis;
@@ -161,10 +163,10 @@ public static class PipelineRunHashExtensions
         var d = hash.ToDictionary(e => (string)e.Name!, e => (string?)e.Value);
 
         // Required init-only fields — null means corrupt hash
-        if (!d.TryGetValue("runId", out var runId) || string.IsNullOrEmpty(runId)) return null;
-        if (!d.TryGetValue("issueIdentifier", out var issueIdStr) || string.IsNullOrEmpty(issueIdStr)) return null;
-        if (!d.TryGetValue("issueProviderConfigId", out var issuePcId) || string.IsNullOrEmpty(issuePcId)) return null;
-        if (!d.TryGetValue("repoProviderConfigId", out var repoPcId) || string.IsNullOrEmpty(repoPcId)) return null;
+        if (!TryGetRequired(d, "runId", out var runId)) return null;
+        if (!TryGetRequired(d, "issueIdentifier", out var issueIdStr)) return null;
+        if (!TryGetRequired(d, "issueProviderConfigId", out var issuePcId)) return null;
+        if (!TryGetRequired(d, "repoProviderConfigId", out var repoPcId)) return null;
 
         _ = Enum.TryParse<PipelineRunType>(d.GetValueOrDefault("runType"), out var runType);
 
@@ -187,16 +189,34 @@ public static class PipelineRunHashExtensions
             RunType = runType,
         };
 
-        // Volatile/Interlocked fields — use property setters
+        ApplyVolatileFields(run, d);
+        ApplyNullableStrings(run, d);
+        ApplyRetryAndReviewCounters(run, d);
+        ApplyChangeAndDecompositionCounters(run, d);
+        ApplyTokenUsage(run, d);
+        ApplyBooleans(run, d);
+        ApplyJsonSubObjects(run, d);
+
+        // Consolidation result fields
+        run.ConsolidationType = JEnum<ConsolidationRunType>(d, "consolidationType");
+        run.ConsolidationTemplateId = NullIfEmpty(d.GetValueOrDefault("consolidationTemplateId"));
+        run.ConsolidationResultSummary = NullIfEmpty(d.GetValueOrDefault("consolidationResultSummary"));
+
+        return run;
+    }
+
+    // Volatile/Interlocked fields — use property setters
+    private static void ApplyVolatileFields(PipelineRun run, Dictionary<string, string?> d)
+    {
         if (Enum.TryParse<PipelineStep>(d.GetValueOrDefault("currentStep"), out var step))
             run.CurrentStep = step;
         if (Enum.TryParse<PipelineStep>(d.GetValueOrDefault("highWaterMark"), out var hwm))
             run.HighWaterMark = hwm;
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("startedAtOffset"), out var sao))
+        if (DateTimeOffset.TryParse(d.GetValueOrDefault("startedAtOffset"), CultureInfo.InvariantCulture, out var sao))
             run.ResetStartedAt(sao);
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("lastStepChangeAt"), out var lsca))
+        if (DateTimeOffset.TryParse(d.GetValueOrDefault("lastStepChangeAt"), CultureInfo.InvariantCulture, out var lsca))
             run.LastStepChangeAt = lsca;
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("completedAtOffset"), out var cao))
+        if (DateTimeOffset.TryParse(d.GetValueOrDefault("completedAtOffset"), CultureInfo.InvariantCulture, out var cao))
             run.MarkCompleted(cao);
 
         // Code review counts (Interlocked) — parse each independently
@@ -207,8 +227,11 @@ public static class PipelineRunHashExtensions
 
         // AgentId (volatile)
         run.AgentId = NullIfEmpty(d.GetValueOrDefault("agentId"));
+    }
 
-        // Nullable strings
+    // Nullable strings
+    private static void ApplyNullableStrings(PipelineRun run, Dictionary<string, string?> d)
+    {
         run.BranchName = NullIfEmpty(d.GetValueOrDefault("branchName"));
         run.FailureReason = NullIfEmpty(d.GetValueOrDefault("failureReason"));
         run.IssueUrl = NullIfEmpty(d.GetValueOrDefault("issueUrl"));
@@ -227,14 +250,22 @@ public static class PipelineRunHashExtensions
         run.ProjectId = NullIfEmpty(d.GetValueOrDefault("projectId"));
         run.ProjectName = NullIfEmpty(d.GetValueOrDefault("projectName"));
         run.InlineCommentsDegradedReason = NullIfEmpty(d.GetValueOrDefault("inlineCommentsDegradedReason"));
+    }
 
-        // Integers
+    // Integers — retry and code review progress counters
+    private static void ApplyRetryAndReviewCounters(PipelineRun run, Dictionary<string, string?> d)
+    {
         if (int.TryParse(d.GetValueOrDefault("retryCount"), out var rc)) run.RetryCount = rc;
         if (int.TryParse(d.GetValueOrDefault("infrastructureRetryCount"), out var irc)) run.InfrastructureRetryCount = irc;
         if (int.TryParse(d.GetValueOrDefault("codeReviewIterationsCompleted"), out var cric)) run.CodeReviewIterationsCompleted = cric;
         if (int.TryParse(d.GetValueOrDefault("codeReviewIterationInProgress"), out var criip)) run.CodeReviewIterationInProgress = criip;
         if (int.TryParse(d.GetValueOrDefault("codeReviewIterationsTotal"), out var crit2)) run.CodeReviewIterationsTotal = crit2;
         if (int.TryParse(d.GetValueOrDefault("inlineCommentsPosted"), out var icp)) run.InlineCommentsPosted = icp;
+    }
+
+    // Integers — change, brain and decomposition statistics
+    private static void ApplyChangeAndDecompositionCounters(PipelineRun run, Dictionary<string, string?> d)
+    {
         if (int.TryParse(d.GetValueOrDefault("filesChangedCount"), out var fcc)) run.FilesChangedCount = fcc;
         if (int.TryParse(d.GetValueOrDefault("linesAdded"), out var la)) run.LinesAdded = la;
         if (int.TryParse(d.GetValueOrDefault("linesRemoved"), out var lr)) run.LinesRemoved = lr;
@@ -243,16 +274,20 @@ public static class PipelineRunHashExtensions
         if (int.TryParse(d.GetValueOrDefault("decompSubIssuesCreated"), out var dsic)) run.DecompositionSubIssuesCreated = dsic;
         if (int.TryParse(d.GetValueOrDefault("decompSubIssuesAttempted"), out var dsia)) run.DecompositionSubIssuesAttempted = dsia;
         if (int.TryParse(d.GetValueOrDefault("openIssuesDownloaded"), out var oid)) run.OpenIssuesDownloaded = oid;
+    }
 
-        // Longs
+    // Longs and decimal — token usage and cost
+    private static void ApplyTokenUsage(PipelineRun run, Dictionary<string, string?> d)
+    {
         if (long.TryParse(d.GetValueOrDefault("totalTokens"), out var tt)) run.TotalTokens = tt;
         if (long.TryParse(d.GetValueOrDefault("cacheReadTokens"), out var crt)) run.CacheReadTokens = crt;
         if (long.TryParse(d.GetValueOrDefault("cacheWriteTokens"), out var cwt)) run.CacheWriteTokens = cwt;
-
-        // Decimal
         if (decimal.TryParse(d.GetValueOrDefault("totalCost"), out var tc)) run.TotalCost = tc;
+    }
 
-        // Booleans
+    // Booleans
+    private static void ApplyBooleans(PipelineRun run, Dictionary<string, string?> d)
+    {
         if (bool.TryParse(d.GetValueOrDefault("brainContextLoaded"), out var bcl)) run.BrainContextLoaded = bcl;
         if (bool.TryParse(d.GetValueOrDefault("brainUpdatesPushed"), out var bup)) run.BrainUpdatesPushed = bup;
         if (bool.TryParse(d.GetValueOrDefault("isDraftPr"), out var idp)) run.IsDraftPr = idp;
@@ -260,8 +295,11 @@ public static class PipelineRunHashExtensions
         if (bool.TryParse(d.GetValueOrDefault("mergeForceResolved"), out var mfr)) run.MergeForceResolved = mfr;
         if (bool.TryParse(d.GetValueOrDefault("inlineCommentsDegraded"), out var icd)) run.InlineCommentsDegraded = icd;
         if (bool.TryParse(d.GetValueOrDefault("baselineHealthPassed"), out var bhp)) run.BaselineHealthPassed = bhp;
+    }
 
-        // JSON sub-objects
+    // JSON sub-objects
+    private static void ApplyJsonSubObjects(PipelineRun run, Dictionary<string, string?> d)
+    {
         run.LatestQualityReport = J<QualityGateReport>(d, "latestQualityReport");
         run.LinkedPullRequest = J<LinkedPullRequest>(d, "linkedPullRequest");
         run.AnalysisRecommendation = JEnum<AnalysisGateResult>(d, "analysisRecommendation");
@@ -283,13 +321,6 @@ public static class PipelineRunHashExtensions
         if (findingsDict is not null)
             foreach (var kv in findingsDict)
                 run.CodeReviewAgentFindings[kv.Key] = kv.Value;
-
-        // Consolidation result fields
-        run.ConsolidationType = JEnum<ConsolidationRunType>(d, "consolidationType");
-        run.ConsolidationTemplateId = NullIfEmpty(d.GetValueOrDefault("consolidationTemplateId"));
-        run.ConsolidationResultSummary = NullIfEmpty(d.GetValueOrDefault("consolidationResultSummary"));
-
-        return run;
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
@@ -314,6 +345,9 @@ public static class PipelineRunHashExtensions
         if (!d.TryGetValue(key, out var val) || string.IsNullOrEmpty(val)) return null;
         return Enum.TryParse<T>(val, out var result) ? result : null;
     }
+
+    private static bool TryGetRequired(Dictionary<string, string?> d, string key, [NotNullWhen(true)] out string? value)
+        => d.TryGetValue(key, out value) && !string.IsNullOrEmpty(value);
 
     private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
 }

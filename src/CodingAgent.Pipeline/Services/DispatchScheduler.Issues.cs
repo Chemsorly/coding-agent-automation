@@ -123,40 +123,57 @@ internal sealed partial class DispatchScheduler
                 continue;
             }
 
-            if (_dependencyChecker != null)
-            {
-                if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
-                {
-                    _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
-                        template.IssueProviderId, candidate.Identifier);
-                    continue;
-                }
-
-                // Issue numbers are unique only within a tracker, so each tracker keeps its own cache:
-                // "#12 is closed" in one tracker says nothing about #12 in another.
-                if (!cycleStateCaches.TryGetValue(template.IssueProviderId, out var trackerStateCache))
-                    cycleStateCaches[template.IssueProviderId] = trackerStateCache = new Dictionary<int, bool>();
-
-                var depResult = await _eligibilityEvaluator.EvaluateDependencyAsync(
-                    candidate.Identifier, candidate.Description, provider, trackerStateCache, _dependencyChecker, ct);
-                if (!depResult.IsEligible)
-                {
-                    // TODO: [WARNING] The structured log property {BlockedBy} is now bound to depResult.Reason
-                    // (a prose string like "Blocked by open issue(s): #5, #12") instead of the original
-                    // depResult.BlockedBy (IReadOnlyList<int>). Any log consumer, dashboard, or alert that
-                    // parses {BlockedBy} as a numeric list will break. Consider renaming the property to
-                    // {BlockedByReason} to match the new string semantics, or expose BlockedBy list from
-                    // DispatchEligibilityResult so the structured type is preserved.
-                    _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
-                        candidate.Identifier, depResult.Reason);
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
-                    continue;
-                }
-            }
+            if (!await AreDependenciesReadyAsync(candidate, template, cycleStateCaches, ct))
+                continue;
 
             return candidate;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if no dependency checker is configured or the check reports
+    /// <paramref name="candidate"/> as ready. Returns <c>false</c> (after logging) when the
+    /// template's issue provider is not cached or the candidate is blocked by open issues.
+    /// </summary>
+    private async Task<bool> AreDependenciesReadyAsync(
+        IssueSummary candidate,
+        PipelineJobTemplate template,
+        Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
+        CancellationToken ct)
+    {
+        if (_dependencyChecker == null)
+            return true;
+
+        if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
+        {
+            _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
+                template.IssueProviderId, candidate.Identifier);
+            return false;
+        }
+
+        // Issue numbers are unique only within a tracker, so each tracker keeps its own cache:
+        // "#12 is closed" in one tracker says nothing about #12 in another.
+        if (!cycleStateCaches.TryGetValue(template.IssueProviderId, out var trackerStateCache))
+            cycleStateCaches[template.IssueProviderId] = trackerStateCache = new Dictionary<int, bool>();
+
+        var depResult = await _eligibilityEvaluator.EvaluateDependencyAsync(
+            candidate.Identifier, candidate.Description, provider, trackerStateCache, _dependencyChecker, ct);
+        if (!depResult.IsEligible)
+        {
+            // TODO: [WARNING] The structured log property {BlockedBy} is now bound to depResult.Reason
+            // (a prose string like "Blocked by open issue(s): #5, #12") instead of the original
+            // depResult.BlockedBy (IReadOnlyList<int>). Any log consumer, dashboard, or alert that
+            // parses {BlockedBy} as a numeric list will break. Consider renaming the property to
+            // {BlockedByReason} to match the new string semantics, or expose BlockedBy list from
+            // DispatchEligibilityResult so the structured type is preserved.
+            _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
+                candidate.Identifier, depResult.Reason);
+            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>

@@ -96,7 +96,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             if (!phasedResult.Success) return phasedResult;
 
             return await FinalizeProposalsAsync(
-                job, agentProvider, issueProvider, workspacePath, [.. openIssueTitles, .. closedIssueTitles], commitSha, onOutputLine, ct);
+                job, agentProvider, issueProvider, workspacePath,
+                new ScanBaseline([.. openIssueTitles, .. closedIssueTitles], commitSha), onOutputLine, ct);
         }, ct);
     }
 
@@ -379,6 +380,12 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
+    /// Repository state captured before the analysis phases: the open and closed issue titles proposals are
+    /// deduplicated against, and the commit the analysis ran on (null when it could not be read).
+    /// </summary>
+    private sealed record ScanBaseline(IReadOnlyList<string> ExistingIssueTitles, string? CommitSha);
+
+    /// <summary>
     /// Shared finalization: parse proposals → adversarial review → create GitHub issues.
     /// Used by both phased and legacy paths.
     /// </summary>
@@ -387,8 +394,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         IAgentProvider agentProvider,
         IIssueProvider issueProvider,
         string workspacePath,
-        IReadOnlyList<string> existingIssueTitles,
-        string? commitSha,
+        ScanBaseline baseline,
         Action<string>? onOutputLine,
         CancellationToken ct)
     {
@@ -418,9 +424,10 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             return await AdversarialReviewHelper.ExecuteReviewAsync(
                 agentProvider,
                 workspacePath,
-                ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
-                ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
-                AgentWorkspacePaths.RefactoringReviewFilePath,
+                new AdversarialReviewPrompts(
+                    ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
+                    ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
+                    AgentWorkspacePaths.RefactoringReviewFilePath),
                 new AdversarialReviewConfig
                 {
                     Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
@@ -447,7 +454,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         }
 
         // Deterministic checks the prompts cannot guarantee (paths, scope, category, duplicates)
-        var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(proposals, workspacePath, existingIssueTitles);
+        var (validProposals, rejectedProposals) = RefactoringProposalValidator.Validate(proposals, workspacePath, baseline.ExistingIssueTitles);
         foreach (var rejection in rejectedProposals)
         {
             Logger.Warning("Dropped refactoring proposal '{Title}' in run {RunId}: {Reason}",
@@ -460,7 +467,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             activity?.SetTag("pipeline.proposal_count", proposals.Count);
             activity?.SetTag("pipeline.rejected_proposal_count", rejectedProposals.Count);
             return await CreateIssuesAsync(
-                validProposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, commitSha, ct);
+                validProposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, baseline.CommitSha, ct);
         });
 
         var attemptedCount = Math.Min(validProposals.Count, job.PipelineConfiguration.MaxRefactoringProposals);

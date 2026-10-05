@@ -17,25 +17,17 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         _http = http;
     }
 
-    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(
-        int page = 1,
-        int pageSize = 50,
-        bool feedbackOnly = false,
-        bool includeActive = false,
-        PipelineStep? finalStep = null,
-        string? projectId = null,
-        DateTimeOffset? since = null,
-        PipelineRunType? runType = null,
-        CancellationToken ct = default)
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(RunHistoryQuery query, CancellationToken ct = default)
     {
-        var url = $"/api/pipeline-runs?page={page}&pageSize={pageSize}&feedbackOnly={feedbackOnly}&includeActive={includeActive}";
-        if (finalStep is { } step)
+        ArgumentNullException.ThrowIfNull(query);
+        var url = $"/api/pipeline-runs?page={query.Page}&pageSize={query.PageSize}&feedbackOnly={query.FeedbackOnly}&includeActive={query.IncludeActive}";
+        if (query.FinalStep is { } step)
             url += $"&finalStep={step}";
-        if (!string.IsNullOrEmpty(projectId))
-            url += $"&projectId={Uri.EscapeDataString(projectId)}";
-        if (since is { } sinceValue)
+        if (!string.IsNullOrEmpty(query.ProjectId))
+            url += $"&projectId={Uri.EscapeDataString(query.ProjectId)}";
+        if (query.Since is { } sinceValue)
             url += $"&since={Uri.EscapeDataString(sinceValue.ToString("O"))}";
-        if (runType is { } rt)
+        if (query.RunType is { } rt)
             url += $"&runType={rt}";
 
         var result = await _http.GetFromJsonAsync<PagedResult<PipelineRunSummary>>(
@@ -85,8 +77,7 @@ internal sealed class PipelineApiRunHistoryClient : IPipelineApiRunHistoryClient
         //   rather than silently returning []. The ?? [] fallback is indistinguishable from a genuine
         //   empty result, which means a misbehaving server returning 200 OK with null body would bypass
         //   the conservative guard — the same class of problem the fix above closes for non-2xx.
-        //   Consider: return result ?? throw new InvalidOperationException(
-        //       "GET /api/pipeline-runs/active-branches returned a 2xx response with a null body.");
+        //   Consider throwing an InvalidOperationException that names the endpoint and the null 2xx body.
         return result ?? [];
     }
 }
