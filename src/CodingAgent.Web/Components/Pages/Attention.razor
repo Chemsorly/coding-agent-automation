@@ -202,7 +202,7 @@
         _error = null;
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId), _cts.Token);
             var items = runs.Items;
 
             // TODO: [WARNING] items is passed directly to AttentionAggregator.Aggregate. The aggregator

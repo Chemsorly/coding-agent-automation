@@ -68,11 +68,18 @@ public static class SchedulerLoopEndpoints
             // Persist ClosedLoopAutoStart=true so the Scheduler auto-starts on next boot
             await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, ct);
         }
-        var error = started ? null
-            : loopService.ValidationErrors.Count > 0 ? "Loop failed to start due to validation errors."
-            : loopService.IsLoopActive ? "Loop is already active."
-            : "A manual run is in progress. Wait for it to complete.";
+        var error = started ? null : DescribeStartFailure(loopService);
         return Results.Ok(new LoopStartResultDto(started, error));
+    }
+
+    /// <summary>Explains why <see cref="IPipelineLoopService.StartLoopAsync"/> refused to start the loop.</summary>
+    private static string DescribeStartFailure(IPipelineLoopService loopService)
+    {
+        if (loopService.ValidationErrors.Count > 0)
+            return "Loop failed to start due to validation errors.";
+        if (loopService.IsLoopActive)
+            return "Loop is already active.";
+        return "A manual run is in progress. Wait for it to complete.";
     }
 
     internal static async Task<IResult> StopLoop(

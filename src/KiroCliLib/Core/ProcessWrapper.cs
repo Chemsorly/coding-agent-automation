@@ -45,12 +45,11 @@ public class ProcessWrapper : IProcessWrapper
         }
     }
     public int? ExitCode => _process?.HasExited == true ? _process.ExitCode : null;
-    // TODO: [WARNING] ProcessId retains a bare catch { return null; } — the same pattern that was
-    // narrowed to catch (InvalidOperationException) for IsRunning in this diff. Process.Id only
-    // throws InvalidOperationException (when the process was not started via Process.Start), so
+    // TODO: [WARNING] ProcessId still swallows every exception with a bare catch that returns null — the
+    // same pattern that was narrowed to InvalidOperationException for IsRunning in this diff. Process.Id
+    // only throws InvalidOperationException (when the process was not started via Process.Start), so
     // the bare catch unnecessarily swallows serious runtime faults (OutOfMemoryException etc.).
-    // Apply the same narrowing as IsRunning: replace the bare catch with
-    // catch (InvalidOperationException). (DotNetSpecialist, issue #2947)
+    // Apply the same narrowing as IsRunning. (DotNetSpecialist, issue #2947)
     public int? ProcessId { get { try { return _process?.Id; } catch { return null; } } }
     public DateTime LastOutputTime => _lastOutputTime;
 
@@ -94,9 +93,7 @@ public class ProcessWrapper : IProcessWrapper
         // TODO: Use AgentWorkspacePaths.MetadataDirectory here once KiroCliLib can reference CodingAgent.Contracts
         //       without a circular dependency. For now, AgentMetadataDirectory mirrors it locally.
         var inlinePrompt = $"@{AgentMetadataDirectory}/prompt-input-{promptId}.md";
-        var resumeFlag = resumeSessionId is not null
-            ? $"--resume-id {resumeSessionId}"
-            : useResume ? "--resume" : null;
+        var resumeFlag = BuildResumeFlag(resumeSessionId, useResume);
         var kiroArgs = resumeFlag is not null
             ? $"chat --no-interactive {resumeFlag} --trust-all-tools \"{inlinePrompt}\""
             : $"chat --no-interactive --trust-all-tools \"{inlinePrompt}\"";
@@ -168,6 +165,17 @@ public class ProcessWrapper : IProcessWrapper
     }
 
     /// <summary>
+    /// The resume argument: a specific session when <paramref name="resumeSessionId"/> is set, otherwise the
+    /// most recent session when <paramref name="useResume"/> is true, otherwise none.
+    /// </summary>
+    private static string? BuildResumeFlag(string? resumeSessionId, bool useResume)
+    {
+        if (resumeSessionId is not null)
+            return $"--resume-id {resumeSessionId}";
+        return useResume ? "--resume" : null;
+    }
+
+    /// <summary>
     /// Forcefully terminates the running process and its process tree.
     /// </summary>
     /// <remarks>
@@ -226,16 +234,28 @@ public class ProcessWrapper : IProcessWrapper
 
     public void Dispose()
     {
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Kills the process if it is still running and releases it.
+    /// </summary>
+    /// <param name="disposing"><see langword="true"/> when called from <see cref="Dispose()"/>.</param>
+    protected virtual void Dispose(bool disposing)
+    {
         if (_disposed) return;
-        Kill();
-        if (_process != null)
+        if (disposing)
         {
-            _process.OutputDataReceived -= OnOutputDataReceived;
-            _process.ErrorDataReceived -= OnErrorDataReceived;
-            _process.Dispose();
-            _process = null;
+            Kill();
+            if (_process != null)
+            {
+                _process.OutputDataReceived -= OnOutputDataReceived;
+                _process.ErrorDataReceived -= OnErrorDataReceived;
+                _process.Dispose();
+                _process = null;
+            }
         }
         _disposed = true;
-        GC.SuppressFinalize(this);
     }
 }

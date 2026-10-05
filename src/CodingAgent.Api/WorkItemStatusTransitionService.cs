@@ -100,8 +100,7 @@ public sealed partial class WorkItemStatusTransitionService
         // a DB query returning null (not found) and return StatusTransitionOutcome.NotFound. This is the
         // correct observable outcome, but Guid.Empty reaching the persistence layer is a correctness
         // hazard if EF or the DB ever treats the all-zeros GUID specially (e.g. default value handling,
-        // optimistic concurrency on a default GUID). Consider adding:
-        //   if (id == Guid.Empty) return StatusTransitionOutcome.NotFound;
+        // optimistic concurrency on a default GUID). Consider returning NotFound early for an empty id,
         // or throwing ArgumentException to fail fast at the public boundary.
 
         // ── Infrastructure-recovery guard (issue #2459) ───────────────────────────────────

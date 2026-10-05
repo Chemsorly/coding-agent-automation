@@ -424,8 +424,9 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
-                finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+                new RunHistoryQuery(Page: _page, PageSize: PageSize, FeedbackOnly: _feedbackOnly, IncludeActive: true,
+                    FinalStep: FinalStepFilter, ProjectId: State.SelectedProjectId),
+                _cts.Token);
             _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
@@ -452,8 +453,9 @@
         try
         {
             _result = await RunHistory.GetRunHistoryAsync(
-                page: _page, pageSize: PageSize, feedbackOnly: _feedbackOnly, includeActive: true,
-                finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
+                new RunHistoryQuery(Page: _page, PageSize: PageSize, FeedbackOnly: _feedbackOnly, IncludeActive: true,
+                    FinalStep: FinalStepFilter, ProjectId: State.SelectedProjectId),
+                _cts.Token);
             _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
             _error = null;
         }

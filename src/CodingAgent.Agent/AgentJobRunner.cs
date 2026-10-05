@@ -100,18 +100,6 @@ public static class AgentJobRunner
         CancellationToken ct = default)
         => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, rethrowOnSigterm, ct);
 
-    /// <summary>Convenience overload accepting <see cref="IWorkItemExecutor"/> directly.</summary>
-    public static Task<JobCompletionPayload> ExecuteAsync(
-        IWorkItemExecutor executor,
-        JobAssignmentMessage assignment,
-        HubConnection connection,
-        OutputBatcher outputBatcher,
-        Action<PipelineStep?> onStepChanged,
-        string? cancelledLabel = null,
-        CancellationToken rethrowOnSigterm = default,
-        CancellationToken ct = default)
-        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, rethrowOnSigterm, ct);
-
     // ── Backward-compatible overload (used by tests without OutputBatcher) ──
 
     /// <summary>

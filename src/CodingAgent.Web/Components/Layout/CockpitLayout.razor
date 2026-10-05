@@ -281,7 +281,7 @@
         // Runs once on circuit init and re-runs whenever the project scope changes.
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId));
             State.SetAttentionCount(AttentionAggregator.Aggregate(runs.Items).TotalCount);
         }
         catch (Exception ex)

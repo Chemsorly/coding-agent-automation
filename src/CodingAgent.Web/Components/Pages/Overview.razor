@@ -209,7 +209,7 @@
             // pageSize matches Attention.razor and Insights.razor (both use 100) so that the "Failed runs"
             // count on the Overview card agrees with those pages. Consider a dedicated server-side
             // counts/stats endpoint so none of the pages depend on a client-side page window.
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: true, projectId: State.SelectedProjectId, ct: _cts.Token);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: true, ProjectId: State.SelectedProjectId), _cts.Token);
             var items = runs.Items;
 
             _activeRuns = items.Where(r => RunOutcomeDisplay.IsActive(r.FinalStep)).ToList();

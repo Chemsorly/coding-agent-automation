@@ -419,8 +419,9 @@
             // Read consolidation run history from the pipeline-run read path (issue #3028).
             // This replaces the former IConsolidationService.GetRunHistoryAsync call.
             var result = await RunHistoryClient.GetRunHistoryAsync(
-                page: 1, pageSize: 200, feedbackOnly: false, includeActive: true,
-                runType: PipelineRunType.Consolidation, ct: CancellationToken.None);
+                new RunHistoryQuery(Page: 1, PageSize: 200, FeedbackOnly: false, IncludeActive: true,
+                    RunType: PipelineRunType.Consolidation),
+                CancellationToken.None);
             _runHistory = result.Items;
             _anyRunCancellable = Access.HasGlobalOperate && _runHistory.Any(r => r.WorkItemId.HasValue && r.CompletedAtOffset == null);
         }

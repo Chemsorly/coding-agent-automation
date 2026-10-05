@@ -128,10 +128,11 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
             factory: hubManagerFactory,
             logger: logger,
             lifetime: hostApplicationLifetime,
-            wireHandlers: WireEventHandlers,
-            registerAgent: (mgr, ct) => _signalRPipeline.ExecuteAsync(async token =>
-                await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, BuildRegistrationMessage(), token), ct).AsTask(),
-            afterSuccessfulReconnect: null);
+            callbacks: new ReconnectCallbacks(
+                WireHandlers: WireEventHandlers,
+                RegisterAgent: (mgr, ct) => _signalRPipeline.ExecuteAsync(async token =>
+                    await mgr.Connection.InvokeAsync(HubMethodNames.RegisterAgent, BuildRegistrationMessage(), token), ct).AsTask(),
+                AfterSuccessfulReconnect: null));
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>

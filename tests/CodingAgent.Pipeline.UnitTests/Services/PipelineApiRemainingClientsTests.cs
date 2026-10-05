@@ -67,7 +67,7 @@ public sealed class PipelineApiRemainingClientsTests
         };
         handler.Respond = _ => JsonResponse(page);
 
-        var result = await client.GetRunHistoryAsync();
+        var result = await client.GetRunHistoryAsync(new RunHistoryQuery());
 
         result.Items.Should().HaveCount(1);
         handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("/api/pipeline-runs");
@@ -79,7 +79,7 @@ public sealed class PipelineApiRemainingClientsTests
         var (client, handler) = Create(h => new PipelineApiRunHistoryClient(h));
         handler.Respond = _ => JsonResponse(MakeEmptyPage());
 
-        await client.GetRunHistoryAsync(feedbackOnly: true);
+        await client.GetRunHistoryAsync(new RunHistoryQuery(FeedbackOnly: true));
 
         handler.LastRequest!.RequestUri!.PathAndQuery.Should().Contain("feedbackOnly=True");
     }
