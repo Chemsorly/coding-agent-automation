@@ -79,6 +79,18 @@ public class PostgresKeyValueStoreTests : IDisposable
         count.Should().Be(1);
     }
 
+    [Fact]
+    public async Task SetAsync_MultipleKeys_StoredIndependently()
+    {
+        var store = CreateStore();
+
+        await store.SetAsync("key-a", "value-a", CancellationToken.None);
+        await store.SetAsync("key-b", "value-b", CancellationToken.None);
+
+        (await store.GetAsync("key-a", CancellationToken.None)).Should().Be("value-a");
+        (await store.GetAsync("key-b", CancellationToken.None)).Should().Be("value-b");
+    }
+
     // ── DeleteAsync ──────────────────────────────────────────────────────
 
     [Fact]
@@ -91,6 +103,29 @@ public class PostgresKeyValueStoreTests : IDisposable
 
         var result = await store.GetAsync("del-key", CancellationToken.None);
         result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task DeleteAsync_WhenKeyNotFound_DoesNotThrow()
+    {
+        var store = CreateStore();
+
+        var act = () => store.DeleteAsync("non-existent", CancellationToken.None);
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task DeleteAsync_OnlyRemovesTargetKey()
+    {
+        var store = CreateStore();
+
+        await store.SetAsync("keep", "value", CancellationToken.None);
+        await store.SetAsync("remove", "value", CancellationToken.None);
+
+        await store.DeleteAsync("remove", CancellationToken.None);
+
+        (await store.GetAsync("keep", CancellationToken.None)).Should().Be("value");
+        (await store.GetAsync("remove", CancellationToken.None)).Should().BeNull();
     }
 }
 

@@ -27,7 +27,7 @@ public sealed class AgentTokenRefreshServiceTests
             _mockLogger.Object);
     }
 
-    #region GitHub App JWT path
+    // ── GitHub App JWT path ─────────────────────────────────────────
 
     [Fact]
     public async Task RefreshToken_PipelineRun_GitHubApp_GeneratesToken()
@@ -72,9 +72,7 @@ public sealed class AgentTokenRefreshServiceTests
         _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(config, It.IsAny<CancellationToken>(), false), Times.Once);
     }
 
-    #endregion
-
-    #region GitLab PAT path
+    // ── GitLab PAT path ─────────────────────────────────────────────
 
     [Fact]
     public async Task RefreshToken_PipelineRun_GitLabPat_ReturnsAccessToken()
@@ -113,9 +111,37 @@ public sealed class AgentTokenRefreshServiceTests
         _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
 
-    #endregion
+    [Fact]
+    public async Task RefreshToken_GitLabPat_ExpiresAtIsFarFutureSentinel()
+    {
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "glpat-valid-token"
+            }
+        };
 
-    #region Pre-vended token fallback
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(MakeRun());
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var before = DateTimeOffset.UtcNow;
+        var service = CreateService();
+
+        var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
+
+        result.Token.Should().Be("glpat-valid-token");
+        // Static GitLab PATs use a far-future sentinel (24h) so agents treat them as non-expiring.
+        result.ExpiresAt.Should().BeCloseTo(before.AddHours(24), TimeSpan.FromMinutes(1),
+            "GitLab PAT is a static token — ExpiresAt must be a far-future sentinel, not a short-lived 1h");
+    }
+
+    // ── Pre-vended token fallback ───────────────────────────────────
 
     [Fact]
     public async Task RefreshToken_PipelineRun_PreVendedToken_ReturnsExistingToken()
@@ -154,9 +180,148 @@ public sealed class AgentTokenRefreshServiceTests
         _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
 
-    #endregion
+    [Fact]
+    public async Task RefreshToken_PreVendedToken_WithoutExpiryMetadata_ExpiresAtIsFarFutureSentinel()
+    {
+        // A static 'token' with no tokenExpiresAt in settings (e.g. a personal access token
+        // stored directly in provider config). Should return a far-future sentinel, not 1h.
+        var config = new ProviderConfig
+        {
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Token] = "pre-vended-12345"
+            }
+        };
 
-    #region Error paths
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(MakeRun());
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var before = DateTimeOffset.UtcNow;
+        var service = CreateService();
+
+        var result = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
+
+        result.Token.Should().Be("pre-vended-12345");
+        // No expiry metadata → far-future sentinel, not a fabricated 1h.
+        result.ExpiresAt.Should().BeCloseTo(before.AddHours(24), TimeSpan.FromMinutes(1),
+            "static token with no expiry metadata must use a far-future sentinel (24h), not fabricate 1h");
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_WithTokenField_AndFreshExpiry_ReturnsParsedExpiry()
+    {
+        // A pre-vended GitHub App token stored in 'token' with 'tokenExpiresAt' metadata.
+        // The expiry should be the parsed value, not fabricated.
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(30);
+        var run = MakeImplementationRun("github-repo");
+        _mockFacade.Setup(f => f.GetRun("run-1")).Returns(run);
+        var config = MakeConfig("github-repo", new()
+        {
+            [ProviderSettingKeys.Token] = "short-lived-token",
+            [ProviderSettingKeys.TokenExpiresAt] = expiresAt.ToString("O")
+        });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var result = await CreateService().RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);
+
+        result.Token.Should().Be("short-lived-token");
+        result.ExpiresAt.Should().BeCloseTo(expiresAt, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_WithTokenField_AndExpiredToken_ThrowsHubException()
+    {
+        // Root-cause regression test for issue #2334:
+        // A pre-vended token with tokenExpiresAt in the past (or within the 5-min buffer)
+        // must THROW instead of silently returning the stale token.
+        // Previously, the code returned it with a fabricated ExpiresAt — that is the bug.
+        var expiredAt = DateTimeOffset.UtcNow.AddMinutes(-10); // clearly expired
+        var run = MakeImplementationRun("github-repo");
+        _mockFacade.Setup(f => f.GetRun("run-1")).Returns(run);
+        var config = MakeConfig("github-repo", new()
+        {
+            [ProviderSettingKeys.Token] = "stale-token",
+            [ProviderSettingKeys.TokenExpiresAt] = expiredAt.ToString("O")
+        });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var act = () => CreateService().RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);
+
+        // Must throw with the specific re-dispatch message, not silently return the stale token.
+        // Use "re-dispatched" as the unique anchor — it only appears in the expired/expiring-imminently
+        // throw, not in any other path, making this assertion distinct from the malformed-expiry throw.
+        await act.Should().ThrowAsync<HubException>().WithMessage("*re-dispatched*");
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_WithTokenField_AndTokenExpiringWithinBuffer_ThrowsHubException()
+    {
+        // Token expiring within the 5-minute renewal buffer should also throw.
+        // TODO [WARNING]: This literal (2 minutes) is not derived from TokenRefreshConstants.RenewalBuffer.
+        // If RenewalBuffer is reduced below 2 minutes the expiry will fall outside the buffer and
+        // the test will stop reaching the expiring-within-buffer branch. Replace with
+        // DateTimeOffset.UtcNow.Add(TokenRefreshConstants.RenewalBuffer - TimeSpan.FromMinutes(1))
+        // to keep the boundary tight relative to the constant.
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(2); // within buffer
+        var run = MakeImplementationRun("github-repo");
+        _mockFacade.Setup(f => f.GetRun("run-1")).Returns(run);
+        var config = MakeConfig("github-repo", new()
+        {
+            [ProviderSettingKeys.Token] = "about-to-expire-token",
+            [ProviderSettingKeys.TokenExpiresAt] = expiresAt.ToString("O")
+        });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var act = () => CreateService().RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);
+
+        // Use "expiring imminently" as the anchor — this phrase only appears in the expiring-within-buffer
+        // throw message and uniquely distinguishes this path from the malformed-expiry throw.
+        await act.Should().ThrowAsync<HubException>().WithMessage("*expiring imminently*");
+    }
+
+    [Fact]
+    public async Task RefreshTokenAsync_WithTokenField_AndMalformedExpiry_ThrowsHubException()
+    {
+        // CRITICAL regression test: when 'tokenExpiresAt' key is present but the value is unparseable
+        // (e.g. a Unix-epoch integer), the service must throw rather than silently falling through
+        // to the "no expiry metadata" static-token branch and returning the token with a 24h sentinel.
+        // Falling through would reintroduce the silent stale-token bug (issue #2334).
+        var run = MakeImplementationRun("github-repo");
+        _mockFacade.Setup(f => f.GetRun("run-1")).Returns(run);
+        var config = MakeConfig("github-repo", new()
+        {
+            [ProviderSettingKeys.Token] = "possibly-stale-token",
+            [ProviderSettingKeys.TokenExpiresAt] = "not-a-date" // unparseable
+        });
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("github-repo", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var act = () => CreateService().RefreshTokenAsync("run-1", ProviderKind.Repository, CancellationToken.None);
+
+        // Must throw with the malformed-expiry message, distinct from the expired/expiring throw.
+        await act.Should().ThrowAsync<HubException>().WithMessage("*malformed*");
+
+        // Security regression guard: verify the Warning log uses len= and prefix= format,
+        // and does NOT emit the raw value. If this fix is reverted to log expiresAtStr verbatim,
+        // this assertion will fail and catch the regression before it ships.
+        _mockLogger.Verify(l => l.Warning(
+            It.Is<string>(msg => msg.Contains("{Length}") && msg.Contains("{Prefix}")),
+            It.IsAny<string>(),           // jobId
+            It.IsAny<ProviderKind>(),     // providerKind
+            It.IsAny<int>(),              // expiresAtStr.Length
+            It.Is<string>(prefix => !prefix.Contains("not-a-date"))), // preview must not be the raw value
+            Times.Once);
+    }
+
+    // ── Error paths ─────────────────────────────────────────────────
 
     [Fact]
     public async Task RefreshToken_NoRunOrWorkItem_Throws()
@@ -227,9 +392,7 @@ public sealed class AgentTokenRefreshServiceTests
         await act.Should().ThrowAsync<HubException>().WithMessage("*no supported authentication method*");
     }
 
-    #endregion
-
-    #region Brain kind resolution
+    // ── Brain kind resolution ───────────────────────────────────────
 
     [Fact]
     public async Task RefreshToken_BrainKind_ResolvesBrainConfig()
@@ -299,9 +462,25 @@ public sealed class AgentTokenRefreshServiceTests
             Times.Never);
     }
 
-    #endregion
+    [Fact]
+    public async Task RefreshToken_BrainKind_ConfigNotFoundInStore_ThrowsHubException()
+    {
+        // brainProviderConfigId is set, but GetProviderConfigByIdAsync returns null
+        var run = MakeRun(brainConfigId: "brain-deleted");
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync(
+                "brain-deleted", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
 
-    #region K8s mode fallback
+        var service = CreateService();
+
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*brain-deleted*not found*");
+    }
+
+    // ── K8s mode fallback ───────────────────────────────────────────
 
     [Fact]
     public async Task RefreshToken_K8sMode_ResolvesFromWorkItem()
@@ -342,9 +521,41 @@ public sealed class AgentTokenRefreshServiceTests
         _mockFacade.Verify(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s-1", It.IsAny<CancellationToken>()), Times.Once);
     }
 
-    #endregion
+    [Fact]
+    public async Task RefreshToken_K8sMode_BrainKind_BrainIdIsNull_ThrowsHubException()
+    {
+        // K8s mode: no in-memory run; WorkItem found but only repoId, no brainId
+        _mockFacade.Setup(f => f.GetRun("wi-k8s")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("repo-from-payload", (string?)null)); // no brain config
 
-    #region includeIssuePermission = true path
+        var service = CreateService();
+
+        var act = () => service.RefreshTokenAsync("wi-k8s", ProviderKind.Brain, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*Brain provider config ID not available*");
+    }
+    [Fact]
+    public async Task RefreshToken_K8sMode_BrainKind_ConfigNotFound_ThrowsHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun("wi-k8s-brain")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s-brain", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("repo-payload", "brain-payload"));
+
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync(
+                "brain-payload", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var service = CreateService();
+
+        var act = () => service.RefreshTokenAsync("wi-k8s-brain", ProviderKind.Brain, CancellationToken.None);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*brain-payload*not found*");
+    }
+
+    // ── includeIssuePermission = true path ──────────────────────────
 
     [Fact]
     public async Task RefreshToken_WithIncludeIssuePermission_True_PassesTrueToGenerateAgentTokenAsync()
@@ -409,30 +620,7 @@ public sealed class AgentTokenRefreshServiceTests
             Times.Never);
     }
 
-    #endregion
-}
-
-// ── Additional coverage for whitespace token values and K8s empty repoId ──
-
-public sealed class AgentTokenRefreshServiceAdditionalTests
-{
-    private readonly Mock<IAgentHubFacade> _mockFacade = new();
-    private readonly Mock<ITokenVendingService> _mockTokenVending = new();
-    private readonly Mock<ILogger> _mockLogger = new();
-
-    private AgentTokenRefreshService CreateService() =>
-        new(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object);
-
-    private static PipelineRun MakeRun(string repoConfigId = "repo-1") => new()
-    {
-        RunId = "job-1",
-        IssueIdentifier = "org/repo#1",
-        IssueTitle = "Test",
-        IssueProviderConfigId = "issue-1",
-        RepoProviderConfigId = repoConfigId
-    };
-
-    // K8s fallback: WorkItem found but repoProviderConfigId is empty string → throws
+    // ── Whitespace token values and K8s empty repoId ────────────────
 
     [Fact]
     public async Task RefreshToken_K8sFallback_EmptyRepoProviderConfigId_ThrowsHubException()
@@ -513,6 +701,48 @@ public sealed class AgentTokenRefreshServiceAdditionalTests
         await act.Should().ThrowAsync<HubException>()
             .WithMessage("*no supported authentication method*");
     }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static PipelineRun MakeRun(
+        string jobId = "job-1",
+        string repoConfigId = "repo-1",
+        string? brainConfigId = null) => new()
+        {
+            RunId = jobId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "issue-1",
+            RepoProviderConfigId = repoConfigId,
+            BrainProviderConfigId = brainConfigId
+        };
+
+    // K8s fallback: WorkItem found but repoProviderConfigId is empty string → throws
+
+    private static PipelineRun MakeImplementationRun(string repoConfigId = "github-repo", string? brainConfigId = null) =>
+        PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = "run-1",
+            IssueIdentifier = "GH-1",
+            IssueTitle = "T",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = repoConfigId,
+            BrainProviderConfigId = brainConfigId,
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "test",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+    private static ProviderConfig MakeConfig(string id = "cfg-1", Dictionary<string, string>? settings = null) =>
+        new()
+        {
+            Id = id,
+            Kind = ProviderKind.Repository,
+            DisplayName = "Test",
+            ProviderType = "GitHub",
+            Settings = settings ?? []
+        };
 }
 
 // ── Retry loop tests (Issue #2759) ────────────────────────────────────────────

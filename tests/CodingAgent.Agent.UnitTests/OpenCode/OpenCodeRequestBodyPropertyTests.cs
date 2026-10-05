@@ -5,6 +5,7 @@ using FsCheck.Xunit;
 using CodingAgent.Agent.OpenCode;
 using CodingAgent.Pipeline.Models;
 using KiroCliLib.Core;
+using AwesomeAssertions;
 
 namespace CodingAgent.Agent.UnitTests.OpenCode;
 
@@ -13,6 +14,7 @@ namespace CodingAgent.Agent.UnitTests.OpenCode;
 /// Verifies that the outbound POST /session/:id/message contains a JSON body with
 /// structure { "parts": [{ "type": "text", "text": "&lt;prompt&gt;" }] } where the prompt
 /// is the exact input string (no escaping beyond JSON serialization).
+/// BuildTextPart_IncludesPromptText_InRequestBody checks the same through a real ExecuteAsync call.
 /// Feature: opencode-agent-executor
 /// </summary>
 [Trait("Feature", "opencode-agent-executor")]
@@ -121,6 +123,31 @@ public class OpenCodeRequestBodyPropertyTests
         var partsElement = body.GetProperty("parts");
         Assert.Equal(1, partsElement.GetArrayLength());
         Assert.Equal(input.Prompt, partsElement[0].GetProperty("text").GetString());
+    }
+
+    // ── BuildTextPart helper ──────────────────────────────────────────────
+
+    /// <summary>
+    /// The text part is always built from the prompt — verified via a real execute call.
+    /// </summary>
+    [Fact]
+    public async Task BuildTextPart_IncludesPromptText_InRequestBody()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-text-part");
+        ctx.Handler.ForUrlPattern("/session/.+/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "response" }]
+        });
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+        await ctx.Provider.ExecuteAsync(
+            OpenCodeTestHelpers.CreateRequest("my unique prompt text"), CancellationToken.None);
+
+        var messageRequest = ctx.Handler.Requests
+            .FirstOrDefault(r => r.Path.Contains("/message"));
+        messageRequest.Should().NotBeNull();
+        messageRequest!.Body.Should().Contain("my unique prompt text");
     }
 }
 

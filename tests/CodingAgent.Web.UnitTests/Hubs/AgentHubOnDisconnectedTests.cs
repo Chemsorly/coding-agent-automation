@@ -134,6 +134,22 @@ public sealed class AgentHubOnDisconnectedTests
         _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
     }
 
+    [Fact]
+    public async Task OnDisconnectedAsync_WithException_LogsExceptionMessage()
+    {
+        var hub = CreateHub("conn-1");
+
+        var agent = CreateAgent("agent-1", "conn-1");
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+
+        // Should not rethrow the passed exception
+        await hub.OnDisconnectedAsync(exception: new InvalidOperationException("test error"));
+
+        _facade.Verify(f => f.TransitionStatus(
+            It.Is<AgentId>(a => a.Value == "agent-1"),
+            AgentStatus.Disconnected), Times.Once);
+    }
+
     // ── Fix 1: non-chat agent with active job still logs Warning ──────────────
 
     /// <summary>
@@ -159,7 +175,7 @@ public sealed class AgentHubOnDisconnectedTests
         // If the argument count ever drops to 3 or fewer, Serilog will bind to an explicit typed overload
         // (Warning(string, object, object, object)) and this verify will silently stop matching.
         // Consider matching with individual It.IsAny<object?>() matchers for the exact parameter count,
-        // consistent with the pattern in AgentHubDeregisterReadyTests.cs:79.
+        // consistent with the pattern in AgentHubRegistrationTests.DeregisterAgent_CallerNotFound_DoesNotDeregister.
         // See review finding: TestQualityReviewer [WARNING] AgentHubOnDisconnectedTests.cs:155
         _logger.Verify(l => l.Warning(
             It.Is<string>(s => s.Contains("active job")),

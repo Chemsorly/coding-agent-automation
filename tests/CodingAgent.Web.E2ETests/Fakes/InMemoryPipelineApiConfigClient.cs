@@ -4,6 +4,7 @@ using System.Text.Json.Serialization;
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
+using CodingAgent.Web.TestUtilities;
 
 namespace CodingAgent.Web.E2ETests.Fakes;
 
