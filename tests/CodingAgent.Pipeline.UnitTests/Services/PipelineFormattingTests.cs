@@ -95,6 +95,40 @@ public class PipelineFormattingTests
         withoutSuffix.Should().NotEndWith("-");
     }
 
+    [Theory]
+    [InlineData("Fix the bug!", "42", "feature/auto-42-fix-the-bug")]
+    [InlineData("Hello World", "1", "feature/auto-1-hello-world")]
+    [InlineData("UPPER CASE", "99", "feature/auto-99-upper-case")]
+    [InlineData("special @#$ chars", "5", "feature/auto-5-special-chars")]
+    [InlineData("---leading-trailing---", "7", "feature/auto-7-leading-trailing")]
+    [InlineData("multiple   spaces", "3", "feature/auto-3-multiple-spaces")]
+    public void GenerateBranchName_WithSpecialCharacters_ProducesValidSlug(string title, string number, string expected)
+    {
+        var result = PipelineFormatting.GenerateBranchName(number, title);
+        result.Should().Be(expected);
+    }
+
+    [Fact]
+    public void GenerateBranchName_WithLongTitle_TruncatesToMaxLength()
+    {
+        var longTitle = new string('a', 200);
+        var result = PipelineFormatting.GenerateBranchName("42", longTitle);
+        result.Length.Should().BeLessThanOrEqualTo(100);
+        result.Should().StartWith("feature/auto-42-");
+        result.Should().NotEndWith("-");
+    }
+
+    [Fact]
+    public void GenerateBranchName_TruncationDoesNotLeaveTrailingHyphen()
+    {
+        // Spaces become hyphens in the slug; truncation mid-slug could leave a trailing hyphen
+        var title = string.Join(" ", Enumerable.Repeat("word", 50));
+        var result = PipelineFormatting.GenerateBranchName("1", title);
+        result.Length.Should().BeLessThanOrEqualTo(100);
+        result.Should().NotEndWith("-");
+        result.Should().NotContain("--");
+    }
+
     // --- GeneratePrTitle ---
 
     [Fact]
@@ -203,6 +237,16 @@ public class PipelineFormattingTests
     // Deleted (behavior removed): GeneratePrBody_NullCoverage_ShowsNotAvailable — asserted "Not available"
     // Deleted (behavior removed): GeneratePrBody_WithCodeReview_ShowsReviewSection — asserted ## AI Code Review Findings
     // Deleted (behavior removed): GeneratePrBody_WithCodeReview_NoFindings_ShowsNoFindingsMessage — asserted "Code review: no findings"
+    // Deleted (behavior removed): GeneratePrBody_IncludesAllSections — asserted ## Files Changed, ## Test Results, ## Coverage
+    // Deleted (behavior removed): GeneratePrBody_WithNullCoverage_ShowsNotAvailable — asserted "Not available" from ## Coverage
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewDisabled_OmitsSection — asserted absence of AI Code Review Findings
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewNoFindings_ShowsNoFindings — asserted code review no findings
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewWithFindings_ShowsAgents — asserted code review agents
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewWithFindings_ShowsSeverityTable — asserted severity table
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewWithFindings_PerAgentCollapsibleBlocks — asserted collapsible blocks
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewAgentFindings_TruncatedAt10000Chars — asserted findings truncation
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewZeroCounts_OmitsZeroRows — asserted zero-count row omission
+    // Deleted (behavior removed): GeneratePrBody_CodeReviewNoAgents_OmitsAgentsLine — asserted agents line omission
 
     [Fact]
     public void GeneratePrBody_ContainsIssueContextSection()
@@ -265,29 +309,39 @@ public class PipelineFormattingTests
     }
 
     [Fact]
-    public void GeneratePrBody_WithComments_ShowsInputCommentsSection()
+    public void GeneratePrBody_WithComments_IncludesInputCommentsSection()
     {
         var comments = new List<IssueComment>
         {
-            new()
-            {
-                Id = "1",
-                Body = "Please also handle edge case X",
-                Author = "reviewer",
-                CreatedAt = new DateTime(2026, 1, 15, 10, 30, 0, DateTimeKind.Utc)
-            }
+            new() { Id = "1", Body = "Please handle edge cases", Author = "alice", CreatedAt = new DateTime(2026, 4, 10, 14, 30, 0, DateTimeKind.Utc) },
+            new() { Id = "2", Body = "Also update the docs", Author = "bob", CreatedAt = new DateTime(2026, 4, 11, 9, 0, 0, DateTimeKind.Utc) },
         };
 
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
-                IssueReference = "#1",
-                IssueTitle = "Test",
+                IssueReference = "#42",
+                IssueTitle = "Feature",
                 Comments = comments,
             });
 
-        result.Should().Contain("## Input Comments");
-        result.Should().Contain("@reviewer");
-        result.Should().Contain("Please also handle edge case X");
+        body.Should().Contain("## Input Comments");
+        body.Should().Contain("@alice");
+        body.Should().Contain("2026-04-10 14:30 UTC");
+        body.Should().Contain("Please handle edge cases");
+        body.Should().Contain("@bob");
+        body.Should().Contain("Also update the docs");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithNoComments_OmitsInputCommentsSection()
+    {
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                IssueTitle = "Bug",
+            });
+
+        body.Should().NotContain("## Input Comments");
     }
 
     // --- FormatQualityGateSummary ---
@@ -396,20 +450,44 @@ public class PipelineFormattingTests
     }
 
     [Fact]
+    public void GeneratePrBody_TruncatesLongComments()
+    {
+        var longBody = new string('x', 2500);
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Body = longBody, Author = "alice", CreatedAt = DateTime.UtcNow },
+        };
+
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                IssueTitle = "T",
+                Comments = comments,
+            });
+
+        body.Should().Contain("…");
+        body.Should().NotContain(longBody);
+    }
+
+    [Fact]
     public void GeneratePrBody_ExcludesAgentAnalysisComments()
     {
         var comments = new List<IssueComment>
         {
-            new() { Id = "1", Author = "bot", Body = "## 🤖 Agent Analysis\nSome analysis", CreatedAt = DateTime.UtcNow },
-            new() { Id = "2", Author = "user1", Body = "Real comment", CreatedAt = DateTime.UtcNow }
+            new() { Id = "1", Body = "Real feedback", Author = "alice", CreatedAt = DateTime.UtcNow },
+            new() { Id = "2", Body = "## 🤖 Agent Analysis\n\nPlanned approach...", Author = "bot", CreatedAt = DateTime.UtcNow },
         };
+
         var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
             {
-                IssueReference = "#42",
-                IssueTitle = "Fix bug",
+                IssueReference = "5",
+                IssueTitle = "Test",
                 Comments = comments,
             });
-        body.Should().Contain("Real comment");
+
+        body.Should().Contain("@alice");
+        body.Should().Contain("Real feedback");
+        body.Should().NotContain("@bot");
         body.Should().NotContain("Agent Analysis");
     }
 

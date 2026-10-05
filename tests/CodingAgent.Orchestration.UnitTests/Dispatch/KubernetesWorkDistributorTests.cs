@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Api.Client;
 using CodingAgent.Orchestration.Dispatch;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -11,7 +12,7 @@ namespace CodingAgent.Orchestration.UnitTests.Dispatch;
 /// Tests for KubernetesWorkDistributor.
 /// Covers: DistributeAsync (success/failure), CancelJobAsync (success/BadRequest/exception/invalid GUID),
 /// GetJobStatusAsync (all WorkItemStatus values, null, invalid GUID),
-/// IsIssueDistributedAsync, GetActiveIssueIdentifiersAsync.
+/// IsIssueDistributedAsync, GetActiveIssueIdentifiersAsync, ReconcileStuckItemsAsync.
 /// </summary>
 public sealed class KubernetesWorkDistributorTests
 {
@@ -219,6 +220,34 @@ public sealed class KubernetesWorkDistributorTests
     }
 
     [Fact]
+    public async Task DistributeAsync_ImplementationRequest_CallsCreateAsync_NotDispatchAsync_InApiTests()
+    {
+        // Non-Consolidation requests must use CreateAsync (Pending enqueue path).
+        var workItemId = Guid.NewGuid();
+        var request = MakeRequest();
+
+        _client
+            .Setup(c => c.CreateAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(workItemId);
+
+        await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Verify CreateAsync was called (Pending enqueue path)
+        _client.Verify(
+            c => c.CreateAsync(
+                It.Is<JobDistributionRequest>(r =>
+                    r.IssueIdentifier == request.IssueIdentifier &&
+                    r.IssueProviderConfigId == request.IssueProviderConfigId),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Verify DispatchAsync was NOT called (synchronous dispatch path is retired)
+        _client.Verify(
+            c => c.DispatchAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
     public async Task DistributeAsync_WhenApiThrows_ReturnsFailureResult()
     {
         _client
@@ -414,6 +443,19 @@ public sealed class KubernetesWorkDistributorTests
         result.Should().HaveCount(2);
         result.Should().Contain(("active-1", "p1"));
         result.Should().Contain(("active-2", "p2"));
+    }
+
+    // ── ReconcileStuckItemsAsync ──────────────────────────────────────────
+
+    [Fact]
+    public async Task ReconcileStuckItems_NoItems_ReturnsZero()
+    {
+        // KubernetesWorkDistributor keeps the IWorkDistributor default, which reports nothing to reconcile.
+        IWorkDistributor sut = _sut;
+
+        var count = await sut.ReconcileStuckItemsAsync(CancellationToken.None);
+
+        count.Should().Be(0);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
