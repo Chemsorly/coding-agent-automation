@@ -183,15 +183,9 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             // Treating Skipped as Failed caused spurious quality-gate failures: when concurrency:cancel-in-progress
             // killed the prior workflow run, these jobs landed as Skipped, which was then reported as
             // "CI Cancelled. 2 job(s) failed: 'docker-push', 'publish-chart'".
-            WorkflowJobConclusion.Skipped => PipelineRunState.Passed,
-            // TODO [WARNING]: WorkflowJobConclusion.Neutral falls through to this default arm and
-            // maps to Failed. Previously it mapped to Passed (same as Skipped), because Neutral
-            // is not an actionable failure — some check run types and third-party apps use it to
-            // indicate "ran without a definitive pass/fail". Mapping it to Failed causes spurious
-            // quality-gate failures when a workflow job exits neutral (e.g. a linting job that
-            // reports warnings but no errors). The [InlineData] test case for Neutral was removed
-            // in the same change, leaving this mapping unverified. Consider restoring
-            // WorkflowJobConclusion.Neutral => PipelineRunState.Passed and adding back the test.
+            // A neutral job did not fail either. Mapping it to Failed reported it to the agent as the
+            // failure and, having no log, made the classifier treat the run as an infrastructure failure.
+            WorkflowJobConclusion.Skipped or WorkflowJobConclusion.Neutral => PipelineRunState.Passed,
             _ => PipelineRunState.Failed
         };
     }

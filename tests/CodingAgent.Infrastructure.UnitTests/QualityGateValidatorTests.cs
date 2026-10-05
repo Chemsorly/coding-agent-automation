@@ -380,17 +380,50 @@ public class QualityGateValidatorTests
         details.Should().Contain("Cancelled");
     }
 
-    // TODO [WARNING]: The prior two tests (BuildCiFailureDetails_OnlyCancelledJob and
-    // BuildCiFailureDetails_FailedAndCancelledJobs) were replaced by the single
-    // CancelledRunState test above. The replacement covers State==Cancelled with cascaded
-    // Failed jobs, but does NOT cover the case where State==Failed with a mix of genuinely
-    // failed jobs and cancelled jobs (State=Cancelled overall run is distinct from individual
-    // job cancellations within a State=Failed run). If BuildCiFailureDetails ever changes to
-    // behave differently when State==Failed with non-zero cancelledJobs, that regression path
-    // will be undetected. Consider adding:
-    //   BuildCiFailureDetails_FailedRunState_WithCancelledJobs_ListsFailedJobsOnly
-    // to assert that a State=Failed run still names the failed jobs even when cancelled jobs
-    // are also present, confirming the conditional logic for State==Cancelled is not over-broad.
+    [Fact]
+    public void BuildCiFailureDetails_OnlyCancelledJob_NamesItAsCancelledWithoutUnknownFailure()
+    {
+        // The e2e job hit its timeout-minutes: GitHub reports it cancelled, the skipped deploy
+        // jobs map to Passed. The agent must be pointed at e2e, not at "0 job(s) failed: unknown".
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Cancelled,
+            Jobs = new List<PipelineJobResult>
+            {
+                new() { Name = "e2e", State = PipelineRunState.Cancelled },
+                new() { Name = "docker-push", State = PipelineRunState.Passed },
+                new() { Name = "publish-chart", State = PipelineRunState.Passed }
+            }
+        };
+
+        var details = QualityGateValidator.BuildCiFailureDetails(status);
+
+        details.Should().StartWith("CI Cancelled.");
+        details.Should().Contain("1 job(s) cancelled before finishing: 'e2e'.");
+        details.Should().Contain("timeout");
+        details.Should().NotContain("job(s) failed");
+        details.Should().NotContain("docker-push");
+        details.Should().NotContain("publish-chart");
+    }
+
+    [Fact]
+    public void BuildCiFailureDetails_FailedAndCancelledJobs_ListsBoth()
+    {
+        var status = new PipelineRunStatus
+        {
+            State = PipelineRunState.Failed,
+            Jobs = new List<PipelineJobResult>
+            {
+                new() { Name = "build", State = PipelineRunState.Failed },
+                new() { Name = "e2e", State = PipelineRunState.Cancelled }
+            }
+        };
+
+        var details = QualityGateValidator.BuildCiFailureDetails(status);
+
+        details.Should().Contain("1 job(s) failed: 'build'.");
+        details.Should().Contain("1 job(s) cancelled before finishing: 'e2e'.");
+    }
 
     // --- Helpers ---
 
@@ -896,5 +929,328 @@ public class QualityGateValidatorInfraKillTests
             report.Tests.Passed.Should().BeFalse();
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+}
+
+/// <summary>
+/// Tests for the <c>reportEvent</c> delegate of <see cref="QualityGateValidator.ValidateAsync"/>,
+/// which fires a server-side process_timeout agent-stall event (issue #2979).
+///
+/// Without these tests, removing or misplacing the ctx.ReportPipelineRunEvent?.Invoke(...)
+/// call in QualityGateValidator.RunQgcProcessAsync would silently break process_timeout
+/// observability.
+/// </summary>
+public class ValidateAsyncStallReportingTests
+{
+    [Fact]
+    public async Task Tests_Timeout_FiresProcessTimeoutStallEvent()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-sside-timeout-{Guid.NewGuid():N}");
+        try
+        {
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 1
+            };
+
+            // Use a non-null reportEvent delegate
+            var report = await validator.ValidateAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportedEvents.Add);
+
+            // Gate must still fail (timeout is a gate failure)
+            report.Tests!.Passed.Should().BeFalse("a process timeout must produce a failed Tests gate");
+            report.QgcResults[0].Tests!.Details.Should().Contain("timed out");
+
+            // Exactly one AgentStall event with kind=process_timeout must have been reported
+            var stallEvents = reportedEvents
+                .Where(e => e.Kind == PipelineRunEventKind.AgentStall)
+                .ToList();
+
+            stallEvents.Should().ContainSingle(
+                "one process_timeout AgentStall event must be fired per QGC process timeout");
+            stallEvents[0].Result.Should().Be(PipelineTelemetry.AgentStallKinds.ProcessTimeout,
+                "the stall kind must be process_timeout");
+            stallEvents[0].Stage.Should().Be(PipelineTelemetry.RunPhases.QualityGate,
+                "the phase must be quality_gate for QGC process timeouts");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    [Fact]
+    public async Task Compilation_Timeout_FiresProcessTimeoutStallEvent()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-sside-comp-{Guid.NewGuid():N}");
+        try
+        {
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Build",
+                CompilationCommand = "dotnet",
+                CompilationArguments = ["build"],
+                ProcessTimeoutSeconds = 1
+            };
+
+            var report = await validator.ValidateAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportedEvents.Add);
+
+            report.Compilation.Passed.Should().BeFalse("compilation timeout must fail the gate");
+
+            var stallEvents = reportedEvents
+                .Where(e => e.Kind == PipelineRunEventKind.AgentStall)
+                .ToList();
+
+            stallEvents.Should().ContainSingle(
+                "one process_timeout AgentStall event must be fired for a compilation timeout");
+            stallEvents[0].Result.Should().Be(PipelineTelemetry.AgentStallKinds.ProcessTimeout);
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    [Fact]
+    public async Task WhenNoTimeout_NoStallEventIsReported()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-sside-ok-{Guid.NewGuid():N}");
+        try
+        {
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: false);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 60
+            };
+
+            await validator.ValidateAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportedEvents.Add);
+
+            reportedEvents.Should().BeEmpty(
+                "no stall events should be reported when the process completes within the timeout");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    private sealed class TimeoutSimulatingValidator : QualityGateValidator
+    {
+        private readonly bool _simulateTimeout;
+
+        public TimeoutSimulatingValidator(bool simulateTimeout)
+            : base(Serilog.Log.Logger) => _simulateTimeout = simulateTimeout;
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+        {
+            if (_simulateTimeout)
+                throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
+            return Task.FromResult((0, "Passed: 3\nTest summary: total: 3; failed: 0; succeeded: 3; skipped: 0; duration: 0.1s", ""));
+        }
+    }
+}
+
+/// <summary>
+/// Covers the directory-cleanup exception catch branch in the workspace-cleanup prologue
+/// (<c>CleanWorkspacePrologue</c>) that <see cref="QualityGateValidator.ValidateAsync"/> runs,
+/// with and without a <c>reportEvent</c> delegate.
+/// The happy-path tests pre-create the TestResults directory so <c>Directory.Exists</c>
+/// returns true and the deletion lines execute. The exception-path tests use <c>chmod 000</c>
+/// on a subdirectory (Linux only) so <c>Directory.Delete</c> throws and the catch block runs.
+/// Root ignores directory permissions, so when the tests run as root the delete succeeds and
+/// the catch block is not reached.
+/// The catch blocks log a Warning and continue; the gate result is not affected.
+/// </summary>
+public class QualityGateValidatorCleanupExceptionTests
+{
+    /// <summary>
+    /// ValidateAsync with a reportEvent delegate must successfully delete the TestResults
+    /// directory when it exists (the happy-path delete in the cleanup prologue).
+    /// </summary>
+    [Fact]
+    public async Task ValidateAsync_WithReportEvent_WhenTestResultsDirExists_DeletesItSuccessfully()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-sside-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        try
+        {
+            // Pre-create the TestResults directory so Directory.Exists returns true
+            // and the cleanup lines are executed.
+            var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+            Directory.CreateDirectory(testResultsDir);
+            File.WriteAllText(Path.Combine(testResultsDir, "dummy.txt"), "dummy");
+
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new NoOpProcessValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 30
+            };
+
+            // Must complete — cleanup (delete TestResults) runs without throwing
+            var report = await validator.ValidateAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportedEvents.Add);
+
+            report.Should().NotBeNull("the method must return a report after running the cleanup prologue");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// ValidateAsync must successfully delete the TestResults directory when it exists
+    /// (the happy-path delete in the cleanup prologue).
+    /// </summary>
+    [Fact]
+    public async Task ValidateAsync_WhenTestResultsDirExists_DeletesItSuccessfully()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-base-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        try
+        {
+            // Pre-create the TestResults directory so the cleanup branch executes
+            var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+            Directory.CreateDirectory(testResultsDir);
+            File.WriteAllText(Path.Combine(testResultsDir, "dummy.txt"), "dummy");
+
+            var validator = new NoOpProcessValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 30
+            };
+
+            // Must complete — cleanup runs without throwing (the assertion is that no exception propagates)
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+
+            report.Should().NotBeNull("the method must return a report after running the cleanup prologue");
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// ValidateAsync must complete successfully when the TestResults directory cleanup
+    /// throws (the exception is caught and logged at Warning level, not propagated).
+    /// On Linux: chmod 000 on a TestResults subdirectory prevents recursive deletion.
+    /// </summary>
+    [SkipOnWindowsFact]
+    public async Task ValidateAsync_WhenTestResultsCleanupThrows_CompletesSuccessfully()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-except-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+        try
+        {
+            // Create TestResults with a subdirectory that cannot be deleted (chmod 000)
+            Directory.CreateDirectory(testResultsDir);
+            var subDir = Path.Combine(testResultsDir, "protected");
+            Directory.CreateDirectory(subDir);
+
+            // Make the subdir non-traversable so Directory.Delete(testResultsRoot, true) throws
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                $"000 \"{subDir}\"")
+            { UseShellExecute = false })!.WaitForExit();
+
+            var validator = new NoOpProcessValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 30
+            };
+
+            // Must not throw even though cleanup throws — exception is swallowed
+            var act = async () => await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+            await act.Should().NotThrowAsync(
+                "a Directory.Delete exception in the cleanup prologue must be caught and not propagated");
+        }
+        finally
+        {
+            // Restore permissions so cleanup can succeed
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                    $"-R 755 \"{testResultsDir}\"")
+                { UseShellExecute = false })!.WaitForExit();
+            }
+            catch { }
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// ValidateAsync with a reportEvent delegate must complete successfully when the
+    /// TestResults directory cleanup throws.
+    /// </summary>
+    [SkipOnWindowsFact]
+    public async Task ValidateAsync_WithReportEvent_WhenTestResultsCleanupThrows_CompletesSuccessfully()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-cleanup-sside-ex-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempWorkspace);
+        var testResultsDir = Path.GetFullPath(Path.Combine(tempWorkspace, "TestResults"));
+        try
+        {
+            Directory.CreateDirectory(testResultsDir);
+            var subDir = Path.Combine(testResultsDir, "protected");
+            Directory.CreateDirectory(subDir);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                $"000 \"{subDir}\"")
+            { UseShellExecute = false })!.WaitForExit();
+
+            var reportedEvents = new List<PipelineRunEventReport>();
+            var validator = new NoOpProcessValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 30
+            };
+
+            var act = async () => await validator.ValidateAsync(
+                tempWorkspace, [qgc], CancellationToken.None, reportEvent: reportedEvents.Add);
+            await act.Should().NotThrowAsync(
+                "a Directory.Delete exception in the cleanup prologue must be caught");
+        }
+        finally
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("chmod",
+                    $"-R 755 \"{testResultsDir}\"")
+                { UseShellExecute = false })!.WaitForExit();
+            }
+            catch { }
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// A no-op <see cref="QualityGateValidator"/> that never actually executes a process,
+    /// used to exercise the cleanup prologue without needing real build/test tools.
+    /// </summary>
+    private sealed class NoOpProcessValidator : QualityGateValidator
+    {
+        public NoOpProcessValidator() : base(Serilog.Log.Logger) { }
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+            => Task.FromResult((0, "Passed: 1\nTest summary: total: 1; failed: 0; succeeded: 1; skipped: 0; duration: 0.0s", ""));
     }
 }
