@@ -254,6 +254,39 @@ public class PipelineRunHashExtensionsPropertyTests
         result.Should().BeNull("missing required runId must return null");
     }
 
+    [Fact]
+    public void FromHash_MissingIssueIdentifier_ReturnsNull()
+    {
+        var hash = MakeMinimalRun().ToHashEntries()
+            .Where(e => (string)e.Name! != "issueIdentifier")
+            .ToArray();
+
+        PipelineRunHashExtensions.FromHash(hash)
+            .Should().BeNull("missing required issueIdentifier must return null");
+    }
+
+    [Fact]
+    public void FromHash_MissingIssueProviderConfigId_ReturnsNull()
+    {
+        var hash = MakeMinimalRun().ToHashEntries()
+            .Where(e => (string)e.Name! != "issueProviderConfigId")
+            .ToArray();
+
+        PipelineRunHashExtensions.FromHash(hash)
+            .Should().BeNull("missing required issueProviderConfigId must return null");
+    }
+
+    [Fact]
+    public void FromHash_MissingRepoProviderConfigId_ReturnsNull()
+    {
+        var hash = MakeMinimalRun().ToHashEntries()
+            .Where(e => (string)e.Name! != "repoProviderConfigId")
+            .ToArray();
+
+        PipelineRunHashExtensions.FromHash(hash)
+            .Should().BeNull("missing required repoProviderConfigId must return null");
+    }
+
     // ── Multi-field roundtrip (integration-style) ─────────────────────────────
 
     [Fact]
