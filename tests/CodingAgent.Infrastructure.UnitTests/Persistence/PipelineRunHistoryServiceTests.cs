@@ -56,6 +56,13 @@ public class PipelineRunHistoryServiceTests : IDisposable
             await Task.Delay(50);
     }
 
+    private string MakeTempDir()
+    {
+        var path = Path.Combine(_tempDir, Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
     [Theory]
     [InlineData(0, 0)]
     [InlineData(3, 100)]
@@ -370,5 +377,256 @@ public class PipelineRunHistoryServiceTests : IDisposable
         // open when the test fixture tears down, causing an IOException on Windows.
         var expectedFile = Path.Combine(_tempDir, $"{runId}.json");
         await WaitForFileAsync(expectedFile, timeoutMs: 15000);
+    }
+
+    // ── GetRunAsync ───────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetRunAsync_ReturnsNull_WhenRunIdNotInHistory()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        var result = await svc.GetRunAsync(Guid.NewGuid());
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetRunAsync_ReturnsSummary_WhenRunExists()
+    {
+        var dir = MakeTempDir();
+        var runId = Guid.NewGuid();
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow,
+            CompletedAtOffset = DateTimeOffset.UtcNow
+        };
+        File.WriteAllText(Path.Combine(dir, $"{runId}.json"), JsonSerializer.Serialize(summary, JsonOptions));
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+        var result = await svc.GetRunAsync(runId);
+
+        result.Should().NotBeNull();
+        result!.RunId.Should().Be(runId.ToString());
+    }
+
+    // ── GetRunHistoryAsync paginated ─────────────────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistoryAsync_PageLessThanOne_Throws()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        var act = () => svc.GetRunHistoryAsync(page: 0, pageSize: 10);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("page");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_PageSizeLessThanOne_Throws()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        var act = () => svc.GetRunHistoryAsync(page: 1, pageSize: 0);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("pageSize");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_PageSizeExceedsMax_Throws()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        var act = () => svc.GetRunHistoryAsync(page: 1, pageSize: PipelineRunHistoryService.MaxHistorySize + 1);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("pageSize");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_PageOverflow_Throws()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        // page = int.MaxValue, pageSize = 2 → offset overflows
+        var act = () => svc.GetRunHistoryAsync(page: int.MaxValue, pageSize: 2);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("page");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_Page1_ReturnsFirstPage()
+    {
+        var dir = MakeTempDir();
+        // Seed 5 runs
+        var runs = Enumerable.Range(1, 5).Select(i => new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = $"{i}",
+            IssueTitle = $"Run {i}",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-i)
+        }).ToList();
+        foreach (var r in runs)
+            File.WriteAllText(Path.Combine(dir, $"{r.RunId}.json"), JsonSerializer.Serialize(r, JsonOptions));
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+        var result = await svc.GetRunHistoryAsync(page: 1, pageSize: 3);
+
+        result.Items.Count.Should().Be(3);
+        result.HasMore.Should().BeTrue();
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_LastPage_HasMoreFalse()
+    {
+        var dir = MakeTempDir();
+        var runs = Enumerable.Range(1, 4).Select(i => new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = $"{i}",
+            IssueTitle = $"Run {i}",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-i)
+        }).ToList();
+        foreach (var r in runs)
+            File.WriteAllText(Path.Combine(dir, $"{r.RunId}.json"), JsonSerializer.Serialize(r, JsonOptions));
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+        var result = await svc.GetRunHistoryAsync(page: 2, pageSize: 3);
+
+        result.Items.Count.Should().Be(1, "4 items, page 2 of page-size 3 = 1 item");
+        result.HasMore.Should().BeFalse();
+    }
+
+    // ── GetRunHistoryAsync feedbackOnly ──────────────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistoryAsync_FeedbackOnly_False_ReturnsSameAsPaginated()
+    {
+        var dir = MakeTempDir();
+        var run = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "1",
+            IssueTitle = "Any",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow,
+            Feedback = null
+        };
+        File.WriteAllText(Path.Combine(dir, $"{run.RunId}.json"), JsonSerializer.Serialize(run, JsonOptions));
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+        var withFeedback = await svc.GetRunHistoryAsync(page: 1, pageSize: 10, feedbackOnly: false);
+
+        withFeedback.Items.Count.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_FeedbackOnly_True_FiltersToRunsWithFeedback()
+    {
+        var dir = MakeTempDir();
+        var withFeedback = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "1",
+            IssueTitle = "Has Feedback",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-1),
+            Feedback = new RunFeedback
+            {
+                Outcome = FeedbackOutcome.Success,
+                CollectedAtUtc = DateTime.UtcNow,
+                Harness = new HarnessFeedback { Category = "ok" }
+            }
+        };
+        var withoutFeedback = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "2",
+            IssueTitle = "No Feedback",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow,
+            Feedback = null
+        };
+        File.WriteAllText(Path.Combine(dir, $"{withFeedback.RunId}.json"), JsonSerializer.Serialize(withFeedback, JsonOptions));
+        File.WriteAllText(Path.Combine(dir, $"{withoutFeedback.RunId}.json"), JsonSerializer.Serialize(withoutFeedback, JsonOptions));
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+        var result = await svc.GetRunHistoryAsync(page: 1, pageSize: 10, feedbackOnly: true);
+
+        result.Items.Count.Should().Be(1);
+        result.Items[0].IssueTitle.Should().Be("Has Feedback");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_FeedbackOnly_PageLessThanOne_Throws()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        var act = () => svc.GetRunHistoryAsync(page: 0, pageSize: 10, feedbackOnly: true);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("page");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_FeedbackOnly_PageSizeLessThanOne_Throws()
+    {
+        var dir = MakeTempDir();
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+
+        var act = () => svc.GetRunHistoryAsync(page: 1, pageSize: 0, feedbackOnly: true);
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>().WithParameterName("pageSize");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_FeedbackOnly_HasMoreWhenMoreItems()
+    {
+        var dir = MakeTempDir();
+        // Seed 3 runs with feedback
+        for (var i = 1; i <= 3; i++)
+        {
+            var r = new PipelineRunSummary
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = $"{i}",
+                IssueTitle = $"Feedback Run {i}",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-i),
+                Feedback = new RunFeedback
+                {
+                    Outcome = FeedbackOutcome.Success,
+                    CollectedAtUtc = DateTime.UtcNow,
+                    Harness = new HarnessFeedback { Category = "ok" }
+                }
+            };
+            File.WriteAllText(Path.Combine(dir, $"{r.RunId}.json"), JsonSerializer.Serialize(r, JsonOptions));
+        }
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, dir);
+        var result = await svc.GetRunHistoryAsync(page: 1, pageSize: 2, feedbackOnly: true);
+
+        result.Items.Count.Should().Be(2);
+        result.HasMore.Should().BeTrue();
+    }
+
+    // ── LoadRunHistory — no directory ────────────────────────────────────────
+
+    [Fact]
+    public async Task Constructor_RunsDirectoryDoesNotExist_LoadsEmptyHistory()
+    {
+        // Directory that doesn't exist — constructor should not throw, history is empty
+        var nonExistent = Path.Combine(Path.GetTempPath(), $"prs-nonexistent-{Guid.NewGuid()}");
+
+        var svc = new PipelineRunHistoryService(_mockLogger.Object, nonExistent);
+        var history = await svc.GetRunHistoryAsync();
+
+        history.Should().BeEmpty();
     }
 }

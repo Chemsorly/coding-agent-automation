@@ -179,15 +179,17 @@ public sealed class AgentHubIssueProxyTests
     }
 
     [Fact]
-    public async Task RequestListOpenIssues_NoRun_ThrowsHubException()
+    public async Task RequestListOpenIssues_UnknownRun_ThrowsHubException()
     {
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(((string, string)?)null);
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         var hub = CreateHub();
-        var act = () => hub.RequestListOpenIssues("job-1", 1, 25, null);
-        await act.Should().ThrowAsync<HubException>();
+        var act = () => hub.RequestListOpenIssues(new JobId("ghost"), 1, 10, null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*No active run*");
     }
 
     // ── RequestListClosedIssues ───────────────────────────────────────────
@@ -287,8 +289,6 @@ public sealed class AgentHubIssueProxyTests
         result.Should().HaveCount(1);
         result[0].Id.Should().Be("c1");
     }
-
-    // ── RequestUpdateComment ──────────────────────────────────────────────
 
     // ── HubException pass-through regression tests (issue #3279) ─────────
     // Guard against a regression where the hub's outer catch(Exception) re-wraps a HubException
@@ -432,6 +432,23 @@ public sealed class AgentHubIssueProxyTests
         await act.Should().ThrowAsync<HubException>().WithMessage("*update comment*");
     }
 
+    [Fact]
+    public async Task RequestUpdateComment_NonNumericCommentId_ThrowsHubException()
+    {
+        // After the type change, the hub parses the wire-string commentId to long before
+        // calling IIssueProvider. A non-numeric commentId must surface as HubException
+        // (wrapped by ExecuteWithIssueProviderAsync) rather than silently failing.
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestUpdateComment(
+            new JobId("job-1"), "issue-1", "not-a-number", "body");
+
+        // ExecuteWithIssueProviderAsync wraps all failures as HubException,
+        // so the ArgumentException from the parse guard becomes a HubException.
+        await act.Should().ThrowAsync<HubException>();
+    }
+
     // ── RequestCreateIssueForProvider ─────────────────────────────────────
 
     [Fact]
@@ -450,19 +467,6 @@ public sealed class AgentHubIssueProxyTests
         var hub = CreateHub();
         var act = () => hub.RequestCreateIssueForProvider("job-1", "cfg-x", "title", "body", new[] { "label" });
         await act.Should().ThrowAsync<HubException>().WithMessage("*No active run*");
-    }
-
-    [Fact]
-    public async Task RequestCreateIssueForProvider_ConfigNotFound_ThrowsHubException()
-    {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig>()); // no matching config
-
-        var hub = CreateHub();
-        var act = () => hub.RequestCreateIssueForProvider("job-1", "nonexistent-cfg", "title", "body", new[] { "label" });
-        await act.Should().ThrowAsync<HubException>().WithMessage("*not found*");
     }
 
     [Fact]
@@ -507,6 +511,22 @@ public sealed class AgentHubIssueProxyTests
         var hub = CreateHub();
         var act = () => hub.RequestCreateIssueForProvider("job-1", "cfg-fail", "title", "body", new[] { "bug" });
         await act.Should().ThrowAsync<HubException>().WithMessage("*Failed to create issue*");
+    }
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_ProviderConfigNotFound_ThrowsHubException()
+    {
+        var run = CreateDecompositionRun();
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "missing-provider", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*missing-provider*not found*");
     }
 
     // ── ExecuteWithIssueProviderAsync — no provider config found ─────────
@@ -958,4 +978,403 @@ public sealed class AgentHubIssueProxyTests
         ex.Which.Message.Should().StartWith("Failed to ");
         ex.Which.Message.Should().Contain("list comments");
     }
+
+    // ── RequestCreateIssueForProvider — different provider, projectId empty → rejected
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_EmptyProjectId_RejectsOtherProvider()
+    {
+        var run = CreateDecompositionRun(projectId: "", issueProviderConfigId: "ip-1");
+        var otherConfig = MakeProviderConfig("ip-other");
+
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new[] { otherConfig });
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "ip-other", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-other*not in the scope*");
+        _mockFacade.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
+    }
+
+    // ── RequestCreateIssueForProvider — project epic: provider outside the project → HubException
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_ProjectEpic_ProviderNotInProject_ThrowsHubException()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        SetupScopeCheck(run, "ip-foreign", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "ip-foreign", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-foreign*not in the scope*");
+    }
+
+    // ── RequestCreateIssueForProvider — project epic: a disabled template's tracker → HubException
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_ProjectEpic_DisabledTemplatesTracker_ThrowsHubException()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        SetupScopeCheck(run, "ip-disabled", epicTrackerId: "ip-1",
+            EnabledTemplate("ip-disabled") with { Enabled = false });
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "ip-disabled", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-disabled*not in the scope*");
+    }
+
+    // ── RequestCreateIssueForProvider — repo epic: another template's tracker → HubException
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_RepoEpic_OtherTemplatesTracker_ThrowsHubException()
+    {
+        // The run is bound to its template's tracker (ip-1), not to the project's epic tracker (ip-epics),
+        // so it is a repo epic and may only create issues in its own tracker.
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        SetupScopeCheck(run, "ip-allowed", epicTrackerId: "ip-epics", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "ip-allowed", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-allowed*not in the scope*");
+    }
+
+    // ── RequestCreateIssueForProvider — the run's project no longer exists → HubException
+
+    [Fact]
+    public async Task RequestCreateIssueForProvider_ProjectNotFound_ThrowsHubException()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        SetupScopeCheck(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+        _mockFacade.Setup(f => f.GetProjectByIdAsync("proj-A", It.IsAny<CancellationToken>()))
+               .ReturnsAsync((PipelineProject?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "ip-allowed", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-allowed*not in the scope*");
+    }
+
+    // ── RequestCreateIssueForProvider — only a decomposition run may leave its tracker
+
+    [Theory]
+    [InlineData(PipelineRunType.Implementation)]
+    [InlineData(PipelineRunType.Review)]
+    [InlineData(PipelineRunType.DecompositionAnalysis)]
+    public async Task RequestCreateIssueForProvider_OtherRunTypeOnTheEpicTracker_ThrowsHubException(PipelineRunType runType)
+    {
+        // The epic tracker is also a template's tracker, so that template's other runs are bound to it too
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1", runType: runType);
+        SetupScopeCheck(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestCreateIssueForProvider(
+            new JobId("job-1"), "ip-allowed", "title", "body", []);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-allowed*not in the scope*");
+        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private static PipelineJobTemplate EnabledTemplate(string issueProviderId) => new()
+    {
+        Id = $"tmpl-{issueProviderId}",
+        Name = $"template-{issueProviderId}",
+        IssueProviderId = issueProviderId,
+        RepoProviderId = "rp-1",
+        Enabled = true
+    };
+
+    /// <summary>
+    /// Sets up a run of project proj-A with the given epic tracker and templates, and an issue provider
+    /// for <paramref name="targetProviderId"/> that creates org/repo#100.
+    /// </summary>
+    private Mock<IIssueProvider> SetupScopeCheck(
+        PipelineRun run, string targetProviderId, string epicTrackerId, params PipelineJobTemplate[] templates)
+    {
+        var targetConfig = MakeProviderConfig(targetProviderId);
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockProvider.Setup(p => p.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "org/repo#100", Url = "https://example.com/100" });
+
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new[] { targetConfig });
+        _mockFacade.Setup(f => f.GetProjectByIdAsync("proj-A", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new PipelineProject { Id = "proj-A", Name = "A", EpicIssueProviderId = epicTrackerId });
+        _mockFacade.Setup(f => f.LoadTemplatesForProjectAsync("proj-A", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(templates);
+        _mockFacade.Setup(f => f.CreateIssueProvider(targetConfig))
+               .Returns(mockProvider.Object);
+        return mockProvider;
+    }
+
+    // ── RequestListOpenIssuesForProvider — scope checks (AC2) ─────────────
+
+    [Fact]
+    public async Task RequestListOpenIssuesForProvider_RunNotFound_ThrowsHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssuesForProvider(new JobId("ghost"), "ip-1", 1, 50, null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*No active run*");
+    }
+
+    [Fact]
+    public async Task RequestListOpenIssuesForProvider_ProviderConfigNotFound_ThrowsHubException()
+    {
+        var run = CreateDecompositionRun();
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssuesForProvider(new JobId("job-1"), "missing-provider", 1, 50, null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*missing-provider*not found*");
+    }
+
+    [Fact]
+    public async Task RequestListOpenIssuesForProvider_RejectsProviderOutsideProjectEpicScope()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        SetupScopeCheckForListing(run, "ip-foreign", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssuesForProvider(new JobId("job-1"), "ip-foreign", 1, 50, null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-foreign*not in the scope*");
+    }
+
+    [Fact]
+    public async Task RequestListOpenIssuesForProvider_AllowsOwnTracker()
+    {
+        var run = CreateDecompositionRun(issueProviderConfigId: "ip-1");
+        var providerConfig = MakeProviderConfig("ip-1");
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], HasMore = false, Page = 1, PageSize = 50 });
+
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new[] { providerConfig });
+        _mockFacade.Setup(f => f.CreateIssueProvider(providerConfig)).Returns(mockProvider.Object);
+
+        var hub = CreateHub();
+        // Passing the run's own IssueProviderConfigId — must succeed without scope check
+        var result = await hub.RequestListOpenIssuesForProvider(new JobId("job-1"), "ip-1", 1, 50, null);
+
+        result.Should().NotBeNull();
+        mockProvider.Verify(p => p.ListOpenIssuesAsync(1, 50, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestListOpenIssuesForProvider_AllowsEnabledTemplateTrackerForProjectEpic()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        var mockProvider = SetupScopeCheckForListing(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var result = await hub.RequestListOpenIssuesForProvider(new JobId("job-1"), "ip-allowed", 1, 50, null);
+
+        result.Should().NotBeNull();
+        mockProvider.Verify(p => p.ListOpenIssuesAsync(1, 50, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestListOpenIssuesForProvider_RejectsNonDecompositionRun()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1", runType: PipelineRunType.Implementation);
+        SetupScopeCheckForListing(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListOpenIssuesForProvider(new JobId("job-1"), "ip-allowed", 1, 50, null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-allowed*not in the scope*");
+    }
+
+    // ── RequestListClosedIssuesForProvider — scope checks (AC2) ───────────
+
+    // TODO: RequestListClosedIssuesForProvider has only two tests (reject out-of-scope, allow enabled template),
+    // while RequestListOpenIssuesForProvider has six. Add symmetric coverage for:
+    //   - run-not-found → HubException
+    //   - provider-config-not-found → HubException
+    //   - own-tracker-always-allowed (no scope check required)
+    //   - non-decomposition-run-rejected
+    // The early-exit guards (run null, config missing) are shared via IsInProjectEpicScopeAsync but are
+    // only exercised against the open variant; a regression in the closed variant would go undetected.
+    // See review finding: asymmetric closed-issues coverage.
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_RejectsProviderOutsideProjectEpicScope()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        SetupScopeCheckForListing(run, "ip-foreign", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "ip-foreign", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-foreign*not in the scope*");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_AllowsEnabledTemplateTrackerForProjectEpic()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1");
+        var mockProvider = SetupScopeCheckForListing(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var result = await hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "ip-allowed", 1, 50, null, since: null);
+
+        result.Should().NotBeNull();
+        mockProvider.Verify(p => p.ListClosedIssuesAsync(1, 50, null, null, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_RunNotFound_ThrowsHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("ghost"), "ip-1", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*No active run*");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_ProviderConfigNotFound_ThrowsHubException()
+    {
+        var run = CreateDecompositionRun();
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(Array.Empty<ProviderConfig>());
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "missing-provider", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*missing-provider*not found*");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_AllowsOwnTracker()
+    {
+        var run = CreateDecompositionRun(issueProviderConfigId: "ip-1");
+        var providerConfig = MakeProviderConfig("ip-1");
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockProvider.Setup(p => p.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], HasMore = false, Page = 1, PageSize = 50 });
+
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new[] { providerConfig });
+        _mockFacade.Setup(f => f.CreateIssueProvider(providerConfig)).Returns(mockProvider.Object);
+
+        var hub = CreateHub();
+        // Passing the run's own IssueProviderConfigId — must succeed without scope check
+        var result = await hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "ip-1", 1, 50, null, since: null);
+
+        result.Should().NotBeNull();
+        mockProvider.Verify(p => p.ListClosedIssuesAsync(1, 50, null, null, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFacade.Verify(f => f.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never,
+            "own-tracker access must bypass scope check without loading project data");
+    }
+
+    [Fact]
+    public async Task RequestListClosedIssuesForProvider_RejectsNonDecompositionRun()
+    {
+        var run = CreateDecompositionRun(projectId: "proj-A", issueProviderConfigId: "ip-1", runType: PipelineRunType.Implementation);
+        SetupScopeCheckForListing(run, "ip-allowed", epicTrackerId: "ip-1", EnabledTemplate("ip-allowed"));
+
+        var hub = CreateHub();
+        var act = () => hub.RequestListClosedIssuesForProvider(new JobId("job-1"), "ip-allowed", 1, 50, null, since: null);
+
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*ip-allowed*not in the scope*");
+    }
+
+    /// <summary>
+    /// Sets up scope check for listing operations (read-only). Unlike <see cref="SetupScopeCheck"/>,
+    /// the mock provider here returns list results instead of issue creation results.
+    /// </summary>
+    private Mock<IIssueProvider> SetupScopeCheckForListing(
+        PipelineRun run, string targetProviderId, string epicTrackerId, params PipelineJobTemplate[] templates)
+    {
+        var targetConfig = MakeProviderConfig(targetProviderId);
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], HasMore = false, Page = 1, PageSize = 50 });
+        mockProvider
+            .Setup(p => p.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = [], HasMore = false, Page = 1, PageSize = 50 });
+
+        _mockFacade.Setup(f => f.GetRun(It.IsAny<JobId>())).Returns(run);
+        _mockFacade.Setup(f => f.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new[] { targetConfig });
+        _mockFacade.Setup(f => f.GetProjectByIdAsync("proj-A", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(new PipelineProject { Id = "proj-A", Name = "A", EpicIssueProviderId = epicTrackerId });
+        _mockFacade.Setup(f => f.LoadTemplatesForProjectAsync("proj-A", It.IsAny<CancellationToken>()))
+               .ReturnsAsync(templates);
+        _mockFacade.Setup(f => f.CreateIssueProvider(targetConfig))
+               .Returns(mockProvider.Object);
+        return mockProvider;
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static PipelineRun CreateDecompositionRun(
+        string runId = "job-1",
+        string projectId = "proj-A",
+        string issueProviderConfigId = "ip-1",
+        PipelineRunType runType = PipelineRunType.Decomposition) => new()
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = issueProviderConfigId,
+            RepoProviderConfigId = "rp-1",
+            ProjectId = projectId,
+            RunType = runType
+        };
+
+    private static ProviderConfig MakeProviderConfig(string id) => new()
+    {
+        Id = id,
+        DisplayName = id,
+        ProviderType = "GitHub",
+        Kind = ProviderKind.Issue
+    };
 }

@@ -24,6 +24,9 @@ public sealed class ApiAgentRegistryServiceTests
 {
     private static readonly DateTimeOffset Origin = new(2026, 8, 20, 12, 0, 0, TimeSpan.Zero);
 
+    private readonly Mock<IPipelineApiAgentClient> _client = new();
+    private readonly Mock<ILogger> _logger = new();
+
     private static AgentEntry Agent(
         string id,
         AgentStatus status = AgentStatus.Idle,
@@ -279,6 +282,27 @@ public sealed class ApiAgentRegistryServiceTests
         registry.GetBusyAgentCount().Should().Be(0);
     }
 
+    [Fact]
+    public void Register_ReturnsEntryWithCorrectFields_DoesNotPersist()
+    {
+        var svc = Create();
+        var msg = new AgentRegistrationMessage
+        {
+            AgentId = new AgentId("a1"),
+            Hostname = "host1",
+            Labels = ["kiro"],
+            ActiveJob = null
+        };
+
+        var result = svc.Register(msg, "conn-1");
+
+        result.AgentId.Value.Should().Be("a1");
+        result.Hostname.Should().Be("host1");
+
+        // Not persisted — snapshot stays empty
+        svc.GetAllAgents().Should().BeEmpty();
+    }
+
     // ── Argument validation ─────────────────────────────────────────────────
 
     [Fact]
@@ -291,4 +315,48 @@ public sealed class ApiAgentRegistryServiceTests
         act.Should().Throw<ArgumentException>(
             "default(AgentId) carries a null Value and is a sentinel, never a lookup key");
     }
+
+    [Fact]
+    public void GetByAgentId_EmptyValue_Throws()
+    {
+        var svc = Create();
+        var act = () => svc.GetByAgentId(new AgentId(""));
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void GetByConnectionId_Empty_Throws()
+    {
+        var svc = Create();
+        var act = () => svc.GetByConnectionId("");
+        act.Should().Throw<ArgumentException>();
+    }
+
+    // ── Constructor guards ────────────────────────────────────────────────
+
+    [Fact]
+    public void Constructor_NullClient_Throws()
+    {
+        var act = () => new ApiAgentRegistryService(null!, TimeProvider.System, _logger.Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullClock_Throws()
+    {
+        var act = () => new ApiAgentRegistryService(_client.Object, null!, _logger.Object);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullLogger_Throws()
+    {
+        var act = () => new ApiAgentRegistryService(_client.Object, TimeProvider.System, null!);
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private ApiAgentRegistryService Create(TimeProvider? clock = null) =>
+        new(_client.Object, clock ?? TimeProvider.System, _logger.Object);
 }

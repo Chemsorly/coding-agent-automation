@@ -547,6 +547,115 @@ public sealed class WorkItemStatusTransitionServiceTests
         capturedLabel.Should().BeNull("empty result string → no FinalLabel → agent:error fallback");
     }
 
+    // ── Ignored FinalLabel diagnostics (Issue #3009, log-forging fix #3121) ───
+
+    /// <summary>
+    /// Helper: runs a Failed transition whose Result payload carries <paramref name="finalLabel"/>,
+    /// with <paramref name="logger"/> injected. Returns the seeded WorkItem ID.
+    /// </summary>
+    private static async Task<Guid> RunFailedTransitionWithFinalLabelAsync(
+        string? finalLabel, ILogger<WorkItemStatusTransitionService> logger)
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Running);
+
+        var lifecycleManager = new Mock<IRunLifecycleManager>();
+        lifecycleManager
+            .Setup(m => m.FailRunWithLabelAsync(
+                It.IsAny<RunId>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<FailureReason?>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var svc = new WorkItemStatusTransitionService(
+            CreateTransitionService(opts), lifecycleManager.Object, logger, CreateDbFactory(opts));
+
+        var payload = new CodingAgent.Pipeline.Models.JobCompletionPayload
+        {
+            FinalLabel = finalLabel,
+            FinalStep = CodingAgent.Pipeline.Models.PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            Result = JsonSerializer.Serialize(payload, CodingAgent.Pipeline.PipelineJsonOptions.Default)
+        };
+
+        var outcome = await svc.TransitionAsync(item.Id, request, CancellationToken.None);
+        outcome.Should().Be(StatusTransitionOutcome.Transitioned);
+        return item.Id;
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithDisallowedFinalLabel_LogsInformationWithLabelAndWorkItemId()
+    {
+        var mockLogger = new Mock<ILogger<WorkItemStatusTransitionService>>();
+
+        var workItemId = await RunFailedTransitionWithFinalLabelAsync("agent:done", mockLogger.Object);
+
+        // The dropped value must be visible to operators, otherwise a Failed completion that
+        // ends at agent:error is indistinguishable from one that carried no FinalLabel at all.
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.Is<It.IsAnyType>((v, _) =>
+                    v.ToString()!.Contains("agent:done") && v.ToString()!.Contains(workItemId.ToString())),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Once,
+            "a FinalLabel outside the allowlist must be logged at Information with the label and WorkItem ID");
+    }
+
+    [Fact]
+    public async Task TransitionAsync_Failed_WithDisallowedFinalLabelContainingNewlines_LogsEscapedLabel()
+    {
+        // FinalLabel comes from the agent-controlled HTTP payload. CR/LF in it must not reach the
+        // plain-text console sink, where it would render as a separate, forged log line.
+        var renderedMessages = new List<string>();
+        var mockLogger = new Mock<ILogger<WorkItemStatusTransitionService>>();
+        mockLogger
+            .Setup(l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
+            .Callback(new InvocationAction(invocation =>
+                renderedMessages.Add(invocation.Arguments[2].ToString()!)));
+
+        await RunFailedTransitionWithFinalLabelAsync(
+            "agent:done\r\n[ERR] forged entry", mockLogger.Object);
+
+        renderedMessages.Should().ContainSingle()
+            .Which.Should().Contain("agent:done\\r\\n[ERR] forged entry",
+                "CR/LF in the agent-supplied FinalLabel must be escaped before logging")
+            .And.NotContain("\r").And.NotContain("\n");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("agent:needs-refinement")]
+    public async Task TransitionAsync_Failed_WithAllowedOrAbsentFinalLabel_DoesNotLogInformation(string? finalLabel)
+    {
+        var mockLogger = new Mock<ILogger<WorkItemStatusTransitionService>>();
+
+        await RunFailedTransitionWithFinalLabelAsync(finalLabel, mockLogger.Object);
+
+        mockLogger.Verify(
+            l => l.Log(
+                LogLevel.Information,
+                It.IsAny<EventId>(),
+                It.IsAny<It.IsAnyType>(),
+                It.IsAny<Exception?>(),
+                It.IsAny<Func<It.IsAnyType, Exception?, string>>()),
+            Times.Never,
+            "only a FinalLabel that is present and dropped is worth an Information line");
+    }
+
     // ── Idempotency when item is already Failed (Issue #3009) ─────────────────
 
     [Fact]

@@ -130,6 +130,44 @@ public sealed class ApiBackedConfigStoresTests
             "a zero TTL disables caching");
     }
 
+    [Fact]
+    public async Task ApiProviderConfigStore_DeleteProviderConfig_CallsClientAndInvalidatesCache()
+    {
+        var client = EmptyClient();
+        var store = new ApiProviderConfigStore(client.Object) { CacheTtlSeconds = 600 };
+
+        // Pre-populate cache for Issue kind
+        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+
+        await store.DeleteProviderConfigAsync("config-id", ProviderKind.Issue, CancellationToken.None);
+
+        client.Verify(c => c.DeleteProviderConfigAsync("config-id", ProviderKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify cache is cleared: next load must call the API
+        var loadCallCount = 0;
+        client.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { loadCallCount++; return Array.Empty<ProviderConfig>(); });
+
+        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        loadCallCount.Should().Be(1, "cache cleared by DeleteProviderConfigAsync");
+    }
+
+    [Fact]
+    public async Task ProviderConfigStore_InvalidateCaches_ClearsAllKinds()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        mockClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>() as IReadOnlyList<ProviderConfig>);
+
+        var store = new ApiProviderConfigStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+        store.InvalidateCaches();
+        await store.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
+
+        mockClient.Verify(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
     // ── ApiConfigurationStore (composite) ───────────────────────────────────
 
     [Fact]
@@ -271,6 +309,581 @@ public sealed class ApiBackedConfigStoresTests
             "a zero TTL must disable caching so every templates load fetches from the API");
     }
 
+    [Fact]
+    public async Task ApiPipelineConfigStore_SavePipelineConfig_CallsClientAndUpdatesCache()
+    {
+        var client = EmptyClient();
+        var store = new ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 600 };
+        var config = new PipelineConfiguration { MaxRetries = 99 };
+
+        await store.SavePipelineConfigAsync(config, CancellationToken.None);
+
+        client.Verify(c => c.SavePipelineConfigAsync(config, It.IsAny<CancellationToken>()), Times.Once);
+
+        // After save, the provided config is cached — next load must not call API again
+        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("should not be called"));
+        var loaded = await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loaded.MaxRetries.Should().Be(99);
+    }
+
+    [Fact]
+    public async Task ApiPipelineConfigStore_UpdatePipelineConfig_CallsClientAndInvalidatesCache()
+    {
+        var client = EmptyClient();
+        var store = new ApiPipelineConfigStore(client.Object) { CacheTtlSeconds = 600 };
+
+        // Pre-populate the cache
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        await store.UpdatePipelineConfigAsync(c => c, CancellationToken.None);
+
+        client.Verify(c => c.UpdatePipelineConfigAsync(
+            It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // After update, cache is invalidated — next load should hit the API
+        var loadCallCount = 0;
+        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => { loadCallCount++; return new PipelineConfiguration(); });
+
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+        loadCallCount.Should().Be(1, "cache invalidated by UpdatePipelineConfigAsync");
+    }
+
+    [Fact]
+    public async Task PipelineConfigStore_LoadPipelineConfigAsync_CallsClientOnFirstLoad()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        var expected = new PipelineConfiguration();
+        mockClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(expected);
+
+        var store = new ApiPipelineConfigStore(mockClient.Object);
+        var result = await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        result.Should().BeSameAs(expected);
+        mockClient.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PipelineConfigStore_InvalidateCaches_ForcesRefetch()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        mockClient.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        var store = new ApiPipelineConfigStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+        store.InvalidateCaches();
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    // ── ApiConfigurationStore agent profile mutations ────────────────────────
+
+    [Fact]
+    public async Task ApiConfigurationStore_SaveAgentProfile_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+        var profile = new AgentProfile { Id = "prof-1", DisplayName = "Test", AgentProviderConfigId = "prov-1" };
+
+        await store.SaveAgentProfileAsync(profile, CancellationToken.None);
+
+        client.Verify(c => c.SaveAgentProfileAsync(profile, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_DeleteAgentProfile_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.DeleteAgentProfileAsync("prof-1", CancellationToken.None);
+
+        client.Verify(c => c.DeleteAgentProfileAsync("prof-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_LoadAgentProfiles_CachesResult()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.LoadAgentProfilesAsync(CancellationToken.None);
+        await store.LoadAgentProfilesAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()), Times.Once,
+            "second load within TTL must not call API");
+    }
+
+    // ── ApiConfigurationStore QGC mutations ──────────────────────────────────
+
+    [Fact]
+    public async Task ApiConfigurationStore_SaveQualityGateConfig_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+        var config = new QualityGateConfiguration { Id = "qgc-1", DisplayName = "Test" };
+
+        await store.SaveQualityGateConfigAsync(config, CancellationToken.None);
+
+        client.Verify(c => c.SaveQualityGateConfigAsync(config, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_DeleteQualityGateConfig_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.DeleteQualityGateConfigAsync("qgc-1", CancellationToken.None);
+
+        client.Verify(c => c.DeleteQualityGateConfigAsync("qgc-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_LoadQualityGateConfigs_CachesResult()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.LoadQualityGateConfigsAsync(CancellationToken.None);
+        await store.LoadQualityGateConfigsAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── ApiConfigurationStore reviewer mutations ──────────────────────────────
+
+    [Fact]
+    public async Task ApiConfigurationStore_SaveReviewerConfig_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+        var config = new ReviewerConfiguration
+        {
+            Id = "rev-1",
+            DisplayName = "Reviewer",
+            Agents = []
+        };
+
+        await store.SaveReviewerConfigAsync(config, CancellationToken.None);
+
+        client.Verify(c => c.SaveReviewerConfigAsync(config, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_DeleteReviewerConfig_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.DeleteReviewerConfigAsync("rev-1", CancellationToken.None);
+
+        client.Verify(c => c.DeleteReviewerConfigAsync("rev-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_LoadReviewerConfigs_CachesResult()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.LoadReviewerConfigsAsync(CancellationToken.None);
+        await store.LoadReviewerConfigsAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_ResetReviewerConfigsToDefault_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+
+        client.Verify(c => c.ResetReviewerConfigsToDefaultAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── ApiConfigurationStore project mutations ───────────────────────────────
+
+    [Fact]
+    public async Task ApiConfigurationStore_SaveProject_DelegatesToProjectStore()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+        var project = new PipelineProject { Id = "proj-1", Name = "My Project" };
+
+        await store.SaveProjectAsync(project, CancellationToken.None);
+
+        client.Verify(c => c.SaveProjectAsync(project, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_DeleteProject_DelegatesToProjectStore()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.DeleteProjectAsync("proj-1", CancellationToken.None);
+
+        client.Verify(c => c.DeleteProjectAsync("proj-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_SaveTemplate_DelegatesToProjectStore()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+        var template = new PipelineJobTemplate
+        {
+            Id = "tmpl-1",
+            Name = "Test Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1"
+        };
+
+        await store.SaveTemplateAsync("proj-1", template, CancellationToken.None);
+
+        client.Verify(c => c.SaveTemplateAsync("proj-1", template, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_DeleteTemplate_DelegatesToProjectStore()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.DeleteTemplateAsync("proj-1", new TemplateId("tmpl-1"), CancellationToken.None);
+
+        client.Verify(c => c.DeleteTemplateAsync("proj-1", "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiConfigurationStore_MoveTemplate_DelegatesToProjectStore()
+    {
+        var client = EmptyClient();
+        var store = MakeConfigStore(client.Object);
+
+        await store.MoveTemplateAsync("src", "dst", new TemplateId("tmpl-1"), CancellationToken.None);
+
+        client.Verify(c => c.MoveTemplateAsync(new ProjectId("src"), new ProjectId("dst"), "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── ApiProjectStore mutations ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task ApiProjectStore_SaveProject_CallsClientAndInvalidatesCache()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+        var project = new PipelineProject { Id = "proj-1", Name = "My Project" };
+
+        await store.SaveProjectAsync(project, CancellationToken.None);
+
+        client.Verify(c => c.SaveProjectAsync(project, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_DeleteProject_CallsClientAndInvalidatesCache()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+
+        await store.DeleteProjectAsync("proj-1", CancellationToken.None);
+
+        client.Verify(c => c.DeleteProjectAsync("proj-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_SaveTemplate_CallsClientAndInvalidatesTemplateCache()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+        var template = new PipelineJobTemplate
+        {
+            Id = "tmpl-1",
+            Name = "Test Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1"
+        };
+
+        await store.SaveTemplateAsync("proj-1", template, CancellationToken.None);
+
+        client.Verify(c => c.SaveTemplateAsync("proj-1", template, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_DeleteTemplate_CallsClient()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+
+        await store.DeleteTemplateAsync("proj-1", new TemplateId("tmpl-1"), CancellationToken.None);
+
+        client.Verify(c => c.DeleteTemplateAsync("proj-1", "tmpl-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_MoveTemplate_CallsClientAndInvalidatesBothCaches()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+
+        await store.MoveTemplateAsync("src", "dst", new TemplateId("tmpl-1"), CancellationToken.None);
+
+        client.Verify(c => c.MoveTemplateAsync(new ProjectId("src"), new ProjectId("dst"), "tmpl-1",
+            It.IsAny<CancellationToken>()), Times.Once);
+        // TODO: [WARNING] This test only verifies the client is called once — it does NOT assert that the
+        // cache is invalidated for both source and target projects, despite the test name claiming it does.
+        // If the cache-invalidation branch in ApiProjectStore.MoveTemplateAsync were deleted, this test
+        // would still pass. Add assertions that load the cached projects before the move, call MoveTemplateAsync,
+        // then call GetProjectsAsync again and verify the client was called a second time (cache miss) for
+        // both source and target project IDs.
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_LoadProjects_CachesResult()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+
+        await store.LoadProjectsAsync(CancellationToken.None);
+        await store.LoadProjectsAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_LoadAllTemplates_CachesResult()
+    {
+        var client = EmptyClient();
+        var store = new ApiProjectStore(client.Object) { CacheTtlSeconds = 600 };
+
+        await store.LoadAllTemplatesAsync(CancellationToken.None);
+        await store.LoadAllTemplatesAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ApiProjectStore_HasEnabledTemplates_DelegatesToClient()
+    {
+        var client = EmptyClient();
+        client.Setup(c => c.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var store = new ApiProjectStore(client.Object);
+
+        var result = await store.HasEnabledTemplatesAsync(CancellationToken.None);
+
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ProjectStore_LoadProjectsAsync_CallsClient()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        mockClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject> { new() { Id = "p1", Name = "Proj" } } as IReadOnlyList<PipelineProject>);
+
+        var store = new ApiProjectStore(mockClient.Object);
+        var result = await store.LoadProjectsAsync(CancellationToken.None);
+
+        result.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task ProjectStore_SaveProjectAsync_InvalidatesCache()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        mockClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>() as IReadOnlyList<PipelineProject>);
+        mockClient.Setup(c => c.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var store = new ApiProjectStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        await store.LoadProjectsAsync(CancellationToken.None);
+        await store.SaveProjectAsync(new PipelineProject { Id = "x", Name = "X" }, CancellationToken.None);
+        await store.LoadProjectsAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ProjectStore_DeleteProjectAsync_InvalidatesCache()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        mockClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>() as IReadOnlyList<PipelineProject>);
+        mockClient.Setup(c => c.DeleteProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var store = new ApiProjectStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        await store.LoadProjectsAsync(CancellationToken.None);
+        await store.DeleteProjectAsync("p1", CancellationToken.None);
+        await store.LoadProjectsAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ProjectStore_InvalidateCaches_ClearsBothProjectsAndTemplates()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        mockClient.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>() as IReadOnlyList<PipelineProject>);
+        mockClient.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>() as IReadOnlyList<PipelineJobTemplate>);
+
+        var store = new ApiProjectStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        await store.LoadProjectsAsync(CancellationToken.None);
+        await store.LoadAllTemplatesAsync(CancellationToken.None);
+        store.InvalidateCaches();
+        await store.LoadProjectsAsync(CancellationToken.None);
+        await store.LoadAllTemplatesAsync(CancellationToken.None);
+
+        mockClient.Verify(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        mockClient.Verify(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    // ── ProviderConfigCache ─────────────────────────────────────────
+
+    [Fact]
+    public void ProviderConfigCache_TryGet_WhenEmpty_ReturnsFalse()
+    {
+        var cache = new ProviderConfigCache();
+        var result = cache.TryGet(ProviderKind.Issue, out var configs);
+
+        result.Should().BeFalse();
+        configs.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void ProviderConfigCache_TryGet_AfterSet_ReturnsTrue()
+    {
+        var cache = new ProviderConfigCache();
+        var list = new List<ProviderConfig>
+        {
+            new() { Id = "p1", Kind = ProviderKind.Issue, DisplayName = "X", ProviderType = "X" }
+        } as IReadOnlyList<ProviderConfig>;
+        cache.Set(ProviderKind.Issue, list, ttlSeconds: 60);
+
+        var result = cache.TryGet(ProviderKind.Issue, out var configs);
+        result.Should().BeTrue();
+        configs.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void ProviderConfigCache_TryGet_AfterExpiry_ReturnsFalse()
+    {
+        var cache = new ProviderConfigCache();
+        var list = new List<ProviderConfig>() as IReadOnlyList<ProviderConfig>;
+        cache.Set(ProviderKind.Issue, list, ttlSeconds: -1); // already expired
+
+        var result = cache.TryGet(ProviderKind.Issue, out _);
+        result.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ProviderConfigCache_Clear_RemovesAllKinds()
+    {
+        var cache = new ProviderConfigCache();
+        var list = new List<ProviderConfig>() as IReadOnlyList<ProviderConfig>;
+        cache.Set(ProviderKind.Issue, list, ttlSeconds: 60);
+        cache.Set(ProviderKind.Agent, list, ttlSeconds: 60);
+
+        cache.Clear();
+
+        cache.TryGet(ProviderKind.Issue, out _).Should().BeFalse();
+        cache.TryGet(ProviderKind.Agent, out _).Should().BeFalse();
+    }
+
+    [Fact]
+    public void ProviderConfigCache_IsolatesKinds_DifferentKindsDoNotShareCache()
+    {
+        var cache = new ProviderConfigCache();
+        var issueList = new List<ProviderConfig>
+        {
+            new() { Id = "issue-1", Kind = ProviderKind.Issue, DisplayName = "I", ProviderType = "I" }
+        } as IReadOnlyList<ProviderConfig>;
+        cache.Set(ProviderKind.Issue, issueList, ttlSeconds: 60);
+
+        var hasAgent = cache.TryGet(ProviderKind.Agent, out var agentConfigs);
+
+        hasAgent.Should().BeFalse();
+        agentConfigs.Should().BeEmpty();
+    }
+
+    // ── ApiConfigurationStore — delegation and cross-invalidation ───
+
+    private static (ApiConfigurationStore Store, Mock<CodingAgent.Api.Client.IPipelineApiConfigClient> Client) CreateConfigStore()
+    {
+        var mockClient = new Mock<CodingAgent.Api.Client.IPipelineApiConfigClient>();
+        var pipeline = new ApiPipelineConfigStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        var providers = new ApiProviderConfigStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        var projects = new ApiProjectStore(mockClient.Object) { CacheTtlSeconds = 60 };
+        var store = new ApiConfigurationStore(mockClient.Object, pipeline, providers, projects) { CacheTtlSeconds = 60 };
+        return (store, mockClient);
+    }
+
+    [Fact]
+    public async Task ConfigurationStore_SaveAgentProfileAsync_InvalidatesCache()
+    {
+        var (store, client) = CreateConfigStore();
+        client.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>() as IReadOnlyList<AgentProfile>);
+        client.Setup(c => c.SaveAgentProfileAsync(It.IsAny<AgentProfile>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await store.LoadAgentProfilesAsync(CancellationToken.None);
+        await store.SaveAgentProfileAsync(new AgentProfile { Id = "a", DisplayName = "A", AgentProviderConfigId = "k" }, CancellationToken.None);
+        await store.LoadAgentProfilesAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ConfigurationStore_InvalidateCaches_ClearsAllComposedStores()
+    {
+        var (store, client) = CreateConfigStore();
+        client.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>() as IReadOnlyList<AgentProfile>);
+        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+
+        await store.LoadAgentProfilesAsync(CancellationToken.None);
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        store.InvalidateCaches();
+
+        await store.LoadAgentProfilesAsync(CancellationToken.None);
+        await store.LoadPipelineConfigAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+        client.Verify(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task ConfigurationStore_ResetReviewerConfigsToDefaultAsync_InvalidatesReviewerCache()
+    {
+        var (store, client) = CreateConfigStore();
+        client.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ReviewerConfiguration>() as IReadOnlyList<ReviewerConfiguration>);
+        client.Setup(c => c.ResetReviewerConfigsToDefaultAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await store.LoadReviewerConfigsAsync(CancellationToken.None);
+        await store.ResetReviewerConfigsToDefaultAsync(CancellationToken.None);
+        await store.LoadReviewerConfigsAsync(CancellationToken.None);
+
+        client.Verify(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────
+
     /// <summary>
     /// Builds the composite store the way DI does: over the same three narrow stores, so the
     /// caches under test are the ones production shares rather than private copies.
@@ -293,4 +906,35 @@ public sealed class ApiBackedConfigStoresTests
             new ApiProviderConfigStore(client) { CacheTtlSeconds = ttlSeconds },
             new ApiProjectStore(client) { CacheTtlSeconds = ttlSeconds })
         { CacheTtlSeconds = ttlSeconds };
+
+    private static Mock<IPipelineApiConfigClient> EmptyClient()
+    {
+        var client = new Mock<IPipelineApiConfigClient>();
+        client.Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        client.Setup(c => c.GetProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        client.Setup(c => c.GetProviderConfigsWithSecretsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ProviderConfig>());
+        client.Setup(c => c.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        client.Setup(c => c.GetQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        client.Setup(c => c.GetReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        client.Setup(c => c.GetProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        client.Setup(c => c.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+        return client;
+    }
+
+    private static ApiConfigurationStore MakeConfigStore(IPipelineApiConfigClient client) =>
+        new(client,
+            new ApiPipelineConfigStore(client),
+            new ApiProviderConfigStore(client),
+            new ApiProjectStore(client))
+        {
+            CacheTtlSeconds = 600
+        };
 }

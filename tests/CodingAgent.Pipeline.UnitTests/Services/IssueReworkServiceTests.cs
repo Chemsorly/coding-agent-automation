@@ -473,4 +473,84 @@ public class IssueReworkServiceTests
     // TODO: No span-emission tests exist for Housekeeping.ConflictRework (added in issue #2977).
     // Add tests to verify: (1) Housekeeping.ConflictRework is emitted with issue_id and pr_number
     // tags when an issue is re-queued for rework; (2) no span is emitted when the rework is skipped.
+
+    // ── Case-insensitivity regression (issue #3366) ───────────────────────────
+
+    /// <summary>
+    /// An issue bearing a mixed-case active label (e.g. "Agent:In-Progress" as GitHub may
+    /// preserve it from creation time) must be recognised as active and must not be re-queued.
+    /// Before the fix: HousekeepingActiveLabels used StringComparer.Ordinal, so the mixed-case
+    /// value was not found and the service incorrectly called AddLabelAsync. After the fix:
+    /// OrdinalIgnoreCase detects the label and the swap is skipped.
+    /// </summary>
+    [Fact]
+    public async Task TriggerConflictReworkAsync_MixedCaseActiveLabel_NotRequeued()
+    {
+        var svc = Create();
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)["42"]);
+
+        var issues = new Mock<IIssueProvider>();
+        // "Agent:In-Progress" — same value as AgentLabels.InProgress but with different casing,
+        // simulating a label name preserved from creation time by the issue tracker.
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", "Agent:In-Progress"));
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        await InvokeAsync(svc, [MakePr(1)], repo, issues,
+            MakeMap((1, PrMergeabilityStatus.Conflicted)));
+
+        issues.Verify(i => i.AddLabelAsync(
+            It.IsAny<IssueIdentifier>(), AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Never,
+            "mixed-case Agent:In-Progress must be treated as active — must not re-queue for rework");
+        // TODO: Also verify RemoveLabelAsync is never called (Times.Never) to catch a partial re-queue
+        // that removes the existing label without adding agent:next — currently only AddLabelAsync is asserted.
+        // TODO: Also verify GetIssueAsync was called exactly once to pin the test to the intended code path;
+        // a future guard that short-circuits before the issue fetch would let this test pass vacuously.
+        // TODO: Consider using a label string that differs in a middle character (e.g. "agent:In-Progress")
+        // rather than only the leading "A", so the test cannot pass under a comparator that happens to match
+        // on the stored constant's own casing.
+    }
+
+    /// <summary>
+    /// An issue bearing a mixed-case rework-blocker label (e.g. "Agent:Wont-Do") must be
+    /// recognised as an abandonment label and must not be re-queued.
+    /// Before the fix: HousekeepingTerminalReworkBlockers used StringComparer.Ordinal, so the
+    /// mixed-case value was not found and the service incorrectly called AddLabelAsync.
+    /// After the fix: OrdinalIgnoreCase catches it and the swap is skipped.
+    /// </summary>
+    [Fact]
+    public async Task TriggerConflictReworkAsync_MixedCaseTerminalReworkBlocker_NotRequeued()
+    {
+        var svc = Create();
+        var repo = new Mock<IRepositoryProvider>();
+        repo.Setup(p => p.ExtractLinkedIssuesAsync(1, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<string>)["42"]);
+
+        var issues = new Mock<IIssueProvider>();
+        // "Agent:Wont-Do" — same value as AgentLabels.WontDo but with different casing.
+        issues.Setup(i => i.GetIssueAsync(new IssueIdentifier("42"), It.IsAny<CancellationToken>()))
+              .ReturnsAsync(MakeIssue("42", "Agent:Wont-Do"));
+        // Explicit setups so any pre-fix assertion failure is clean (not a secondary Moq error).
+        issues.Setup(i => i.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+        issues.Setup(i => i.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+              .Returns(Task.CompletedTask);
+
+        await InvokeAsync(svc, [MakePr(1)], repo, issues,
+            MakeMap((1, PrMergeabilityStatus.Conflicted)));
+
+        issues.Verify(i => i.AddLabelAsync(
+            It.IsAny<IssueIdentifier>(), AgentLabels.Next, It.IsAny<CancellationToken>()), Times.Never,
+            "mixed-case Agent:Wont-Do must be treated as an abandonment label — must not re-queue for rework");
+        // TODO: Also verify RemoveLabelAsync is never called (Times.Never) to catch a partial re-queue
+        // that removes the existing label without adding agent:next — currently only AddLabelAsync is asserted.
+        // TODO: Consider using a label string that differs in a middle character (e.g. "agent:Wont-Do")
+        // rather than only the leading "A", so the test cannot pass under a comparator that happens to match
+        // on the stored constant's own casing.
+    }
 }

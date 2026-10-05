@@ -88,18 +88,14 @@ public sealed class LeaderElectionServiceTests
     }
 
     [Fact]
-    public async Task StartAsync_NonK8s_FailOnNonKubernetesEnvironment_True_Throws()
+    public async Task StartAsync_NonKubernetes_FailOnNonK8s_ThrowsInvalidOperation()
     {
-        var opts = new LeaderElectionOptions
-        {
-            FailOnNonKubernetesEnvironment = true
-        };
-        var svc = new LeaderElectionService(Options.Create(opts), kubeClient: null);
+        using var sut = new LeaderElectionService(DefaultOptions(o =>
+            o.FailOnNonKubernetesEnvironment = true));
 
-        var act = () => svc.StartAsync(CancellationToken.None);
-
-        await act.Should().ThrowAsync<InvalidOperationException>(
-            "service must throw when configured to fail outside Kubernetes");
+        var act = () => sut.StartAsync(CancellationToken.None);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*Kubernetes*");
     }
 
     // ── StopAsync — before StartAsync ────────────────────────────────────
@@ -226,6 +222,35 @@ public sealed class LeaderElectionServiceTests
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task StartAsync_WithCustomLeaseName_DoesNotThrow()
+    {
+        using var sut = new LeaderElectionService(DefaultOptions(o =>
+        {
+            o.LeaseName = "custom-lease";
+            o.Namespace = "custom-ns";
+            o.Identity = "my-pod";
+        }));
+        var ex = await Record.ExceptionAsync(() => sut.StartAsync(CancellationToken.None));
+        ex.Should().BeNull();
+    }
+
+    [Fact]
+    public void Options_DefaultValues_AreCorrect()
+    {
+        // Migrated from Services/LeaderElectionServiceTests.cs — that file was a
+        // near-duplicate; this test had no counterpart in LeaderElection/.
+        var opts = new LeaderElectionOptions();
+
+        opts.LeaseName.Should().Be("caa-leader");
+        opts.Namespace.Should().BeNull();
+        opts.LeaseDuration.Should().Be(TimeSpan.FromSeconds(15));
+        opts.RenewDeadline.Should().Be(TimeSpan.FromSeconds(10));
+        opts.RetryPeriod.Should().Be(TimeSpan.FromSeconds(2));
+        opts.Identity.Should().BeNull();
+        opts.FailOnNonKubernetesEnvironment.Should().BeFalse();
+    }
+
     // ── ILeaderElectionService interface compliance ───────────────────────
 
     [Fact]
@@ -262,6 +287,19 @@ public sealed class LeaderElectionServiceTests
             "non-k8s instance never acquires leadership so LeaderToken stays cancelled");
     }
 
+    // ── Cancellation via CancellationToken ────────────────────────────────────
+
+    [Fact]
+    public async Task StartAsync_WithPreCancelledToken_NonKubernetes_CompletesImmediately()
+    {
+        using var sut = new LeaderElectionService(DefaultOptions());
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var ex = await Record.ExceptionAsync(() => sut.StartAsync(cts.Token));
+        ex.Should().BeNull("non-K8s path must complete without hanging on a cancelled token");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static LeaderElectionService CreateNonK8sService(
@@ -270,6 +308,13 @@ public sealed class LeaderElectionServiceTests
         return new LeaderElectionService(
             Options.Create(opts ?? new LeaderElectionOptions()),
             kubeClient: null);
+    }
+
+    private static IOptions<LeaderElectionOptions> DefaultOptions(Action<LeaderElectionOptions>? configure = null)
+    {
+        var opts = new LeaderElectionOptions();
+        configure?.Invoke(opts);
+        return Options.Create(opts);
     }
 }
 

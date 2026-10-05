@@ -13,6 +13,8 @@ namespace CodingAgent.Agent.UnitTests.OpenCode;
 /// Tests are end-to-end via <c>ExecuteAsync</c> (not the private <c>HandleHttpErrorResponseAsync</c>)
 /// so that both the classification logic AND the <c>ErrorCategory</c> forwarding in the final
 /// <c>new AgentResult { ... }</c> reconstruction are exercised together.
+///
+/// The HandleHttpErrorResponseAsync tests also check the failure output and the 404/410 session eviction.
 /// </summary>
 [Trait("Feature", "opencode-http-error-category")]
 public class OpenCodeHttpErrorCategoryTests
@@ -137,5 +139,68 @@ public class OpenCodeHttpErrorCategoryTests
         result.ErrorCategory.Should().Be(AgentErrorCategory.None,
             "successful responses must have no error category");
         result.ExitCode.Should().Be(ExitCodes.Success);
+    }
+
+    // ── HandleHttpErrorResponseAsync ─────────────────────────────────────
+
+    /// <summary>
+    /// A 404 response triggers session cache eviction and returns a failure result.
+    /// </summary>
+    [Fact]
+    public async Task HandleHttpErrorResponseAsync_NotFound_ReturnsFailureAndEvictsSession()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-evict");
+        // Use URL pattern so FIFO ordering doesn't conflict with the SSE stream reader
+        ctx.Handler.ForUrlPattern("/session/.+/message", HttpStatusCode.NotFound, "{\"error\":\"not found\"}");
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+
+        var request = OpenCodeTestHelpers.CreateRequest("prompt");
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().NotBe(0, "404 response must produce a failure result");
+        result.OutputLines.Should().ContainMatch("*404*");
+    }
+
+    /// <summary>
+    /// A 410 Gone response also triggers session cache eviction.
+    /// </summary>
+    [Fact]
+    public async Task HandleHttpErrorResponseAsync_Gone_ReturnsFailureAndEvictsSession()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-gone");
+        ctx.Handler.ForUrlPattern("/session/.+/message", HttpStatusCode.Gone, "{\"error\":\"gone\"}");
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+
+        var request = OpenCodeTestHelpers.CreateRequest("prompt");
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().NotBe(0);
+        result.OutputLines.Should().ContainMatch("*410*");
+    }
+
+    /// <summary>
+    /// A non-404/410 error (e.g. 500) returns failure without evicting the session.
+    /// </summary>
+    [Fact]
+    public async Task HandleHttpErrorResponseAsync_ServerError_ReturnsFailureWithoutEviction()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-500");
+        ctx.Handler.ForUrlPattern("/session/.+/message", HttpStatusCode.InternalServerError, "{\"error\":\"internal error\"}");
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+
+        var request = OpenCodeTestHelpers.CreateRequest("prompt");
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().NotBe(0);
+        result.OutputLines.Should().ContainMatch("*500*");
     }
 }
