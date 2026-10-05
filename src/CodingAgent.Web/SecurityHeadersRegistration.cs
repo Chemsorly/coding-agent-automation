@@ -25,6 +25,12 @@ internal static class SecurityHeadersRegistration
     internal const string PermissionsPolicy =
         "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()";
 
+    /// <summary>
+    /// The one resource other sites may embed: dashboards (e.g. Homepage) show it as the service icon.
+    /// It is public and served without sign-in; every other response stays same-origin.
+    /// </summary>
+    internal const string FaviconPath = "/favicon.svg";
+
     public static WebApplication UseSecurityHeaders(this WebApplication app)
     {
         if (app.Configuration.GetValue<bool>(HttpsRedirectKey))
@@ -63,7 +69,8 @@ internal static class SecurityHeadersRegistration
         headers["Referrer-Policy"] = "strict-origin-when-cross-origin";
         headers["Permissions-Policy"] = PermissionsPolicy;
         headers["Cross-Origin-Opener-Policy"] = "same-origin";
-        headers["Cross-Origin-Resource-Policy"] = "same-origin";
+        headers["Cross-Origin-Resource-Policy"] =
+            context.Request.Path.Equals(FaviconPath, StringComparison.OrdinalIgnoreCase) ? "cross-origin" : "same-origin";
         return next(context);
     }
 }
