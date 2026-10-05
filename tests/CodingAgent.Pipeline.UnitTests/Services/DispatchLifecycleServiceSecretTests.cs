@@ -146,7 +146,7 @@ public sealed class DispatchLifecycleServiceSecretTests : IDisposable
             db,
             projection,
             template,
-            IsKiroAgent: true,
+            IsKiro: true,
             AvailablePvcs: ["pvc-0"],
             ConcurrencyBySelector: new Dictionary<string, int>(),
             LogPrefix: "test ");

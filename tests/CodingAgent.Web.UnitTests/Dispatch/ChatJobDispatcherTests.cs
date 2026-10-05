@@ -1094,34 +1094,6 @@ public class ChatJobDispatcherTests
         ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
     }
 
-    [Theory]
-    [InlineData("kiro")]
-    [InlineData("KIRO")]
-    [InlineData("Kiro")]
-    public void IsKiroAgent_KiroVariants_ReturnsTrue(string providerType)
-        => ChatJobDispatcher.IsKiroAgent(providerType).Should().BeTrue();
-
-    [Theory]
-    [InlineData("opencode")]
-    [InlineData("")]
-    [InlineData("kiro-dotnet")]
-    public void IsKiroAgent_NonKiro_ReturnsFalse(string providerType)
-        => ChatJobDispatcher.IsKiroAgent(providerType).Should().BeFalse();
-
-    [Theory]
-    [InlineData("opencode")]
-    [InlineData("OPENCODE")]
-    [InlineData("OpenCode")]
-    public void IsOpencodeAgent_OpencodeVariants_ReturnsTrue(string providerType)
-        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeTrue();
-
-    [Theory]
-    [InlineData("kiro")]
-    [InlineData("")]
-    [InlineData("opencode-dotnet")]
-    public void IsOpencodeAgent_NonOpencode_ReturnsFalse(string providerType)
-        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeFalse();
-
     // ─── IsNotFound ───────────────────────────────────────────────────────────
 
     [Theory]
