@@ -1,13 +1,12 @@
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
-using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgent.Pipeline.UnitTests.Services;
+namespace CodingAgent.Web.UnitTests.Hubs;
 
 /// <summary>
 /// Unit tests for AgentJobLifecycleService.
@@ -81,6 +80,28 @@ public sealed class AgentJobLifecycleServiceTests
             FinalLabel = finalLabel,
             FailureCategory = failureCategory
         };
+
+    /// <summary>A run built directly, without an agent assigned.</summary>
+    private static PipelineRun MakeUnassignedRun(string jobId = "job-1") => new()
+    {
+        RunId = jobId,
+        IssueIdentifier = "org/repo#42",
+        IssueTitle = "Test Issue",
+        IssueProviderConfigId = "issue-cfg-1",
+        RepoProviderConfigId = "repo-cfg-1"
+    };
+
+    /// <summary>A busy agent that holds <paramref name="jobId"/>.</summary>
+    private static AgentEntry MakeBusyAgent(string agentId = "agent-1", string jobId = "job-1") => new()
+    {
+        AgentId = agentId,
+        ConnectionId = "conn-1",
+        Hostname = "host-1",
+        Labels = new[] { "dotnet" },
+        Status = AgentStatus.Busy,
+        RegisteredAt = DateTimeOffset.UtcNow,
+        ActiveJobId = jobId
+    };
 
     // ── HandleJobAcceptedAsync ────────────────────────────────────────────
 
@@ -170,6 +191,19 @@ public sealed class AgentJobLifecycleServiceTests
             "NotifyChange must NOT be called when the WorkItem DB transition is rejected");
     }
 
+    [Fact]
+    public async Task HandleJobAccepted_NullAgent_NotifyChangeNotCalled()
+    {
+        _facade.Setup(f => f.TransitionWorkItemAsync(It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(true);
+
+        await _sut.HandleJobAcceptedAsync(new JobId("job-1"), null, CancellationToken.None);
+
+        _changeNotifier.Verify(c => c.NotifyChange(), Times.Never,
+            "NotifyChange is only called when agent is not null");
+    }
+
     // ── HandleJobRejectedAsync ────────────────────────────────────────────
 
     [Fact]
@@ -204,18 +238,6 @@ public sealed class AgentJobLifecycleServiceTests
 
         _facade.Verify(f => f.TransitionStatus(agent.AgentId, AgentStatus.Idle), Times.Once);
         agent.ActiveJobId.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task HandleJobRejectedAsync_WhenNoRunFound_StillTransitionsAgentToIdle()
-    {
-        var agent = MakeAgent();
-        var jobId = new JobId("job-1");
-        _facade.Setup(f => f.GetRun(jobId)).Returns((PipelineRun?)null);
-
-        await _sut.HandleJobRejectedAsync(jobId, agent, "reason", CancellationToken.None);
-
-        _facade.Verify(f => f.TransitionStatus(agent.AgentId, AgentStatus.Idle), Times.Once);
     }
 
     [Fact]
@@ -358,6 +380,95 @@ public sealed class AgentJobLifecycleServiceTests
             "the original exception must propagate even when agent is null");
     }
 
+    [Fact]
+    public async Task HandleJobRejected_NoRunInMemory_TransitionsAgentToIdle()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var agent = MakeBusyAgent();
+
+        await _sut.HandleJobRejectedAsync(new JobId("job-1"), agent, "workspace full", CancellationToken.None);
+
+        _facade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+        agent.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task HandleJobRejected_NullAgent_DoesNotThrow()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var act = async () => await _sut.HandleJobRejectedAsync(
+            new JobId("job-1"), null, "reason", CancellationToken.None);
+
+        await act.Should().NotThrowAsync();
+    }
+    [Fact]
+    public async Task HandleJobRejected_RetryCountBelowMax_RequeuesWorkItem()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.GetWorkItemRetryCountAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(1);  // 1 < 3 → should requeue
+
+        await _sut.HandleJobRejectedAsync(new JobId("job-1"), null, "agent error", CancellationToken.None);
+
+        _facade.Verify(f => f.RequeueWorkItemAsync("job-1", It.IsAny<CancellationToken>()), Times.Once);
+        // Must NOT permanently fail when retries remain
+        _facade.Verify(f => f.TransitionWorkItemAsync(
+            "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Never);
+    }
+    [Fact]
+    public async Task HandleJobRejected_RetryCountAtMax_TransitionsToFailed()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.GetWorkItemRetryCountAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);  // 3 >= 3 → permanent failure
+
+        await _sut.HandleJobRejectedAsync(new JobId("job-1"), null, "crash", CancellationToken.None);
+
+        _facade.Verify(f => f.TransitionWorkItemAsync(
+            "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), FailureReason.InfrastructureFailure), Times.Once);
+        // Must NOT requeue when max retries exhausted
+        _facade.Verify(f => f.RequeueWorkItemAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HandleJobRejected_AgentFields_UpdatedOnRejection()
+    {
+        _facade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+
+        var agent = MakeBusyAgent();
+        var before = DateTimeOffset.UtcNow.AddSeconds(-1);
+
+        await _sut.HandleJobRejectedAsync(new JobId("job-1"), agent, "workspace full", CancellationToken.None);
+
+        agent.ActiveJobId.Should().BeNull("ActiveJobId cleared on rejection");
+        agent.LastJobCompletedAt.Should().BeAfter(before, "LastJobCompletedAt set to push agent to back of queue");
+    }
+
+    [Fact]
+    public async Task HandleJobRejected_MaxRetries_TransitionWorkItemThrows_DoesNotPropagate()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade.Setup(f => f.GetWorkItemRetryCountAsync("job-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3); // max retries
+
+        _facade.Setup(f => f.TransitionWorkItemAsync(
+                It.IsAny<JobId>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+                It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ThrowsAsync(new InvalidOperationException("DB unavailable"));
+
+        var act = async () => await _sut.HandleJobRejectedAsync(
+            new JobId("job-1"), null, "crash", CancellationToken.None);
+
+        await act.Should().NotThrowAsync("permanent failure transition exception is caught and logged");
+    }
+
     // ── HandleJobCompletedAsync ───────────────────────────────────────────
 
     [Fact]
@@ -449,30 +560,6 @@ public sealed class AgentJobLifecycleServiceTests
         await _sut.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
 
         _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Cancelled, It.IsAny<CancellationToken>()), Times.Once);
-    }
-
-    [Fact]
-    public async Task HandleJobCompletedAsync_FinalLabelOverridesTaken_WhenKnownLabel()
-    {
-        var agent = MakeAgent();
-        var jobId = new JobId("job-1");
-        var run = MakeRun("job-1");
-
-        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
-        _facade.Setup(f => f.ReplaceRun(It.IsAny<PipelineRun>()));
-        // CompleteRunAsync must return the run (non-null) so runWasAlive=true → label swap fires
-        _lifecycle.Setup(l => l.CompleteRunAsync(
-            "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
-            It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
-        _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-
-        // FinalLabel = agent:error overrides Completed step
-        var payload = MakePayload(finalLabel: AgentLabels.Error);
-
-        await _sut.HandleJobCompletedAsync(jobId, agent, payload, CancellationToken.None);
-
-        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -641,6 +728,131 @@ public sealed class AgentJobLifecycleServiceTests
         // Bookkeeping (label swap, feedback comment) should NOT be called for consolidation
         _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         _issueOps.Verify(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PostCompletion_FinalStep_Failed_SwapsLabelToError()
+    {
+        var run = MakeUnassignedRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Failed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FinalLabel = null,
+            FailureReason = "build failed",
+            FailureCategory = FailureReason.AgentError
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycle
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed,
+                It.IsAny<CancellationToken>(), "build failed", FailureReason.AgentError))
+            .ReturnsAsync(run);
+
+        await _sut.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PostCompletion_ValidFinalLabel_OverridesStepDerivedLabel()
+    {
+        var run = MakeUnassignedRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FinalLabel = AgentLabels.EpicReview  // override for decomposition
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycle
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        await _sut.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // FinalLabel takes precedence over step-derived AgentLabels.Done
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.EpicReview, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PostCompletion_UnknownFinalStep_NoLabelSwap_FeedbackCommentStillPosted()
+    {
+        // A step that has no label mapping (e.g., Created) → no swap, but comment still runs
+        var run = MakeUnassignedRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Created,
+            CompletedAt = DateTimeOffset.UtcNow,
+            FinalLabel = null
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycle
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .ReturnsAsync(run);
+
+        await _sut.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        // No label swap — Starting has no mapping
+        _issueOps.Verify(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        // Feedback comment must still be posted regardless
+        _issueOps.Verify(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PostCompletion_LabelSwapThrows_ExceptionPropagates()
+    {
+        // PostCompletionBookkeepingAsync has no try-catch around SwapLabelAsync.
+        // The exception propagates out of HandleJobCompletedAsync — feedback comment
+        // is never reached. This test pins that documented behaviour; if a future change
+        // wraps SwapLabelAsync in a try-catch, the ThrowAsync expectation here will
+        // fail and alert the author to also verify PostIssueFeedbackCommentAsync runs.
+        var run = MakeUnassignedRun();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycle
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+        _issueOps
+            .Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("rate limit"));
+
+        var act = async () =>
+            await _sut.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>("SwapLabelAsync exceptions propagate from PostCompletionBookkeepingAsync");
+        _issueOps.Verify(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Consolidation_NotifiesChangeAfterCompletion()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "consol-job",
+            IssueIdentifier = "consolidation",
+            IssueTitle = "Consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
+            RepoProviderConfigId = "rp-1"
+        };
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("consol-job")).Returns(run);
+
+        await _sut.HandleJobCompletedAsync(new JobId("consol-job"), null, payload, CancellationToken.None);
+
+        _changeNotifier.Verify(c => c.NotifyChange(), Times.Once);
     }
 
     // ── HandleJobCompletedAsync — agent null fallback ─────────────────────
@@ -876,24 +1088,195 @@ public sealed class AgentJobLifecycleServiceTests
     }
 
     [Fact]
-    public void HandleStepTransition_WithMetadata_AppliesMetadata()
+    public void HandleStepTransition_CancelledStep_DoesNotAdvanceHighWaterMark()
     {
-        var jobId = new JobId("job-1");
-        var run = MakeRun("job-1");
-        _facade.Setup(f => f.GetRun(jobId)).Returns(run);
-        _facade.Setup(f => f.TouchLastProgressAsync(It.IsAny<JobId>(), It.IsAny<DateTimeOffset>(),
-            It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var run = MakeUnassignedRun();
+        run.HighWaterMark = PipelineStep.GeneratingCode;
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
 
-        var metadata = new Dictionary<string, string>
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.Cancelled, DateTimeOffset.UtcNow, null);
+
+        run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode,
+            "terminal Cancelled step must not update HighWaterMark");
+    }
+
+    [Fact]
+    public void HandleStepTransition_PastTimestamp_UsedAsIs()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var pastTimestamp = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.GeneratingCode, pastTimestamp, null);
+
+        // Past timestamps are valid and should not be clamped
+        run.LastStepChangeAt.Should().BeCloseTo(pastTimestamp, TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public void HandleStepTransition_EmptyMetadata_IsNoOp()
+    {
+        var run = MakeUnassignedRun();
+        run.BranchName = "original";
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>());
+
+        run.BranchName.Should().Be("original", "empty metadata must not alter existing run state");
+    }
+
+    [Fact]
+    public void HandleStepTransition_TouchesLastProgressAsync()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _facade
+            .Setup(f => f.TouchLastProgressAsync(It.IsAny<JobId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, null);
+
+        // TouchLastProgressAsync is fire-and-forget but must be initiated
+        _facade.Verify(f => f.TouchLastProgressAsync(
+            It.IsAny<JobId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData("OpenIssuesDownloaded", 25)]
+    [InlineData("DecompositionSubIssuesCreated", 10)]
+    [InlineData("DecompositionSubIssuesAttempted", 11)]
+    [InlineData("RetryCount", 2)]
+    [InlineData("InfrastructureRetryCount", 3)]
+    [InlineData("CodeReviewIterationsCompleted", 4)]
+    [InlineData("CodeReviewIterationsTotal", 5)]
+    [InlineData("CodeReviewIterationInProgress", 1)]
+    public void HandleStepTransition_IntMetadataKey_AppliedToRun(string key, int expected)
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { [key] = expected.ToString() });
+
+        var actual = key switch
         {
-            ["BranchName"] = "feature/test",
-            ["FilesChangedCount"] = "5"
+            "OpenIssuesDownloaded" => run.OpenIssuesDownloaded,
+            "DecompositionSubIssuesCreated" => run.DecompositionSubIssuesCreated,
+            "DecompositionSubIssuesAttempted" => run.DecompositionSubIssuesAttempted,
+            "RetryCount" => run.RetryCount,
+            "InfrastructureRetryCount" => run.InfrastructureRetryCount,
+            "CodeReviewIterationsCompleted" => run.CodeReviewIterationsCompleted,
+            "CodeReviewIterationsTotal" => run.CodeReviewIterationsTotal,
+            "CodeReviewIterationInProgress" => run.CodeReviewIterationInProgress,
+            _ => throw new ArgumentOutOfRangeException(key)
         };
 
-        _sut.HandleStepTransition(jobId, PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        actual.Should().Be(expected, $"key '{key}' must set the corresponding property");
+    }
 
-        run.BranchName.Should().Be("feature/test");
-        run.FilesChangedCount.Should().Be(5);
+    [Fact]
+    public void HandleStepTransition_TotalCostMetadata_Applied()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["TotalCost"] = "3.50" });
+
+        run.TotalCost.Should().Be(3.50m);
+    }
+
+    [Fact]
+    public void HandleStepTransition_TotalTokensMetadata_Applied()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["TotalTokens"] = "1234567890" });
+
+        run.TotalTokens.Should().Be(1234567890L);
+    }
+
+    [Fact]
+    public void HandleStepTransition_BaselineHealthPassedFalse_Applied()
+    {
+        var run = MakeUnassignedRun();
+        run.BaselineHealthPassed = true; // start as true
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.VerifyingBaseline, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["BaselineHealthPassed"] = "False" });
+
+        run.BaselineHealthPassed.Should().BeFalse();
+    }
+
+    [Fact]
+    public void HandleStepTransition_AnalysisSkippedTrue_Applied()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["AnalysisSkipped"] = "True" });
+
+        run.AnalysisSkipped.Should().BeTrue();
+    }
+
+    [Fact]
+    public void HandleStepTransition_CodeReviewCountsMetadata_Applied()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var unitSep = new string(new[] { (char)31 });
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["CodeReviewCriticalCount"] = "5",
+                ["CodeReviewWarningCount"] = "10",
+                ["CodeReviewSuggestionCount"] = "15",
+                ["CodeReviewAgentsRun"] = "agent-a" + unitSep + "agent-b"
+            });
+
+        run.CodeReviewCriticalCount.Should().Be(5);
+        run.CodeReviewWarningCount.Should().Be(10);
+        run.CodeReviewSuggestionCount.Should().Be(15);
+        run.CodeReviewAgentsRun.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public void HandleStepTransition_BranchNameAndFilesChanged_Applied()
+    {
+        var run = MakeUnassignedRun();
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _sut.HandleStepTransition(
+            new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["BranchName"] = "feature/my-branch",
+                ["FilesChangedCount"] = "7",
+                ["LinesAdded"] = "100",
+                ["LinesRemoved"] = "20"
+            });
+
+        run.BranchName.Should().Be("feature/my-branch");
+        run.FilesChangedCount.Should().Be(7);
+        run.LinesAdded.Should().Be(100);
+        run.LinesRemoved.Should().Be(20);
     }
 
     // ── ApplyStepMetadata (internal static) ───────────────────────────────
