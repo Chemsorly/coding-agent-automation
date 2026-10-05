@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using AwesomeAssertions;
 using CodingAgent.Agent.OpenCode;
 using CodingAgent.Pipeline.Models;
 using KiroCliLib.Core;
@@ -11,6 +12,7 @@ namespace CodingAgent.Agent.UnitTests.OpenCode;
 /// Verifies that when SSE successfully streams assistant content via message.part.updated
 /// events, the HTTP response lines are NOT re-emitted via the onOutputLine callback,
 /// preventing duplicate content in the output panel.
+/// Also covers ParseAndEmitResponseAsync: malformed JSON responses and plain text-part output.
 /// </summary>
 [Trait("Feature", "opencode-agent-executor")]
 [Trait("Property", "8")]
@@ -134,5 +136,76 @@ public class OpenCodeOutputDeduplicationTests
         Assert.Contains(callbackLines, l => l.StartsWith("[assistant] "));
         // Assert: HTTP response NOT duplicated (SSE already streamed assistant content)
         Assert.DoesNotContain(callbackLines, l => l == responseText);
+    }
+
+    // ── ParseAndEmitResponseAsync ─────────────────────────────────────────
+
+    /// <summary>
+    /// A malformed JSON message response returns a parse-error failure result.
+    /// </summary>
+    [Fact]
+    public async Task ParseAndEmitResponseAsync_MalformedJson_ReturnsParseError()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-json-err");
+        ctx.Handler.ForUrlPattern("/session/.+/message", HttpStatusCode.OK, "not-valid-json");
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+
+        var request = OpenCodeTestHelpers.CreateRequest("prompt");
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().NotBe(0, "malformed JSON must produce a failure result");
+        result.OutputLines.Should().ContainMatch("*JSON parse error*");
+    }
+
+    /// <summary>
+    /// When SSE already streamed assistant content (sseEmitted=true), the onOutputLine callback
+    /// should NOT be invoked again for HTTP response lines.
+    /// </summary>
+    [Fact]
+    public async Task ParseAndEmitResponseAsync_WhenSseAlreadyEmitted_DoesNotDuplicateOutput()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-dedup");
+        ctx.Handler.ForUrlPattern("/session/.+/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "HTTP line" }]
+        });
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+
+        var outputLines = new List<string>();
+        var request = OpenCodeTestHelpers.CreateRequest("test prompt");
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None, line => outputLines.Add(line));
+
+        result.Should().NotBeNull();
+        result.ExitCode.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Normal success response: text parts are joined and returned as output lines.
+    /// </summary>
+    [Fact]
+    public async Task ParseAndEmitResponseAsync_ValidResponse_ReturnsOutputLines()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "sess-ok");
+        ctx.Handler.ForUrlPattern("/session/.+/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "Hello from agent" }]
+        });
+
+        await ctx.Provider.EnsureSessionAsync(Path.GetTempPath(), CancellationToken.None);
+
+        var emitted = new List<string>();
+        var request = OpenCodeTestHelpers.CreateRequest("test");
+        var result = await ctx.Provider.ExecuteAsync(request, CancellationToken.None, line => emitted.Add(line));
+
+        result.ExitCode.Should().Be(0);
+        result.OutputLines.Should().Contain(l => l.Contains("Hello from agent"));
     }
 }
