@@ -37,14 +37,14 @@ public sealed class AgentStatusTransitionTests
     // ── Valid transitions (all 8 of 9 ordered pairs that are NOT Disconnected→Busy) ──
 
     [Theory]
-    [InlineData(AgentStatus.Idle,         AgentStatus.Busy)]
-    [InlineData(AgentStatus.Busy,         AgentStatus.Idle)]
-    [InlineData(AgentStatus.Idle,         AgentStatus.Disconnected)]
-    [InlineData(AgentStatus.Busy,         AgentStatus.Disconnected)]
+    [InlineData(AgentStatus.Idle, AgentStatus.Busy)]
+    [InlineData(AgentStatus.Busy, AgentStatus.Idle)]
+    [InlineData(AgentStatus.Idle, AgentStatus.Disconnected)]
+    [InlineData(AgentStatus.Busy, AgentStatus.Disconnected)]
     [InlineData(AgentStatus.Disconnected, AgentStatus.Idle)]
     [InlineData(AgentStatus.Disconnected, AgentStatus.Disconnected)]
-    [InlineData(AgentStatus.Idle,         AgentStatus.Idle)]
-    [InlineData(AgentStatus.Busy,         AgentStatus.Busy)]
+    [InlineData(AgentStatus.Idle, AgentStatus.Idle)]
+    [InlineData(AgentStatus.Busy, AgentStatus.Busy)]
     public void IsAllowed_ValidEdge_ReturnsTrue(AgentStatus from, AgentStatus to)
     {
         // AgentStatus has 3 values → 3×3 = 9 ordered pairs. One is rejected (Disconnected→Busy).
