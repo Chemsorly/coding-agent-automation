@@ -349,7 +349,7 @@ credentialPools:
 jobTemplates: []
   # Example:
   # - labels: "kiro,dotnet,dotnet10"
-  #   image: "chemsorly/coding-agent:kiro-dotnet10"
+  #   image: "chemsorly/coding-agent:coding-agent-kiro-latest"
   #   imagePullPolicy: Always  # Always (default), IfNotPresent, or Never
   #   providerType: kiro       # kiro, opencode or claude
   #   maxConcurrent: 2
