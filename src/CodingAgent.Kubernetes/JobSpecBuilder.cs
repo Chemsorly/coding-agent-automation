@@ -1,4 +1,5 @@
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Models;
 using System.Text.Json;
 using k8s.Models;
 using Serilog;
@@ -75,7 +76,7 @@ public static class JobSpecBuilder
     /// </summary>
     public static V1Job Build(JobTemplate template, BuildContext ctx)
     {
-        var isKiroAgent = IsKiroAgent(template.ProviderType);
+        var isKiroAgent = JobTemplateProviderType.IsKiro(template.ProviderType);
 
         var envVars = BuildEnvVars(template, ctx);
         var (volumeMounts, volumes) = BuildVolumeMountsAndVolumes(isKiroAgent, ctx);
@@ -320,7 +321,7 @@ public static class JobSpecBuilder
         // /home/ubuntu/.config/opencode/ entirely, preventing entrypoint.sh from writing the
         // correctly-named opencode.json file. Accepted tradeoff: port 4096 is container-internal
         // only and the secret is already in the K8s Secret object (same etcd exposure level).
-        if (IsOpencodeAgent(template.ProviderType) && !string.IsNullOrEmpty(ctx.OpencodeConfigSecretName))
+        if (JobTemplateProviderType.IsOpencode(template.ProviderType) && !string.IsNullOrEmpty(ctx.OpencodeConfigSecretName))
         {
             envVars.Add(new V1EnvVar
             {
@@ -428,12 +429,6 @@ public static class JobSpecBuilder
         }
         return result;
     }
-
-    private static bool IsKiroAgent(string providerType) =>
-        string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsOpencodeAgent(string providerType) =>
-        string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
 
     private static bool IsClaudeAgent(string providerType) =>
         string.Equals(providerType, AgentDefaults.ClaudeTemplateProviderType, StringComparison.OrdinalIgnoreCase);

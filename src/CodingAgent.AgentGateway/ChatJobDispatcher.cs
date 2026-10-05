@@ -249,7 +249,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     private string? ClaimPvcForKiroAgent(string providerType, List<V1Job> activeChatJobs)
     {
-        if (!IsKiroAgent(providerType))
+        if (!JobTemplateProviderType.IsKiro(providerType))
             return null;
 
         var claimedByActiveJobs = activeChatJobs
@@ -290,7 +290,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             AgentApiKeySecretName = _options.AgentApiKeySecretName,
             AgentServiceAccountName = _options.AgentServiceAccountName,
             Namespace = _options.Namespace,
-            OpencodeConfigSecretName = IsOpencodeAgent(template.ProviderType)
+            OpencodeConfigSecretName = JobTemplateProviderType.IsOpencode(template.ProviderType)
                 ? _options.OpencodeConfigSecretName : null,
             ClaudeAuthSecretName = _options.ClaudeAuthSecretName,
             ProjectSecrets = null
@@ -752,12 +752,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     internal static bool IsTerminal(V1Job job)
         => job.Status?.Conditions?.Any(c =>
                (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True") == true;
-
-    internal static bool IsKiroAgent(string providerType)
-        => string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase);
-
-    internal static bool IsOpencodeAgent(string providerType)
-        => string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
 
     // ─── Test helpers (internal) ──────────────────────────────────────────────
 
