@@ -95,34 +95,51 @@ internal sealed partial class DispatchScheduler
                 continue;
             }
 
-            if (_dependencyChecker != null)
-            {
-                if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
-                {
-                    _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
-                        template.IssueProviderId, candidate.Identifier);
-                    continue;
-                }
-
-                // Issue numbers are unique only within a tracker, so each tracker keeps its own cache:
-                // "#12 is closed" in one tracker says nothing about #12 in another.
-                if (!cycleStateCaches.TryGetValue(template.IssueProviderId, out var trackerStateCache))
-                    cycleStateCaches[template.IssueProviderId] = trackerStateCache = new Dictionary<int, bool>();
-
-                var depResult = await _dependencyChecker.CheckAsync(
-                    candidate.Identifier, candidate.Description, provider, trackerStateCache, ct);
-                if (!depResult.IsReady)
-                {
-                    _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
-                        candidate.Identifier, depResult.BlockedBy);
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
-                    continue;
-                }
-            }
+            if (!await AreDependenciesReadyAsync(candidate, template, cycleStateCaches, ct))
+                continue;
 
             return candidate;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if no dependency checker is configured or the check reports
+    /// <paramref name="candidate"/> as ready. Returns <c>false</c> (after logging) when the
+    /// template's issue provider is not cached or the candidate is blocked by open issues.
+    /// </summary>
+    private async Task<bool> AreDependenciesReadyAsync(
+        IssueSummary candidate,
+        PipelineJobTemplate template,
+        Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
+        CancellationToken ct)
+    {
+        if (_dependencyChecker == null)
+            return true;
+
+        if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
+        {
+            _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
+                template.IssueProviderId, candidate.Identifier);
+            return false;
+        }
+
+        // Issue numbers are unique only within a tracker, so each tracker keeps its own cache:
+        // "#12 is closed" in one tracker says nothing about #12 in another.
+        if (!cycleStateCaches.TryGetValue(template.IssueProviderId, out var trackerStateCache))
+            cycleStateCaches[template.IssueProviderId] = trackerStateCache = new Dictionary<int, bool>();
+
+        var depResult = await _dependencyChecker.CheckAsync(
+            candidate.Identifier, candidate.Description, provider, trackerStateCache, ct);
+        if (!depResult.IsReady)
+        {
+            _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
+                candidate.Identifier, depResult.BlockedBy);
+            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
+            return false;
+        }
+
+        return true;
     }
 
     /// <summary>

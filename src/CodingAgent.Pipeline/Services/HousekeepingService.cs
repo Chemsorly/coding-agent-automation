@@ -324,46 +324,60 @@ public sealed class HousekeepingService : IHousekeepingService
             await ReprobeDelayFunc(MergeabilityReprobeDelay, ct);
 
             foreach (var prNumber in unknownAfterFirstProbe.Select(pr => pr.Number))
-            {
-                try
-                {
-                    var resolved = await repoProvider.IsPullRequestBehindBaseAsync(prNumber, ct);
-                    mergeabilityMap[prNumber] = resolved;
-
-                    if (resolved != PrMergeabilityStatus.Unknown)
-                    {
-                        _logger.Debug(
-                            "HousekeepingService: PR #{PrNumber} re-probe resolved to {Status} in repo {RepoId}",
-                            prNumber, resolved, repoProviderId);
-                        var resolvedLabel = resolved switch
-                        {
-                            PrMergeabilityStatus.Behind => "behind",
-                            PrMergeabilityStatus.UpToDate => "up_to_date",
-                            PrMergeabilityStatus.Conflicted => "conflicted",
-                            PrMergeabilityStatus.Blocked => "blocked",
-                            _ => "unknown",
-                        };
-                        var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolvedLabel);
-                        PipelineTelemetry.HousekeepingReprobeResolved.Add(1, repoTag, resolvedTag);
-                    }
-                    else
-                    {
-                        _logger.Debug(
-                            "HousekeepingService: PR #{PrNumber} re-probe still Unknown in repo {RepoId} — skipping this cycle (conservative fallback)",
-                            prNumber, repoProviderId);
-                    }
-                }
-                catch (Exception ex) when (!ct.IsCancellationRequested)
-                {
-                    _logger.Warning(ex,
-                        "HousekeepingService: re-probe failed for PR #{PrNumber} in repo {RepoId} — keeping Unknown (conservative fallback)",
-                        prNumber, repoProviderId);
-                    // keep Unknown — already set from first pass
-                }
-            }
+                await ReprobeMergeabilityAsync(repoProvider, repoProviderId, prNumber, mergeabilityMap, repoTag, ct);
         }
 
         return mergeabilityMap;
+    }
+
+    /// <summary>
+    /// Re-probes a single PR whose first probe returned <see cref="PrMergeabilityStatus.Unknown"/>
+    /// and records the result in <paramref name="mergeabilityMap"/>. A failed re-probe keeps the
+    /// Unknown status set by the first pass.
+    /// </summary>
+    private async Task ReprobeMergeabilityAsync(
+        IRepositoryProvider repoProvider,
+        string repoProviderId,
+        int prNumber,
+        Dictionary<int, PrMergeabilityStatus> mergeabilityMap,
+        KeyValuePair<string, object?> repoTag,
+        CancellationToken ct)
+    {
+        try
+        {
+            var resolved = await repoProvider.IsPullRequestBehindBaseAsync(prNumber, ct);
+            mergeabilityMap[prNumber] = resolved;
+
+            if (resolved != PrMergeabilityStatus.Unknown)
+            {
+                _logger.Debug(
+                    "HousekeepingService: PR #{PrNumber} re-probe resolved to {Status} in repo {RepoId}",
+                    prNumber, resolved, repoProviderId);
+                var resolvedLabel = resolved switch
+                {
+                    PrMergeabilityStatus.Behind => "behind",
+                    PrMergeabilityStatus.UpToDate => "up_to_date",
+                    PrMergeabilityStatus.Conflicted => "conflicted",
+                    PrMergeabilityStatus.Blocked => "blocked",
+                    _ => "unknown",
+                };
+                var resolvedTag = new KeyValuePair<string, object?>("resolved_state", resolvedLabel);
+                PipelineTelemetry.HousekeepingReprobeResolved.Add(1, repoTag, resolvedTag);
+            }
+            else
+            {
+                _logger.Debug(
+                    "HousekeepingService: PR #{PrNumber} re-probe still Unknown in repo {RepoId} — skipping this cycle (conservative fallback)",
+                    prNumber, repoProviderId);
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.Warning(ex,
+                "HousekeepingService: re-probe failed for PR #{PrNumber} in repo {RepoId} — keeping Unknown (conservative fallback)",
+                prNumber, repoProviderId);
+            // keep Unknown — already set from first pass
+        }
     }
 
     // ── Step 2.5 ──────────────────────────────────────────────────────────────

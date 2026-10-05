@@ -101,42 +101,56 @@ public static class AgentLabelOperations
             if (string.Equals(label, newLabel, StringComparison.Ordinal))
                 continue;
 
-            var removed = false;
-            for (var attempt = 0; attempt < 3 && !removed; attempt++)
-            {
-                try
-                {
-                    effectiveLogger.Debug("AgentLabelOperations: removing label {Label}", label);
-                    await removeLabel(label, ct);
-                    removed = true;
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex) when (attempt < 2)
-                {
-                    effectiveLogger.Warning(ex,
-                        "AgentLabelOperations: removeLabel attempt {Attempt} failed for label {Label} on {Identifier} — retrying",
-                        attempt + 1, label, identifier ?? "unknown");
-                    await Task.Delay(TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)), ct);
-                }
-                catch (Exception ex)
-                {
-                    effectiveLogger.Warning(ex,
-                        "AgentLabelOperations: removeLabel exhausted retries for label {Label} on {Identifier} — partial swap; old label remains",
-                        label, identifier ?? "unknown");
+            await RemoveLabelWithRetryAsync(removeLabel, label, identifier, effectiveLogger,
+                throwOnRemoveExhaustion, effectiveExhaustionCounter, ct);
+        }
+    }
 
-                    if (throwOnRemoveExhaustion)
-                        throw;
-                    else
-                    {
-                        // Increment only when the error is swallowed — the issue is now in a dual-label state.
-                        // When throwOnRemoveExhaustion=true the caller knows about the failure; no counter needed.
-                        effectiveExhaustionCounter.Add(1, new TagList
-                        {
-                            new("label", label),
-                            new("identifier", identifier ?? "unknown")
-                        });
-                    }
-                }
+    /// <summary>Removes <paramref name="label"/> with up to three attempts and exponential backoff.
+    /// On exhaustion, re-throws when <paramref name="throwOnRemoveExhaustion"/> is true; otherwise
+    /// increments <paramref name="exhaustionCounter"/> and returns.</summary>
+    private static async Task RemoveLabelWithRetryAsync(
+        Func<string, CancellationToken, Task> removeLabel,
+        string label,
+        string? identifier,
+        ILogger logger,
+        bool throwOnRemoveExhaustion,
+        Counter<long> exhaustionCounter,
+        CancellationToken ct)
+    {
+        var removed = false;
+        for (var attempt = 0; attempt < 3 && !removed; attempt++)
+        {
+            try
+            {
+                logger.Debug("AgentLabelOperations: removing label {Label}", label);
+                await removeLabel(label, ct);
+                removed = true;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) when (attempt < 2)
+            {
+                logger.Warning(ex,
+                    "AgentLabelOperations: removeLabel attempt {Attempt} failed for label {Label} on {Identifier} — retrying",
+                    attempt + 1, label, identifier ?? "unknown");
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)), ct);
+            }
+            catch (Exception ex)
+            {
+                logger.Warning(ex,
+                    "AgentLabelOperations: removeLabel exhausted retries for label {Label} on {Identifier} — partial swap; old label remains",
+                    label, identifier ?? "unknown");
+
+                if (throwOnRemoveExhaustion)
+                    throw;
+
+                // Increment only when the error is swallowed — the issue is now in a dual-label state.
+                // When throwOnRemoveExhaustion=true the caller knows about the failure; no counter needed.
+                exhaustionCounter.Add(1, new TagList
+                {
+                    new("label", label),
+                    new("identifier", identifier ?? "unknown")
+                });
             }
         }
     }
