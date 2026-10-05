@@ -89,7 +89,7 @@ public sealed class ModelFetchJobService
 
         // ── 2. Claim PVC (required for kiro provider auth) ───────────────
         string? claimedPvc = null;
-        if (string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase))
+        if (JobTemplateProviderType.IsKiro(providerType))
         {
             if (_options.KiroPvcPool.Count == 0)
             {

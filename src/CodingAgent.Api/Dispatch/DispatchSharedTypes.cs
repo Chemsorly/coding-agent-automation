@@ -42,7 +42,7 @@ internal sealed record DispatchCandidate(
     PendingWorkItemProjection Item,
     JobTemplate Template,
     string EffectiveSelector,
-    bool IsKiroAgent);
+    bool IsKiro);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/>.
@@ -53,7 +53,7 @@ internal sealed record DispatchLifecycleContext(
     PipelineDbContext Db,
     PendingWorkItemProjection Item,
     JobTemplate Template,
-    bool IsKiroAgent,
+    bool IsKiro,
     List<string> AvailablePvcs,
     Dictionary<string, int> ConcurrencyBySelector,
     string LogPrefix)

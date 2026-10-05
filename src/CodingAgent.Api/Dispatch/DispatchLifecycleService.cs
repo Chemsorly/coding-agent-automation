@@ -100,7 +100,7 @@ internal sealed class DispatchLifecycleService : IDisposable
         var db = ctx.Db;
         var item = ctx.Item;
         var template = ctx.Template;
-        var isKiroAgent = ctx.IsKiroAgent;
+        var isKiroAgent = ctx.IsKiro;
         var availablePvcs = ctx.AvailablePvcs;
         var logPrefix = ctx.LogPrefix;
 

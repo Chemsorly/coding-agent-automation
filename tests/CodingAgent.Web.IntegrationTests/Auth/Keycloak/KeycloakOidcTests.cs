@@ -12,6 +12,8 @@ namespace CodingAgent.Web.IntegrationTests.Auth.Keycloak;
 /// <summary>
 /// Spec 049 Req 3 and 12.4: OIDC login against a real Keycloak, end to end through the web host.
 /// Runs only where Docker is available (CI job <c>iam-tests</c>, or locally with Docker Desktop).
+/// In Docker-less environments (e.g. the local agent quality-gate runner) each test returns early
+/// via <see cref="KeycloakFixture.IsDockerUnavailable"/>.
 /// </summary>
 [Trait("Category", "Integration")]
 [Trait("Feature", "IAM")]

@@ -156,7 +156,7 @@ public class DispatchStateBuilderCandidateTests : IDisposable
         }
 
         candidates.Should().HaveCount(1);
-        candidates[0].IsKiroAgent.Should().BeTrue("the template has kiro providerType");
+        candidates[0].IsKiro.Should().BeTrue("the template has kiro providerType");
     }
 
     [Fact]
@@ -185,7 +185,7 @@ public class DispatchStateBuilderCandidateTests : IDisposable
         }
 
         candidates.Should().HaveCount(1);
-        candidates[0].IsKiroAgent.Should().BeFalse("opencode templates are not kiro agents");
+        candidates[0].IsKiro.Should().BeFalse("opencode templates are not kiro agents");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

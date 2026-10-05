@@ -39,12 +39,18 @@ public sealed class AgentChatPage
         // SelectTemplateAsync to round-trip through the Blazor Server WebSocket circuit.
         // Without this wait, clicking immediately after SelectTemplateAsync can land on a
         // still-disabled button because the circuit hasn't processed the change event yet.
+        //
+        // 30 s instead of 10 s: OnTemplateSelected() is an async method that calls
+        // ConfigStore.LoadAgentProfilesAsync + GetProviderConfigByIdAsync before it calls
+        // StateHasChanged. Under CI load those async calls can take several seconds, pushing
+        // the total roundtrip well beyond the original 10 s budget and producing a flaky
+        // TimeoutException at this wait (as seen in shard 3/3 failures).
         var button = _page.Locator(".btn-start-chat");
-        await button.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        await button.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30_000 });
         await _page.WaitForFunctionAsync(
             "() => { const b = document.querySelector('.btn-start-chat'); return b && !b.disabled; }",
             null,
-            new() { Timeout = 10_000 });
+            new() { Timeout = 30_000 });
         await _page.ClickAsync(".btn-start-chat");
     }
 

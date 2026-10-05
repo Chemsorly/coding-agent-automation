@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -33,24 +34,37 @@ public sealed class InsightsPage
         _baseUrl = baseUrl;
     }
 
-    /// <summary>Navigates to /insights and waits for the initial load.</summary>
+    /// <summary>
+    /// Navigates to /insights, waits for the interactive circuit's first render, and waits for
+    /// the loading state to clear. After this method returns, either the headline tiles or a
+    /// non-loading empty/error card is present.
+    /// </summary>
     public async Task NavigateAsync()
     {
         await _page.GotoAsync($"{_baseUrl}/insights");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
+        // The prerendered HTML already contains the figures, but when the circuit connects the
+        // interactive component re-runs OnInitializedAsync and replaces them with "Loading…" until
+        // the run-history API call returns. Wait for the circuit to attach the layout's event
+        // handlers so the settled-state check below cannot be satisfied by prerendered markup.
+        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", DefaultTimeout);
         await WaitForLoadCompleteAsync();
     }
 
-    /// <summary>Waits until the loading card is gone (page data loaded).</summary>
-    public async Task WaitForLoadCompleteAsync()
-    {
-        // Wait for the Loading… card to disappear
-        await _page.WaitForFunctionAsync(
-            "() => !document.querySelector('.cockpit-card .cockpit-empty') || " +
-            "      ![...document.querySelectorAll('.cockpit-card .cockpit-empty')].some(e => e.textContent.trim() === 'Loading\u2026')",
+    /// <summary>
+    /// Waits until the page shows a settled state: no "Loading…" card, and either the headline
+    /// tiles or an empty/error card is present. The success-rate tile is the content sentinel
+    /// because insights-total sits in the page header and also renders (as 0) while loading.
+    /// </summary>
+    public Task WaitForLoadCompleteAsync()
+        => _page.WaitForFunctionAsync(
+            "() => { " +
+            "  const empties = [...document.querySelectorAll('.cockpit-page .cockpit-card .cockpit-empty')]; " +
+            "  if (empties.some(e => e.textContent.trim() === 'Loading\u2026')) return false; " +
+            "  return !!document.querySelector(\".cockpit-page [data-testid='insights-success-rate']\") || empties.length > 0; " +
+            "}",
             null,
             new() { Timeout = DefaultTimeout });
-    }
 
     /// <summary>Selects a time window from the dropdown. Values: "1", "6", "24", "168", "0".</summary>
     public async Task SelectWindowAsync(string windowHours)
@@ -152,8 +166,16 @@ public sealed class InsightsPage
     public async Task<string?> GetNoGateDataMessageTextAsync()
     {
         var el = _page.Locator("[data-testid='insights-gate-no-data']");
-        if (await el.CountAsync() == 0)
+        // Wait up to 5s for the element — the Blazor auto-refresh can briefly remove it
+        // between a prior IsNoGateDataMessageVisibleAsync() check and this read.
+        try
+        {
+            await el.WaitForAsync(new() { Timeout = 5_000, State = WaitForSelectorState.Visible });
+        }
+        catch (Microsoft.Playwright.PlaywrightException)
+        {
             return null;
+        }
         return (await el.TextContentAsync())?.Trim();
     }
 

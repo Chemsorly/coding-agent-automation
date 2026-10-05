@@ -529,6 +529,9 @@ public partial class LayerBoundaryTests
                 // (the live dictionary value at swap time) and is not a mutation of any shared entry.
                 "ActiveJobId = current.ActiveJobId,",
                 "ActiveJobId = dict.GetValueOrDefault(\"activeJobId\") is { Length: > 0 } aj ? aj : null,",
+                // HashToEntry object-initializer reading from Redis hash via RedisHashReader (issue #XXXX):
+                // constructs a new AgentEntry from a Redis HGETALL result; the object is not yet shared.
+                "ActiveJobId = r.OptionalString(\"activeJobId\"),",
             },
 
             // AgentEntryDtoFactory — DTO mapping: reads entry.ActiveJobId into a DTO; no write to a live entry.

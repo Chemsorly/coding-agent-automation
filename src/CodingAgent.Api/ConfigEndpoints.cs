@@ -508,7 +508,7 @@ public static class ConfigEndpoints
         ModelFetchJobService fetchService,
         CancellationToken ct)
     {
-        var (models, error) = await fetchService.FetchModelsAsync("kiro", ct);
+        var (models, error) = await fetchService.FetchModelsAsync(JobTemplateProviderType.Kiro, ct);
         if (error is not null)
             return TypedResults.Problem(error, statusCode: 502);
         return TypedResults.Ok(models);
