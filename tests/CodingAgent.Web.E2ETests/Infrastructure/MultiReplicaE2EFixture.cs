@@ -5,7 +5,6 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.TestUtilities;
-using InMemoryConfigurationStore = CodingAgent.Web.E2ETests.Fakes.InMemoryConfigurationStore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgent.Web.E2ETests.Infrastructure;
@@ -52,7 +51,7 @@ public sealed class MultiReplicaE2EFixture : IAsyncLifetime
 
     // Shared fakes — both replicas use the same instances so test assertions
     // against config, history, and providers work regardless of which replica handles a request.
-    private readonly InMemoryConfigurationStore _configStore = new();
+    private readonly InMemoryConfigurationStore _configStore = new(FakeProviderFactory.ExtraProviderConfigs);
     private readonly InMemoryPipelineRunHistoryService _historyService = new();
     private readonly FakeProviderFactory _fakeProviders = new();
     private readonly FakeKubernetesJobClient _fakeK8sClient = new();

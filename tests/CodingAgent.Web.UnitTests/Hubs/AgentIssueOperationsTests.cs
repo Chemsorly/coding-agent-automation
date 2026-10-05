@@ -42,6 +42,24 @@ public sealed class AgentIssueOperationsTests
             // LabelTargetKind is computed from RunType — defaults to Issue
         };
 
+    /// <summary>An implementation run whose issue tracker is "github", with an agent assigned.</summary>
+    private static PipelineRun MakeImplementationRun(string runId = "run-1") =>
+        PipelineRun.CreateImplementation(new PipelineRunCreationParams
+        {
+            RunId = runId,
+            IssueIdentifier = "GH-42",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "github",
+            RepoProviderConfigId = "github-repo",
+            AgentId = "agent-1",
+            AgentProviderConfigId = "kiro",
+            InitiatedBy = "test",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+
+    private static ProviderConfig MakeConfig(string id = "github") =>
+        new() { Id = id, Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+
     // ── SwapLabelAsync ─────────────────────────────────────────────────────
 
     [Fact]
@@ -130,6 +148,25 @@ public sealed class AgentIssueOperationsTests
         var result = await ops.PostCommentViaIssueProviderAsync(run, "body");
 
         result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PostCommentViaIssueProviderAsync_WhenProviderThrows_ReturnsNull()
+    {
+        var config = MakeConfig();
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("github", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("provider down"));
+        mockProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        _facade.Setup(f => f.CreateIssueProvider(config)).Returns(mockProvider.Object);
+
+        var result = await CreateOps().PostCommentViaIssueProviderAsync(MakeImplementationRun(), "body");
+
+        result.Should().BeNull(); // exception swallowed
     }
 
     // ── PostCommentViaIssueProviderAsync — success ─────────────────────────
@@ -250,6 +287,29 @@ public sealed class AgentIssueOperationsTests
         var act = async () => await ops.PostIssueFeedbackCommentAsync(run);
 
         await act.Should().NotThrowAsync("PostIssueFeedbackCommentAsync must swallow all exceptions");
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_WhenExceptionThrown_IsSwallowed()
+    {
+        // Trigger via PostCommentViaIssueProviderAsync throwing internally
+        // Use a run with no Feedback → FeedbackCommentFormatter returns null → returns early (safe path)
+        // To hit the exception path, the config lookup must throw
+        var run = MakeImplementationRun();
+        run.Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Success,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback(),
+            Issue = new IssueFeedback() // non-null issue feedback triggers comment posting
+        };
+
+        _facade.Setup(f => f.GetProviderConfigByIdAsync(
+            It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("db error"));
+
+        var act = () => CreateOps().PostIssueFeedbackCommentAsync(run);
+        await act.Should().NotThrowAsync(); // outer catch swallows it
     }
 
     // ── AppendFeedbackLinkToPrBodyAsync — idempotency guard (local body) ───

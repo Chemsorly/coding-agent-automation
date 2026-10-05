@@ -222,4 +222,24 @@ public sealed class SeverityParserTests
         result.Warning.Should().Be(0);
         result.Suggestion.Should().Be(0);
     }
+
+    [Fact]
+    public void Parse_WithMarkersInNoise_CountsCorrectly()
+    {
+        var lines = new[]
+        {
+            "Starting code review...",
+            "Checking file src/Foo.cs",
+            "[WARNING] Unused import on line 3",
+            "Checking file src/Bar.cs",
+            "[SUGGESTION] Consider extracting method",
+            "Review complete."
+        };
+
+        var result = SeverityParser.Parse(lines);
+
+        result.Critical.Should().Be(0);
+        result.Warning.Should().Be(1);
+        result.Suggestion.Should().Be(1);
+    }
 }

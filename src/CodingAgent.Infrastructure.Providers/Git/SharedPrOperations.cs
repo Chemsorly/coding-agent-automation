@@ -76,15 +76,14 @@ internal static class SharedPrOperations
     /// This is strictly an <c>EndsWith("[bot]")</c> check — names that merely contain
     /// "bot" (e.g. "robotnik") are NOT flagged.
     /// </summary>
-    // TODO [WARNING]: This helper uses EndsWith("[bot]") only. The original GitHub implementation
-    // also checked AccountType.Bot (c.User?.Type == AccountType.Bot), covering GitHub App accounts
-    // whose login name does not follow the [bot]-suffix convention (e.g. "copilot-for-prs",
-    // "my-deploy-bot"). Those accounts now return IsBot = false. If AccountType.Bot detection is
-    // needed for GitHub, the GitHub provider should OR in that condition before calling this helper,
-    // or this helper should gain an optional isSystemBot parameter.
-    // Similarly, the original GitLab implementation used Contains("bot", OrdinalIgnoreCase), which
-    // also flagged usernames like "gitlab-bot" or "ci-bot" that do not carry the [bot] suffix.
-    // Those accounts are now treated as non-bot by this shared helper.
+    // NOTE: This helper uses EndsWith("[bot]") only and is intentionally kept as a login-only
+    // fallback. The GitHub provider (GitHubRepositoryProvider.PullRequests.cs) ORs in
+    // c.User?.Type == AccountType.Bot / r.User?.Type == AccountType.Bot at each of the three
+    // PrConversationComment construction sites to cover GitHub App accounts whose login does not
+    // follow the [bot]-suffix convention (e.g. "copilot-for-prs", "my-deploy-bot").
+    // GitLab's note author (note.Author.Username) carries no Octokit AccountType, so the original
+    // Contains("bot", OrdinalIgnoreCase) heuristic gap for names like "gitlab-bot"/"ci-bot" is a
+    // separate concern and is addressed in its own proposal.
     // TODO [WARNING]: This method has no explicit null guard on `author`. In practice all call sites
     // pass `... ?? string.Empty` so null never reaches here, but for defensive consistency and to
     // match the ArgumentNullException.ThrowIfNull guards used by other helpers in this class, either

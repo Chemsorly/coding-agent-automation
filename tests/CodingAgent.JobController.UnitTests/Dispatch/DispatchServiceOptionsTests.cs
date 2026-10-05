@@ -119,6 +119,7 @@ public sealed class DispatchServiceOptionsTests
 /// <summary>
 /// Unit tests for <see cref="DispatchServiceOptionsFactory.Create"/>.
 /// </summary>
+[Collection("EnvironmentVariables")]
 public sealed class DispatchServiceOptionsFactoryTests
 {
     private static readonly string[] ExpectedPvcPool = ["pvc-1", "pvc-2"];
@@ -192,5 +193,51 @@ public sealed class DispatchServiceOptionsFactoryTests
         var opts = DispatchServiceOptionsFactory.Create(config);
 
         opts.KiroPvcPool.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Create_MissingNamespaceConfig_FallsBackToEnvironmentVariable()
+    {
+        var config = BuildConfig(new()
+        {
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10"
+        });
+
+        var previousValue = Environment.GetEnvironmentVariable("POD_NAMESPACE");
+        try
+        {
+            Environment.SetEnvironmentVariable("POD_NAMESPACE", "test-ns-from-env");
+
+            var opts = DispatchServiceOptionsFactory.Create(config);
+
+            opts.Namespace.Should().Be("test-ns-from-env");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("POD_NAMESPACE", previousValue);
+        }
+    }
+
+    [Fact]
+    public void Create_MissingNamespaceConfigAndEnvVar_FallsBackToDefault()
+    {
+        var config = BuildConfig(new()
+        {
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10"
+        });
+
+        var previousValue = Environment.GetEnvironmentVariable("POD_NAMESPACE");
+        try
+        {
+            Environment.SetEnvironmentVariable("POD_NAMESPACE", null);
+
+            var opts = DispatchServiceOptionsFactory.Create(config);
+
+            opts.Namespace.Should().Be("default");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("POD_NAMESPACE", previousValue);
+        }
     }
 }

@@ -207,6 +207,17 @@ public sealed class ConsolidationBadgeServiceTests
 
         _sut.HasEverBeenIncremented.Should().BeTrue();
     }
+
+    // ── Increment then reset cycle ────────────────────────────────────────
+
+    [Fact]
+    public void IncrementThenReset_ThenIncrementAgain_Accumulates()
+    {
+        _sut.IncrementBy(5);
+        _sut.Reset();
+        _sut.IncrementBy(3);
+        _sut.BadgeCount.Should().Be(3);
+    }
 }
 
 

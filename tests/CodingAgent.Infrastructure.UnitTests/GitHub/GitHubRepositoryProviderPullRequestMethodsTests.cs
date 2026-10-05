@@ -464,6 +464,12 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
         result.Should().BeEmpty("empty review body must be filtered out");
     }
 
+    // TODO [WARNING]: This test uses a login of "dependabot[bot]" (ends in [bot]) AND AccountType.Bot,
+    // so both conditions of the OR are true simultaneously. It would pass even without the AccountType.Bot
+    // fix (the suffix check alone would satisfy it). A complementary case with a [bot]-suffixed login but
+    // AccountType.User (e.g. login="dependabot[bot]", type="User") should be added to confirm that
+    // IsBotAuthor alone (the suffix fallback) still fires correctly and that an accidental implementation
+    // of `IsBot = c.User?.Type == AccountType.Bot` (dropping the suffix fallback entirely) would be caught.
     [Fact]
     public async Task ListPullRequestCommentsAsync_IsBotFlag_SetForBotAccounts()
     {
@@ -477,6 +483,61 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
 
         result.Should().HaveCount(1);
         result[0].IsBot.Should().BeTrue("accounts with [bot] suffix must be flagged as bot");
+    }
+
+    /// <summary>
+    /// Regression: GitHub App accounts whose login does NOT end in [bot] (e.g. "my-deploy-bot",
+    /// "copilot-for-prs") but whose Octokit AccountType is Bot must be flagged IsBot=true.
+    /// Before the fix only the [bot]-suffix check was applied, so these accounts returned IsBot=false.
+    /// </summary>
+    [Fact]
+    public async Task ListPullRequestCommentsAsync_IssueComment_AccountTypeBotNoSuffix_IsFlaggedAsBot()
+    {
+        // Login "my-deploy-bot" does NOT end in "[bot]" — pure suffix check returns false.
+        // Octokit account type is "Bot" — combined check must return true.
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/90/comments"),
+            new[] { BuildIssueCommentWithAccountType(10, "automated comment", "my-deploy-bot", "Bot") });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/90/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/90/reviews"), Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListPullRequestCommentsAsync(90, "pr-author", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].IsBot.Should().BeTrue(
+            "a GitHub App account with AccountType.Bot must be flagged IsBot=true even when its login does not end in [bot]");
+    }
+
+    [Fact]
+    public async Task ListPullRequestCommentsAsync_ReviewComment_AccountTypeBotNoSuffix_IsFlaggedAsBot()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/91/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/91/comments"),
+            new[] { BuildReviewCommentWithAccountType(11, "inline bot comment", "copilot-for-prs", "Bot", "src/Foo.cs") });
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/91/reviews"), Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListPullRequestCommentsAsync(91, "pr-author", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].IsBot.Should().BeTrue(
+            "a GitHub App review comment with AccountType.Bot must be flagged IsBot=true even when its login does not end in [bot]");
+    }
+
+    [Fact]
+    public async Task ListPullRequestCommentsAsync_ReviewBody_AccountTypeBotNoSuffix_IsFlaggedAsBot()
+    {
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/issues/92/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/92/comments"), Array.Empty<object>());
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/pulls/92/reviews"),
+            new[] { BuildReviewWithAccountType(12, "LGTM from bot", "security-scanner", "Bot") });
+
+        await using var provider = CreateProvider();
+        var result = await provider.ListPullRequestCommentsAsync(92, "pr-author", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].IsBot.Should().BeTrue(
+            "a GitHub App PR review with AccountType.Bot must be flagged IsBot=true even when its login does not end in [bot]");
     }
 
     [Fact]
@@ -699,12 +760,32 @@ public class GitHubRepositoryProviderPullRequestMethodsTests : WireMockTestBase
         updated_at = "2026-01-15T10:30:00Z"
     };
 
+    private static object BuildReviewCommentWithAccountType(long id, string body, string login, string accountType, string path) => new
+    {
+        id,
+        body,
+        user = new { login, id = 1, type = accountType },
+        path,
+        original_position = 5,
+        created_at = "2026-01-15T10:30:00Z",
+        updated_at = "2026-01-15T10:30:00Z"
+    };
+
     private static object BuildReview(long id, string body, string author) => new
     {
         id,
         body,
         state = "COMMENTED",
         user = new { login = author, id = 1, type = "User" },
+        submitted_at = "2026-01-15T12:00:00Z"
+    };
+
+    private static object BuildReviewWithAccountType(long id, string body, string login, string accountType) => new
+    {
+        id,
+        body,
+        state = "COMMENTED",
+        user = new { login, id = 1, type = accountType },
         submitted_at = "2026-01-15T12:00:00Z"
     };
 }

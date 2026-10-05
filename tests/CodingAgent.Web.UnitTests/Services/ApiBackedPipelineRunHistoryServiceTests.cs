@@ -393,6 +393,22 @@ public sealed class ApiBackedPipelineRunHistoryServiceTests
             "permanent failure (not HttpRequestException) must not be retried — exactly 1 call expected");
     }
 
+    // ── AddRunToHistoryAsync — client failure is swallowed ─────────────────
+
+    [Fact]
+    public async Task HistoryService_AddRunToHistoryAsync_WhenClientThrows_DoesNotPropagate()
+    {
+        _client.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRunSummary>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API down"));
+
+        var svc = CreateSut();
+        var run = MakeRun();
+        run.MarkCompleted();
+
+        var act = () => svc.AddRunToHistoryAsync(run);
+        await act.Should().NotThrowAsync();
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static PipelineRun MakeRun(
