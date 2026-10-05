@@ -285,22 +285,23 @@ public sealed partial class AgentHub
                 break;
 
             case PipelineRunEventKind.AgentStall:
-                if (report.Stage is not null && report.Result is not null)
+                if (report.Stage is not null
+                    && PipelineTelemetry.AgentStallKinds.Normalize(report.Result) is { } stallKind)
                 {
-                    // TODO [WARNING]: report.Stage and report.Result are forwarded directly from the agent
-                    // payload without validation against the closed sets (PipelineTelemetry.StallPhases,
-                    // PipelineTelemetry.AgentStallKinds). See the CiWait note above. (SecurityReviewer #2979)
+                    // Both tags are mapped onto closed sets so an agent (including an older image that
+                    // still reports qgc_retry_agent / code_review / unknown) cannot add label values.
+                    var phase = PipelineTelemetry.NormalizeRunPhase(report.Stage);
                     PipelineTelemetry.RunAgentStalls.Add(1,
                         PipelineTelemetry.RunTypeTag(runType),
-                        new KeyValuePair<string, object?>("phase", report.Stage),
-                        new KeyValuePair<string, object?>("kind", report.Result));
+                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>("kind", stallKind));
                     _logger.Debug("Job {JobId} agent stall recorded: phase={Phase} kind={Kind}",
-                        jobId.Value, report.Stage, report.Result);
+                        jobId.Value, phase, stallKind);
                 }
                 else
                 {
-                    _logger.Warning("Job {JobId} AgentStall event missing required fields (Stage, Result) — skipped",
-                        jobId.Value);
+                    _logger.Warning("Job {JobId} AgentStall event without a stage or with unknown kind {Kind} — skipped",
+                        jobId.Value, report.Result);
                 }
                 break;
 

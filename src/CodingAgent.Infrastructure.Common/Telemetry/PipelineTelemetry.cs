@@ -21,7 +21,6 @@ public static class PipelineTelemetry
     private const string UnitUpdate = "{update}";
     private const string UnitFailure = "{failure}";
     private const string UnitItem = "{item}";
-    private const string UnitRetry = "{retry}";
     private const string UnitRun = "{run}";
     private const string UnitEvent = "{event}";
     private const string UnitReprobe = "{reprobe}";
@@ -177,51 +176,53 @@ public static class PipelineTelemetry
         });
 
     /// <summary>
-    /// Normalizes a raw phase name (from <see cref="RunMetrics.PhaseBreakdown"/> or phase description)
-    /// to a closed set of phase tag values for metrics. Per-reviewer names (e.g. "review_correctness")
-    /// collapse into "review". Unknown phases map to "other".
+    /// Normalizes a raw phase key (from <see cref="RunMetrics.PhaseBreakdown"/>, an agent invocation, or an
+    /// agent-reported stall event) to the closed <see cref="RunPhases"/> set. This one vocabulary is used by
+    /// the <c>phase</c> tag of every metric and by the <c>pipeline.phase</c> attribute of
+    /// <c>invoke_agent</c> spans. Per-reviewer keys (<c>review_{name}</c>, <c>follow_up_{name}</c>) collapse
+    /// into <c>review</c>; unknown keys map to <c>other</c>.
     /// </summary>
     /// <remarks>
-    /// Closed set: analysis, analysis_review, codegen, review, acceptance_criteria,
-    /// pr_description, reflection, decomposition, other.
+    /// Also accepts the stall phase names older agent images still report
+    /// (<c>qgc_retry_agent</c>, <c>code_review</c>, <c>unknown</c>).
     /// </remarks>
     public static string NormalizeRunPhase(string? phase)
     {
         if (string.IsNullOrEmpty(phase))
             return RunPhases.Other;
 
-        // TODO: Several real phase keys produced in the codebase fall through to "other" and lose
-        // per-phase attribution. Known gaps: "decomposition_analysis" and "decomposition_refinement"
-        // (DecompositionAnalysisStep.cs) should map to "decomposition"; "follow_up_{DisplayName}"
-        // (AgentPhaseExecutor.CodeReview.cs) should map to "review"; "fix" (CodeReviewOrchestrator.cs)
-        // should likely map to "codegen". Add the missing arms when those phases are confirmed stable.
-        // TODO: The two `_ when` guard clauses below reference the original `phase` variable (not the
-        // already-lowercased local). This is safe because OrdinalIgnoreCase is passed, but it is
-        // asymmetric with the literal arms above. If adding new StartsWith guards, use the lowercased
-        // local or always pass OrdinalIgnoreCase to avoid silent case-sensitivity bugs.
-        return phase.ToLowerInvariant() switch
+        var key = phase.ToLowerInvariant();
+        return key switch
         {
-            "analysis" => "analysis",
-            "analysis_review" or "analysisreview" => "analysis_review",
-            "codegen" or "code_gen" or "code generation" => "codegen",
-            "review" => "review",
-            "acceptance_criteria" or "acceptancecriteria" => "acceptance_criteria",
-            "pr_description" or "prdescription" => "pr_description",
-            "reflection" => "reflection",
-            "decomposition" or "decomposition_review" or "decompositionreview" => "decomposition",
-            _ when phase.StartsWith("review_", StringComparison.OrdinalIgnoreCase) => "review",
-            _ when phase.StartsWith("review ", StringComparison.OrdinalIgnoreCase) => "review",
+            "analysis" => RunPhases.Analysis,
+            "analysis_review" or "analysisreview" => RunPhases.AnalysisReview,
+            "codegen" or "code_gen" or "code generation" => RunPhases.CodeGen,
+            "review" or "code_review" or "fix" => RunPhases.Review,
+            "quality_gate" or "qgc_retry_agent" => RunPhases.QualityGate,
+            "acceptance_criteria" or "acceptancecriteria" => RunPhases.AcceptanceCriteria,
+            "pr_description" or "prdescription" => RunPhases.PrDescription,
+            "reflection" => RunPhases.Reflection,
+            _ when key.StartsWith("decomposition", StringComparison.Ordinal) => RunPhases.Decomposition,
+            _ when key.StartsWith("review_", StringComparison.Ordinal)
+                || key.StartsWith("review ", StringComparison.Ordinal)
+                || key.StartsWith("follow_up_", StringComparison.Ordinal) => RunPhases.Review,
             _ => RunPhases.Other
         };
     }
 
-    /// <summary>Normalized phase tag values for pipeline.run.* LLM usage counters.</summary>
+    /// <summary>
+    /// Normalized phase tag values, shared by the <c>pipeline.run.*</c> usage counters,
+    /// <c>pipeline.run.agent_stalls</c> and the <c>pipeline.phase</c> span attribute.
+    /// </summary>
     public static class RunPhases
     {
         public const string Analysis = "analysis";
         public const string AnalysisReview = "analysis_review";
         public const string CodeGen = "codegen";
+        /// <summary>Code review: reviewer agents, follow-ups, the summary, and the fix iterations.</summary>
         public const string Review = "review";
+        /// <summary>Quality gate retries: the fix agent runs and the gate processes themselves.</summary>
+        public const string QualityGate = "quality_gate";
         public const string AcceptanceCriteria = "acceptance_criteria";
         public const string PrDescription = "pr_description";
         public const string Reflection = "reflection";
@@ -231,7 +232,7 @@ public static class PipelineTelemetry
         /// <summary>All closed-set phase values for pre-initialization.</summary>
         public static readonly string[] All =
         [
-            Analysis, AnalysisReview, CodeGen, Review, AcceptanceCriteria,
+            Analysis, AnalysisReview, CodeGen, Review, QualityGate, AcceptanceCriteria,
             PrDescription, Reflection, Decomposition, Other
         ];
     }
@@ -291,46 +292,9 @@ public static class PipelineTelemetry
             Statuses.FirstOrDefault(s => s.Equals(status, StringComparison.OrdinalIgnoreCase)) ?? Other;
     }
 
-    public static readonly Counter<long> QualityGateRetries = Meter.CreateCounter<long>(
-        "quality_gate.retries", UnitRetry, "Quality gate retry attempts");
-    public static readonly Histogram<double> QualityGateDuration = Meter.CreateHistogram<double>(
-        "quality_gate.duration", "s", "Total time in quality gate phase");
-    public static readonly Counter<long> QualityGateEvaluations = Meter.CreateCounter<long>(
-        "quality_gate.evaluations", "{evaluation}", "Individual gate evaluation events");
-    public static readonly Histogram<double> ExternalCiDuration = Meter.CreateHistogram<double>(
-        "quality_gate.external_ci.duration", "s", "Time waiting for external CI",
-        advice: new InstrumentAdvice<double>
-        {
-            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
-        });
-
-    // QGC process-level instrumentation (issue #2367)
-    public static readonly Counter<long> QgcProcessTimeouts = Meter.CreateCounter<long>(
-        "quality_gate.process.timeout", "{timeout}", "QGC process timeouts by gate and QGC name");
-    public static readonly Histogram<double> QgcProcessDuration = Meter.CreateHistogram<double>(
-        "quality_gate.process.duration", "s",
-        "Single process invocation duration (compilation or test command). Distinct from quality_gate.duration which covers the entire retry phase.",
-        advice: new InstrumentAdvice<double>
-        {
-            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600]
-        });
-    public static readonly Counter<long> StallWarnings = Meter.CreateCounter<long>(
-        "quality_gate.stall.warnings", "{warning}", "Agent stall silence warnings by phase");
-    public static readonly Counter<long> StallKills = Meter.CreateCounter<long>(
-        "quality_gate.stall.kills", "{kill}", "Agent stall kill events by phase");
-    public static readonly Counter<long> StallProcessDeaths = Meter.CreateCounter<long>(
-        "quality_gate.stall.process_deaths", "{process_death}", "Agent stall process death events by phase");
-    public static readonly Histogram<double> PostPrCiDuration = Meter.CreateHistogram<double>(
-        "quality_gate.post_pr_ci.duration", "s", "Time waiting for post-PR CI to complete",
-        advice: new InstrumentAdvice<double>
-        {
-            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
-        });
-
     // ── API-side quality gate and CI metrics (issue #2979) ───────────────────────────────────────
-    // These are recorded by the API when the agent reports events via the hub, NOT by agent pods.
-    // Agent pods must not record quality_gate.results, ci.not_started_retriggers, ci.wait, or
-    // agent_stalls — those counters live exclusively on the API side.
+    // These are recorded by the API when the agent reports events via the hub. Agent pods export no
+    // metrics at all (issue #2980), so anything an agent measures must reach the API this way.
 
     /// <summary>
     /// Counter: individual gate evaluation outcomes, recorded by the API when ReportQualityGateResult
@@ -379,10 +343,6 @@ public static class PipelineTelemetry
     public static readonly Counter<long> ConsolidationDispatchPermanentFailures = Meter.CreateCounter<long>(
         "consolidation.dispatch.permanent_failures", UnitFailure,
         "Consolidation dispatch permanent failures (e.g. no job template for selector). Tagged by run.type.");
-
-    // Brain metrics (kept: BrainPushRetries used in BrainUpdateService in Infrastructure.Providers)
-    public static readonly Counter<long> BrainPushRetries = Meter.CreateCounter<long>(
-        "brain.push.retries", UnitRetry, "Brain repo push retry attempts on non-fast-forward conflict");
 
     // Token vending metrics
     public static readonly Counter<long> TokenVendingFailures = Meter.CreateCounter<long>(
@@ -537,14 +497,6 @@ public static class PipelineTelemetry
     public static readonly Counter<long> QueueSweepFailed = Meter.CreateCounter<long>(
         "pipeline.queue_sweep.failed", UnitItem, "PostStatusAsync unexpected failures during queue sweep (expected races like already-terminal are not counted)");
 
-    // Agent worker metrics
-    public static readonly Counter<long> AgentHeartbeatFailures = Meter.CreateCounter<long>(
-        "agent.heartbeat.failures", UnitFailure, "Agent heartbeat failures");
-    public static readonly Counter<long> AgentReconnections = Meter.CreateCounter<long>(
-        "agent.reconnections", "{reconnection}", "Agent reconnection events");
-    public static readonly Counter<long> AgentSignalRFailures = Meter.CreateCounter<long>(
-        "agent.signalr.failures", UnitFailure, "Failed or dropped SignalR messages from agent");
-
     /// <summary>
     /// Hub-auth rejection counter tagged by <c>reason</c> (closed set).
     /// Reason values: <c>reconnect_race</c>, <c>not_registered</c>,
@@ -564,13 +516,6 @@ public static class PipelineTelemetry
         public const string SkippedFilteredByLabel = "skipped_filtered_by_label";
     }
 
-    public static class AgentRejectionReasons
-    {
-        public const string Busy = "busy";
-        public const string ShuttingDown = "shutting_down";
-        public const string Unknown = "unknown";
-    }
-
     /// <summary>
     /// Reason tag values for <see cref="HubAuthRejections"/> (closed set — do not add cardinality).
     /// </summary>
@@ -584,13 +529,6 @@ public static class PipelineTelemetry
         public const string JobMismatch = "job_mismatch";
         /// <summary>Operator connection tried to call an agent-only method.</summary>
         public const string OperatorForbidden = "operator_forbidden";
-    }
-
-    internal static class QualityGateNames
-    {
-        public const string Compilation = "compilation";
-        public const string Tests = "tests";
-        public const string ExternalCi = "external_ci";
     }
 
     /// <summary>
@@ -613,6 +551,13 @@ public static class PipelineTelemetry
         public const string ProcessDeath = "process_death";
         public const string ProcessTimeout = "process_timeout";
         public static readonly string[] All = [StallKill, ProcessDeath, ProcessTimeout];
+
+        /// <summary>
+        /// Maps an agent-reported stall kind to the closed set, or <c>null</c> when it is not one of
+        /// the known kinds, so a misbehaving agent cannot inflate label cardinality.
+        /// </summary>
+        public static string? Normalize(string? kind) =>
+            All.FirstOrDefault(k => k.Equals(kind, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -625,25 +570,10 @@ public static class PipelineTelemetry
     }
 
     /// <summary>
-    /// Normalized phase tag values for stall-monitor metrics (issue #2367).
-    /// Using a closed constant set prevents unbounded label cardinality on the
-    /// <c>quality_gate.stall.*</c> counters.
+    /// Maps a free-text agent invocation description (e.g. "Quality gate retry fix agent (attempt 2)")
+    /// to a <see cref="RunPhases"/> value. Used when an invocation carries no phase key.
     /// </summary>
-    public static class StallPhases
-    {
-        public const string QgcRetryAgent = "qgc_retry_agent";
-        public const string CodeGen = "codegen";
-        public const string Analysis = "analysis";
-        public const string CodeReview = "code_review";
-        public const string Decomposition = "decomposition";
-        public const string Unknown = "unknown";
-    }
-
-    /// <summary>
-    /// Maps a raw <paramref name="phaseDescription"/> string to one of the closed-set
-    /// <see cref="StallPhases"/> constants, preventing unbounded metric cardinality.
-    /// </summary>
-    public static string NormalizeStallPhase(string phaseDescription)
+    public static string NormalizePhaseDescription(string phaseDescription)
     {
         ArgumentException.ThrowIfNullOrEmpty(phaseDescription);
 
@@ -651,35 +581,33 @@ public static class PipelineTelemetry
             phaseDescription.Contains("Pre-PR cleanup", StringComparison.OrdinalIgnoreCase) ||
             phaseDescription.Contains("Final QG", StringComparison.OrdinalIgnoreCase) ||
             phaseDescription.Contains("Post-PR CI", StringComparison.OrdinalIgnoreCase))
-            return StallPhases.QgcRetryAgent;
+            return RunPhases.QualityGate;
 
         if (phaseDescription.Contains("Code generation", StringComparison.OrdinalIgnoreCase) ||
             phaseDescription.Contains("Code gen", StringComparison.OrdinalIgnoreCase))
-            return StallPhases.CodeGen;
+            return RunPhases.CodeGen;
 
         if (phaseDescription.Contains("Analysis agent", StringComparison.OrdinalIgnoreCase) ||
             phaseDescription.StartsWith("Analysis", StringComparison.OrdinalIgnoreCase))
-            return StallPhases.Analysis;
+            return RunPhases.Analysis;
+
+        if (phaseDescription.Contains("Acceptance criteria", StringComparison.OrdinalIgnoreCase))
+            return RunPhases.AcceptanceCriteria;
 
         if (phaseDescription.Contains("Code review", StringComparison.OrdinalIgnoreCase) ||
             phaseDescription.Contains("Follow-up for reviewer", StringComparison.OrdinalIgnoreCase) ||
-            phaseDescription.Contains("Review summary", StringComparison.OrdinalIgnoreCase) ||
-            phaseDescription.Contains("Acceptance criteria", StringComparison.OrdinalIgnoreCase))
-            return StallPhases.CodeReview;
+            phaseDescription.Contains("Review summary", StringComparison.OrdinalIgnoreCase))
+            return RunPhases.Review;
 
         if (phaseDescription.Contains("Decomposition", StringComparison.OrdinalIgnoreCase))
-            return StallPhases.Decomposition;
+            return RunPhases.Decomposition;
 
-        return StallPhases.Unknown;
+        return RunPhases.Other;
     }
 
     /// <summary>Creates a run_type tag from the given <see cref="PipelineRunType"/>.</summary>
     public static KeyValuePair<string, object?> RunTypeTag(PipelineRunType runType) =>
         new("run_type", runType.ToString().ToLowerInvariant());
-
-    /// <summary>Creates a pipeline.project_name tag.</summary>
-    public static KeyValuePair<string, object?> ProjectNameTag(string? projectName) =>
-        new("pipeline.project_name", projectName ?? ActivityTags.Unknown);
 
     /// <summary>
     /// Sets project-related tags on an <see cref="Activity"/>.
@@ -689,22 +617,6 @@ public static class PipelineTelemetry
         activity?.SetTag("pipeline.project_id", projectId ?? ActivityTags.Unknown);
         activity?.SetTag("pipeline.project_name", projectName ?? ActivityTags.Unknown);
     }
-
-    /// <summary>
-    /// Builds a <see cref="TagList"/> containing run_type and project_name tags.
-    /// <para>
-    /// The <paramref name="projectId"/> parameter is accepted but no longer emitted as a metric
-    /// tag — <c>pipeline.project_name</c> is 1:1 with it and already present, so the extra tag
-    /// was redundant cardinality. <c>pipeline.project_id</c> is still set on spans via
-    /// <see cref="SetProjectTags"/>. See issue #2980.
-    /// </para>
-    /// </summary>
-    public static TagList BuildTags(PipelineRunType runType, string? projectId, string? projectName) =>
-        new(
-        [
-            RunTypeTag(runType),
-            ProjectNameTag(projectName)
-        ]);
 
     /// <summary>
     /// Records an error on the given <see cref="Activity"/>. For graceful cancellation

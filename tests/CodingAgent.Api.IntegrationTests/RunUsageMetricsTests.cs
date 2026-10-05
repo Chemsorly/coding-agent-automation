@@ -348,14 +348,14 @@ public sealed class RunUsageMetricsTests
 
         Program.EmitPreInitCounters();
 
-        // 5 run_types × 9 phases × 4 providers = 180 series
-        tokenSeries.Should().HaveCount(180,
-            "5 run_types × 9 phases × 4 providers = 180 pre-init series for pipeline.run.tokens");
+        // 5 run_types × 10 phases × 4 providers = 200 series
+        tokenSeries.Should().HaveCount(200,
+            "5 run_types × 10 phases × 4 providers = 200 pre-init series for pipeline.run.tokens");
 
-        sessionSeries.Should().HaveCount(180,
-            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 180 series");
+        sessionSeries.Should().HaveCount(200,
+            "pipeline.run.agent_sessions: model='unknown' is fixed in pre-init, same 200 series");
 
-        // Verify all 9 phases are present
+        // Verify all 10 phases are present
         var phases = tokenSeries.Select(m => m.Tags.GetValueOrDefault("phase")?.ToString())
             .Where(p => p is not null).Distinct().Order().ToList();
         phases.Should().BeEquivalentTo(PipelineTelemetry.RunPhases.All);

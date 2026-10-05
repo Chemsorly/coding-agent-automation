@@ -100,11 +100,8 @@ builder.Services.AddOpenTelemetry()
          .AddAspNetCoreInstrumentation(opts =>
             opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
          .AddHttpClientInstrumentation(opts =>
-         {
-             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest;
-             opts.EnrichWithHttpRequestMessage = OtelNoiseFilter.EnrichHttpClientRequest;
-         })
-         .AddProcessor(new OtelNoiseSpanDropProcessor())
+             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
+         .AddProcessor(new OtelNoiseSpanProcessor())
          .AddOtlpExporter();
     })
     .WithMetrics(m =>
