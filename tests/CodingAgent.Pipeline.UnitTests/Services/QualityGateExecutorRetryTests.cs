@@ -164,8 +164,9 @@ public class QualityGateExecutorRetryTests
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
-            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _) =>
+                It.IsAny<string?>(),
+                It.IsAny<Action<PipelineRunEventReport>?>()))
+            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _, Action<PipelineRunEventReport>? _) =>
             {
                 callCount++;
                 if (callCount >= 2)
@@ -188,8 +189,9 @@ public class QualityGateExecutorRetryTests
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
-            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _) =>
+                It.IsAny<string?>(),
+                It.IsAny<Action<PipelineRunEventReport>?>()))
+            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _, Action<PipelineRunEventReport>? _) =>
             {
                 callCount++;
                 if (callCount >= 2)
