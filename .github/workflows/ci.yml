@@ -365,11 +365,9 @@ jobs:
           - { tag: coding-agent-api }
           - { tag: coding-agent-jobcontroller }
           - { tag: coding-agent-scheduler }
-          # aliases: the retired per-stack tags, moved along with -latest and -<version> so job
-          # templates that still use them keep getting updates. Remove once templates have moved.
-          - { tag: coding-agent-kiro, aliases: coding-agent-kiro-dotnet10 coding-agent-kiro-python312 coding-agent-kiro-java21 }
-          - { tag: coding-agent-opencode, aliases: coding-agent-opencode-dotnet10 coding-agent-opencode-python312 coding-agent-opencode-java21 }
-          - { tag: coding-agent-claude, aliases: coding-agent-claude-dotnet10 coding-agent-claude-python312 coding-agent-claude-java21 }
+          - { tag: coding-agent-kiro }
+          - { tag: coding-agent-opencode }
+          - { tag: coding-agent-claude }
 
     steps:
       - name: Install cosign
@@ -458,20 +456,11 @@ jobs:
           push_signed_manifest "${{ matrix.tag }}-latest"
 
           # Push version-tagged manifest on tag pushes
-          VERSION=""
           if echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
             VERSION="${{ github.ref_name }}"
             VERSION="${VERSION#v}"
             push_signed_manifest "${{ matrix.tag }}-${VERSION}"
           fi
-
-          # Point the deprecated alias tags at the same manifest list
-          for ALIAS in ${{ matrix.aliases }}; do
-            push_signed_manifest "${ALIAS}-latest"
-            if [ -n "${VERSION}" ]; then
-              push_signed_manifest "${ALIAS}-${VERSION}"
-            fi
-          done
 
   # Chart publishing — only on tag pushes (release)
   publish-chart:
