@@ -97,6 +97,10 @@ web:
     #  - secretName: coding-agent-tls
     #    hosts:
     #      - coding-agent.example.com
+    # With a tls section, the web host redirects clients that reached the ingress over plain HTTP
+    # (X-Forwarded-Proto: http) to HTTPS, so the login form never posts a password unencrypted.
+    # Set false when TLS ends in front of the ingress and the ingress sees only HTTP.
+    httpsRedirect: true
   env:
     # Startup delay was previously needed to give the web hub time to rehydrate active runs
     # before dispatching. After Spec 044, the API owns IOrchestratorRunService and rehydrates on
