@@ -38,8 +38,9 @@ public static class AgentLabels
         (EpicApproved, "0e8a16")
     };
 
-    /// <summary>All agent label names.</summary>
-    public static readonly IReadOnlyList<string> All = Definitions.Select(d => d.Name).ToList().AsReadOnly();
+    /// <summary>All agent label names. Membership checks are case-insensitive.</summary>
+    public static readonly IReadOnlySet<string> All =
+        new HashSet<string>(Definitions.Select(d => d.Name), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Agent label names that are replaced during a status swap.
@@ -49,9 +50,12 @@ public static class AgentLabels
     /// <c>agent:generated</c>). Only <see cref="AgentLabelOperations.SwapAsync"/> uses this set;
     /// <see cref="AgentLabelOperations.RemoveAllAsync"/> continues to use <see cref="All"/> because
     /// an explicit full-cleanup intentionally removes every agent label including provenance labels.
+    /// Membership checks are case-insensitive.
     /// </summary>
-    public static readonly IReadOnlyList<string> SwapTargets =
-        All.Where(l => !string.Equals(l, Generated, StringComparison.Ordinal)).ToList().AsReadOnly();
+    public static readonly IReadOnlySet<string> SwapTargets =
+        new HashSet<string>(
+            Definitions.Select(d => d.Name).Where(l => !string.Equals(l, Generated, StringComparison.OrdinalIgnoreCase)),
+            StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Labels representing terminal pipeline states — should not be overwritten by recovery services.</summary>
     public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -91,8 +95,9 @@ public static class AgentLabels
     /// Labels that require explicit human action to set. Agents may not set these via RequestLabelChange.
     /// Every member of this set must also be present in <see cref="All"/>; labels absent from <c>All</c>
     /// would be rejected by the prior guard and never reach the gated-label check.
+    /// Membership checks are case-insensitive.
     /// </summary>
-    public static readonly IReadOnlySet<string> DispatchGatedLabels = new HashSet<string>
+    public static readonly IReadOnlySet<string> DispatchGatedLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         EpicApproved
     };
@@ -103,6 +108,12 @@ public static class AgentLabels
     /// branch deletion. An issue bearing any of these labels must not be re-queued or have its
     /// branch deleted — work is either pending dispatch or currently running.
     /// </summary>
+    // TODO: HousekeepingActiveLabels uses StringComparer.Ordinal while all other membership-check sets
+    // in this file were migrated to OrdinalIgnoreCase (issue #3337). If a caller ever checks this set
+    // against a label received from GitHub/GitLab (which preserves creation-time casing), a mixed-case
+    // value like "Agent:Epic-Approved" would not match, potentially allowing stale-branch deletion or
+    // conflict-rework re-queuing of an epic-approved issue. Consider migrating to OrdinalIgnoreCase for
+    // consistency and correctness.
     public static readonly IReadOnlySet<string> HousekeepingActiveLabels = new HashSet<string>(StringComparer.Ordinal)
     {
         Next,
@@ -127,6 +138,10 @@ public static class AgentLabels
     /// they are human-placed signals that the issue should be re-queued for rework.
     /// </para>
     /// </summary>
+    // TODO: HousekeepingTerminalReworkBlockers uses StringComparer.Ordinal while all other membership-check
+    // sets in this file were migrated to OrdinalIgnoreCase (issue #3337). A mixed-case label sourced from
+    // an external webhook could bypass the rework-blocker guard. Consider migrating to OrdinalIgnoreCase
+    // for consistency with the rest of the file.
     public static readonly IReadOnlySet<string> HousekeepingTerminalReworkBlockers = new HashSet<string>(StringComparer.Ordinal)
     {
         WontDo,
@@ -136,8 +151,9 @@ public static class AgentLabels
     /// <summary>
     /// Agent labels that are allowed on newly-created issues.
     /// All other <c>agent:*</c> labels are dropped when an agent requests issue creation.
+    /// Membership checks are case-insensitive.
     /// </summary>
-    public static readonly IReadOnlySet<string> AllowedOnCreation = new HashSet<string>(StringComparer.Ordinal)
+    public static readonly IReadOnlySet<string> AllowedOnCreation = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         Next,
         Generated
@@ -149,16 +165,16 @@ public static class AgentLabels
     /// <see cref="AllowedOnCreation"/> (<c>agent:next</c> and <c>agent:generated</c>).
     /// All other <c>agent:*</c> labels are silently dropped; callers that need to log
     /// dropped labels should inspect the return value against the input.
+    /// Comparisons are case-insensitive so mixed-case labels (e.g. "Agent:Epic-Approved")
+    /// are correctly classified and dropped.
     /// </summary>
     public static IReadOnlyList<string> FilterForIssueCreation(IEnumerable<string> labels)
     {
         ArgumentNullException.ThrowIfNull(labels);
-        // TODO: All and AllowedOnCreation are built with StringComparer.Ordinal, so a mixed-case
-        // agent label (e.g. "Agent:Next") is not found in All and passes through as though it were
-        // a non-agent label — violating the filter contract. The whitespace guard here also uses
-        // IsNullOrEmpty while CreateSubIssuesStep uses IsNullOrWhiteSpace, which is inconsistent.
-        // Consider rebuilding All / AllowedOnCreation with OrdinalIgnoreCase and switching this
-        // guard to IsNullOrWhiteSpace for consistency with callers.
+        // TODO: This guard uses string.IsNullOrEmpty while the parallel guard in CreateSubIssuesStep.cs
+        // uses string.IsNullOrWhiteSpace. A label consisting only of whitespace (e.g. "   ") passes
+        // IsNullOrEmpty, is not found in All, and is forwarded to the provider. Consider switching to
+        // IsNullOrWhiteSpace for consistency with the CreateSubIssuesStep path.
         return labels
             .Where(l => !string.IsNullOrEmpty(l) &&
                         (!All.Contains(l) || AllowedOnCreation.Contains(l)))

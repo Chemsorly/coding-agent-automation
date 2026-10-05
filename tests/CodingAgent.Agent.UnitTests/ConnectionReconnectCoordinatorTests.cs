@@ -46,9 +46,10 @@ public sealed class ConnectionReconnectCoordinatorTests
             factory: factory,
             logger: Mock.Of<Serilog.ILogger>(),
             lifetime: lifetime,
-            wireHandlers: wireHandlers ?? (_ => { }),
-            registerAgent: registerAgent ?? ((_, _) => Task.CompletedTask),
-            afterSuccessfulReconnect: afterSuccessfulReconnect);
+            callbacks: new ReconnectCallbacks(
+                WireHandlers: wireHandlers ?? (_ => { }),
+                RegisterAgent: registerAgent ?? ((_, _) => Task.CompletedTask),
+                AfterSuccessfulReconnect: afterSuccessfulReconnect));
         return (coordinator, initialHub);
     }
 

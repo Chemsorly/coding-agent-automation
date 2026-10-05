@@ -101,7 +101,8 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
 
         // ProcessId after exit: may return the PID or null depending on whether
         // the OS allows reading it after exit — just verify it doesn't throw.
-        var _ = wrapper.ProcessId; // must not throw
+        var act = () => wrapper.ProcessId;
+        act.Should().NotThrow();
     }
 
     // ── StartAsync guard: already running ───────────────────────────────

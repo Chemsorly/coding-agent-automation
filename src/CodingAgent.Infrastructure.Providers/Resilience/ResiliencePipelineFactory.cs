@@ -354,9 +354,14 @@ public static class ResiliencePipelineFactory
     /// Truncates a message to the specified maximum length to prevent log explosion.
     /// </summary>
     internal static string TruncateMessage(string? message, int maxLength = 200)
-        => message is null ? "unknown"
-           : message.Length <= maxLength ? message
-           : string.Concat(message.AsSpan(0, maxLength), "…");
+    {
+        if (message is null)
+            return "unknown";
+
+        return message.Length <= maxLength
+            ? message
+            : string.Concat(message.AsSpan(0, maxLength), "…");
+    }
 
     /// <summary>
     /// Determines if a <see cref="GitLabException"/> is retryable (5xx, 408 Request Timeout, 429 Too Many Requests).

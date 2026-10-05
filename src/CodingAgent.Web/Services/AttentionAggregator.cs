@@ -68,8 +68,7 @@ public static class AttentionAggregator
         // gate fires and the run terminates as Failed) will appear in BOTH NeedsRefinement and FailedRuns.
         // TotalCount then over-counts by 1 and the badge will disagree with the Attention page (where
         // a single row is rendered once). Consider giving NeedsRefinement priority and excluding those
-        // runs from FailedRuns: var failedRuns = representatives.Where(r => r.FinalStep == PipelineStep.Failed
-        //   && r.AnalysisRecommendation != AnalysisGateResult.NotReady).ToList();
+        // runs from FailedRuns, i.e. only count a Failed representative whose recommendation is not NotReady.
         var needsRefinement = representatives
             .Where(r => r.AnalysisRecommendation == AnalysisGateResult.NotReady)
             .ToList();

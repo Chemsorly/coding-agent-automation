@@ -174,32 +174,29 @@ return hash
         foreach (var line in outputLines) run.OutputLines.Enqueue(line);
 
         var chatEntries = await _store.ListRangeAsync(ChatKey(runId), 0, -1);
-        foreach (var entry in chatEntries)
-        {
-            try
-            {
-                var chatEntry = JsonSerializer.Deserialize<ChatEntry>(entry);
-                if (chatEntry is not null) run.ChatHistory.Enqueue(chatEntry);
-            }
-            catch { /* malformed entry — skip */ }
-        }
+        EnqueueDeserialized(chatEntries, run.ChatHistory);
 
         var qgReports = await _store.ListRangeAsync(QgKey(runId), 0, -1);
-        foreach (var report in qgReports)
-        {
-            try
-            {
-                var qgReport = JsonSerializer.Deserialize<QualityGateReport>(report);
-                if (qgReport is not null) run.QualityGateHistory.Enqueue(qgReport);
-            }
-            catch { /* malformed entry — skip */ }
-        }
+        EnqueueDeserialized(qgReports, run.QualityGateHistory);
 
         var retryErrors = await _store.ListRangeAsync(RetryErrorsKey(runId), 0, -1);
         foreach (var error in retryErrors) run.RetryErrors.Enqueue(error);
 
         _logger.Information("Active run removed: {RunId}", runId);
         return run;
+    }
+
+    private static void EnqueueDeserialized<T>(string[] entries, BoundedConcurrentQueue<T> target) where T : class
+    {
+        foreach (var entry in entries)
+        {
+            try
+            {
+                var item = JsonSerializer.Deserialize<T>(entry);
+                if (item is not null) target.Enqueue(item);
+            }
+            catch { /* malformed entry — skip */ }
+        }
     }
 
     // ── GetRun ────────────────────────────────────────────────────────

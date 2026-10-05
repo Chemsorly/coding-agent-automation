@@ -311,8 +311,7 @@ public partial class GitLabRepositoryProvider
         foreach (var mr in matching)
         {
             // Fetch discussion notes for review comments (filter pipeline-generated)
-            var client = await GetClientAsync(ct);
-            var reviewComments = await GetMergeRequestReviewCommentsAsync(client, mr.Iid, ct);
+            var reviewComments = await GetMergeRequestReviewCommentsAsync(mr.Iid, ct);
 
             results.Add(new LinkedPullRequest
             {
@@ -768,7 +767,7 @@ public partial class GitLabRepositoryProvider
     /// Returns up to 50 comments ordered by creation date, via <see cref="SharedPrOperations.FinalizeReviewComments"/>.
     /// </summary>
     private async Task<IReadOnlyList<PullRequestReviewComment>> GetMergeRequestReviewCommentsAsync(
-        IGitLabClient client, long mrIid, CancellationToken ct)
+        long mrIid, CancellationToken ct)
     {
         try
         {

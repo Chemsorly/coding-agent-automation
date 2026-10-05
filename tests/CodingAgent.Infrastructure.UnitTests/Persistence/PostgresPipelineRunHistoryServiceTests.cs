@@ -974,9 +974,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         }
 
         var result = await _sut.GetRunHistoryAsync(
-            page: 1, pageSize: 10, feedbackOnly: false,
-            finalStep: null, projectId: null, since: null,
-            runType: PipelineRunType.Consolidation);
+            new RunHistoryQuery(Page: 1, PageSize: 10, FeedbackOnly: false,
+                FinalStep: null, ProjectId: null, Since: null,
+                RunType: PipelineRunType.Consolidation));
 
         result.Items.Should().HaveCount(2, "only Consolidation runs should be returned");
         result.Items.Should().AllSatisfy(s => s.RunType.Should().Be(PipelineRunType.Consolidation));
@@ -994,10 +994,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
 
         // runType=null → all run types; since is set to force the filter path (not the no-filter fast path)
         var result = await _sut.GetRunHistoryAsync(
-            page: 1, pageSize: 10, feedbackOnly: false,
-            finalStep: null, projectId: null,
-            since: DateTimeOffset.UtcNow.AddDays(-1),
-            runType: null);
+            new RunHistoryQuery(Page: 1, PageSize: 10, FeedbackOnly: false,
+                FinalStep: null, ProjectId: null, Since: DateTimeOffset.UtcNow.AddDays(-1),
+                RunType: null));
 
         result.Items.Should().HaveCount(2, "null runType must return all run types");
     }
@@ -1014,9 +1013,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         }
 
         var result = await _sut.GetRunHistoryAsync(
-            page: 1, pageSize: 10, feedbackOnly: false,
-            finalStep: null, projectId: null, since: null,
-            runType: null);
+            new RunHistoryQuery(Page: 1, PageSize: 10, FeedbackOnly: false,
+                FinalStep: null, ProjectId: null, Since: null,
+                RunType: null));
 
         result.Items.Should().HaveCount(2, "all-null filters must fall through to the unfiltered path");
     }
@@ -1025,9 +1024,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     public async Task GetRunHistoryAsync_WithRunType_InvalidPage_ThrowsArgumentOutOfRangeException()
     {
         var act = async () => await _sut.GetRunHistoryAsync(
-            page: 0, pageSize: 10, feedbackOnly: false,
-            finalStep: null, projectId: null, since: null,
-            runType: PipelineRunType.Consolidation);
+            new RunHistoryQuery(Page: 0, PageSize: 10, FeedbackOnly: false,
+                FinalStep: null, ProjectId: null, Since: null,
+                RunType: PipelineRunType.Consolidation));
 
         await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
@@ -1036,10 +1035,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     public async Task GetRunHistoryAsync_WithRunType_Consolidation_EmptyTable_ReturnsEmpty()
     {
         var result = await _sut.GetRunHistoryAsync(
-            page: 1, pageSize: 10, feedbackOnly: false,
-            finalStep: null, projectId: null,
-            since: DateTimeOffset.UtcNow.AddDays(-1),
-            runType: PipelineRunType.Consolidation);
+            new RunHistoryQuery(Page: 1, PageSize: 10, FeedbackOnly: false,
+                FinalStep: null, ProjectId: null, Since: DateTimeOffset.UtcNow.AddDays(-1),
+                RunType: PipelineRunType.Consolidation));
 
         result.Items.Should().BeEmpty();
         result.HasMore.Should().BeFalse();

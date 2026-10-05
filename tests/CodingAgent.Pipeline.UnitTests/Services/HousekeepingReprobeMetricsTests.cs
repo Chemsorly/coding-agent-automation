@@ -50,22 +50,11 @@ public class HousekeepingReprobeMetricsTests
                 .ReturnsAsync(new HashSet<string>());
 
         var staleBranchMock = new Mock<IStaleBranchCleaner>();
-        staleBranchMock.Setup(s => s.RunIfDueAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
-                It.IsAny<string>(),
-                It.IsAny<KeyValuePair<string, object?>>(), It.IsAny<bool>(), It.IsAny<int>(),
-                It.IsAny<CancellationToken>()))
+        staleBranchMock.Setup(s => s.RunIfDueAsync(It.IsAny<StaleBranchCleanupRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var reworkMock = new Mock<IIssueReworkService>();
-        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
-                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
-                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
-                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
-                It.IsAny<CancellationToken>()))
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(It.IsAny<ConflictReworkRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var providerMock = new Mock<IRepositoryProvider>();
@@ -91,8 +80,21 @@ public class HousekeepingReprobeMetricsTests
     private static Task ExecAsync(
         HousekeepingService svc, Mock<IRepositoryProvider> repo, Mock<IIssueProvider> issues,
         IReadOnlyList<PullRequestSummary> prs, int limit = 1)
-        => svc.ExecuteAsync(repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, wasInputTruncated: false, limit, false, 60, 25, CancellationToken.None);
+        => svc.ExecuteAsync(
+            new HousekeepingRequest
+            {
+                RepoProvider = repo.Object,
+                RepoProviderId = RepoId,
+                IssueProvider = issues.Object,
+                IssueProviderId = IssueProviderId,
+                AgentDonePrs = prs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = limit,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 60,
+                TriggerCooldownMinutes = 25
+            },
+            CancellationToken.None);
 
     private (System.Diagnostics.Metrics.MeterListener Listener,
              System.Collections.Concurrent.ConcurrentBag<(string Name, long Value, KeyValuePair<string, object?>[] Tags)> Measurements)

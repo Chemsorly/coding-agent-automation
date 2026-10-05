@@ -35,17 +35,16 @@ public static class PipelineRunFactory
         if (request.TaskType == WorkItemTaskType.Consolidation ||
             request.RunType == PipelineRunType.Consolidation)
         {
-            // TODO: PipelineRun.CreateImplementation is semantically misnamed for consolidation usage. It works
-            // today because CreateImplementation has no RunType guard, but if a guard is ever added to reject
-            // non-Implementation run types, this call site will throw at runtime. Consider introducing a
-            // CreateConsolidation factory method mirroring CreateDecomposition. See review warning (issue #3023).
-            var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
+            var consolidationRun = PipelineRun.CreateForRunType(new PipelineRunCreationParams
             {
                 RunId = workItemId.ToString(),
                 IssueIdentifier = request.IssueIdentifier,
                 IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title)
                     ? request.IssueIdentifier.Value
                     : request.IssueDetail.Title,
+                // IssueProviderConfigId must be the sentinel so that AgentJobLifecycleService
+                // routes completion to ConsolidationJobCompletionStrategy (which checks
+                // run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId).
                 IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
                 RepoProviderConfigId = request.RepoProviderConfigId,
                 RunType = PipelineRunType.Consolidation,
@@ -83,69 +82,37 @@ public static class PipelineRunFactory
         PipelineStep? initialStep = null,
         DateTimeOffset? startedAt = null)
     {
-        var run = request.RunType switch
+        // Consolidation runs must use the sentinel IssueProviderConfigId so that
+        // AgentJobLifecycleService routes completion to ConsolidationJobCompletionStrategy
+        // (which checks run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId).
+        // All other run types pass through the real provider ID from the request.
+        var issueProviderConfigId = request.RunType == PipelineRunType.Consolidation
+            ? ConsolidationConstants.ProviderConfigId
+            : request.IssueProviderConfigId;
+
+        var run = PipelineRun.CreateForRunType(new PipelineRunCreationParams
         {
-            PipelineRunType.Review => PipelineRun.CreateReview(new PipelineRunCreationParams
-            {
-                RunId = request.RunId!,
-                IssueIdentifier = request.IssueIdentifier,
-                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
-                IssueUrl = request.IssueDetail?.Url,
-                IssueProviderConfigId = request.IssueProviderConfigId,
-                RepoProviderConfigId = request.RepoProviderConfigId,
-                RunType = PipelineRunType.Review,
-                InitiatedBy = request.InitiatedBy ?? "rehydrated",
-                AgentId = agentId,
-                StartedAt = startedAt,
-                ReviewPrBranchName = request.LinkedPullRequest?.BranchName ?? string.Empty,
-                ReviewPrTargetBranch = request.ReviewPrTargetBranch ?? string.Empty,
-                ReviewPrUrl = request.LinkedPullRequest?.Url,
-                ReviewPrDescription = request.ReviewPrDescription,
-                ReviewPrAuthor = request.ReviewPrAuthor,
-                AgentProviderConfigId = request.AgentProviderConfigId,
-                BrainProviderConfigId = request.BrainProviderConfigId
-            }),
-            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(new PipelineRunCreationParams
-            {
-                RunId = request.RunId!,
-                IssueIdentifier = request.IssueIdentifier,
-                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
-                IssueUrl = request.IssueDetail?.Url,
-                IssueProviderConfigId = request.IssueProviderConfigId,
-                RepoProviderConfigId = request.RepoProviderConfigId,
-                RunType = request.RunType,
-                InitiatedBy = request.InitiatedBy ?? "rehydrated",
-                AgentId = agentId,
-                StartedAt = startedAt,
-                AgentProviderConfigId = request.AgentProviderConfigId,
-                BrainProviderConfigId = request.BrainProviderConfigId
-            }),
-            _ => PipelineRun.CreateImplementation(new PipelineRunCreationParams
-            {
-                RunId = request.RunId!,
-                IssueIdentifier = request.IssueIdentifier,
-                IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
-                IssueUrl = request.IssueDetail?.Url,
-                // TODO: FromDistributionRequest has no Consolidation arm in this switch — a consolidation
-                // work item rehydrated after an API restart (e.g. pod reconnect while a consolidation job is
-                // in-flight) will fall through here and produce a run with IssueProviderConfigId =
-                // request.IssueProviderConfigId (the real provider ID) rather than ConsolidationConstants.ProviderConfigId.
-                // This will silently route completion through RegularJobCompletionStrategy instead of
-                // ConsolidationJobCompletionStrategy. Add a PipelineRunType.Consolidation arm that mirrors
-                // CreateFromWorkItem's consolidation branch (hardcoding the sentinel ProviderConfigId).
-                // See review warning (issue #3023).
-                IssueProviderConfigId = request.IssueProviderConfigId,
-                RepoProviderConfigId = request.RepoProviderConfigId,
-                // NOTE: InitiatedBy null fallback — "rehydrated" is a reasonable default for
-                // dispatch callers that don't supply an explicit value. Each call site can pass
-                // its own fallback via request.InitiatedBy if more specificity is needed.
-                InitiatedBy = request.InitiatedBy ?? "rehydrated",
-                AgentId = agentId,
-                StartedAt = startedAt,
-                AgentProviderConfigId = request.AgentProviderConfigId,
-                BrainProviderConfigId = request.BrainProviderConfigId
-            })
-        };
+            RunId = request.RunId!,
+            IssueIdentifier = request.IssueIdentifier,
+            IssueTitle = string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+            IssueUrl = request.IssueDetail?.Url,
+            IssueProviderConfigId = issueProviderConfigId,
+            RepoProviderConfigId = request.RepoProviderConfigId,
+            RunType = request.RunType,
+            // NOTE: InitiatedBy null fallback — "rehydrated" is a reasonable default for
+            // dispatch callers that don't supply an explicit value. Each call site can pass
+            // its own fallback via request.InitiatedBy if more specificity is needed.
+            InitiatedBy = request.InitiatedBy ?? "rehydrated",
+            AgentId = agentId,
+            StartedAt = startedAt,
+            ReviewPrBranchName = request.LinkedPullRequest?.BranchName ?? string.Empty,
+            ReviewPrTargetBranch = request.ReviewPrTargetBranch ?? string.Empty,
+            ReviewPrUrl = request.LinkedPullRequest?.Url,
+            ReviewPrDescription = request.ReviewPrDescription,
+            ReviewPrAuthor = request.ReviewPrAuthor,
+            AgentProviderConfigId = request.AgentProviderConfigId,
+            BrainProviderConfigId = request.BrainProviderConfigId
+        });
 
         if (initialStep.HasValue)
             run.CurrentStep = initialStep.Value;

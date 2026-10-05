@@ -39,11 +39,9 @@ public class CockpitLayoutAccessTests : BunitContext
             });
         _configClient.Setup(s => s.GetKeyValueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
         _configClient.Setup(s => s.HasEnabledTemplatesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        _runHistory.Setup(c => c.GetRunHistoryAsync(
-                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(),
-                It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
-            .Callback((int _, int _, bool _, bool _, PipelineStep? _, string? projectId, DateTimeOffset? _, PipelineRunType? _, CancellationToken _) =>
-                _attentionQueries.Add(projectId))
+        _runHistory.Setup(c => c.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
+            .Callback((RunHistoryQuery query, CancellationToken _) =>
+                _attentionQueries.Add(query.ProjectId))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false });
 
         Services.AddSingleton(_configClient.Object);

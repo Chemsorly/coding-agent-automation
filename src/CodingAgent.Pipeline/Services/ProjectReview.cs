@@ -73,8 +73,9 @@ public static class ProjectReview
     private static string UniqueName(string name, HashSet<string> names)
     {
         var candidate = name;
-        for (var suffix = 2; !names.Add(candidate); suffix++)
-            candidate = $"{name}{suffix}";
+        var suffix = 2;
+        while (!names.Add(candidate))
+            candidate = $"{name}{suffix++}";
         return candidate;
     }
 }

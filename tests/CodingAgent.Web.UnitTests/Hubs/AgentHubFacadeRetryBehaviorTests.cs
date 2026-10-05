@@ -94,26 +94,11 @@ public sealed class AgentHubFacadeRetryBehaviorTests
                 return Task.FromResult(true);
             });
 
-        // FakeTimeProvider: advance time in a background thread so the Task.Delay(2s, _timeProvider, ct)
-        // resolves immediately once it is awaited, without any real wall-clock wait.
-        using var advanceCts = new CancellationTokenSource();
-        var advanceThread = new Thread(() =>
-        {
-            while (!advanceCts.IsCancellationRequested)
-            {
-                Thread.Sleep(1); // NOSONAR S2925 — background thread advancing FakeTimeProvider requires real wall-clock pause
-                _timeProvider.Advance(TimeSpan.FromSeconds(3));
-            }
-        }) { IsBackground = true };
-        advanceThread.Start();
-
-        // Act
-        var exception = await Record.ExceptionAsync(() =>
+        // Act: the fake clock is advanced until the call completes, so the Task.Delay(2s, _timeProvider, ct)
+        // between attempts resolves without any real wall-clock wait.
+        var exception = await RecordExceptionAdvancingFakeClockAsync(() =>
             _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Failed,
                 CancellationToken.None, "err", FailureReason.AgentError));
-
-        advanceCts.Cancel();
-        advanceThread.Join(100);
 
         // Assert: no exception escapes; called twice (attempt 0 threw, attempt 1 succeeded)
         exception.Should().BeNull();
@@ -160,25 +145,10 @@ public sealed class AgentHubFacadeRetryBehaviorTests
             .Setup(s => s.TryFallbackChainAsync(workItemId, WorkItemStatus.Cancelled, null, null, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("DB timeout"));
 
-        // FakeTimeProvider: advance in a background thread so Task.Delay(2s, _timeProvider, ct)
+        // Act: the fake clock is advanced until the call completes, so Task.Delay(2s, _timeProvider, ct)
         // between the two attempts does not block real wall-clock time.
-        using var advanceCts = new CancellationTokenSource();
-        var advanceThread = new Thread(() =>
-        {
-            while (!advanceCts.IsCancellationRequested)
-            {
-                Thread.Sleep(1); // NOSONAR S2925 — background thread advancing FakeTimeProvider requires real wall-clock pause
-                _timeProvider.Advance(TimeSpan.FromSeconds(3));
-            }
-        }) { IsBackground = true };
-        advanceThread.Start();
-
-        // Act
-        var exception = await Record.ExceptionAsync(() =>
+        var exception = await RecordExceptionAdvancingFakeClockAsync(() =>
             _facade.TransitionWorkItemAsync(workItemId.ToString(), WorkItemStatus.Cancelled, CancellationToken.None));
-
-        advanceCts.Cancel();
-        advanceThread.Join(100);
 
         // Assert: the final attempt's exception propagates — the catch guard is false on attempt index 1
         // (catch condition: attempt < maxAttempts - 1  =>  1 < 1  =>  false).
@@ -189,5 +159,24 @@ public sealed class AgentHubFacadeRetryBehaviorTests
             s => s.TryFallbackChainAsync(workItemId, WorkItemStatus.Cancelled, null, null, It.IsAny<CancellationToken>()),
             Times.Exactly(2),
             "both retry attempts are made before the final exception escapes");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Starts <paramref name="action"/> and keeps advancing the <see cref="FakeTimeProvider"/> until it
+    /// completes, so retry delays scheduled on the fake clock elapse without real wall-clock waits.
+    /// Returns the exception the action faulted with, or <c>null</c> when it succeeded.
+    /// </summary>
+    private async Task<Exception?> RecordExceptionAdvancingFakeClockAsync(Func<Task> action)
+    {
+        var task = action();
+        while (!task.IsCompleted)
+        {
+            _timeProvider.Advance(TimeSpan.FromSeconds(3));
+            await Task.Delay(TimeSpan.FromMilliseconds(1), CancellationToken.None);
+        }
+
+        return await Record.ExceptionAsync(() => task);
     }
 }

@@ -96,7 +96,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     /// <summary>
     /// Creates a provider with a pre-built <see cref="IGitLabClient"/> for testing.
     /// </summary>
-    internal GitLabProviderBase(IGitLabClient client, int projectId)
+    private protected GitLabProviderBase(IGitLabClient client, int projectId)
     {
         ArgumentNullException.ThrowIfNull(client);
 

@@ -436,14 +436,17 @@ public class FeedbackServiceTests
             .ThrowsAsync(new OperationCanceledException("feedback timed out"));
 
         await _sut.CollectFeedbackCoreAsync(
-            run,
-            agentProvider.Object,
-            historyService: null,
-            promptFactory: _ => "test prompt",
-            outcome: FeedbackOutcome.Failure,
-            feedbackTimeoutSeconds: 30,
-            ct: CancellationToken.None,
-            emitOutputLine: _ => { });
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "test prompt",
+                Outcome = FeedbackOutcome.Failure,
+                FeedbackTimeoutSeconds = 30,
+                EmitOutputLine = _ => { }
+            },
+            CancellationToken.None);
 
         // Must set fallback feedback, not propagate
         run.Feedback.Should().NotBeNull();
@@ -473,14 +476,17 @@ public class FeedbackServiceTests
             .ThrowsAsync(new OperationCanceledException("pipeline cancelled"));
 
         var act = async () => await _sut.CollectFeedbackCoreAsync(
-            run,
-            agentProvider.Object,
-            historyService: null,
-            promptFactory: _ => "test prompt",
-            outcome: FeedbackOutcome.Failure,
-            feedbackTimeoutSeconds: 30,
-            ct: cts.Token,
-            emitOutputLine: _ => { });
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "test prompt",
+                Outcome = FeedbackOutcome.Failure,
+                FeedbackTimeoutSeconds = 30,
+                EmitOutputLine = _ => { }
+            },
+            cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         // run.Feedback must remain null — fallback is not set on pipeline cancellation
@@ -498,14 +504,17 @@ public class FeedbackServiceTests
             .ThrowsAsync(new InvalidOperationException(errorMessage));
 
         await _sut.CollectFeedbackCoreAsync(
-            run,
-            agentProvider.Object,
-            historyService: null,
-            promptFactory: _ => "test prompt",
-            outcome: FeedbackOutcome.Success,
-            feedbackTimeoutSeconds: 30,
-            ct: CancellationToken.None,
-            emitOutputLine: _ => { });
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "test prompt",
+                Outcome = FeedbackOutcome.Success,
+                FeedbackTimeoutSeconds = 30,
+                EmitOutputLine = _ => { }
+            },
+            CancellationToken.None);
 
         run.Feedback.Should().NotBeNull();
         run.Feedback!.Outcome.Should().Be(FeedbackOutcome.Success);
@@ -528,14 +537,17 @@ public class FeedbackServiceTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [feedbackJson] });
 
         await _sut.CollectFeedbackCoreAsync(
-            run,
-            agentProvider.Object,
-            historyService: null,
-            promptFactory: _ => "test prompt",
-            outcome: FeedbackOutcome.Failure,
-            feedbackTimeoutSeconds: 30,
-            ct: CancellationToken.None,
-            emitOutputLine: _ => { });
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "test prompt",
+                Outcome = FeedbackOutcome.Failure,
+                FeedbackTimeoutSeconds = 30,
+                EmitOutputLine = _ => { }
+            },
+            CancellationToken.None);
 
         run.Feedback.Should().NotBeNull();
         run.Feedback!.Outcome.Should().Be(FeedbackOutcome.Failure);
@@ -560,14 +572,17 @@ public class FeedbackServiceTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
 
         var act = async () => await _sut.CollectFeedbackCoreAsync(
-            run,
-            agentProvider.Object,
-            historyService: null,
-            promptFactory: _ => "prompt",
-            outcome: FeedbackOutcome.Success,
-            feedbackTimeoutSeconds: 30,
-            ct: CancellationToken.None,
-            emitOutputLine: _ => { });
+            new FeedbackCollectionRequest
+            {
+                Run = run,
+                AgentProvider = agentProvider.Object,
+                HistoryService = null,
+                PromptFactory = _ => "prompt",
+                Outcome = FeedbackOutcome.Success,
+                FeedbackTimeoutSeconds = 30,
+                EmitOutputLine = _ => { }
+            },
+            CancellationToken.None);
 
         await act.Should().NotThrowAsync();
         run.Feedback.Should().NotBeNull();

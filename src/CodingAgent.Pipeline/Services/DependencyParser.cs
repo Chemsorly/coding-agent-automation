@@ -75,34 +75,7 @@ public static class DependencyParser
         try
         {
             foreach (Match match in DependencyPattern.Matches(body))
-            {
-                if (match.Groups[1].Success)
-                {
-                    // GitHub issue URL
-                    var url = match.Groups[1].Value;
-                    if (seenUrls.Add(url))
-                        results.Add(new UrlRef(url));
-                }
-                else if (match.Groups[2].Success)
-                {
-                    // GitLab issue URL
-                    var url = match.Groups[2].Value;
-                    if (seenUrls.Add(url))
-                        results.Add(new UrlRef(url));
-                }
-                else if (match.Groups[3].Success)
-                {
-                    // #digits
-                    if (int.TryParse(match.Groups[3].Value, out var issueNumber) && issueNumber > 0)
-                    {
-                        if (selfIdentifier.HasValue && issueNumber == selfIdentifier.Value)
-                            continue;
-                        if (seenNumbers.Add(issueNumber))
-                            results.Add(new NumberRef(issueNumber));
-                    }
-                }
-                // Group 4 (alpha identifier like PROJ-123) is never a numeric dependency — skip.
-            }
+                AddMatch(match, selfIdentifier, seenNumbers, seenUrls, results);
         }
         catch (RegexMatchTimeoutException)
         {
@@ -111,5 +84,50 @@ public static class DependencyParser
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Adds the dependency reference captured by <paramref name="match"/> to <paramref name="results"/>,
+    /// skipping duplicates and self-references.
+    /// </summary>
+    private static void AddMatch(
+        Match match,
+        int? selfIdentifier,
+        HashSet<int> seenNumbers,
+        HashSet<string> seenUrls,
+        List<DependencyRef> results)
+    {
+        if (match.Groups[1].Success)
+        {
+            // GitHub issue URL
+            AddUrl(match.Groups[1].Value, seenUrls, results);
+        }
+        else if (match.Groups[2].Success)
+        {
+            // GitLab issue URL
+            AddUrl(match.Groups[2].Value, seenUrls, results);
+        }
+        else if (match.Groups[3].Success)
+        {
+            // #digits
+            AddNumber(match.Groups[3].Value, selfIdentifier, seenNumbers, results);
+        }
+        // Group 4 (alpha identifier like PROJ-123) is never a numeric dependency — skip.
+    }
+
+    private static void AddUrl(string url, HashSet<string> seenUrls, List<DependencyRef> results)
+    {
+        if (seenUrls.Add(url))
+            results.Add(new UrlRef(url));
+    }
+
+    private static void AddNumber(string value, int? selfIdentifier, HashSet<int> seenNumbers, List<DependencyRef> results)
+    {
+        if (!int.TryParse(value, out var issueNumber) || issueNumber <= 0)
+            return;
+        if (selfIdentifier.HasValue && issueNumber == selfIdentifier.Value)
+            return;
+        if (seenNumbers.Add(issueNumber))
+            results.Add(new NumberRef(issueNumber));
     }
 }

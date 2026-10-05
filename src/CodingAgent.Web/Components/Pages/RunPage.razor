@@ -102,7 +102,7 @@
 
         <div class="cockpit-card">
             <div class="cockpit-card-pad cockpit-detail-grid">
-                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset, _isLive)</div></div>
+                <div class="cockpit-detail-item"><div class="k">Duration</div><div class="v">@Dur(run.StartedAtOffset, run.CompletedAtOffset)</div></div>
                 <div class="cockpit-detail-item"><div class="k">Agent</div><div class="v mono">@(_resolvedAgentName ?? run.AgentId ?? "—")</div></div>
                 <div class="cockpit-detail-item"><div class="k">Initiated by</div><div class="v">@InitiatedByConstants.ToDisplayString(run.InitiatedBy, run.RunMode)</div></div>
                 @if (run.ModelName is not null)
@@ -393,7 +393,7 @@
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to load pipeline config for MaxRetries; using default"); }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load run: {ex.Message}";
@@ -530,32 +530,35 @@
             // Reload the now-terminal summary for final metadata, and advance the sidebar model's
             // step to the terminal step — without discarding the live pipeline detail (quality gates,
             // PR, review) already accumulated from snapshots.
-            if (Guid.TryParse(RunId, out var id))
-            {
-                try
-                {
-                    _run = await RunHistory.GetRunAsync(id, _cts.Token);
-                    if (_run is not null && _model is not null)
-                    {
-                        _model.CurrentStep = _run.FinalStep;
-                        if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
-                            _model.HighWaterMark = _run.FinalStep;
-                        // TODO: [WARNING] Unconditionally overwriting HighWaterMark with FinalStep
-                        // (Completed/Failed ordinal) for terminal states clobbers the real last-active
-                        // step if no live snapshots were received before OnCompleted fired (e.g. reconnect
-                        // race). In that case _model has no data fields set and GetLastReachedStep falls
-                        // back to Created. Consider using _run.LastActiveStep here for terminal FinalSteps,
-                        // mirroring the logic in BuildRunModelFromSummary.
-                        // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
-                        // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
-                        _model.CompletedAtOffset = _run.CompletedAtOffset;
-                    }
-                }
-                catch (OperationCanceledException) { }
-                catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
-            }
+            await ReloadCompletedRunAsync();
             StateHasChanged();
         });
+    }
+
+    private async Task ReloadCompletedRunAsync()
+    {
+        if (!Guid.TryParse(RunId, out var id)) return;
+        try
+        {
+            _run = await RunHistory.GetRunAsync(id, _cts.Token);
+            if (_run is not null && _model is not null)
+            {
+                _model.CurrentStep = _run.FinalStep;
+                if (StepOrder.GetOrder(_run.FinalStep) > StepOrder.GetOrder(_model.HighWaterMark))
+                    _model.HighWaterMark = _run.FinalStep;
+                // TODO: [WARNING] Unconditionally overwriting HighWaterMark with FinalStep
+                // (Completed/Failed ordinal) for terminal states clobbers the real last-active
+                // step if no live snapshots were received before OnCompleted fired (e.g. reconnect
+                // race). In that case _model has no data fields set and GetLastReachedStep falls
+                // back to Created. Consider using _run.LastActiveStep here for terminal FinalSteps,
+                // mirroring the logic in BuildRunModelFromSummary.
+                // Seed CompletedAtOffset so GetElapsedTime() and Dur() show the real duration
+                // instead of continuing to use DateTimeOffset.UtcNow after the run finishes.
+                _model.CompletedAtOffset = _run.CompletedAtOffset;
+            }
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { Serilog.Log.Warning(ex, "RunPage: failed to reload completed run {RunId}", RunId); }
     }
 
     // Accumulates incremental chat entries pushed by the hub during an active run.
@@ -588,7 +591,7 @@
             await Guard.DemandAsync(AccessRole.Operator, _run?.ProjectId, "CancelRun");
             await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (AccessDeniedException)
         {
             _cancelError = AccessDeniedException.UserMessage;
@@ -664,7 +667,7 @@
             _redispatchSuccess = true;
             _showRedispatchConfirm = false;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (AccessDeniedException)
         {
             _redispatchError = AccessDeniedException.UserMessage;
@@ -762,11 +765,11 @@
         model.ModelName = snapshot.ModelName;
         model.RepositoryName = snapshot.RepositoryName;
         // Drain before re-enqueuing so a reconnect's second snapshot does not duplicate entries.
-        while (model.QualityGateHistory.TryDequeue(out _)) { }
+        while (model.QualityGateHistory.TryDequeue(out _)) { /* Discard. */ }
         foreach (var report in snapshot.QualityGateHistory)
             model.QualityGateHistory.Enqueue(report);
         // Drain before re-seeding from the snapshot — prevents duplicates on reconnect.
-        while (model.ChatHistory.TryDequeue(out _)) { }
+        while (model.ChatHistory.TryDequeue(out _)) { /* Discard. */ }
         foreach (var entry in snapshot.ChatHistory)
             model.ChatHistory.Enqueue(entry);
         if (snapshot.StartedAtOffset != default)
@@ -774,12 +777,12 @@
     }
 
     private static string Truncate(string? s, int n)
-        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
 
-    // TODO: [WARNING] The isLive parameter is accepted but never read — the live-vs-terminal
-    // distinction is handled by the `end ?? DateTimeOffset.UtcNow` fallback alone. Either use the
-    // flag to alter formatting (e.g. show seconds for live runs) or remove it to avoid a misleading API.
-    private static string Dur(DateTimeOffset start, DateTimeOffset? end, bool isLive = false)
+    private static string Dur(DateTimeOffset start, DateTimeOffset? end)
     {
         var d = (end ?? DateTimeOffset.UtcNow) - start;
         // For live runs with no CompletedAtOffset, show the live elapsed (same value as the sidebar

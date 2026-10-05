@@ -38,7 +38,7 @@ Cockpit landing: loop status, stat strip, needs-attention preview, active runs, 
 - **Loop status / stat strip** — the closed-loop controller (`LoopService` injected in `AgentCoding.razor`: `IsLoopActive`, `CurrentCycleTemplateIndex`/`Count`, `ProcessedCount`, `FailedCount`, `StartLoop`/`StopLoop`).
 - **Active / Queue** — `IPipelineApiWorkItemClient.GetActiveAsync(...)` → `ActiveWorkItemDto[]`, `GetPendingAsync(maxResults)` → `PendingWorkItemDto[]`.
 - **Agents (N/M, offline count)** — `IPipelineApiAgentClient.GetAgentsAsync()` → `AgentEntry[]`.
-- **Runs 24h / Success / Tokens** — `IPipelineApiRunHistoryClient.GetRunHistoryAsync(page, pageSize, includeActive:true)` → `PagedResult<PipelineRunSummary>`, aggregated client-side.
+- **Runs 24h / Success / Tokens** — `IPipelineApiRunHistoryClient.GetRunHistoryAsync(new RunHistoryQuery(Page, PageSize, IncludeActive: true))` → `PagedResult<PipelineRunSummary>`, aggregated client-side.
 - **Recent activity** — same run-history call; render `RunType` + result + `TotalTokens` + `PullRequestUrl`.
 - **Reuse:** none left — the AgentMonitoring pieces this screen started from (`AgentMonitoringPageService`, `ActiveRunsSection`, `JobQueueSection`, `RecentRunsSection`) were removed once `Overview.razor` replaced them.
 
@@ -53,9 +53,9 @@ Issue/epic backlog with readiness, labels, epic expansion, dependency graph.
 - **Dropped:** per-issue **PriorityWeight** — no backend field exists. The design uses **Labels** and sorts by recency instead.
 
 ### Runs (list)  ·  *new — the index behind the Run Page*
-- **Data** — `IPipelineApiRunHistoryClient.GetRunHistoryAsync(page, pageSize, feedbackOnly, includeActive)` → `PagedResult<PipelineRunSummary>` (server-side paging). Filter tabs by status/`RunType`.
+- **Data** — `IPipelineApiRunHistoryClient.GetRunHistoryAsync(new RunHistoryQuery(Page, PageSize, FeedbackOnly, IncludeActive))` → `PagedResult<PipelineRunSummary>` (server-side paging). Filter tabs by status/`RunType`.
 - **Columns** — result (from `RunOutcomeDisplay`: Completed/Merged, Failed, Cancelled/Closed, Restarted, or Running+step), `RunType`, duration (`StartedAtOffset`→`CompletedAtOffset`), `TotalTokens`, `PullRequestUrl`.
-- **Consolidation rows** — consolidation runs are `PipelineRunType.Consolidation`; queryable via `IPipelineApiRunHistoryClient.GetRunHistoryAsync` with `runType: Consolidation` filter. **Note (issue #3032):** `IConsolidationService.GetRunHistoryAsync`, `IPipelineApiConsolidationRunClient`, and `ConsolidationRun[]` no longer exist — use `PipelineRunSummary` from the pipeline-run history client instead.
+- **Consolidation rows** — consolidation runs are `PipelineRunType.Consolidation`; queryable via `IPipelineApiRunHistoryClient.GetRunHistoryAsync` with a `RunHistoryQuery { RunType = Consolidation }` filter. **Note (issue #3032):** `IConsolidationService.GetRunHistoryAsync`, `IPipelineApiConsolidationRunClient`, and `ConsolidationRun[]` no longer exist — use `PipelineRunSummary` from the pipeline-run history client instead.
 - **Reuse:** `RunOutcomeDisplay` for the result badge (shared with Overview, Insights and the Run page). `Runs.razor` renders its own rows; the old `RecentRunsSection` was removed.
 
 ### Run Page  ·  *new — deep-linkable run detail*

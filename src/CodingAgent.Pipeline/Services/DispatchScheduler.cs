@@ -155,30 +155,7 @@ internal sealed partial class DispatchScheduler
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
-        int totalBudget = request.MaxRunsPerCycle > 0 ? request.MaxRunsPerCycle : int.MaxValue;
-
-        // Compute the floor reservation: reduce the priority-loop budget by MinIssueSlots
-        // so the floor pass always has budget available. The reservation only applies when:
-        //   - MinIssueSlots > 0 (floor enabled)
-        //   - MaxRunsPerCycle == 0 (unlimited) or >= 2 (enough budget to reserve)
-        //   - Issues are actually present in the queues (no point reserving if there are no issues)
-        int issueFloor = request.Config.MinIssueSlots;
-        bool issuesPresent = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
-        bool floorEnabled = issueFloor > 0
-            && (request.MaxRunsPerCycle == 0 || request.MaxRunsPerCycle >= 2)
-            && issuesPresent;
-
-        // Priority-loop budget is reduced by the floor reservation, but capped at totalBudget - 1
-        // (minimum 1 so the loop can still run). For unlimited budgets, no reduction needed —
-        // in unlimited mode, PRs can never truly exhaust the budget; the floor is still useful
-        // if the PR queue is infinite, but we handle it via the floor-fires-always path below.
-        // When Issues are dispatched inside the priority loop, the floor pass is skipped
-        // (issueDispatchedThisCycle=true). In that case the reserved slots are reclaimed back
-        // into `remaining` the first time an issue turn makes progress, allowing the loop to
-        // continue up to MaxRunsPerCycle. See the reclaimApplied guard below.
-        int priorityBudget = floorEnabled && totalBudget != int.MaxValue
-            ? Math.Max(totalBudget - issueFloor, 1)
-            : totalBudget;
+        var (totalBudget, issueFloor, floorEnabled, priorityBudget) = ComputeCycleBudget(request);
 
         int remaining = priorityBudget;
         int processedCount = 0;
@@ -199,10 +176,8 @@ internal sealed partial class DispatchScheduler
         bool issueDispatchedThisCycle = false;
         bool reclaimApplied = false;
 
-        while (remaining > 0)
+        while (remaining > 0 && !ct.IsCancellationRequested)
         {
-            if (ct.IsCancellationRequested) break;
-
             var (hasIssues, hasPrs, hasDecomp) = ComputeQueueAvailability(request, activeDecompositionCount);
             var (foundTurn, selectedTurn) = TrySelectHighestPriorityQueue(hasIssues, hasPrs, hasDecomp);
             if (!foundTurn) break;
@@ -238,15 +213,8 @@ internal sealed partial class DispatchScheduler
                 // can continue up to MaxRunsPerCycle instead of silently abandoning them.
                 // Math.Min caps the reclaim to actual available capacity, preventing
                 // over-dispatch even when MinIssueSlots >= MaxRunsPerCycle.
-                if (floorEnabled && !reclaimApplied && totalBudget != int.MaxValue)
-                {
-                    int reclaimable = Math.Min(issueFloor, totalBudget - processedCount - failedCount);
-                    if (reclaimable > 0)
-                    {
-                        remaining += reclaimable;
-                        reclaimApplied = true;
-                    }
-                }
+                (remaining, reclaimApplied) = ReclaimFloorSlots(
+                    floorEnabled, reclaimApplied, issueFloor, totalBudget, remaining, processedCount + failedCount);
             }
 
             if (ct.IsCancellationRequested || remaining <= 0) break;
@@ -265,8 +233,9 @@ internal sealed partial class DispatchScheduler
         // Floor pass: if Issues were present but never dispatched in the priority loop,
         // spend the reserved floor slots exclusively for Issues.
         var floorResult = await RunFloorPassAsync(
-            request, floorEnabled, issueDispatchedThisCycle, issueFloor,
-            totalBudget, processedCount, failedCount, activeDecompositionCount,
+            request,
+            new FloorPassBudget(floorEnabled, issueDispatchedThisCycle, issueFloor,
+                totalBudget, processedCount, failedCount, activeDecompositionCount),
             templateProjectLookup, trackingReportIssue, cycleStateCaches,
             stoppingToken, ct);
         remaining -= floorResult.Consumed;
@@ -274,12 +243,7 @@ internal sealed partial class DispatchScheduler
         failedCount += floorResult.Failed;
 
         // Compute total budget remaining for telemetry (accounts for both priority loop and floor pass).
-        // Math.Max(0, ...) guards against the theoretically impossible case where
-        // processedCount+failedCount slightly exceeds totalBudget due to future code changes,
-        // ensuring EmitSkippedMaxRunsTelemetry never silently suppresses due to a negative value.
-        int totalRemaining = totalBudget == int.MaxValue
-            ? remaining
-            : Math.Max(0, totalBudget - processedCount - failedCount);
+        int totalRemaining = ComputeTotalRemaining(totalBudget, remaining, processedCount + failedCount);
 
         EmitSkippedMaxRunsTelemetry(request, totalRemaining);
 
@@ -287,25 +251,98 @@ internal sealed partial class DispatchScheduler
     }
 
     /// <summary>
+    /// Computes the cycle budget and the issue floor reservation for <see cref="DispatchFairRoundRobinAsync"/>.
+    /// </summary>
+    private static (int TotalBudget, int IssueFloor, bool FloorEnabled, int PriorityBudget) ComputeCycleBudget(
+        DispatchRoundRobinRequest request)
+    {
+        int totalBudget = request.MaxRunsPerCycle > 0 ? request.MaxRunsPerCycle : int.MaxValue;
+
+        // Compute the floor reservation: reduce the priority-loop budget by MinIssueSlots
+        // so the floor pass always has budget available. The reservation only applies when:
+        //   - MinIssueSlots > 0 (floor enabled)
+        //   - MaxRunsPerCycle == 0 (unlimited) or >= 2 (enough budget to reserve)
+        //   - Issues are actually present in the queues (no point reserving if there are no issues)
+        int issueFloor = request.Config.MinIssueSlots;
+        bool issuesPresent = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
+        bool floorEnabled = issueFloor > 0
+            && (request.MaxRunsPerCycle == 0 || request.MaxRunsPerCycle >= 2)
+            && issuesPresent;
+
+        // Priority-loop budget is reduced by the floor reservation, but capped at totalBudget - 1
+        // (minimum 1 so the loop can still run). For unlimited budgets, no reduction needed —
+        // in unlimited mode, PRs can never truly exhaust the budget; the floor is still useful
+        // if the PR queue is infinite, but we handle it via the floor-fires-always path below.
+        // When Issues are dispatched inside the priority loop, the floor pass is skipped
+        // (issueDispatchedThisCycle=true). In that case the reserved slots are reclaimed back
+        // into `remaining` the first time an issue turn makes progress, allowing the loop to
+        // continue up to MaxRunsPerCycle. See ReclaimFloorSlots.
+        int priorityBudget = floorEnabled && totalBudget != int.MaxValue
+            ? Math.Max(totalBudget - issueFloor, 1)
+            : totalBudget;
+
+        return (totalBudget, issueFloor, floorEnabled, priorityBudget);
+    }
+
+    /// <summary>
+    /// Reclaims the pre-reserved issue floor slots back into the priority-loop budget, at most once
+    /// per cycle and capped to the capacity left in <paramref name="totalBudget"/>.
+    /// Returns the updated remaining budget and reclaim flag.
+    /// </summary>
+    private static (int Remaining, bool ReclaimApplied) ReclaimFloorSlots(
+        bool floorEnabled, bool reclaimApplied, int issueFloor, int totalBudget, int remaining, int usedSlots)
+    {
+        if (!floorEnabled || reclaimApplied || totalBudget == int.MaxValue)
+            return (remaining, reclaimApplied);
+
+        int reclaimable = Math.Min(issueFloor, totalBudget - usedSlots);
+        return reclaimable > 0
+            ? (remaining + reclaimable, true)
+            : (remaining, reclaimApplied);
+    }
+
+    /// <summary>
+    /// Computes the total budget remaining after the priority loop and the floor pass.
+    /// Math.Max(0, ...) guards against the theoretically impossible case where
+    /// <paramref name="usedSlots"/> slightly exceeds <paramref name="totalBudget"/> due to future code changes,
+    /// ensuring EmitSkippedMaxRunsTelemetry never silently suppresses due to a negative value.
+    /// </summary>
+    private static int ComputeTotalRemaining(int totalBudget, int remaining, int usedSlots)
+    {
+        return totalBudget == int.MaxValue
+            ? remaining
+            : Math.Max(0, totalBudget - usedSlots);
+    }
+
+    /// <summary>
+    /// The cycle budget state handed from the priority loop to <see cref="RunFloorPassAsync"/>
+    /// (groups its parameters for S107).
+    /// </summary>
+    private readonly record struct FloorPassBudget(
+        bool FloorEnabled,
+        bool IssueDispatchedThisCycle,
+        int IssueFloor,
+        int TotalBudget,
+        int ProcessedCount,
+        int FailedCount,
+        int ActiveDecompositionCount);
+
+    /// <summary>
     /// Runs the issue floor pass after the priority loop. If issues were present but never dispatched
-    /// in the priority loop, dispatches up to <paramref name="issueFloor"/> additional issue items to
-    /// ensure the minimum allocation guarantee is met.
+    /// in the priority loop, dispatches up to <see cref="FloorPassBudget.IssueFloor"/> additional issue
+    /// items to ensure the minimum allocation guarantee is met.
     /// </summary>
     private async Task<(int Consumed, int Processed, int Failed)> RunFloorPassAsync(
         DispatchRoundRobinRequest request,
-        bool floorEnabled,
-        bool issueDispatchedThisCycle,
-        int issueFloor,
-        int totalBudget,
-        int processedCount,
-        int failedCount,
-        int activeDecompositionCount,
+        FloorPassBudget budget,
         Dictionary<string, PipelineProject> templateProjectLookup,
         Action<string?> trackingReportIssue,
         Dictionary<string, Dictionary<int, bool>> cycleStateCaches,
         CancellationToken stoppingToken,
         CancellationToken ct)
     {
+        var (floorEnabled, issueDispatchedThisCycle, issueFloor, totalBudget,
+            processedCount, failedCount, activeDecompositionCount) = budget;
         if (!floorEnabled || issueDispatchedThisCycle || ct.IsCancellationRequested)
             return (0, 0, 0);
 
@@ -428,8 +465,11 @@ internal sealed partial class DispatchScheduler
     {
         var hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
         var hasPrs = HasEligible(request.PollableTemplates, request.PrQueues, t => t.ReviewEnabled);
-        var hasDecomp = HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled)
-            && activeDecompositionCount < request.Config.MaxConcurrentDecompositions;
+        var hasDecompItems = HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled);
+        var concurrencyResult = _eligibilityEvaluator.EvaluateConcurrencyLimit(
+            activeCount: activeDecompositionCount,
+            maxAllowed: request.Config.MaxConcurrentDecompositions);
+        var hasDecomp = hasDecompItems && concurrencyResult.IsEligible;
         return (hasIssues, hasPrs, hasDecomp);
     }
 

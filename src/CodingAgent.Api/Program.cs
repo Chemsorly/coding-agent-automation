@@ -202,6 +202,8 @@ await app.RunAsync();
 // Make Program accessible for WebApplicationFactory in integration tests
 public partial class Program // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
 {
+    private const string RunTypeKey = "run_type";
+
     /// <summary>
     /// Emits <c>Add(0)</c> for all closed-tag combinations of the counters that must be pre-initialized.
     /// Callable from both the API startup path (via <c>MetricPreInitialization.Run</c>) and integration tests
@@ -223,38 +225,9 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// </remarks>
     internal static void EmitPreInitCounters()
     {
-        const string FailureReasonKey = "failure_reason";
-
         string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
-        string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
-        string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
 
-        // pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7)
-        foreach (var runType in runTypes)
-        {
-            foreach (var outcome in nonFailureOutcomes)
-            {
-                PipelineTelemetry.RunOutcomes.Add(0,
-                    new KeyValuePair<string, object?>("run_type", runType),
-                    new KeyValuePair<string, object?>("outcome", outcome),
-                    new KeyValuePair<string, object?>(FailureReasonKey, "none"));
-            }
-
-            // timeout outcome
-            PipelineTelemetry.RunOutcomes.Add(0,
-                new KeyValuePair<string, object?>("run_type", runType),
-                new KeyValuePair<string, object?>("outcome", "timeout"),
-                new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
-
-            // failed outcome — one series per named failure_reason
-            foreach (var failureReason in failureReasons)
-            {
-                PipelineTelemetry.RunOutcomes.Add(0,
-                    new KeyValuePair<string, object?>("run_type", runType),
-                    new KeyValuePair<string, object?>("outcome", "failed"),
-                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
-            }
-        }
+        EmitRunOutcomePreInitCounters(runTypes);
 
         // workdistribution.dispatch.attempts: 7 result × reason series
         WorkDistributionTelemetry.PreInitializeDispatchAttempts();
@@ -267,7 +240,58 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
         foreach (var result in new[] { "pushed", "none" })
             PipelineTelemetry.RunBrainUpdates.Add(0, new KeyValuePair<string, object?>("result", result));
 
-        // pipeline.run.quality_gate.results: run_type × gate × result × infrastructure_failure (issue #2979)
+        EmitQualityGateResultPreInitCounters(runTypes);
+
+        // pipeline.run.ci.not_started_retriggers: 5 run_types (issue #2979)
+        foreach (var runType in runTypes)
+            PipelineTelemetry.RunCiNotStartedRetriggers.Add(0,
+                new KeyValuePair<string, object?>(RunTypeKey, runType));
+
+        EmitAgentStallPreInitCounters(runTypes);
+        EmitRunPhasePreInitCounters(runTypes);
+        EmitUsageDetailPreInitCounters(runTypes);
+    }
+
+    /// <summary>pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7).</summary>
+    private static void EmitRunOutcomePreInitCounters(string[] runTypes)
+    {
+        const string FailureReasonKey = "failure_reason";
+
+        string[] nonFailureOutcomes = ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
+        string[] failureReasons = ["timeout", "infrastructure_failure", "agent_error", "token_refresh_failure", "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
+
+        foreach (var runType in runTypes)
+        {
+            foreach (var outcome in nonFailureOutcomes)
+            {
+                PipelineTelemetry.RunOutcomes.Add(0,
+                    new KeyValuePair<string, object?>(RunTypeKey, runType),
+                    new KeyValuePair<string, object?>("outcome", outcome),
+                    new KeyValuePair<string, object?>(FailureReasonKey, "none"));
+            }
+
+            // timeout outcome
+            PipelineTelemetry.RunOutcomes.Add(0,
+                new KeyValuePair<string, object?>(RunTypeKey, runType),
+                new KeyValuePair<string, object?>("outcome", "timeout"),
+                new KeyValuePair<string, object?>(FailureReasonKey, "timeout"));
+
+            // failed outcome — one series per named failure_reason
+            foreach (var failureReason in failureReasons)
+            {
+                PipelineTelemetry.RunOutcomes.Add(0,
+                    new KeyValuePair<string, object?>(RunTypeKey, runType),
+                    new KeyValuePair<string, object?>("outcome", "failed"),
+                    new KeyValuePair<string, object?>(FailureReasonKey, failureReason));
+            }
+        }
+    }
+
+    /// <summary>
+    /// pipeline.run.quality_gate.results: run_type × gate × result × infrastructure_failure (issue #2979).
+    /// </summary>
+    private static void EmitQualityGateResultPreInitCounters(string[] runTypes)
+    {
         // Skip infrastructure_failure=true for compilation (never fires there).
         // TODO [WARNING]: The condition below (`gate != Compilation`) also pre-initializes external_ci with
         // infrastructure_failure=true, but RecordQualityGateResultMetrics hard-codes infraFailure:false for the
@@ -282,7 +306,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 foreach (var result in new[] { "pass", "fail" })
                 {
                     PipelineTelemetry.RunQualityGateResults.Add(0,
-                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("gate", gate),
                         new KeyValuePair<string, object?>("result", result),
                         new KeyValuePair<string, object?>("infrastructure_failure", "false"));
@@ -290,7 +314,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                     if (gate != PipelineTelemetry.QualityGateResultGates.Compilation)
                     {
                         PipelineTelemetry.RunQualityGateResults.Add(0,
-                            new KeyValuePair<string, object?>("run_type", runType),
+                            new KeyValuePair<string, object?>(RunTypeKey, runType),
                             new KeyValuePair<string, object?>("gate", gate),
                             new KeyValuePair<string, object?>("result", result),
                             new KeyValuePair<string, object?>("infrastructure_failure", "true"));
@@ -298,13 +322,11 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 }
             }
         }
+    }
 
-        // pipeline.run.ci.not_started_retriggers: 5 run_types (issue #2979)
-        foreach (var runType in runTypes)
-            PipelineTelemetry.RunCiNotStartedRetriggers.Add(0,
-                new KeyValuePair<string, object?>("run_type", runType));
-
-        // pipeline.run.agent_stalls: run_type × phase × kind (issue #2979)
+    /// <summary>pipeline.run.agent_stalls: run_type × phase × kind (issue #2979).</summary>
+    private static void EmitAgentStallPreInitCounters(string[] runTypes)
+    {
         foreach (var runType in runTypes)
         {
             foreach (var phase in PipelineTelemetry.RunPhases.All)
@@ -312,13 +334,20 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 foreach (var kind in PipelineTelemetry.AgentStallKinds.All)
                 {
                     PipelineTelemetry.RunAgentStalls.Add(0,
-                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("phase", phase),
                         new KeyValuePair<string, object?>("kind", kind));
                 }
             }
         }
+    }
 
+    /// <summary>
+    /// Pre-initializes the per-phase usage counters: pipeline.run.tokens, pipeline.run.cost_usd,
+    /// pipeline.run.agent_sessions and pipeline.run.agent_time.
+    /// </summary>
+    private static void EmitRunPhasePreInitCounters(string[] runTypes)
+    {
         // 5 run_types × 10 phases × 4 providers = 200 series per metric, 4 metrics.
         // model is excluded from pre-initialization (unbounded cardinality per Req 7 additional comment).
         // TODO: run_type="unknown" can be emitted at runtime when ResolveRunContextAsync cannot resolve
@@ -332,30 +361,28 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 foreach (var provider in PipelineTelemetry.RunProviders.All)
                 {
                     PipelineTelemetry.RunTokens.Add(0,
-                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("phase", phase),
                         new KeyValuePair<string, object?>("provider", provider));
 
                     PipelineTelemetry.RunCostUsd.Add(0,
-                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("phase", phase),
                         new KeyValuePair<string, object?>("provider", provider));
 
                     PipelineTelemetry.RunAgentSessions.Add(0,
-                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("phase", phase),
                         new KeyValuePair<string, object?>("provider", provider),
                         new KeyValuePair<string, object?>("model", "unknown"));
 
                     PipelineTelemetry.RunAgentTime.Add(0,
-                        new KeyValuePair<string, object?>("run_type", runType),
+                        new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("phase", phase),
                         new KeyValuePair<string, object?>("provider", provider));
                 }
             }
         }
-
-        EmitUsageDetailPreInitCounters(runTypes);
     }
 
     /// <summary>
@@ -369,7 +396,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
         {
             foreach (var provider in PipelineTelemetry.RunProviders.All)
             {
-                var runTypeTag = new KeyValuePair<string, object?>("run_type", runType);
+                var runTypeTag = new KeyValuePair<string, object?>(RunTypeKey, runType);
                 var providerTag = new KeyValuePair<string, object?>("provider", provider);
 
                 foreach (var tokenType in PipelineTelemetry.TokenTypes.All)

@@ -270,9 +270,9 @@
         var name = _projects.FirstOrDefault(p => p.Id == id)?.Name;
         State.SetProject(id, name);
         try { await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", id); }
-        catch (JSDisconnectedException) { }
-        catch (JSException) { }
-        catch (InvalidOperationException) { }
+        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+        catch (JSException) { /* Browser-side failure is non-fatal here. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
     }
 
     private async Task RefreshAttentionCountAsync()
@@ -281,7 +281,7 @@
         // Runs once on circuit init and re-runs whenever the project scope changes.
         try
         {
-            var runs = await RunHistory.GetRunHistoryAsync(page: 1, pageSize: 100, feedbackOnly: false, includeActive: false, projectId: State.SelectedProjectId);
+            var runs = await RunHistory.GetRunHistoryAsync(new RunHistoryQuery(Page: 1, PageSize: 100, FeedbackOnly: false, IncludeActive: false, ProjectId: State.SelectedProjectId));
             State.SetAttentionCount(AttentionAggregator.Aggregate(runs.Items).TotalCount);
         }
         catch (Exception ex)
@@ -291,17 +291,17 @@
     }
 
     // TODO: [WARNING] HandleProjectChanged is declared async void. RefreshAttentionCountAsync wraps its
-    // body in catch (Exception ex), so today's risk is low. However if RefreshAttentionCountAsync ever
+    // body in a catch-all handler, so today's risk is low. However if RefreshAttentionCountAsync ever
     // rethrows, or if new awaitable work is added outside its try/catch, the exception will escape the
-    // outer catch (ObjectDisposedException) guard here and be delivered to the Blazor circuit's unhandled-
-    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in
-    // catch (Exception) or scheduling via _ = InvokeAsync(RefreshAttentionCountAsync) so Blazor's own
+    // outer ObjectDisposedException guard here and be delivered to the Blazor circuit's unhandled-
+    // exception handler, potentially tearing down the circuit. Consider wrapping the entire body in a
+    // catch-all handler, or scheduling the refresh as a discarded InvokeAsync task, so Blazor's own
     // error pipeline handles it. Also note that OperationCanceledException on circuit teardown would
     // also escape the current ObjectDisposedException guard.
     private async void HandleProjectChanged()
     {
         try { await RefreshAttentionCountAsync(); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private void HandleStateChanged() => InvokeAsync(StateHasChanged);
@@ -354,50 +354,59 @@
                 _dotNetRef = DotNetObjectReference.Create(this);
                 await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
 
-                var t = await JS.InvokeAsync<string>("getTheme");
-                if (!string.IsNullOrEmpty(t) && t != _theme)
-                {
-                    _theme = t;
-                    StateHasChanged();
-                }
+                await SyncThemeFromBrowserAsync();
 
                 // Restore persisted project scope. Must run after OnInitializedAsync so _projects
                 // is populated. null = key absent (first visit); "" = "All projects" explicitly saved.
-                var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
-                if (savedProjectId is not null && _accessReady && !_noReadableProject && Access.Grant.HasAnyAccess)
-                {
-                    if (string.IsNullOrEmpty(savedProjectId))
-                    {
-                        if (IsSelectable(""))
-                            State.SetProject("", null);
-                    }
-                    else
-                    {
-                        var project = _projects.FirstOrDefault(p => p.Id == savedProjectId);
-                        if (project is not null)
-                            State.SetProject(project.Id, project.Name);
-                        else
-                            // TODO [WARNING]: A transient config-API failure causes OnInitializedAsync to
-                            // degrade _projects to [] (documented). If that happens on a reload where a
-                            // *valid* project ID is stored, this branch incorrectly treats it as "deleted"
-                            // and permanently clears the saved preference. Consider tracking whether the
-                            // project list loaded successfully (e.g. a bool _projectsLoadedOk flag set in
-                            // OnInitializedAsync) and only clearing the stale key when the list loaded OK.
-                            await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", ""); // clear stale
-                    }
-                }
+                await RestoreSavedProjectScopeAsync();
 
                 // Signal to Faro that the Blazor circuit connected successfully (ported from MainLayout).
                 await Faro.PushEventAsync("blazor.circuit.connected");
             }
-            catch (JSDisconnectedException) { }
-            catch (JSException) { }
-            catch (ObjectDisposedException) { }
-            catch (InvalidOperationException) { }
+            catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+            catch (JSException) { /* Browser-side failure is non-fatal here. */ }
+            catch (ObjectDisposedException) { /* Already disposed. */ }
+            catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
         }
 
         // Flush any notifications added since the last render to Faro (ported from MainLayout).
         await FaroBridge.FlushAsync();
+    }
+
+    private async Task SyncThemeFromBrowserAsync()
+    {
+        var t = await JS.InvokeAsync<string>("getTheme");
+        if (!string.IsNullOrEmpty(t) && t != _theme)
+        {
+            _theme = t;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RestoreSavedProjectScopeAsync()
+    {
+        var savedProjectId = await JS.InvokeAsync<string?>("localStorageGet", "cockpit.selectedProjectId");
+        if (savedProjectId is null || !_accessReady || _noReadableProject || !Access.Grant.HasAnyAccess)
+            return;
+
+        if (string.IsNullOrEmpty(savedProjectId))
+        {
+            if (IsSelectable(""))
+                State.SetProject("", null);
+            return;
+        }
+
+        var project = _projects.FirstOrDefault(p => p.Id == savedProjectId);
+        if (project is not null)
+            State.SetProject(project.Id, project.Name);
+        else
+            // TODO [WARNING]: A transient config-API failure causes OnInitializedAsync to
+            // degrade _projects to [] (documented). If that happens on a reload where a
+            // *valid* project ID is stored, this branch incorrectly treats it as "deleted"
+            // and permanently clears the saved preference. Consider tracking whether the
+            // project list loaded successfully (e.g. a bool _projectsLoadedOk flag set in
+            // OnInitializedAsync) and only clearing the stale key when the list loaded OK.
+            await JS.InvokeVoidAsync("localStorageSet", "cockpit.selectedProjectId", ""); // clear stale
     }
 
     [JSInvokable]
@@ -419,7 +428,7 @@
                 break;
         }
         try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private void CloseShortcutHelp()
@@ -432,8 +441,8 @@
     {
         _theme = _theme == "dark" ? "light" : "dark";
         try { await JS.InvokeVoidAsync("setTheme", _theme); }
-        catch (JSException) { }
-        catch (InvalidOperationException) { }
+        catch (JSException) { /* Browser-side failure is non-fatal here. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
     }
 
     public async ValueTask DisposeAsync()
@@ -444,8 +453,8 @@
         // Push disconnect while JS is still available (ported from MainLayout; FaroService swallows a dead circuit).
         await Faro.PushEventAsync("blazor.circuit.disconnected");
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
-        catch (JSDisconnectedException) { }
-        catch (InvalidOperationException) { }
+        catch (JSDisconnectedException) { /* Circuit gone: nothing left to update. */ }
+        catch (InvalidOperationException) { /* JS interop unavailable during prerender. */ }
         _dotNetRef?.Dispose();
     }
 }

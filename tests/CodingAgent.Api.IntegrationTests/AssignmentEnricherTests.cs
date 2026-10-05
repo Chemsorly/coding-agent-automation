@@ -873,7 +873,8 @@ public sealed class AssignmentEnricherTests
         var (projectStore, consolidationTemplateResolver) = MakeProjectStubs();
         var enricher = new AssignmentEnricher(
             infra, profileStoreMock.Object, preparerMock.Object,
-            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger, runHistory, harnessSuggestions);
+            projectStore.Object, consolidationTemplateResolver, Serilog.Log.Logger,
+            new ConsolidationRunContextSources(runHistory, harnessSuggestions));
         return (infra, preparerMock, enricher);
     }
 
@@ -907,12 +908,16 @@ public sealed class AssignmentEnricherTests
     {
         var history = new Mock<IPipelineRunHistoryService>();
         history
-            .Setup(h => h.GetRunHistoryAsync(1, It.IsAny<int>(), false, PipelineStep.Completed, null, null,
-                PipelineRunType.Consolidation, It.IsAny<CancellationToken>()))
+            .Setup(h => h.GetRunHistoryAsync(
+                It.Is<RunHistoryQuery>(q => q.Page == 1 && !q.FeedbackOnly && q.FinalStep == PipelineStep.Completed
+                    && q.ProjectId == null && q.Since == null && q.RunType == PipelineRunType.Consolidation),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = successfulConsolidations, Page = 1, PageSize = 100, HasMore = false });
         history
-            .Setup(h => h.GetRunHistoryAsync(1, It.IsAny<int>(), true, null, null, It.IsAny<DateTimeOffset?>(),
-                null, It.IsAny<CancellationToken>()))
+            .Setup(h => h.GetRunHistoryAsync(
+                It.Is<RunHistoryQuery>(q => q.Page == 1 && q.FeedbackOnly && q.FinalStep == null
+                    && q.ProjectId == null && q.RunType == null),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<PipelineRunSummary> { Items = runsWithFeedback ?? [], Page = 1, PageSize = 200, HasMore = false });
         return history;
     }
@@ -956,8 +961,9 @@ public sealed class AssignmentEnricherTests
         var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
         result!.ConsolidationFeedbackDataJson.Should().Contain("Build tool missing").And.Contain("Flaky test");
-        history.Verify(h => h.GetRunHistoryAsync(1, ConsolidationRunHistoryContext.MaxFeedbackEntries, true, null, null,
-            new DateTimeOffset(generatedAt), null, It.IsAny<CancellationToken>()), Times.Once);
+        var expectedQuery = new RunHistoryQuery(Page: 1, PageSize: ConsolidationRunHistoryContext.MaxFeedbackEntries,
+            FeedbackOnly: true, Since: new DateTimeOffset(generatedAt));
+        history.Verify(h => h.GetRunHistoryAsync(expectedQuery, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -973,8 +979,8 @@ public sealed class AssignmentEnricherTests
         var result = await enricher.EnrichAsync(identity, MakeProject(), CancellationToken.None);
 
         result!.ConsolidationFeedbackDataJson.Should().Contain("Build tool missing");
-        history.Verify(h => h.GetRunHistoryAsync(1, ConsolidationRunHistoryContext.MaxFeedbackEntries, true, null, null,
-            null, null, It.IsAny<CancellationToken>()), Times.Once);
+        var expectedQuery = new RunHistoryQuery(Page: 1, PageSize: ConsolidationRunHistoryContext.MaxFeedbackEntries, FeedbackOnly: true);
+        history.Verify(h => h.GetRunHistoryAsync(expectedQuery, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -995,8 +1001,7 @@ public sealed class AssignmentEnricherTests
     {
         var history = new Mock<IPipelineRunHistoryService>();
         history
-            .Setup(h => h.GetRunHistoryAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<PipelineStep?>(),
-                It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+            .Setup(h => h.GetRunHistoryAsync(It.IsAny<RunHistoryQuery>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TimeoutException("DB timeout"));
         var (_, _, enricher) = MakeConsolidationEnricher(runHistory: history.Object);
 
@@ -1669,12 +1674,11 @@ public sealed class AssignmentEnricherOceCancellationTests
             "the OCE must propagate from EnrichAsync — the `when (ex is not OCE)` guard must not catch it");
 
         // ASSERT — Error log must NOT have been called.
-        // AssignmentEnricher calls: _logger.Error(ex, "... {IssueIdentifier} ...", identity.IssueIdentifier)
-        // which resolves to Serilog's generic overload Error<T>(Exception, string, T) with T = IssueIdentifier.
+        // AssignmentEnricher calls: _logger.Error("... {IssueIdentifier} ...", identity.IssueIdentifier)
+        // which resolves to Serilog's generic overload Error<T>(string, T) with T = IssueIdentifier.
         // The `when (ex is not OperationCanceledException)` guard must prevent this call for OCE.
         mockLogger.Verify(
             l => l.Error(
-                It.IsAny<Exception>(),
                 It.IsAny<string>(),
                 It.IsAny<IssueIdentifier>()),
             Times.Never,
@@ -1704,11 +1708,10 @@ public sealed class AssignmentEnricherOceCancellationTests
         await act.Should().ThrowAsync<InvalidOperationException>();
 
         // ASSERT — Error log MUST have been called (verifies the guard is not over-broad)
-        // AssignmentEnricher calls: _logger.Error(ex, "... {IssueIdentifier} ...", identity.IssueIdentifier)
-        // which resolves to Serilog's generic overload Error<T>(Exception, string, T) with T = IssueIdentifier.
+        // AssignmentEnricher calls: _logger.Error("... {IssueIdentifier} ...", identity.IssueIdentifier)
+        // which resolves to Serilog's generic overload Error<T>(string, T) with T = IssueIdentifier.
         mockLogger.Verify(
             l => l.Error(
-                It.IsAny<Exception>(),
                 It.IsAny<string>(),
                 It.IsAny<IssueIdentifier>()),
             Times.Once,

@@ -146,14 +146,13 @@ public sealed class PostStatusIdempotencyTests
             .CreateLogger();
 
         var request = new WorkItemStatusRequest { Status = terminal };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         try
         {
             // Act — call PostStatus directly (not via HTTP)
             var result = await WorkItemAgentEndpoints.PostStatus(
-                item.Id, request, transitionService, runService, lifecycleManager, dbFactory);
+                item.Id, request, transitionService, lifecycleManager, dbFactory);
 
             // Assert — structural guard proven above; no timing dependency on Task.Delay.
             // Both the counter and the log line must be absent because the
@@ -194,12 +193,11 @@ public sealed class PostStatusIdempotencyTests
         // Strict mock: any unexpected call fails the test.
         // On the idempotent path, neither FailRunAsync nor CancelRunAsync should be called.
 
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var request = new WorkItemStatusRequest { Status = terminal };
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, null);
+            item.Id, request, transitionService, lifecycleManager.Object, null);
 
         // Assert
         result.Should().BeOfType<NoContent>("an idempotent PostStatus on an already-terminal item must return 204 No Content");
@@ -237,12 +235,11 @@ public sealed class PostStatusIdempotencyTests
 
         var transitionService = CreateTransitionService(opts);
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         // Act — dbFactory is null (no secondary DB read path)
         var result = await WorkItemAgentEndpoints.PostStatus(
-            Guid.NewGuid(), request, transitionService, runService, lifecycleManager, null);
+            Guid.NewGuid(), request, transitionService, lifecycleManager, null);
 
         // Assert
         result.Should().BeOfType<NotFound>(
@@ -259,12 +256,11 @@ public sealed class PostStatusIdempotencyTests
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Pending);
         var transitionService = CreateTransitionService(opts);
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, null);
+            item.Id, request, transitionService, lifecycleManager, null);
 
         // Assert
         result.Should().BeOfType<BadRequest<string>>("an invalid transition must return 400");
@@ -298,14 +294,13 @@ public sealed class PostStatusIdempotencyTests
         listener.Start();
 
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Succeeded };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync
         // before returning. This eliminates the Task.Delay(200) race: the metric is recorded
         // synchronously (from the test's perspective) before the assertion runs.
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory,
+            item.Id, request, transitionService, lifecycleManager, dbFactory,
             ct: default, awaitTelemetry: true);
 
         // Assert
@@ -336,7 +331,6 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "test error" };
 
         // Act
@@ -348,7 +342,7 @@ public sealed class PostStatusIdempotencyTests
         // Pass a real dbFactory here so that a null-dereference regression in the telemetry path
         // surfaces as an observable unobserved task exception.
         await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, null);
+            item.Id, request, transitionService, lifecycleManager.Object, null);
 
         // Assert: FailRunWithLabelAsync called with resolvedFinalLabel=null (no request.Result provided)
         lifecycleManager.Verify(
@@ -378,7 +372,6 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<string?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Cancelled };
 
         // Act
@@ -387,7 +380,7 @@ public sealed class PostStatusIdempotencyTests
         // Transitioned path. Pass a real dbFactory to surface any null-dereference regression in the
         // background task as an observable failure.
         await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, null);
+            item.Id, request, transitionService, lifecycleManager.Object, null);
 
         // Assert
         lifecycleManager.Verify(
@@ -427,7 +420,6 @@ public sealed class PostStatusIdempotencyTests
             completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
             failureReason: FailureReason.Timeout);
         var transitionService = CreateTransitionService(opts);
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
         // dbFactory is null: Running is not a terminal status, so EmitTerminalStatusTelemetryAsync
         // is never reached — null is safe and matches the pattern of non-telemetry tests in this class.
@@ -439,7 +431,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
+            item.Id, request, transitionService, lifecycleManager, dbFactory: null);
 
         // Assert — HTTP 200 confirms the recovery path was taken
         result.Should().BeOfType<Ok>(
@@ -472,14 +464,13 @@ public sealed class PostStatusIdempotencyTests
             completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
             failureReason: FailureReason.AgentError);
         var transitionService = CreateTransitionService(opts);
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
         // dbFactory is null: the endpoint returns 400 before any telemetry path is reached.
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
+            item.Id, request, transitionService, lifecycleManager, dbFactory: null);
 
         // Assert — HTTP 400: AgentError is non-recoverable
         result.Should().BeOfType<BadRequest<string>>(
@@ -555,7 +546,6 @@ public sealed class PostStatusIdempotencyTests
             Status = WorkItemStatus.Failed,
             FailureReason = "99"
         };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
             .Setup(m => m.FailRunAsync(
@@ -569,7 +559,7 @@ public sealed class PostStatusIdempotencyTests
         // This eliminates the Task.Delay(200) race and the cross-test meter-listener leakage
         // that caused {"Timeout"} to appear instead of {"none"} on loaded CI hosts.
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
         // Assert
@@ -628,7 +618,6 @@ public sealed class PostStatusIdempotencyTests
             Status = WorkItemStatus.Failed,
             FailureReason = "AgentError"
         };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
             .Setup(m => m.FailRunAsync(
@@ -640,7 +629,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act — pass awaitTelemetry: true so PostStatus awaits EmitTerminalStatusTelemetryAsync.
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
         // Assert
@@ -680,7 +669,6 @@ public sealed class PostStatusIdempotencyTests
             Status = WorkItemStatus.Failed,
             FailureReason = "99"
         };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
             .Setup(m => m.FailRunAsync(
@@ -692,7 +680,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act — awaitTelemetry: true so the call is fully synchronous before we read the DB.
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
         // Assert
@@ -733,7 +721,6 @@ public sealed class PostStatusIdempotencyTests
             Status = WorkItemStatus.Failed,
             FailureReason = "AgentError"
         };
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>();
         lifecycleManager
             .Setup(m => m.FailRunAsync(
@@ -745,7 +732,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
         // Assert
@@ -801,13 +788,12 @@ public sealed class PostStatusIdempotencyTests
         // The guard must short-circuit before TransitionDetailedAsync and therefore before any
         // lifecycle branch is entered.
         var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
-        var runService = new Mock<IOrchestratorRunService>().Object;
 
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Late K8s callback" };
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory);
 
         // Assert 1: endpoint returns 204 No Content (idempotent no-op signal, issue #2802)
         // TODO: This assertion confirms the result type but does not verify that GetCurrentStatusAsync
@@ -858,13 +844,12 @@ public sealed class PostStatusIdempotencyTests
         var dbFactory = CreateDbFactory(opts);
 
         var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
-        var runService = new Mock<IOrchestratorRunService>().Object;
 
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Late K8s callback" };
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory);
 
         // Assert 1: endpoint returns 204 No Content (idempotent no-op signal, issue #2802)
         // TODO: Same guard-mechanism verification gap as WhenItemIsCancelled_PostStatusFailed_ReturnOkWithoutTransition —
@@ -908,10 +893,9 @@ public sealed class PostStatusIdempotencyTests
         var dbFactory = CreateDbFactory(opts);
 
         var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
-        var runService = new Mock<IOrchestratorRunService>().Object;
 
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, new WorkItemStatusRequest { Status = requested }, transitionService, runService,
+            item.Id, new WorkItemStatusRequest { Status = requested }, transitionService,
             lifecycleManager.Object, dbFactory);
 
         result.Should().BeOfType<NoContent>();
@@ -939,7 +923,6 @@ public sealed class PostStatusIdempotencyTests
         var item = await SeedWorkItemAsync(opts, WorkItemStatus.Dispatched);
         var transitionService = CreateTransitionService(opts);
         var dbFactory = CreateDbFactory(opts);
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         var request = new WorkItemStatusRequest
@@ -950,7 +933,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory);
+            item.Id, request, transitionService, lifecycleManager, dbFactory);
 
         // Assert: transition succeeded and BranchName was persisted
         result.Should().BeOfType<Ok>("Dispatched→Running is a valid transition");
@@ -1004,7 +987,6 @@ public sealed class PostStatusIdempotencyTests
 
         var transitionService = CreateTransitionService(opts);
         var dbFactory = CreateDbFactory(opts);
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
 
         // Infrastructure recovery will handle Running→Running idempotently (returns true)
@@ -1018,7 +1000,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory);
+            item.Id, request, transitionService, lifecycleManager, dbFactory);
 
         // Assert: returns 200 (idempotent running or recovery path), BranchName preserved
         result.Should().BeOfType<Ok>("Running→Running with null BranchName is idempotent (200)");
@@ -1051,7 +1033,6 @@ public sealed class PostStatusIdempotencyTests
 
         // Strict mock: no lifecycle call should occur on the AlreadyAtTarget path
         var lifecycleManager = new Mock<IRunLifecycleManager>(MockBehavior.Strict);
-        var runService = new Mock<IOrchestratorRunService>().Object;
 
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "Duplicate callback" };
 
@@ -1063,7 +1044,7 @@ public sealed class PostStatusIdempotencyTests
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory);
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory);
 
         // Assert: 204 No Content (idempotent no-op via AlreadyAtTarget)
         result.Should().BeOfType<NoContent>(
@@ -1092,13 +1073,12 @@ public sealed class PostStatusIdempotencyTests
             completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
             failureReason: FailureReason.InfrastructureFailure);
         var transitionService = CreateTransitionService(opts);
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var lifecycleManager = new Mock<IRunLifecycleManager>().Object;
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Running };
 
         // Act
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager, dbFactory: null);
+            item.Id, request, transitionService, lifecycleManager, dbFactory: null);
 
         // Assert — HTTP 200 confirms the recovery path was taken
         result.Should().BeOfType<Ok>(
@@ -1137,12 +1117,11 @@ public sealed class PostStatusIdempotencyTests
                 It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
-        var runService = new Mock<IOrchestratorRunService>().Object;
         var request = new WorkItemStatusRequest { Status = WorkItemStatus.Failed, ErrorMessage = "test error" };
 
         // Act — awaitTelemetry: true so any NRE inside the task surfaces immediately
         var result = await WorkItemAgentEndpoints.PostStatus(
-            item.Id, request, transitionService, runService, lifecycleManager.Object, dbFactory,
+            item.Id, request, transitionService, lifecycleManager.Object, dbFactory,
             ct: default, awaitTelemetry: true);
 
         // Assert: no exception thrown, correct result

@@ -461,19 +461,22 @@ public static class WorkItemDispatchEndpoints
         // (the client receives the raw 409). PvcPoolExhaustions and RecordDispatchAttempt("dispatched")
         // are not emitted here — those belong exclusively to the DispatchPendingWorkItem path.
         var syncDispatchResult = await dispatchService.DispatchResolvedWorkItemAsync(
-            db,
-            template,
-            projection,
-            normalizedSelector: normalizedReqSelector,
-            sanitizedSelector: sanitizedReqSelector,
-            concurrencyBySelector,
-            pvcResult,
-            expectedInitialStatus: WorkItemStatus.Dispatched,
-            logPrefix: "sync-dispatch ",
-            onDispatchFailure: (id, reason) => SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, id, reason),
-            onSuccess: id => TypedResults.Ok(id),
-            workItemId,
-            callerName: "DispatchWorkItem",
+            new ResolvedDispatchRequest
+            {
+                Db = db,
+                Template = template,
+                Projection = projection,
+                NormalizedSelector = normalizedReqSelector,
+                SanitizedSelector = sanitizedReqSelector,
+                ConcurrencyBySelector = concurrencyBySelector,
+                PvcResult = pvcResult,
+                ExpectedInitialStatus = WorkItemStatus.Dispatched,
+                LogPrefix = "sync-dispatch ",
+                OnDispatchFailure = (id, reason) => SafelyCancelOrphanedDispatchedWorkItemAsync(lifecycle, id, reason),
+                OnSuccess = id => TypedResults.Ok(id),
+                WorkItemId = workItemId,
+                CallerName = "DispatchWorkItem"
+            },
             lifecycle,
             ct);
         // NOTE (issue #3243): InterpretDispatchResult unconditionally emits RecordDispatchAttempt("transient",
