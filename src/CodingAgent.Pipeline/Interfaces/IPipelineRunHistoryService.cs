@@ -73,12 +73,14 @@ public interface IPipelineRunHistoryService
         => GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, ct);
 
     /// <summary>
-    /// Retrieves paginated run history filtered by <see cref="PipelineRunType"/> in addition to all other filters.
-    /// The <paramref name="runType"/> filter is applied in the DB query before paging.
+    /// Retrieves paginated run history filtered by <see cref="RunHistoryQuery.RunType"/> in addition to all other
+    /// filters of <paramref name="query"/>. The run-type filter is applied in the DB query before paging.
     /// </summary>
-    /// <param name="runType">When set, returns only runs of this <see cref="PipelineRunType"/>; null = all run types.</param>
+    /// <param name="query">Paging and filter options. <see cref="RunHistoryQuery.IncludeActive"/> is ignored — history holds persisted runs only.</param>
+    /// <param name="ct">Cancellation token.</param>
     /// <remarks>
-    /// The default implementation ignores <paramref name="runType"/> and delegates to the <paramref name="since"/> overload.
+    /// The default implementation ignores <see cref="RunHistoryQuery.RunType"/> and delegates to the
+    /// <see cref="GetRunHistoryAsync(int,int,bool,PipelineStep?,string?,DateTimeOffset?,CancellationToken)"/> overload.
     /// Only <c>PostgresPipelineRunHistoryService</c> overrides this overload to push the filter to the DB.
     /// </remarks>
     // TODO [WARNING]: The default implementation silently ignores the runType parameter. Any
@@ -89,8 +91,8 @@ public interface IPipelineRunHistoryService
     // applies the filter. Document this contract clearly or consider adding a compile-time guard
     // (e.g. abstract method) to prevent silent filter-ignore in future implementations.
     // (DotNetSpecialist review)
-    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, PipelineRunType? runType, CancellationToken ct = default)
-        => GetRunHistoryAsync(page, pageSize, feedbackOnly, finalStep, projectId, since, ct);
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(RunHistoryQuery query, CancellationToken ct = default)
+        => GetRunHistoryAsync(query.Page, query.PageSize, query.FeedbackOnly, query.FinalStep, query.ProjectId, query.Since, ct);
 
     /// <summary>Retrieves a single pipeline run summary by run ID. Returns null if not found.</summary>
     Task<PipelineRunSummary?> GetRunAsync(Guid runId, CancellationToken ct = default);

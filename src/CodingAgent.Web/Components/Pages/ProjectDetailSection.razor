@@ -238,27 +238,7 @@
                 <div class="template-list">
                     @for (var i = 0; i < _project.TemplateIds.Count; i++)
                     {
-                        var index = i;
-                        var templateId = _project.TemplateIds[index];
-                        var template = _allTemplates.FirstOrDefault(t => t.Id == templateId);
-                        var displayName = template?.Name ?? $"Unknown ({templateId[..8]}...)";
-
-                        <div class="template-row">
-                            <span class="template-name">@displayName</span>
-                            <div class="template-actions">
-                                <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
-                                    <option value="">Move to…</option>
-                                    @foreach (var proj in _allProjects.Where(p => p.Id != _project.Id))
-                                    {
-                                        <option value="@proj.Id">@proj.Name</option>
-                                    }
-                                </select>
-                                @if (_project.Id != WellKnownIds.DefaultProjectId)
-                                {
-                                    <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove from project (moves to Default)">✕</button>
-                                }
-                            </div>
-                        </div>
+                        @RenderTemplateRow(i)
                     }
                 </div>
             }
@@ -272,6 +252,30 @@
                     }
                 </select>
                 <button class="btn-save" disabled="@(string.IsNullOrEmpty(_selectedTemplateToAdd))" @onclick="AddTemplate">Add</button>
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderTemplateRow(int index) => __builder =>
+    {
+        var templateId = _project.TemplateIds[index];
+        var template = _allTemplates.FirstOrDefault(t => t.Id == templateId);
+        var displayName = template?.Name ?? $"Unknown ({templateId[..8]}...)";
+
+        <div class="template-row">
+            <span class="template-name">@displayName</span>
+            <div class="template-actions">
+                <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
+                    <option value="">Move to…</option>
+                    @foreach (var proj in _allProjects.Where(p => p.Id != _project.Id))
+                    {
+                        <option value="@proj.Id">@proj.Name</option>
+                    }
+                </select>
+                @if (_project.Id != WellKnownIds.DefaultProjectId)
+                {
+                    <button class="btn-icon btn-icon-danger" @onclick="() => RemoveTemplate(index)" title="Remove from project (moves to Default)">✕</button>
+                }
             </div>
         </div>
     };

@@ -140,9 +140,7 @@ public class GitLabCiPipelineProvider : GitLabProviderBase, IPipelineProvider
             enrichFailedJobsAsync: (status, ct2) => PipelinePollingHelper.EnrichFailedJobsWithLogsAsync(
                 status, GetJobLogsAsync, "GitLab job", ct2, _logger),
             isTerminalState: s => IsTerminalState(s.State),
-            pollInterval: _pollInterval,
-            timeout: timeout,
-            logPrefix: "GitLab CI",
+            settings: new PipelinePollingSettings(_pollInterval, timeout, "GitLab CI"),
             ct: ct,
             logger: _logger);
     }

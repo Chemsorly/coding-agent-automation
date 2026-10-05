@@ -35,8 +35,8 @@
             await Task.Delay(5000, token);
             await InvokeAsync(() => { _visible = false; StateHasChanged(); });
         }
-        catch (OperationCanceledException) { }
-        catch (ObjectDisposedException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task UndoClicked()

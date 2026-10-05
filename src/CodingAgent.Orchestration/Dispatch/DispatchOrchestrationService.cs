@@ -566,9 +566,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     /// <inheritdoc />
     // TODO: [WARNING] The async/await wrapper here adds an unnecessary state machine allocation on every call.
-    // The private overload already returns a Task directly (no async state machine). Replace with:
-    //   public Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
-    //       => ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
+    // The private overload already returns a Task directly (no async state machine), so this
+    // overload could drop async/await and return the private overload's Task as-is.
     public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
         => await ConfirmDistributionLabelAsync(request, ct, swallowCancellation: false);
 

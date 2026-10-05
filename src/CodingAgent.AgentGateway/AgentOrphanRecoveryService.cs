@@ -384,40 +384,45 @@ public sealed class AgentOrphanRecoveryService(
         // Agent tracking: always run when the run belongs to this agent.
         // This covers: first pickup (AgentId just set above), pod replacement (AgentId just updated),
         // and same-agent reconnect (AgentId already matched, tracking still needed if entry lost state).
-        var trackedEntry = _facade.GetByAgentId(agentId);
-        if (trackedEntry is not null)
-        {
-            bool shouldTransition;
-            lock (trackedEntry.SyncRoot)
-            {
-                if (trackedEntry.ActiveJobId is null)
-                {
-                    trackedEntry.ActiveJobId = activeJob.RunId;
-                    _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "LinkAgentToExistingRun");
-                    // Transition to Busy only when we actually wrote the ActiveJobId.
-                    // The decision is captured inside the lock so a concurrent disconnect handler
-                    // that clears ActiveJobId after lock release cannot cause a spurious Busy
-                    // transition.
-                    shouldTransition = true;
-                }
-                else
-                {
-                    // ActiveJobId already set (same-agent reconnect or DrainService race).
-                    // Only transition to Busy if the active job matches the run being linked.
-                    // If DrainService assigned a different run between GetByAgentId and lock
-                    // acquisition, trackedEntry.ActiveJobId != activeJob.RunId and we skip the
-                    // transition to avoid clobbering the DrainService assignment.
-                    shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
-                }
-            }
-            if (shouldTransition)
-                _facade.TransitionStatus(agentId, AgentStatus.Busy);
-        }
+        TrackLinkedActiveJob(agentId, activeJob);
 
         _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
             agentId, activeJob.RunId);
 
         return agentChanged && string.IsNullOrEmpty(previousAgentId) ? existingRun : null;
+    }
+
+    private void TrackLinkedActiveJob(AgentId agentId, ActiveJobState activeJob)
+    {
+        var trackedEntry = _facade.GetByAgentId(agentId);
+        if (trackedEntry is null)
+            return;
+
+        bool shouldTransition;
+        lock (trackedEntry.SyncRoot)
+        {
+            if (trackedEntry.ActiveJobId is null)
+            {
+                trackedEntry.ActiveJobId = activeJob.RunId;
+                _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "LinkAgentToExistingRun");
+                // Transition to Busy only when we actually wrote the ActiveJobId.
+                // The decision is captured inside the lock so a concurrent disconnect handler
+                // that clears ActiveJobId after lock release cannot cause a spurious Busy
+                // transition.
+                shouldTransition = true;
+            }
+            else
+            {
+                // ActiveJobId already set (same-agent reconnect or DrainService race).
+                // Only transition to Busy if the active job matches the run being linked.
+                // If DrainService assigned a different run between GetByAgentId and lock
+                // acquisition, trackedEntry.ActiveJobId != activeJob.RunId and we skip the
+                // transition to avoid clobbering the DrainService assignment.
+                shouldTransition = trackedEntry.ActiveJobId == activeJob.RunId;
+            }
+        }
+        if (shouldTransition)
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
     }
 
     // TODO: [WARNING] The acceptance criterion says "DetectAndRestoreOrphans delegates each of its

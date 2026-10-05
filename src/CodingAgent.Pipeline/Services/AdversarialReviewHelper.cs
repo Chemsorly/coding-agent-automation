@@ -17,6 +17,14 @@ public sealed record AdversarialReviewConfig
 }
 
 /// <summary>
+/// The prompts and findings file for a single adversarial review pass.
+/// </summary>
+/// <param name="ReviewPrompt">Prompt for the isolated discriminator (reviewer) agent call.</param>
+/// <param name="RefinementPrompt">Prompt for the generator refinement call, sent when the review finds CRITICAL/WARNING issues.</param>
+/// <param name="ReviewFilePath">Workspace-relative path of the review findings file the reviewer writes.</param>
+public sealed record AdversarialReviewPrompts(string ReviewPrompt, string RefinementPrompt, string ReviewFilePath);
+
+/// <summary>
 /// Result of an adversarial review pass, including whether review ran,
 /// whether refinement was triggered, and token usage from both calls.
 /// </summary>
@@ -66,9 +74,7 @@ public static class AdversarialReviewHelper
     public static async Task<AdversarialReviewResult> ExecuteReviewAsync(
         IAgentProvider agentProvider,
         string workspacePath,
-        string reviewPrompt,
-        string refinementPrompt,
-        string reviewFilePath,
+        AdversarialReviewPrompts prompts,
         AdversarialReviewConfig config,
         Action<string>? onOutputLine,
         ILogger logger,
@@ -76,6 +82,10 @@ public static class AdversarialReviewHelper
     {
         ArgumentNullException.ThrowIfNull(agentProvider);
         ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentNullException.ThrowIfNull(prompts);
+        var reviewPrompt = prompts.ReviewPrompt;
+        var refinementPrompt = prompts.RefinementPrompt;
+        var reviewFilePath = prompts.ReviewFilePath;
         ArgumentNullException.ThrowIfNull(reviewPrompt);
         ArgumentNullException.ThrowIfNull(refinementPrompt);
         ArgumentNullException.ThrowIfNull(reviewFilePath);

@@ -222,24 +222,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         }
 
         // 8. Apply labels: agent:next + agent:generated + allowed custom labels from proposal.
-        // Agent-supplied labels are filtered through AgentLabels.FilterForIssueCreation:
-        // non-agent labels and agent:next / agent:generated are kept; all other agent:* labels
-        // (e.g. agent:epic-approved, agent:done) are dropped to prevent bypassing hub validation.
-        var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
-        foreach (var label in proposal.Labels)
-        {
-            if (!string.IsNullOrWhiteSpace(label) &&
-                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
-            {
-                // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
-                if (!AgentLabels.All.Contains(label))
-                    labels.Add(label);
-                else
-                    context.Logger.Warning(
-                        "CreateSubIssues: dropping disallowed agent label '{Label}' from sub-issue '{Title}'",
-                        label, proposal.Title);
-            }
-        }
+        var labels = BuildSubIssueLabels(proposal, context);
 
         // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
         for (var attempt = 0; attempt < MaxRetryAttempts; attempt++)
@@ -265,6 +248,30 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             Success = false,
             FailureReason = "Unexpected: exhausted retry loop without result"
         };
+    }
+
+    private static List<string> BuildSubIssueLabels(SubIssueProposal proposal, PipelineStepContext context)
+    {
+        // Agent-supplied labels are filtered through AgentLabels.FilterForIssueCreation:
+        // non-agent labels and agent:next / agent:generated are kept; all other agent:* labels
+        // (e.g. agent:epic-approved, agent:done) are dropped to prevent bypassing hub validation.
+        var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
+        foreach (var label in proposal.Labels)
+        {
+            if (!string.IsNullOrWhiteSpace(label) &&
+                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
+            {
+                // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
+                if (!AgentLabels.All.Contains(label))
+                    labels.Add(label);
+                else
+                    context.Logger.Warning(
+                        "CreateSubIssues: dropping disallowed agent label '{Label}' from sub-issue '{Title}'",
+                        label, proposal.Title);
+            }
+        }
+
+        return labels;
     }
 
     /// <summary>

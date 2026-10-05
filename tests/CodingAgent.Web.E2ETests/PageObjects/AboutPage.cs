@@ -35,7 +35,8 @@ public sealed class AboutPage
     }
 
     /// <summary>
-    /// Returns the text value from the info grid within the given section, for the given label.
+    /// Returns the text value from the info grid within the given section, for the given label,
+    /// or null if the value does not appear within <see cref="DefaultTimeout"/>.
     /// Uses adjacent sibling selector: the value span immediately follows the label span.
     /// </summary>
     /// <param name="sectionHeading">Text of the h2 heading (e.g., "Version Info", "Build Info", "Pipeline Stats").</param>
@@ -52,8 +53,14 @@ public sealed class AboutPage
         var valueLocator = section
             .Locator(".about-info-grid")
             .Locator($".about-label:has-text('{label}') + .about-value");
-        if (await valueLocator.CountAsync() == 0)
+        try
+        {
+            await valueLocator.WaitForAsync(new() { Timeout = DefaultTimeout });
+        }
+        catch (TimeoutException)
+        {
             return null;
+        }
         return (await valueLocator.TextContentAsync())?.Trim();
     }
 

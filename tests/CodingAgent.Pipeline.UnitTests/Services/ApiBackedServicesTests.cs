@@ -639,7 +639,7 @@ public sealed class ApiBackedServicesTests
     {
         var client = new Mock<CodingAgent.Api.Client.IPipelineApiRunHistoryClient>();
         var page = new PagedResult<PipelineRunSummary> { Items = [], Page = 1, PageSize = 1000, HasMore = false };
-        client.Setup(c => c.GetRunHistoryAsync(1, 1000, false, false, It.IsAny<PipelineStep?>(), It.IsAny<string?>(), It.IsAny<DateTimeOffset?>(), It.IsAny<PipelineRunType?>(), It.IsAny<CancellationToken>()))
+        client.Setup(c => c.GetRunHistoryAsync(It.Is<RunHistoryQuery>(q => q.Page == 1 && q.PageSize == 1000 && !q.FeedbackOnly && !q.IncludeActive), It.IsAny<CancellationToken>()))
             .ReturnsAsync(page);
 
         var svc = CreateHistoryService(client.Object);

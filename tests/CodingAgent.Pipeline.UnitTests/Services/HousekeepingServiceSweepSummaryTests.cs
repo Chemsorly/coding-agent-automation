@@ -54,21 +54,11 @@ public class HousekeepingServiceSweepSummaryLogTests
                 .ReturnsAsync(new HashSet<string>());
 
         var staleMock = new Mock<IStaleBranchCleaner>();
-        staleMock.Setup(s => s.RunIfDueAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
-                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        staleMock.Setup(s => s.RunIfDueAsync(It.IsAny<StaleBranchCleanupRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var reworkMock = new Mock<IIssueReworkService>();
-        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
-                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
-                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
-                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
-                It.IsAny<CancellationToken>()))
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(It.IsAny<ConflictReworkRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var svc = new HousekeepingService(runsMock.Object, staleMock.Object, reworkMock.Object, logger);
@@ -85,8 +75,20 @@ public class HousekeepingServiceSweepSummaryLogTests
         IReadOnlyList<PullRequestSummary> prs,
         bool wasInputTruncated = false)
         => svc.ExecuteAsync(
-            repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, wasInputTruncated, 1, false, 60, 25, CancellationToken.None);
+            new HousekeepingRequest
+            {
+                RepoProvider = repo.Object,
+                RepoProviderId = RepoId,
+                IssueProvider = issues.Object,
+                IssueProviderId = IssueProviderId,
+                AgentDonePrs = prs,
+                WasInputTruncated = wasInputTruncated,
+                EffectiveConcurrencyLimit = 1,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 60,
+                TriggerCooldownMinutes = 25
+            },
+            CancellationToken.None);
 
     private static PullRequestSummary MakePr(int number)
         => new()
@@ -280,21 +282,11 @@ public class HousekeepingServiceSweepSummaryMetricTests
                 .ReturnsAsync(activeBranches ?? new HashSet<string>());
 
         var staleMock = new Mock<IStaleBranchCleaner>();
-        staleMock.Setup(s => s.RunIfDueAsync(
-                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(), It.IsAny<bool>(),
-                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
-                It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        staleMock.Setup(s => s.RunIfDueAsync(It.IsAny<StaleBranchCleanupRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var reworkMock = new Mock<IIssueReworkService>();
-        reworkMock.Setup(s => s.TriggerConflictReworkAsync(
-                It.IsAny<IReadOnlyList<PullRequestSummary>>(),
-                It.IsAny<IReadOnlyDictionary<int, PrMergeabilityStatus>>(),
-                It.IsAny<IReadOnlySet<string>>(), It.IsAny<bool>(),
-                It.IsAny<IRepositoryProvider>(), It.IsAny<IIssueProvider>(),
-                It.IsAny<string>(), It.IsAny<KeyValuePair<string, object?>>(),
-                It.IsAny<CancellationToken>()))
+        reworkMock.Setup(s => s.TriggerConflictReworkAsync(It.IsAny<ConflictReworkRequest>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var svc = new HousekeepingService(runsMock.Object, staleMock.Object, reworkMock.Object, Log.Logger);
@@ -311,8 +303,20 @@ public class HousekeepingServiceSweepSummaryMetricTests
         IReadOnlyList<PullRequestSummary> prs,
         int limit = 1)
         => svc.ExecuteAsync(
-            repo.Object, RepoId, issues.Object, IssueProviderId,
-            prs, false, limit, false, 60, 25, CancellationToken.None);
+            new HousekeepingRequest
+            {
+                RepoProvider = repo.Object,
+                RepoProviderId = RepoId,
+                IssueProvider = issues.Object,
+                IssueProviderId = IssueProviderId,
+                AgentDonePrs = prs,
+                WasInputTruncated = false,
+                EffectiveConcurrencyLimit = limit,
+                BranchCleanupEnabled = false,
+                CleanupIntervalMinutes = 60,
+                TriggerCooldownMinutes = 25
+            },
+            CancellationToken.None);
 
     private static PullRequestSummary MakePr(int number)
         => new()

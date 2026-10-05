@@ -188,47 +188,52 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
             if (headerIndex < 0)
                 return null;
 
-            // Count data rows immediately after the separator line
-            // (skip blank lines or lines not starting/ending with '|')
-            var dataRowCount = 0;
-            var separatorFound = false;
-
-            for (var i = headerIndex + 1; i < lines.Length; i++)
-            {
-                var line = lines[i].Trim();
-
-                if (!separatorFound)
-                {
-                    // The first line after the header should be the separator row (|---|...|)
-                    if (IsMarkdownTableSeparator(line))
-                    {
-                        separatorFound = true;
-                        continue;
-                    }
-                    // If the line after the header is not a separator, this is not a valid table
-                    return null;
-                }
-
-                // After separator: count non-empty pipe-delimited rows
-                // TODO: A blank line embedded inside the table body terminates the count early here,
-                // causing an undercount and suppressing the cap warning even when the plan exceeds the cap.
-                // The issue spec defines fail-open as "can't parse the table → no warning", but this
-                // silently miscounts a partially-parsable table instead of returning null. Consider
-                // skipping blank lines (continue) rather than breaking on the first non-pipe line,
-                // or returning null when a blank line is encountered inside the table body.
-                if (line.StartsWith('|') && line.EndsWith('|'))
-                    dataRowCount++;
-                else
-                    break; // Table ended
-            }
-
-            return separatorFound ? dataRowCount : null;
+            return CountSubIssueTableDataRows(lines, headerIndex);
         }
         catch (Exception ex)
         {
             logger?.Warning(ex, "Failed to parse sub-issue table in decomposition plan; posting without cap warning");
             return null;
         }
+    }
+
+    private static int? CountSubIssueTableDataRows(string[] lines, int headerIndex)
+    {
+        // Count data rows immediately after the separator line
+        // (skip blank lines or lines not starting/ending with '|')
+        var dataRowCount = 0;
+        var separatorFound = false;
+
+        for (var i = headerIndex + 1; i < lines.Length; i++)
+        {
+            var line = lines[i].Trim();
+
+            if (!separatorFound)
+            {
+                // The first line after the header should be the separator row (|---|...|)
+                if (IsMarkdownTableSeparator(line))
+                {
+                    separatorFound = true;
+                    continue;
+                }
+                // If the line after the header is not a separator, this is not a valid table
+                return null;
+            }
+
+            // After separator: count non-empty pipe-delimited rows
+            // TODO: A blank line embedded inside the table body terminates the count early here,
+            // causing an undercount and suppressing the cap warning even when the plan exceeds the cap.
+            // The issue spec defines fail-open as "can't parse the table → no warning", but this
+            // silently miscounts a partially-parsable table instead of returning null. Consider
+            // skipping blank lines (continue) rather than breaking on the first non-pipe line,
+            // or returning null when a blank line is encountered inside the table body.
+            if (line.StartsWith('|') && line.EndsWith('|'))
+                dataRowCount++;
+            else
+                break; // Table ended
+        }
+
+        return separatorFound ? dataRowCount : null;
     }
 
     /// <summary>

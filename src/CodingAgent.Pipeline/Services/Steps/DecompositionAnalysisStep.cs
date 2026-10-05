@@ -81,7 +81,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         var execResult = await context.TryCriticalAsync(async () =>
         {
             agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                context.AgentProvider,
+                new AgentMonitorContext(context.AgentProvider, run, config, "Decomposition analysis agent", context.Callbacks.NotifyChange, logger),
                 new AgentRequest
                 {
                     Prompt = analysisPrompt,
@@ -89,7 +89,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
                     Timeout = config.AgentTimeout,
                     UseResume = false
                 },
-                run, config, "Decomposition analysis agent", context.Callbacks.NotifyChange, logger, ct,
+                ct,
                 line => context.Callbacks.EmitOutputLine(line),
                 reportStallEvent: AgentPhaseExecutor.BuildStallEventReporter(context.ReportPipelineRunEvent),
                 phase: "decomposition");
@@ -135,9 +135,10 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
             context.AgentProvider,
             run.WorkspacePath!,
-            DecompositionPromptBuilder.BuildReviewPrompt(maxFiles, maxSubIssues, context.ProjectContext),
-            DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles, maxSubIssues),
-            AgentWorkspacePaths.DecompositionReviewFilePath,
+            new AdversarialReviewPrompts(
+                DecompositionPromptBuilder.BuildReviewPrompt(maxFiles, maxSubIssues, context.ProjectContext),
+                DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles, maxSubIssues),
+                AgentWorkspacePaths.DecompositionReviewFilePath),
             new AdversarialReviewConfig
             {
                 Enabled = true,

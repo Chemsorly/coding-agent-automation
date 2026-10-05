@@ -91,9 +91,9 @@ public class AgentStallMonitorTests
             .Returns(tcs.Task);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Test phase", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Test phase", null, _mockLogger.Object, CancellationToken.None,
+            CancellationToken.None,
             timeProvider: signalingTime);
 
         // Wait until the monitor has registered its timer with FakeTimeProvider, then advance
@@ -144,9 +144,8 @@ public class AgentStallMonitorTests
             .Returns(tcs.Task);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Code review agent 'Correctness'", null, _mockLogger.Object,
             CancellationToken.None, timeProvider: signalingTime);
 
         // After one poll tick: silence=3m > StallWarningInterval=2m.
@@ -199,9 +198,9 @@ public class AgentStallMonitorTests
             .Returns(Task.CompletedTask);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Stuck agent", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Stuck agent", null, _mockLogger.Object, CancellationToken.None,
+            CancellationToken.None,
             timeProvider: signalingTime);
 
         // Wait until the monitor has registered its timer with FakeTimeProvider, then advance
@@ -250,9 +249,9 @@ public class AgentStallMonitorTests
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
         var result = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Fast agent", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Fast agent", null, _mockLogger.Object, CancellationToken.None,
+            CancellationToken.None,
             timeProvider: fakeTime);
 
         result.ExitCode.Should().Be(0);
@@ -283,9 +282,9 @@ public class AgentStallMonitorTests
             .Returns(() => { called = true; return tcs.Task; });
 
         var task = AgentStallMonitor.MonitorAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Session warm-up", null, _mockLogger.Object),
             () => _mockAgent.Object.EnsureSessionAsync("/ws", CancellationToken.None),
-            _run, config, "Session warm-up", null, _mockLogger.Object, CancellationToken.None,
+            CancellationToken.None,
             timeProvider: signalingTime);
 
         await signalingTime.FirstTimerRegistered;
@@ -334,9 +333,8 @@ public class AgentStallMonitorTests
 
         // No phase key: the reported phase comes from the description.
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Quality gate retry agent (attempt 2)", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Quality gate retry agent (attempt 2)", null, _mockLogger.Object,
             CancellationToken.None, reportStallEvent: (phase, kind) => reported.Enqueue((phase, kind)),
             timeProvider: signalingTime);
 
@@ -374,9 +372,8 @@ public class AgentStallMonitorTests
 
         // A per-reviewer phase key is reported as the normalized "review" phase.
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
-            _mockAgent.Object,
+            new AgentMonitorContext(_mockAgent.Object, _run, config, "Code review agent", null, _mockLogger.Object),
             new AgentRequest { Prompt = "test", WorkspacePath = "/ws" },
-            _run, config, "Code review agent", null, _mockLogger.Object,
             CancellationToken.None, reportStallEvent: (phase, kind) => reported.Enqueue((phase, kind)),
             timeProvider: signalingTime, phase: "review_correctness");
 

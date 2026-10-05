@@ -153,8 +153,12 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
-    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, bool feedbackOnly, PipelineStep? finalStep, string? projectId, DateTimeOffset? since, PipelineRunType? runType, CancellationToken ct = default)
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(RunHistoryQuery query, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(query);
+        // IncludeActive is an endpoint-level concern (merging in-flight runs) — history ignores it.
+        var (page, pageSize, feedbackOnly, _, finalStep, projectId, since, runType) = query;
+
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);

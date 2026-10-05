@@ -264,7 +264,7 @@
         <div class="cockpit-card">
             <div class="cockpit-card-header">
                 <h2>Provider backlog</h2>
-                <span style="font-size: 12px; color: var(--text-muted);">@(_backlogLoading ? "checking…" : $"{_backlog.Issues.Count(b => b.IsReady && !IsWorkItemActive(b))} ready · {(_backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}")} open")</span>
+                <span style="font-size: 12px; color: var(--text-muted);">@BacklogSummary</span>
             </div>
             @if (_backlogLoading)
             {
@@ -391,6 +391,18 @@
     private BacklogResult _backlog = new([], IsTruncated: false);
     private bool _backlogLoading = true;
 
+    /// <summary>Provider backlog card header: ready/open counts, or "checking…" while the live query runs.</summary>
+    private string BacklogSummary
+    {
+        get
+        {
+            if (_backlogLoading) return "checking…";
+            var ready = _backlog.Issues.Count(b => b.IsReady && !IsWorkItemActive(b));
+            var open = _backlog.IsTruncated ? $"{_backlog.Issues.Count}+" : $"{_backlog.Issues.Count}";
+            return $"{ready} ready · {open} open";
+        }
+    }
+
     protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
 
     // Load the live provider backlog only after the queue has rendered, so provider calls never delay first paint.
@@ -409,7 +421,7 @@
             await InvokeAsync(StateHasChanged);
             await LoadBacklogAsync();
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task LoadBacklogAsync()
@@ -420,12 +432,12 @@
         {
             _backlog = await BlockedIssues.GetBacklogAsync(State.SelectedProjectId, _cts.Token);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* the service already degrades to empty on provider errors */ }
         finally
         {
             _backlogLoading = false;
-            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { /* Already disposed. */ }
         }
     }
 
@@ -436,7 +448,7 @@
             _active = await WorkItems.GetActiveAsync(olderThanSeconds: 0, projectId: State.SelectedProjectId, ct: _cts.Token);
             _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load work: {ex.Message}";
@@ -460,7 +472,7 @@
             await WorkItems.PostStatusAsync(id, new WorkItemStatusUpdate { Status = nameof(WorkItemStatus.Cancelled) }, _cts.Token);
             await RefreshQuietAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (AccessDeniedException)
         {
             _error = AccessDeniedException.UserMessage;
@@ -489,7 +501,7 @@
             _priorityError = null;
             await RefreshQuietAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (AccessDeniedException)
         {
             _priorityError = AccessDeniedException.UserMessage;
@@ -518,7 +530,7 @@
             _pending = await WorkItems.GetPendingAsync(maxResults: 100, projectId: State.SelectedProjectId, ct: _cts.Token);
             _error = null;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* keep last-known data until the next tick */ }
     }
 
@@ -560,18 +572,25 @@
         if (labels is null) return null;
         foreach (var l in labels)
         {
-            if (l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase)) return ("In progress", "accent");
-            if (l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase)) return ("Done", "muted");
-            if (l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase)) return ("Error", "error");
-            if (l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
-             || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase)) return ("Won't do", "muted");
-            if (l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase)) return ("Needs refinement", "warning");
-            if (l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase)) return ("Queued", "accent");
-            if (l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
-             || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
-             || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase)) return ("Epic", "muted");
-            if (l.Equals("backlog", StringComparison.OrdinalIgnoreCase)) return ("Parked", "muted");
+            var display = GetLabelDisplay(l);
+            if (display is not null) return display;
         }
+        return null;
+    }
+
+    private static (string Text, string StyleClass)? GetLabelDisplay(string l)
+    {
+        if (l.Equals(AgentLabels.InProgress, StringComparison.OrdinalIgnoreCase)) return ("In progress", "accent");
+        if (l.Equals(AgentLabels.Done, StringComparison.OrdinalIgnoreCase)) return ("Done", "muted");
+        if (l.Equals(AgentLabels.Error, StringComparison.OrdinalIgnoreCase)) return ("Error", "error");
+        if (l.Equals(AgentLabels.WontDo, StringComparison.OrdinalIgnoreCase)
+         || l.Equals(AgentLabels.Cancelled, StringComparison.OrdinalIgnoreCase)) return ("Won't do", "muted");
+        if (l.Equals(AgentLabels.NeedsRefinement, StringComparison.OrdinalIgnoreCase)) return ("Needs refinement", "warning");
+        if (l.Equals(AgentLabels.Next, StringComparison.OrdinalIgnoreCase)) return ("Queued", "accent");
+        if (l.Equals(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)
+         || l.Equals(AgentLabels.EpicApproved, StringComparison.OrdinalIgnoreCase)
+         || l.Equals(AgentLabels.EpicReview, StringComparison.OrdinalIgnoreCase)) return ("Epic", "muted");
+        if (l.Equals("backlog", StringComparison.OrdinalIgnoreCase)) return ("Parked", "muted");
         return null;
     }
 
@@ -592,7 +611,10 @@
     private void OpenRun(Guid id) => Nav.NavigateTo($"runs/{id}");
 
     private static string Truncate(string? s, int n)
-        => string.IsNullOrEmpty(s) ? "" : (s.Length > n ? s[..n] + "…" : s);
+    {
+        if (string.IsNullOrEmpty(s)) return "";
+        return s.Length > n ? s[..n] + "…" : s;
+    }
 
     private static string Ago(DateTimeOffset t)
     {
