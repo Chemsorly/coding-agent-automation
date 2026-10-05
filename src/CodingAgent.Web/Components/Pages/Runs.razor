@@ -378,7 +378,7 @@
                 await RefreshQuietAsync();
                 StateHasChanged();
             }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Already disposed. */ }
         });
     }
 
@@ -391,7 +391,7 @@
             await LoadAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task SetOutcome(OutcomeFilter outcome)
@@ -421,7 +421,7 @@
                 finalStep: FinalStepFilter, projectId: State.SelectedProjectId, ct: _cts.Token);
             _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load runs: {ex.Message}";
@@ -450,7 +450,7 @@
             _anyRunHasTokens = _result?.Items.Any(r => r.TotalTokens > 0) ?? false;
             _error = null;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* keep the current page until the next tick */ }
         finally
         {

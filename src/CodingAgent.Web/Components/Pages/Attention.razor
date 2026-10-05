@@ -157,7 +157,7 @@
             await InvokeAsync(StateHasChanged);
             await LoadBlockedIssuesAsync();
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // Reload both sections — used by the RefreshBar OnRefresh callback.
@@ -181,12 +181,12 @@
         {
             _blockedIssues = await BlockedIssues.GetBlockedIssuesAsync(State.SelectedProjectId, _cts.Token);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* the service already degrades to empty on provider errors */ }
         finally
         {
             _blockedLoading = false;
-            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { }
+            try { await InvokeAsync(StateHasChanged); } catch (ObjectDisposedException) { /* Already disposed. */ }
         }
     }
 
@@ -222,7 +222,7 @@
 
             State.SetAttentionCount(_sections.Sum(s => s.Rows.Count));
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load attention items: {ex.Message}";

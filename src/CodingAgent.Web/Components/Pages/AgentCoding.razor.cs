@@ -703,14 +703,14 @@ public partial class AgentCoding : IDisposable
         await Task.Delay(3000, CancellationToken.None);
         _recentlyToggled.Remove(templateId);
         try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private async Task ClearSuccessAfterDelay()
     {
         await Task.Delay(3000, CancellationToken.None);
         try { await InvokeAsync(() => { if (_disposed) return; _successMessage = null; StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     private void DismissAgentSummary() => _showAgentSummary = false;
@@ -721,7 +721,7 @@ public partial class AgentCoding : IDisposable
     {
         await Task.Delay(8000, CancellationToken.None);
         try { await InvokeAsync(() => { if (_disposed) return; _showAgentSummary = false; StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // ── Event Handlers ──
@@ -747,7 +747,7 @@ public partial class AgentCoding : IDisposable
                 StateHasChanged();
             });
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     public void Dispose()

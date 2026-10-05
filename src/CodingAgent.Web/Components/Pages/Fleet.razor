@@ -248,7 +248,7 @@
             _agents = await AgentClient.GetAgentsAsync(_cts.Token);
             await LoadPoolAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load agents: {ex.Message}";
@@ -276,7 +276,7 @@
             await LoadPoolAsync();
             _error = null;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch { /* keep last-known agents until the next tick */ }
     }
 

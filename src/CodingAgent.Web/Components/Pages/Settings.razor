@@ -252,7 +252,7 @@
             _agentProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Agent, _cts.Token)).ToList();
             _pipelineProviders = (await ConfigClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Pipeline, _cts.Token)).ToList();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             ShowStatus($"Failed to load settings: {ex.Message}", isError: true);
@@ -311,7 +311,7 @@
             await LoadAllData();
             ShowStatus($"{kind} provider deleted.");
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             ShowStatus($"Failed to delete: {ex.Message}", isError: true);
@@ -351,7 +351,7 @@
             _statusMessage = null;
             await InvokeAsync(StateHasChanged);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
     }
 
     private async Task NavigateToProjectDetail(string projectId)

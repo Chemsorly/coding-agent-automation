@@ -194,7 +194,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
             // the current use but silently discarding OCE on an explicit ct parameter is a code smell.
             // See review finding: DotNetSpecialist WARNING @ ChatSessionWatcher.cs:161.
             // ct cancelled — let the while-condition exit the loop on the next iteration.
-            try { await Task.Delay(pollInterval, ct).ConfigureAwait(false); } catch (OperationCanceledException) { }
+            try { await Task.Delay(pollInterval, ct).ConfigureAwait(false); } catch (OperationCanceledException) { /* Expected on cancellation. */ }
             return IdleKillResult.GuardFired;
         }
 

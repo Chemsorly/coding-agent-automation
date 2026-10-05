@@ -92,7 +92,7 @@ internal static class AgentStallMonitor
         finally
         {
             await stallCts.CancelAsync();
-            try { await monitorTask; } catch (OperationCanceledException) { }
+            try { await monitorTask; } catch (OperationCanceledException) { /* Expected on cancellation. */ }
         }
 
         if (sessionSpan is not null)
@@ -178,7 +178,7 @@ internal static class AgentStallMonitor
         finally
         {
             await stallCts.CancelAsync();
-            try { await monitorTask; } catch (OperationCanceledException) { }
+            try { await monitorTask; } catch (OperationCanceledException) { /* Expected on cancellation. */ }
         }
     }
 
@@ -238,8 +238,8 @@ internal static class AgentStallMonitor
                     HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime, timeProvider, sessionSpan);
                 }
             }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
+            catch (OperationCanceledException) { /* Expected on cancellation. */ }
+            catch (ObjectDisposedException) { /* Already disposed. */ }
         }, CancellationToken.None);
     }
 

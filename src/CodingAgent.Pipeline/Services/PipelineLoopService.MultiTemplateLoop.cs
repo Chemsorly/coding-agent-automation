@@ -912,7 +912,7 @@ public sealed partial class PipelineLoopService
         {
             await Task.Delay(interval, ct);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
     }
 
     /// <summary>

@@ -277,7 +277,7 @@
             await LoadAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // TODO: [WARNING] LoadAsync is invoked via @bind:after="LoadAsync" on the time-window dropdown, making
@@ -309,7 +309,7 @@
             if (_total > 0)
                 Aggregate(items, now);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)
         {
             _error = $"Failed to load insights: {ex.Message}";

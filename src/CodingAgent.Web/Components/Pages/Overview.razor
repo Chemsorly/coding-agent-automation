@@ -176,7 +176,7 @@
             await RefreshDataAsync();
             await InvokeAsync(StateHasChanged);
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     // Re-fetched on load and on each auto-refresh tick. Degrades quietly (keeps prior values).
@@ -201,7 +201,7 @@
             _queueCount = pending.Count;
         }
         catch (OperationCanceledException) { return; }
-        catch { }
+        catch { /* Card keeps its last value; the next refresh retries. */ }
 
         // Runs — one page, active + recent, aggregated client-side
         try
@@ -231,7 +231,7 @@
             _attnPlans = attn.PlansToApprove.Count;
         }
         catch (OperationCanceledException) { return; }
-        catch { }
+        catch { /* Card keeps its last value; the next refresh retries. */ }
     }
 
     // NavigationManager.NavigateTo with a bare relative path resolves against BaseUri (the app
@@ -262,7 +262,7 @@
     private async void HandleLoopChanged()
     {
         try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
     }
 
     public async ValueTask DisposeAsync()

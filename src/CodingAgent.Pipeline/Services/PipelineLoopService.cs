@@ -156,7 +156,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             if (!IsLoopActive) return;
             _stopRequested = true;
             // Cancel the loop CTS so DelayOrStop returns immediately (review finding #2)
-            try { _loopCts?.Cancel(); } catch (ObjectDisposedException) { }
+            try { _loopCts?.Cancel(); } catch (ObjectDisposedException) { /* Already disposed. */ }
             // Unblock circuit breaker wait if paused
             _resumeSignal?.TrySetResult();
             StatusMessage = "⏹ Loop stopping… (finishing current run)";

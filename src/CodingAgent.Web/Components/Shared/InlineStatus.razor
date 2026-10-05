@@ -43,7 +43,7 @@
             await Task.Delay(4000, token);
             await OnDismissed.InvokeAsync();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
     }
 
     private async Task Dismiss() => await OnDismissed.InvokeAsync();
