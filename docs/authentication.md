@@ -153,7 +153,7 @@ The web host reads claims from the ID token only; it does not call the userinfo 
 | "You have no access yet" after sign-in | Open the profile page (`/user`). If no groups are listed, the provider does not put groups into the ID token (Keycloak mapper, Entra groups claim or overage). If groups are listed, add a binding with one of them. |
 | A binding shows "unknown project" | The `project` value must equal the project name in Settings exactly. |
 | A binding shows "duplicate project name" | Two projects have that name; rename one. |
-| "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client secret or issuer, or a clock skew. |
+| "Sign-in with … failed" | The web host logs the reason: wrong redirect URI, client ID, client secret or issuer, a provider it cannot reach, or a clock skew. |
 | Redirect URI uses `http://` behind TLS | The ingress must send `X-Forwarded-Proto: https`. |
 | Signed out on every request with several web replicas | Configure `signalr.redis.connectionString`. |
 | Pages load but stay unresponsive with several web replicas; the browser console shows "No Connection with that ID" | Enable sticky sessions at the ingress (see [Exposing the UI](#exposing-the-ui)). |
