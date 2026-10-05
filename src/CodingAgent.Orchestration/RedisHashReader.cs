@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using StackExchange.Redis;
 
@@ -26,7 +27,7 @@ internal readonly struct RedisHashReader
     /// </summary>
     public RedisHashReader(HashEntry[] hash)
     {
-        _d = hash.ToDictionary(e => (string)e.Name!, e => (string?)e.Value);
+        _d = hash.ToDictionary(e => e.Name.ToString(), e => (string?)e.Value);
     }
 
     // ── String accessors ──────────────────────────────────────────────
@@ -89,7 +90,7 @@ internal readonly struct RedisHashReader
     public DateTimeOffset DateTimeOffset(string key)
     {
         _d.TryGetValue(key, out var val);
-        return System.DateTimeOffset.TryParse(val, out var result) ? result : default;
+        return System.DateTimeOffset.TryParse(val, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var result) ? result : default;
     }
 
     /// <summary>
@@ -99,7 +100,7 @@ internal readonly struct RedisHashReader
     public DateTimeOffset? DateTimeOffsetOrNull(string key)
     {
         _d.TryGetValue(key, out var val);
-        return System.DateTimeOffset.TryParse(val, out var result) ? result : null;
+        return System.DateTimeOffset.TryParse(val, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var result) ? result : null;
     }
 
     // ── Numeric accessors ─────────────────────────────────────────────
@@ -122,6 +123,12 @@ internal readonly struct RedisHashReader
     public decimal? Decimal(string key)
     {
         _d.TryGetValue(key, out var val);
+        // TODO: decimal.TryParse uses the current thread culture. On hosts where the OS locale
+        // uses "," as the decimal separator, a stored value like "1.2345" silently fails to parse
+        // and returns null (zeroing TotalCost). Switch to decimal.TryParse(val,
+        // NumberStyles.Any, CultureInfo.InvariantCulture, out var result) and update the writer
+        // (ToHashEntries) to use ToString(CultureInfo.InvariantCulture) consistently.
+        // Tracked: DotNetSpecialist review warning — RedisHashReader.cs:125
         return decimal.TryParse(val, out var result) ? result : null;
     }
 

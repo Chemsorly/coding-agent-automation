@@ -1438,6 +1438,10 @@ public sealed class DistributedAgentRegistryServiceTests
 /// when a required field is absent from the stored hash, GetByAgentId must return null.
 /// Tests exercise HashToEntry indirectly via FakeRedisStore → GetByAgentId → GetAgentRaw.
 /// </summary>
+// TODO: add equivalent tests that exercise the async path (GetByAgentIdAsync), which calls
+// HashToEntry directly without going through GetAgentRaw. A future change accidentally bypassing
+// HashToEntry in GetByAgentIdAsync would not be caught by the sync-path tests below.
+// Tracked: TestQualityReviewer warning — DistributedAgentRegistryServiceTests.cs:1463
 public sealed class HashToEntryRequiredFieldTests
 {
     private readonly FakeRedisStore _store = new();
@@ -1457,6 +1461,11 @@ public sealed class HashToEntryRequiredFieldTests
         new HashEntry("status", "Idle"),
         new HashEntry("labels", "[]"),
         new HashEntry("disabled", "False"),
+        // TODO: FullHash intentionally omits "lastHeartbeatAt" (and other optional DateTimeOffset
+        // fields) to keep it minimal. Add a test that verifies HashToEntry still returns a non-null
+        // entry with LastHeartbeatAt == default(DateTimeOffset) when the field is absent, to lock
+        // in the silent-default behaviour and catch any future change that makes it required.
+        // Tracked: TestQualityReviewer warning — DistributedAgentRegistryServiceTests.cs:1456
     ];
 
     [Fact]

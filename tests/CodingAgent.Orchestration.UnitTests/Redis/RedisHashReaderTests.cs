@@ -74,6 +74,11 @@ public class RedisHashReaderTests
         // PipelineStep is stored as an integer string
         var r = new RedisHashReader(H(("step", "8")));
         r.Enum<PipelineStep>("step").Should().Be(PipelineStep.GeneratingCode);
+        // TODO: add a test for an out-of-range integer string (e.g. "99999") — Enum.TryParse
+        // succeeds for numeric strings even when the value has no named member, so the current
+        // implementation silently returns the undefined ordinal rather than defaultValue.
+        // If callers expect defaultValue for undefined ordinals, the implementation must add an
+        // Enum.IsDefined() guard. Tracked: TestQualityReviewer warning — RedisHashReaderTests.cs:75
     }
 
     [Fact]
@@ -94,6 +99,11 @@ public class RedisHashReaderTests
     public void Enum_AbsentKey_ReturnsDefaultWhenNoExplicitDefault()
     {
         var r = new RedisHashReader(Array.Empty<HashEntry>());
+        // TODO: this assertion relies on default(PipelineRunType) == Implementation because
+        // Implementation is currently the first member (value 0). If PipelineRunType.Implementation
+        // is ever given a non-zero underlying value, default(T) will silently diverge.
+        // Replace with: .Should().Be(PipelineRunType.Implementation)
+        // Tracked: TestQualityReviewer warning — RedisHashReaderTests.cs:113
         // default(PipelineRunType) == Implementation (0)
         r.Enum<PipelineRunType>("runType").Should().Be(default(PipelineRunType));
     }
@@ -188,6 +198,9 @@ public class RedisHashReaderTests
     {
         var r = new RedisHashReader(Array.Empty<HashEntry>());
         r.Int("n").Should().Be(0);
+        // TODO: add a test for an invalid (non-numeric) stored string, e.g. H(("n", "corrupt")),
+        // to assert the silent-default contract ("returns 0 on parse failure") is preserved.
+        // Tracked: TestQualityReviewer warning — RedisHashReaderTests.cs:175
     }
 
     // ── Long ──────────────────────────────────────────────────────────
@@ -204,6 +217,9 @@ public class RedisHashReaderTests
     {
         var r = new RedisHashReader(Array.Empty<HashEntry>());
         r.Long("n").Should().Be(0L);
+        // TODO: add a test for an invalid (non-numeric) stored string, e.g. H(("n", "corrupt")),
+        // to assert the silent-default contract ("returns 0 on parse failure") is preserved.
+        // Tracked: TestQualityReviewer warning — RedisHashReaderTests.cs:175
     }
 
     // ── Decimal ───────────────────────────────────────────────────────
@@ -277,7 +293,7 @@ public class RedisHashReaderTests
     public void Json_ValidJson_ReturnsDeserializedObject()
     {
         var r = new RedisHashReader(H(("labels", "[\"bug\",\"enhancement\"]")));
-        r.Json<List<string>>("labels").Should().BeEquivalentTo(new[] { "bug", "enhancement" });
+        r.Json<List<string>>("labels").Should().BeEquivalentTo(["bug", "enhancement"]);
     }
 
     [Fact]
