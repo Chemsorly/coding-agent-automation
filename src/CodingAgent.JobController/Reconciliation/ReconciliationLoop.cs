@@ -39,6 +39,26 @@ internal sealed record CanaryViolation : ExecutionAgeResult;
 /// </summary>
 internal sealed record Enforceable(double AgeSeconds) : ExecutionAgeResult;
 
+// ─── Pure timeout-action classifier ──────────────────────────────────────────
+
+/// <summary>
+/// Pure decision returned by <see cref="ReconciliationLoop.ResolveTimeoutAction"/>.
+/// </summary>
+internal enum TimeoutAction
+{
+    /// <summary>
+    /// Skip this item — it is not yet eligible for timeout enforcement.
+    /// Reasons include: non-Running status, non-positive TimeoutSeconds,
+    /// within grace window, canary violation, or execution age below threshold.
+    /// </summary>
+    Skip,
+
+    /// <summary>
+    /// The item has exceeded its configured timeout — mark it Failed.
+    /// </summary>
+    Enforce
+}
+
 // ─── ReconciliationLoop ───────────────────────────────────────────────────────
 
 /// <summary>
@@ -58,6 +78,8 @@ public sealed class ReconciliationLoop
     private const string JobPhaseFailed = "Failed";
     private const string JobPhaseComplete = "Complete"; // the condition type Kubernetes sets on success
     private const string JobReasonDeadlineExceeded = "DeadlineExceeded"; // Failed condition reason when activeDeadlineSeconds fires
+    private const string WorkItemIdTag = "work_item_id";
+    private const string AgentSelectorTag = "agent_selector";
 
     /// <summary>
     /// Minimum execution age (seconds) before timeout is enforced.
@@ -298,8 +320,8 @@ public sealed class ReconciliationLoop
                 // Distinct from Reconcile.Timeout (Running items) to avoid ambiguity in Tempo queries.
                 // Spans only fire when actual work happens — idle cycles return early above.
                 using var dispatchedTimeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.DispatchedTimeout");
-                dispatchedTimeoutActivity?.SetTag("work_item_id", item.Id);
-                dispatchedTimeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
+                dispatchedTimeoutActivity?.SetTag(WorkItemIdTag, item.Id);
+                dispatchedTimeoutActivity?.SetTag(AgentSelectorTag, item.AgentSelector ?? "");
 
                 await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
                 {
@@ -383,19 +405,10 @@ public sealed class ReconciliationLoop
         if (item.TimeoutSeconds <= 0) return false;
 
         var ageResult = ResolveExecutionAge(item);
-        if (ageResult is WithinGrace or CanaryViolation) return false;
 
-        if (ageResult is not Enforceable enforceable) return false;
-
-        // Not timed out yet (age < timeout) — skip.
-        // NOTE (issue #3243): The strict-less-than guard means executionAgeSeconds == effectiveTimeoutSeconds
-        // is considered timed out (not skipped). At TimeoutSeconds == 60 (the canary minimum),
-        // the canary guard (executionAgeSeconds < 60) and this guard (executionAgeSeconds < 60)
-        // use the same threshold, so the canary invariant provides no protection for items at
-        // exactly that boundary — the item is immediately enforced on the first cycle it is
-        // returned by the query. This is a gap in the canary design that was not present when
-        // the global timeout was always >> 60s. (DotNetSpecialist review finding)
-        return enforceable.AgeSeconds >= item.TimeoutSeconds;
+        // ResolveTimeoutAction is a pure function: it decides Skip vs Enforce from the
+        // already-computed execution age and the per-item threshold. No I/O or dispatch.
+        return ResolveTimeoutAction(ageResult, item.TimeoutSeconds) != TimeoutAction.Skip;
     }
 
     private async Task FailTimedOutItemAsync(ActiveWorkItemDto item, CancellationToken ct)
@@ -406,8 +419,8 @@ public sealed class ReconciliationLoop
             // Spans only fire when enforcement happens — idle cycles with no timed-out items
             // never reach this path (all items are skipped by the guards in IsTimedOut).
             using var timeoutActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.Timeout");
-            timeoutActivity?.SetTag("work_item_id", item.Id);
-            timeoutActivity?.SetTag("agent_selector", item.AgentSelector ?? "");
+            timeoutActivity?.SetTag(WorkItemIdTag, item.Id);
+            timeoutActivity?.SetTag(AgentSelectorTag, item.AgentSelector ?? "");
             timeoutActivity?.SetTag("timeout_seconds", item.TimeoutSeconds);
 
             await _workItemClient.PostStatusAsync(item.Id, new WorkItemStatusUpdate
@@ -420,7 +433,7 @@ public sealed class ReconciliationLoop
             var jobName = await ResolveJobNameAsync(item, ct);
 
             _agentTimeouts.Add(1,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
 
             if (jobName is not null)
                 await SafeDeleteJobAsync(jobName, ct);
@@ -472,7 +485,7 @@ public sealed class ReconciliationLoop
         orphanActivity?.SetTag("job_name", jobName);
         orphanActivity?.SetTag("orphan_reason", orphanReason);
         if (workItemId.HasValue)
-            orphanActivity?.SetTag("work_item_id", workItemId.Value);
+            orphanActivity?.SetTag(WorkItemIdTag, workItemId.Value);
         await SafeDeleteJobAsync(jobName, ct);
     }
 
@@ -540,7 +553,7 @@ public sealed class ReconciliationLoop
         }
 
         _timeoutExecutionAge.Record(executionAgeSeconds,
-            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+            new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
 
         // Canary guard: if age is suspiciously low the timeout anchor is wrong (INV-001).
         // Skip enforcement for this sweep — the item will be re-evaluated next cycle.
@@ -549,11 +562,56 @@ public sealed class ReconciliationLoop
             _log.Warning("WorkItem {Id} timeout canary violation: execution age {AgeSeconds:F1}s < {MinAge}s — skipping enforcement",
                 item.Id, executionAgeSeconds, TimeoutCanaryMinAgeSeconds);
             _timeoutCanaryViolations.Add(1,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
             return new CanaryViolation();
         }
 
         return new Enforceable(executionAgeSeconds);
+    }
+
+    /// <summary>
+    /// Pure, side-effect-free function that decides whether to enforce a timeout for a work item,
+    /// given an already-computed <see cref="ExecutionAgeResult"/> and the item's per-item timeout.
+    /// </summary>
+    /// <param name="ageResult">
+    /// The execution-age classification returned by <see cref="ResolveExecutionAge"/>.
+    /// <see cref="WithinGrace"/> and <see cref="CanaryViolation"/> both map to <see cref="TimeoutAction.Skip"/>.
+    /// </param>
+    /// <param name="timeoutSeconds">
+    /// The per-item timeout in seconds (<see cref="ActiveWorkItemDto.TimeoutSeconds"/>).
+    /// Callers must already have validated that this is positive before calling this method.
+    /// </param>
+    /// <returns>
+    /// <see cref="TimeoutAction.Enforce"/> when <paramref name="ageResult"/> is
+    /// <see cref="Enforceable"/> and its age has reached or exceeded <paramref name="timeoutSeconds"/>;
+    /// <see cref="TimeoutAction.Skip"/> in all other cases.
+    /// </returns>
+    /// <remarks>
+    /// <para>
+    /// Boundary semantics: the condition is <c>ageSeconds &gt;= timeoutSeconds</c>, so an item at
+    /// exactly the threshold is considered timed out.  This is consistent with the strict-less-than
+    /// guard previously inlined in <c>EnforceTimeoutsAsync</c>:
+    /// <c>if (enforceable.AgeSeconds &lt; item.TimeoutSeconds) continue;</c>
+    /// means "skip when age is strictly less than threshold", i.e. enforce at equality.
+    /// </para>
+    /// <para>
+    /// NOTE (issue #3243): at <c>TimeoutSeconds == 60</c> (the canary minimum), the canary guard
+    /// (<c>executionAgeSeconds &lt; 60</c>) and this boundary (<c>ageSeconds &gt;= 60</c>) share the
+    /// same threshold. An item with an age of exactly 60s was not blocked by the canary guard
+    /// (which returns <see cref="Enforceable"/>) and will immediately be enforced. This is a known
+    /// gap in the canary design when short per-project timeouts equal the canary minimum.
+    /// </para>
+    /// </remarks>
+    internal static TimeoutAction ResolveTimeoutAction(ExecutionAgeResult ageResult, int timeoutSeconds)
+    {
+        if (ageResult is not Enforceable enforceable)
+            return TimeoutAction.Skip;
+
+        // Enforce when age has reached or exceeded the configured threshold.
+        // Strict-less-than means equality (age == timeoutSeconds) triggers enforcement.
+        return enforceable.AgeSeconds >= timeoutSeconds
+            ? TimeoutAction.Enforce
+            : TimeoutAction.Skip;
     }
 
     /// <summary>
@@ -632,7 +690,7 @@ public sealed class ReconciliationLoop
                     // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
                     // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
                     using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
-                    jobFailedActivity?.SetTag("work_item_id", workItemId.Value);
+                    jobFailedActivity?.SetTag(WorkItemIdTag, workItemId.Value);
                     jobFailedActivity?.SetTag("failure_reason", failureReason);
                     if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
                         _reconciledTerminalIds.Add(workItemId.Value);

@@ -51,7 +51,7 @@ Each label set keeps its own `maxConcurrent` and resources. Quality gates and re
 
 The image's default `AGENT_LABELS` lists the agent tool and every stack. Kubernetes Jobs set `AGENT_LABELS` from their job template, so the default applies only to an agent started outside Kubernetes.
 
-The per-stack tags of earlier releases (`coding-agent-kiro-dotnet10-latest`, `coding-agent-claude-java21-latest`, …) are deprecated aliases: CI moves them to the agent tool's image, so existing job templates keep working. Switch them to `coding-agent-<tool>-latest`.
+The per-stack tags of earlier releases (`coding-agent-kiro-dotnet10-latest`, `coding-agent-claude-java21-latest`, …) are no longer published. Point job templates that still use them at `coding-agent-<tool>-latest`.
 
 The Claude image runs the Claude Code CLI. Its job templates use `providerType: claude`, and their agent profiles point to an agent provider config of type `ClaudeCode` (model, effort, auth mode). It needs no credential PVC: the API key and/or subscription token come from the agent Secret — see [Deployment](deployment.md).
 
