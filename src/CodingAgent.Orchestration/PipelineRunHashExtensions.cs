@@ -1,7 +1,5 @@
 #pragma warning disable CS0618 // Obsolete StartedAt used intentionally for round-trip
 
-using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Pipeline.Models;
 using StackExchange.Redis;
@@ -112,7 +110,7 @@ public static class PipelineRunHashExtensions
             F("cacheWriteTokens",           run.CacheWriteTokens.ToString()),
 
             // Decimals
-            F("totalCost",                  run.TotalCost?.ToString("G") ?? ""),
+            F("totalCost",                  run.TotalCost?.ToString("G", System.Globalization.CultureInfo.InvariantCulture) ?? ""),
 
             // Booleans
             F("brainContextLoaded",         run.BrainContextLoaded.ToString()),
@@ -160,15 +158,13 @@ public static class PipelineRunHashExtensions
     {
         if (hash is null || hash.Length == 0) return null;
 
-        var d = hash.ToDictionary(e => (string)e.Name!, e => (string?)e.Value);
+        var r = new RedisHashReader(hash);
 
         // Required init-only fields — null means corrupt hash
-        if (!TryGetRequired(d, "runId", out var runId)) return null;
-        if (!TryGetRequired(d, "issueIdentifier", out var issueIdStr)) return null;
-        if (!TryGetRequired(d, "issueProviderConfigId", out var issuePcId)) return null;
-        if (!TryGetRequired(d, "repoProviderConfigId", out var repoPcId)) return null;
-
-        _ = Enum.TryParse<PipelineRunType>(d.GetValueOrDefault("runType"), out var runType);
+        var runId = r.RequiredString("runId"); if (runId is null) return null;
+        var issueIdStr = r.RequiredString("issueIdentifier"); if (issueIdStr is null) return null;
+        var issuePcId = r.RequiredString("issueProviderConfigId"); if (issuePcId is null) return null;
+        var repoPcId = r.RequiredString("repoProviderConfigId"); if (repoPcId is null) return null;
 
         var run = new PipelineRun
         {
@@ -176,148 +172,158 @@ public static class PipelineRunHashExtensions
             IssueIdentifier = new IssueIdentifier(issueIdStr),
             IssueProviderConfigId = issuePcId,
             RepoProviderConfigId = repoPcId,
-            IssueTitle = d.GetValueOrDefault("issueTitle") ?? "",
-            BrainProviderConfigId = NullIfEmpty(d.GetValueOrDefault("brainProviderConfigId")),
-            AgentProviderConfigId = NullIfEmpty(d.GetValueOrDefault("agentProviderConfigId")),
-            ReviewPrBranchName = NullIfEmpty(d.GetValueOrDefault("reviewPrBranchName")),
-            ReviewPrTargetBranch = NullIfEmpty(d.GetValueOrDefault("reviewPrTargetBranch")),
-            ReviewPrUrl = NullIfEmpty(d.GetValueOrDefault("reviewPrUrl")),
-            ReviewPrDescription = NullIfEmpty(d.GetValueOrDefault("reviewPrDescription")),
-            ReviewPrAuthor = NullIfEmpty(d.GetValueOrDefault("reviewPrAuthor")),
-            DecompositionSource = NullIfEmpty(d.GetValueOrDefault("decompositionSource")),
-            InitiatedBy = d.GetValueOrDefault("initiatedBy") ?? InitiatedByConstants.Manual,
-            RunType = runType,
+            // IssueTitle is serialised as "" when null — restore "" (not null) on missing/empty
+            IssueTitle = r.OptionalString("issueTitle") ?? "",
+            BrainProviderConfigId = r.OptionalString("brainProviderConfigId"),
+            AgentProviderConfigId = r.OptionalString("agentProviderConfigId"),
+            ReviewPrBranchName = r.OptionalString("reviewPrBranchName"),
+            ReviewPrTargetBranch = r.OptionalString("reviewPrTargetBranch"),
+            ReviewPrUrl = r.OptionalString("reviewPrUrl"),
+            ReviewPrDescription = r.OptionalString("reviewPrDescription"),
+            ReviewPrAuthor = r.OptionalString("reviewPrAuthor"),
+            DecompositionSource = r.OptionalString("decompositionSource"),
+            // InitiatedBy must never be null — used in routing/display logic without null guards
+            InitiatedBy = r.OptionalString("initiatedBy") ?? InitiatedByConstants.Manual,
+            RunType = r.Enum<PipelineRunType>("runType"),
         };
 
-        ApplyVolatileFields(run, d);
-        ApplyNullableStrings(run, d);
-        ApplyRetryAndReviewCounters(run, d);
-        ApplyChangeAndDecompositionCounters(run, d);
-        ApplyTokenUsage(run, d);
-        ApplyBooleans(run, d);
-        ApplyJsonSubObjects(run, d);
+        ApplyVolatileFields(run, r);
+        ApplyNullableStrings(run, r);
+        ApplyRetryAndReviewCounters(run, r);
+        ApplyChangeAndDecompositionCounters(run, r);
+        ApplyTokenUsage(run, r);
+        ApplyBooleans(run, r);
+        ApplyJsonSubObjects(run, r);
 
         // Consolidation result fields
-        run.ConsolidationType = JEnum<ConsolidationRunType>(d, "consolidationType");
-        run.ConsolidationTemplateId = NullIfEmpty(d.GetValueOrDefault("consolidationTemplateId"));
-        run.ConsolidationResultSummary = NullIfEmpty(d.GetValueOrDefault("consolidationResultSummary"));
+        run.ConsolidationType = r.EnumOrNull<ConsolidationRunType>("consolidationType");
+        run.ConsolidationTemplateId = r.OptionalString("consolidationTemplateId");
+        run.ConsolidationResultSummary = r.OptionalString("consolidationResultSummary");
 
         return run;
     }
 
     // Volatile/Interlocked fields — use property setters
-    private static void ApplyVolatileFields(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyVolatileFields(PipelineRun run, RedisHashReader r)
     {
-        if (Enum.TryParse<PipelineStep>(d.GetValueOrDefault("currentStep"), out var step))
-            run.CurrentStep = step;
-        if (Enum.TryParse<PipelineStep>(d.GetValueOrDefault("highWaterMark"), out var hwm))
-            run.HighWaterMark = hwm;
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("startedAtOffset"), CultureInfo.InvariantCulture, out var sao))
-            run.ResetStartedAt(sao);
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("lastStepChangeAt"), CultureInfo.InvariantCulture, out var lsca))
-            run.LastStepChangeAt = lsca;
-        if (DateTimeOffset.TryParse(d.GetValueOrDefault("completedAtOffset"), CultureInfo.InvariantCulture, out var cao))
-            run.MarkCompleted(cao);
+        // PipelineStep is stored as an integer string (e.g. "8"), so Enum.TryParse handles
+        // both name strings and numeric strings — use EnumOrNull to skip assignment on missing key.
+        var step = r.EnumOrNull<PipelineStep>("currentStep");
+        if (step.HasValue) run.CurrentStep = step.Value;
+
+        var hwm = r.EnumOrNull<PipelineStep>("highWaterMark");
+        if (hwm.HasValue) run.HighWaterMark = hwm.Value;
+
+        // Use DateTimeOffsetOrNull so the guard matches parse-success (like the original
+        // DateTimeOffset.TryParse guard), not value-equality against default(DateTimeOffset).
+        var sao = r.DateTimeOffsetOrNull("startedAtOffset");
+        if (sao.HasValue) run.ResetStartedAt(sao.Value);
+
+        var lsca = r.DateTimeOffsetOrNull("lastStepChangeAt");
+        if (lsca.HasValue) run.LastStepChangeAt = lsca.Value;
+
+        var cao = r.DateTimeOffsetOrNull("completedAtOffset");
+        if (cao.HasValue) run.MarkCompleted(cao.Value);
 
         // Code review counts (Interlocked) — parse each independently
-        _ = int.TryParse(d.GetValueOrDefault("codeReviewCriticalCount"), out var crit);
-        _ = int.TryParse(d.GetValueOrDefault("codeReviewWarningCount"), out var warn);
-        _ = int.TryParse(d.GetValueOrDefault("codeReviewSuggestionCount"), out var sugg);
-        run.SetCodeReviewCounts(crit, warn, sugg);
+        run.SetCodeReviewCounts(
+            r.Int("codeReviewCriticalCount"),
+            r.Int("codeReviewWarningCount"),
+            r.Int("codeReviewSuggestionCount"));
 
         // AgentId (volatile)
-        run.AgentId = NullIfEmpty(d.GetValueOrDefault("agentId"));
+        run.AgentId = r.OptionalString("agentId");
     }
 
     // Nullable strings
-    private static void ApplyNullableStrings(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyNullableStrings(PipelineRun run, RedisHashReader r)
     {
-        run.BranchName = NullIfEmpty(d.GetValueOrDefault("branchName"));
-        run.FailureReason = NullIfEmpty(d.GetValueOrDefault("failureReason"));
-        run.IssueUrl = NullIfEmpty(d.GetValueOrDefault("issueUrl"));
-        run.PullRequestUrl = NullIfEmpty(d.GetValueOrDefault("pullRequestUrl"));
-        run.PullRequestBody = NullIfEmpty(d.GetValueOrDefault("pullRequestBody"));
-        run.PullRequestNumber = NullIfEmpty(d.GetValueOrDefault("pullRequestNumber"));
-        run.WorkspacePath = NullIfEmpty(d.GetValueOrDefault("workspacePath"));
-        run.ModelName = NullIfEmpty(d.GetValueOrDefault("modelName"));
-        run.RepositoryName = NullIfEmpty(d.GetValueOrDefault("repositoryName"));
-        run.CodegenSessionId = NullIfEmpty(d.GetValueOrDefault("codegenSessionId"));
-        run.FinalLabel = NullIfEmpty(d.GetValueOrDefault("finalLabel"));
-        run.CodeReviewChangeSummary = NullIfEmpty(d.GetValueOrDefault("codeReviewChangeSummary"));
-        run.CodeReviewVerdictSummary = NullIfEmpty(d.GetValueOrDefault("codeReviewVerdictSummary"));
-        run.ResolvedProfileId = NullIfEmpty(d.GetValueOrDefault("resolvedProfileId"));
-        run.PipelineProviderConfigId = NullIfEmpty(d.GetValueOrDefault("pipelineProviderConfigId"));
-        run.ProjectId = NullIfEmpty(d.GetValueOrDefault("projectId"));
-        run.ProjectName = NullIfEmpty(d.GetValueOrDefault("projectName"));
-        run.InlineCommentsDegradedReason = NullIfEmpty(d.GetValueOrDefault("inlineCommentsDegradedReason"));
+        run.BranchName = r.OptionalString("branchName");
+        run.FailureReason = r.OptionalString("failureReason");
+        run.IssueUrl = r.OptionalString("issueUrl");
+        run.PullRequestUrl = r.OptionalString("pullRequestUrl");
+        run.PullRequestBody = r.OptionalString("pullRequestBody");
+        run.PullRequestNumber = r.OptionalString("pullRequestNumber");
+        run.WorkspacePath = r.OptionalString("workspacePath");
+        run.ModelName = r.OptionalString("modelName");
+        run.RepositoryName = r.OptionalString("repositoryName");
+        run.CodegenSessionId = r.OptionalString("codegenSessionId");
+        run.FinalLabel = r.OptionalString("finalLabel");
+        run.CodeReviewChangeSummary = r.OptionalString("codeReviewChangeSummary");
+        run.CodeReviewVerdictSummary = r.OptionalString("codeReviewVerdictSummary");
+        run.ResolvedProfileId = r.OptionalString("resolvedProfileId");
+        run.PipelineProviderConfigId = r.OptionalString("pipelineProviderConfigId");
+        run.ProjectId = r.OptionalString("projectId");
+        run.ProjectName = r.OptionalString("projectName");
+        run.InlineCommentsDegradedReason = r.OptionalString("inlineCommentsDegradedReason");
     }
 
     // Integers — retry and code review progress counters
-    private static void ApplyRetryAndReviewCounters(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyRetryAndReviewCounters(PipelineRun run, RedisHashReader r)
     {
-        if (int.TryParse(d.GetValueOrDefault("retryCount"), out var rc)) run.RetryCount = rc;
-        if (int.TryParse(d.GetValueOrDefault("infrastructureRetryCount"), out var irc)) run.InfrastructureRetryCount = irc;
-        if (int.TryParse(d.GetValueOrDefault("codeReviewIterationsCompleted"), out var cric)) run.CodeReviewIterationsCompleted = cric;
-        if (int.TryParse(d.GetValueOrDefault("codeReviewIterationInProgress"), out var criip)) run.CodeReviewIterationInProgress = criip;
-        if (int.TryParse(d.GetValueOrDefault("codeReviewIterationsTotal"), out var crit2)) run.CodeReviewIterationsTotal = crit2;
-        if (int.TryParse(d.GetValueOrDefault("inlineCommentsPosted"), out var icp)) run.InlineCommentsPosted = icp;
+        run.RetryCount = r.Int("retryCount");
+        run.InfrastructureRetryCount = r.Int("infrastructureRetryCount");
+        run.CodeReviewIterationsCompleted = r.Int("codeReviewIterationsCompleted");
+        run.CodeReviewIterationInProgress = r.Int("codeReviewIterationInProgress");
+        run.CodeReviewIterationsTotal = r.Int("codeReviewIterationsTotal");
+        run.InlineCommentsPosted = r.Int("inlineCommentsPosted");
     }
 
     // Integers — change, brain and decomposition statistics
-    private static void ApplyChangeAndDecompositionCounters(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyChangeAndDecompositionCounters(PipelineRun run, RedisHashReader r)
     {
-        if (int.TryParse(d.GetValueOrDefault("filesChangedCount"), out var fcc)) run.FilesChangedCount = fcc;
-        if (int.TryParse(d.GetValueOrDefault("linesAdded"), out var la)) run.LinesAdded = la;
-        if (int.TryParse(d.GetValueOrDefault("linesRemoved"), out var lr)) run.LinesRemoved = lr;
-        if (int.TryParse(d.GetValueOrDefault("brainKnowledgeFileCount"), out var bkfc)) run.BrainKnowledgeFileCount = bkfc;
-        if (int.TryParse(d.GetValueOrDefault("brainFilesCommitted"), out var bfc)) run.BrainFilesCommitted = bfc;
-        if (int.TryParse(d.GetValueOrDefault("decompSubIssuesCreated"), out var dsic)) run.DecompositionSubIssuesCreated = dsic;
-        if (int.TryParse(d.GetValueOrDefault("decompSubIssuesAttempted"), out var dsia)) run.DecompositionSubIssuesAttempted = dsia;
-        if (int.TryParse(d.GetValueOrDefault("openIssuesDownloaded"), out var oid)) run.OpenIssuesDownloaded = oid;
+        run.FilesChangedCount = r.Int("filesChangedCount");
+        run.LinesAdded = r.Int("linesAdded");
+        run.LinesRemoved = r.Int("linesRemoved");
+        run.BrainKnowledgeFileCount = r.Int("brainKnowledgeFileCount");
+        run.BrainFilesCommitted = r.Int("brainFilesCommitted");
+        run.DecompositionSubIssuesCreated = r.Int("decompSubIssuesCreated");
+        run.DecompositionSubIssuesAttempted = r.Int("decompSubIssuesAttempted");
+        run.OpenIssuesDownloaded = r.Int("openIssuesDownloaded");
     }
 
     // Longs and decimal — token usage and cost
-    private static void ApplyTokenUsage(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyTokenUsage(PipelineRun run, RedisHashReader r)
     {
-        if (long.TryParse(d.GetValueOrDefault("totalTokens"), out var tt)) run.TotalTokens = tt;
-        if (long.TryParse(d.GetValueOrDefault("cacheReadTokens"), out var crt)) run.CacheReadTokens = crt;
-        if (long.TryParse(d.GetValueOrDefault("cacheWriteTokens"), out var cwt)) run.CacheWriteTokens = cwt;
-        if (decimal.TryParse(d.GetValueOrDefault("totalCost"), out var tc)) run.TotalCost = tc;
+        run.TotalTokens = r.Long("totalTokens");
+        run.CacheReadTokens = r.Long("cacheReadTokens");
+        run.CacheWriteTokens = r.Long("cacheWriteTokens");
+        run.TotalCost = r.Decimal("totalCost");
     }
 
     // Booleans
-    private static void ApplyBooleans(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyBooleans(PipelineRun run, RedisHashReader r)
     {
-        if (bool.TryParse(d.GetValueOrDefault("brainContextLoaded"), out var bcl)) run.BrainContextLoaded = bcl;
-        if (bool.TryParse(d.GetValueOrDefault("brainUpdatesPushed"), out var bup)) run.BrainUpdatesPushed = bup;
-        if (bool.TryParse(d.GetValueOrDefault("isDraftPr"), out var idp)) run.IsDraftPr = idp;
-        if (bool.TryParse(d.GetValueOrDefault("analysisSkipped"), out var ask)) run.AnalysisSkipped = ask;
-        if (bool.TryParse(d.GetValueOrDefault("mergeForceResolved"), out var mfr)) run.MergeForceResolved = mfr;
-        if (bool.TryParse(d.GetValueOrDefault("inlineCommentsDegraded"), out var icd)) run.InlineCommentsDegraded = icd;
-        if (bool.TryParse(d.GetValueOrDefault("baselineHealthPassed"), out var bhp)) run.BaselineHealthPassed = bhp;
+        run.BrainContextLoaded = r.Bool("brainContextLoaded");
+        run.BrainUpdatesPushed = r.Bool("brainUpdatesPushed");
+        run.IsDraftPr = r.Bool("isDraftPr");
+        run.AnalysisSkipped = r.Bool("analysisSkipped");
+        run.MergeForceResolved = r.Bool("mergeForceResolved");
+        run.InlineCommentsDegraded = r.Bool("inlineCommentsDegraded");
+        run.BaselineHealthPassed = r.BoolNullable("baselineHealthPassed");
     }
 
     // JSON sub-objects
-    private static void ApplyJsonSubObjects(PipelineRun run, Dictionary<string, string?> d)
+    private static void ApplyJsonSubObjects(PipelineRun run, RedisHashReader r)
     {
-        run.LatestQualityReport = J<QualityGateReport>(d, "latestQualityReport");
-        run.LinkedPullRequest = J<LinkedPullRequest>(d, "linkedPullRequest");
-        run.AnalysisRecommendation = JEnum<AnalysisGateResult>(d, "analysisRecommendation");
-        run.AcceptanceCriteriaReport = J<AcceptanceCriteriaReport>(d, "acceptanceCriteriaReport");
-        run.BrainValidation = J<BrainValidationResult>(d, "brainValidation");
-        run.Feedback = J<RunFeedback>(d, "feedback");
+        run.LatestQualityReport = r.Json<QualityGateReport>("latestQualityReport");
+        run.LinkedPullRequest = r.Json<LinkedPullRequest>("linkedPullRequest");
+        run.AnalysisRecommendation = r.EnumOrNull<AnalysisGateResult>("analysisRecommendation");
+        run.AcceptanceCriteriaReport = r.Json<AcceptanceCriteriaReport>("acceptanceCriteriaReport");
+        run.BrainValidation = r.Json<BrainValidationResult>("brainValidation");
+        run.Feedback = r.Json<RunFeedback>("feedback");
 
-        run.IssueLabels = J<List<string>>(d, "issueLabels") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.BlacklistedFilesDetected = J<List<string>>(d, "blacklistedFilesDetected") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.MergeConflictFiles = J<List<string>>(d, "mergeConflictFiles") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.SubIssueResults = J<List<SubIssueCreationResult>>(d, "subIssueResults") ?? (IReadOnlyList<SubIssueCreationResult>)Array.Empty<SubIssueCreationResult>();
-        run.AnalysisConcerns = J<List<string>>(d, "analysisConcerns") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.AnalysisBlockingIssues = J<List<string>>(d, "analysisBlockingIssues") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.CodeReviewAgentsRun = J<List<string>>(d, "codeReviewAgentsRun") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.ResolvedQualityGateConfigIds = J<List<string>>(d, "resolvedQualityGateConfigIds") ?? (IReadOnlyList<string>)Array.Empty<string>();
-        run.ResolvedReviewerConfigIds = J<List<string>>(d, "resolvedReviewerConfigIds") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.IssueLabels = r.Json<List<string>>("issueLabels") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.BlacklistedFilesDetected = r.Json<List<string>>("blacklistedFilesDetected") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.MergeConflictFiles = r.Json<List<string>>("mergeConflictFiles") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.SubIssueResults = r.Json<List<SubIssueCreationResult>>("subIssueResults") ?? (IReadOnlyList<SubIssueCreationResult>)Array.Empty<SubIssueCreationResult>();
+        run.AnalysisConcerns = r.Json<List<string>>("analysisConcerns") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.AnalysisBlockingIssues = r.Json<List<string>>("analysisBlockingIssues") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.CodeReviewAgentsRun = r.Json<List<string>>("codeReviewAgentsRun") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.ResolvedQualityGateConfigIds = r.Json<List<string>>("resolvedQualityGateConfigIds") ?? (IReadOnlyList<string>)Array.Empty<string>();
+        run.ResolvedReviewerConfigIds = r.Json<List<string>>("resolvedReviewerConfigIds") ?? (IReadOnlyList<string>)Array.Empty<string>();
 
-        var findingsDict = J<Dictionary<string, string>>(d, "codeReviewAgentFindings");
+        var findingsDict = r.Json<Dictionary<string, string>>("codeReviewAgentFindings");
         if (findingsDict is not null)
             foreach (var kv in findingsDict)
                 run.CodeReviewAgentFindings[kv.Key] = kv.Value;
@@ -332,24 +338,6 @@ public static class PipelineRunHashExtensions
 
     private static HashEntry JEnum<T>(string name, T? value) where T : struct, Enum
         => new(name, value.HasValue ? value.Value.ToString() : "");
-
-    private static T? J<T>(Dictionary<string, string?> d, string key) where T : class
-    {
-        if (!d.TryGetValue(key, out var json) || string.IsNullOrEmpty(json)) return null;
-        try { return JsonSerializer.Deserialize<T>(json, JsonOpts); }
-        catch { return null; }
-    }
-
-    private static T? JEnum<T>(Dictionary<string, string?> d, string key) where T : struct, Enum
-    {
-        if (!d.TryGetValue(key, out var val) || string.IsNullOrEmpty(val)) return null;
-        return Enum.TryParse<T>(val, out var result) ? result : null;
-    }
-
-    private static bool TryGetRequired(Dictionary<string, string?> d, string key, [NotNullWhen(true)] out string? value)
-        => d.TryGetValue(key, out value) && !string.IsNullOrEmpty(value);
-
-    private static string? NullIfEmpty(string? s) => string.IsNullOrEmpty(s) ? null : s;
 }
 
 #pragma warning restore CS0618
