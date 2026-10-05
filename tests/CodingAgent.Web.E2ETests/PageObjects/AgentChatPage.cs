@@ -34,6 +34,17 @@ public sealed class AgentChatPage
     /// <summary>Clicks the "Launch Chat Pod" button.</summary>
     public async Task LaunchChatPodAsync()
     {
+        // Wait for the button to be enabled before clicking. The button is enabled only when
+        // _selectedTemplateLabels is set in Blazor, which requires the @onchange from
+        // SelectTemplateAsync to round-trip through the Blazor Server WebSocket circuit.
+        // Without this wait, clicking immediately after SelectTemplateAsync can land on a
+        // still-disabled button because the circuit hasn't processed the change event yet.
+        var button = _page.Locator(".btn-start-chat");
+        await button.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+        await _page.WaitForFunctionAsync(
+            "() => { const b = document.querySelector('.btn-start-chat'); return b && !b.disabled; }",
+            null,
+            new() { Timeout = 10_000 });
         await _page.ClickAsync(".btn-start-chat");
     }
 
