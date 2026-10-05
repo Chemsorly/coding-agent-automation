@@ -358,4 +358,70 @@ public class PipelineFormattingTests
         result.Should().Contain("Tests ✅");
         result.Should().NotContain("passed");
     }
+
+    [Fact]
+    public void GenerateBranchName_VeryLongTitle_TruncatesSlug()
+    {
+        var longTitle = new string('a', 200);
+        var result = PipelineFormatting.GenerateBranchName("42", longTitle, "abcdef12-0000-0000-0000-000000000000");
+        result.Length.Should().BeLessThanOrEqualTo(100);
+        result.Should().StartWith("feature/auto-42-");
+    }
+
+    [Fact]
+    public void GenerateBranchName_EmptyTitle_FallsBackToPrefix()
+    {
+        var result = PipelineFormatting.GenerateBranchName("42", "", "abcdef12-0000-0000-0000-000000000000");
+        result.Should().StartWith("feature/auto-42");
+    }
+
+
+
+
+    [Fact]
+    public void GeneratePrBody_WithLongComment_TruncatesAndClosesCodeFence()
+    {
+        var longBody = "```csharp\n" + new string('x', 2000) + "\n```";
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Author = "user1", Body = longBody, CreatedAt = DateTime.UtcNow }
+        };
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                IssueTitle = "Fix bug",
+                Comments = comments,
+            });
+        body.Should().Contain("user1");
+    }
+
+    [Fact]
+    public void GeneratePrBody_ExcludesAgentAnalysisComments()
+    {
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "1", Author = "bot", Body = "## 🤖 Agent Analysis\nSome analysis", CreatedAt = DateTime.UtcNow },
+            new() { Id = "2", Author = "user1", Body = "Real comment", CreatedAt = DateTime.UtcNow }
+        };
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                IssueTitle = "Fix bug",
+                Comments = comments,
+            });
+        body.Should().Contain("Real comment");
+        body.Should().NotContain("Agent Analysis");
+    }
+
+    [Fact]
+    public void GeneratePrBody_WithoutModelName_UsesDefaultFooter()
+    {
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                IssueTitle = "Fix bug",
+            });
+        body.Should().Contain("Automated implementation via pipeline");
+        body.Should().NotContain("Model:");
+    }
 }

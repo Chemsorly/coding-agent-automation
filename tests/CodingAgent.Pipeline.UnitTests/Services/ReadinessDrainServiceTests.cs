@@ -1,3 +1,4 @@
+using AwesomeAssertions;
 using CodingAgent.Pipeline.Services;
 using Microsoft.Extensions.Time.Testing;
 using Serilog;
@@ -164,5 +165,30 @@ public class ReadinessDrainServiceTests
 
         // Even though delay was cancelled, state was already flipped
         Assert.False(state.IsReady);
+    }
+
+    // ── StoppingAsync: marks not-ready before delay elapses ──────────────────
+
+    [Fact]
+    public async Task StoppingAsync_MarksNotReady_BeforeDelayElapses()
+    {
+        var readiness = new ReadinessState();
+        var fakeTime = new FakeTimeProvider();
+        var svc = new ReadinessDrainService(readiness, Serilog.Log.Logger,
+            drainDelay: TimeSpan.FromSeconds(10), timeProvider: fakeTime);
+
+        // Start StoppingAsync but don't advance time — it should block on Task.Delay
+        var stoppingTask = svc.StoppingAsync(CancellationToken.None);
+
+        // MarkNotReady is synchronous and happens before the await, so by the time
+        // we reach here after scheduling the task, readiness is already marked.
+        await Task.Yield(); // let the task start
+
+        readiness.IsReady.Should().BeFalse(
+            "MarkNotReady must be called before the drain delay starts");
+
+        // Advance time past the drain to let the task complete
+        fakeTime.Advance(TimeSpan.FromSeconds(11));
+        await stoppingTask.WaitAsync(TimeSpan.FromSeconds(5));
     }
 }
