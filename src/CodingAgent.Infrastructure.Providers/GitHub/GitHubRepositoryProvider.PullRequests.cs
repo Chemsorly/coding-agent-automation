@@ -707,8 +707,9 @@ public partial class GitHubRepositoryProvider
     // (PascalCase → ruby_case mapping is automatic via ToRubyCase()).
     // The property setters are only ever invoked by that serializer via reflection, so each DTO is
     // annotated with [DynamicallyAccessedMembers(PublicProperties)] to declare the reflection usage
-    // (keeps the setters under trimming and tells analyzers they are not dead code).
+    // (keeps the setters under trimming). Sonar's S1144 does not honour that attribute, hence the pragma below.
 
+#pragma warning disable S1144 // Setters are called by Octokit's SimpleJsonSerializer via reflection; Sonar's S1144 ignores [DynamicallyAccessedMembers].
     [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     private sealed class GitHubPrDetailDto
     {
@@ -751,4 +752,5 @@ public partial class GitHubRepositoryProvider
     {
         public string? Name { get; set; }
     }
+#pragma warning restore S1144
 }

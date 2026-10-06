@@ -139,12 +139,7 @@ public sealed class WorkItemDispatchLoop : BackgroundService
             if (ct.IsCancellationRequested)
                 break;
 
-            // TODO: [WARNING] This uses an explicit Verdict enum comparison instead of the idiomatic
-            // !result.IsEligible pattern used at every other call site. Refactor to:
-            //   if (!_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stoppedSelectors).IsEligible)
-            // to be consistent and avoid implicitly assuming SelectorBlocked is the only non-eligible verdict.
-            if (_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stoppedSelectors).Verdict
-                    == EligibilityVerdict.SelectorBlocked)
+            if (!_eligibilityEvaluator.EvaluateSelectorBlocked(item.AgentSelector, stoppedSelectors).IsEligible)
             {
                 _logger.Debug(
                     "WorkItemDispatchLoop: skipping {WorkItemId} — selector {AgentSelector} is stopped for this cycle",
