@@ -64,31 +64,22 @@ public static class AgentLabels
     };
 
     /// <summary>
-    /// Labels that make an issue ineligible for dispatch.
-    /// When the <c>DispatchLoop</c> sees any of these labels on the upstream issue it cancels the
-    /// pending <c>WorkItem</c> rather than dispatching it.
+    /// Labels that make an issue ineligible for dispatch: every member of <see cref="TerminalLabels"/>.
+    /// Manual dispatch from the issue drawer treats them as a force-requeue: it clears them and sets
+    /// <c>agent:next</c> before creating the <c>WorkItem</c>.
     /// <para>
     /// Includes <c>agent:done</c> — a completed issue must not be re-dispatched automatically.
+    /// Includes <c>agent:epic-review</c> — an epic awaiting approval of its plan continues only once a
+    /// person sets <c>agent:epic-approved</c> (decisions.md, "Epic decomposition: two-phase with human
+    /// gate"), so the drawer rejects its manual dispatch instead of force-requeuing it.
     /// <c>agent:in-progress</c> is intentionally absent: a second WorkItem for an issue that is
     /// already running is blocked by the partial unique index on <c>WorkItems</c>, not this set.
     /// <c>agent:next</c> is also absent: it is the normal pre-dispatch signal and must not block dispatch.
-    /// <c>agent:epic-review</c> is intentionally absent: an epic awaiting human review may still
-    /// be picked up by an agent for processing (e.g. posting a summary comment), so it must not
-    /// block dispatch.
     /// </para>
     /// </summary>
-    // TODO: EpicReview was removed from DispatchIneligibleLabels (previously it blocked dispatch).
-    // The change is intentional — see XML comment above — but it breaks the formerly-established subset
-    // invariant that all TerminalLabels are also DispatchIneligibleLabels. EpicReview is now in
-    // TerminalLabels but NOT in DispatchIneligibleLabels. Any dispatch path that gates solely on
-    // DispatchIneligibleLabels (without independent epic-review guards) will now allow re-dispatch of
-    // epics awaiting human review. Verify all dispatch paths have independent guards for epic-review state.
-    // The test TerminalLabels_IsSubsetOf_DispatchIneligibleLabels was removed to accommodate this change;
-    // consider adding a replacement test that explicitly documents which TerminalLabels are intentionally
-    // absent from DispatchIneligibleLabels (currently only EpicReview) to prevent silent future drift.
     public static readonly IReadOnlySet<string> DispatchIneligibleLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        Done, Error, NeedsRefinement, WontDo, Cancelled
+        Done, Error, NeedsRefinement, WontDo, Cancelled, EpicReview
     };
 
     /// <summary>
