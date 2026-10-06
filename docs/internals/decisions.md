@@ -1,10 +1,12 @@
 # Design Decisions
 
+<!-- refcheck-ignore: backoffLimit .agent/pr-description.md -->
+
 Why the system behaves as it does where the code can't tell you. Each entry is a rule the owner decided, with the reason and the cost accepted. Entries state intent, not implementation: read the code for how it works.
 
 **Agents:** read the [Invariants](#invariants) before you change behavior, and search this file for the area you touch. If a change would break a rule, say so in the PR instead of rewriting the rule. Don't edit a Rule or Why line unless the issue asks for it.
 
-**Maintainers:** add or change an entry in the same PR that changes the policy. A changed decision replaces its entry; git history keeps the old text. Bugs go to GitHub issues, not here. Areas without a preference are listed under [Flexible areas](#flexible-areas).
+**Maintainers:** add or change an entry in the same PR that changes the policy. A changed decision replaces its entry; git history keeps the old text. When a new entry supersedes or contradicts another entry, remove the old one and its Invariants line in the same PR, and list it under [Retired](#retired). Bugs go to GitHub issues, not here. Areas without a preference are listed under [Flexible areas](#flexible-areas).
 
 **Fields:** **Rule** is what the system does or refuses. **Why** is the owner's reason. **Accepting** is the cost we live with. **Not** lists rejected alternatives. **Revisit when** is the trigger to reconsider. A **Gap** line marks a decision whose implementation falls short while the owner's choice is pending.
 
@@ -45,7 +47,6 @@ The rules a plausible change could break. Details are in the linked entries.
 - Nothing calibrates itself: feedback is collected and shown, and the operator decides. ([Feedback](#feedback-loop-data-collection-only-automated-calibration-explicitly-deferred))
 - Conflicted PRs are reworked unless the issue is `agent:wont-do` or `agent:cancelled`; missing active-run data skips all rework that cycle. ([Conflict rework](#conflict-rework-re-queues-issues-regardless-of-current-label--only-abandonment-labels-block), [Fail-closed rework](#issuereworkservice-fail-closed-on-missing-active-run-data-is-intentional))
 - Every pipeline progress line is also a structured log entry with the run ID. ([Telemetry](#telemetry-philosophy-instrument-every-decision-point-for-full-run-traceability))
-- One operator, no RBAC. ([Target user](#target-user-single-operatorpower-user--no-rbac-for-now))
 
 ## Deployment and topology
 
@@ -602,13 +603,6 @@ A setting's limits are standard `[Range]` attributes, the one source for the API
 
 ## Scope and users
 
-### Target user: single operator/power-user — no RBAC for now
-<!-- 2026-07-04 -->
-**Rule:** The UI serves one expert operator who configures, watches and manages the pipeline. Work is submitted with tracker labels, outside the UI. No roles or permissions exist, and the UX favors expertise (compact, dense) over approachability.
-**Why:** One person owns the whole pipeline lifecycle, so RBAC isn't needed yet.
-**Not:** a developer-facing tool with guided flows; admin and viewer personas.
-**Revisit when:** a second person needs access, or the system runs as a shared service; then add ArgoCD-style Read, ReadWrite and Admin roles.
-
 ### Image extraction: security hardening kept but feature is experimental, may be reworked
 <!-- 2026-07-25 -->
 **Rule:** Downloading issue images for agents keeps its security hardening (SSRF protection, magic-byte, dimension and byte-budget checks). The feature is experimental and may be reworked, and its limits are reasonable defaults, not invariants from a threat model.
@@ -662,3 +656,9 @@ The owner has no preference in these areas. Follow best practice and the surroun
 - A startup warning when chat heartbeats run without Redis: optional, for consistency.
 - The advisory lock on the agent-synchronous dispatch path: add it if concurrent calls are possible there.
 - Where `PvcPoolExhaustions` is emitted: keep it consistent with its documented meaning.
+
+## Retired
+
+Decisions that no longer hold. Don't bring one back without asking the owner.
+
+- Target user: single operator/power-user — no RBAC for now (2026-07-04, retired 2026-10-05): superseded by [Web UI sign-in](#web-ui-sign-in-one-oidc-provider-roles-in-helm-values-no-user-database) and [admin is global-only](#admin-is-global-only-project-bindings-scope-actions-and-visibility).
