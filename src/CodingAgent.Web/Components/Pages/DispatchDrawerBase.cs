@@ -7,7 +7,7 @@ namespace CodingAgent.Web.Components.Pages;
 /// <summary>
 /// Base class for dispatch drawer components that share filter, selection, and lifecycle logic.
 /// </summary>
-public abstract class DispatchDrawerBase<TItem> : ComponentBase
+public abstract class DispatchDrawerBase<TItem> : ComponentBase where TItem : class
 {
     [Parameter, EditorRequired] public bool IsOpen { get; set; }
     [Parameter, EditorRequired] public PipelineJobTemplate? Template { get; set; }
