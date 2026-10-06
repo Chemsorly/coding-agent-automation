@@ -22,7 +22,8 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
 
         // Retry loop: the file-backed PipelineRunHistoryService has async writes that may still be
         // in flight when Dispose() runs on a loaded CI runner, causing an IOException if the
-        // directory isn't fully drained before deletion. Three short retries are sufficient.
+        // directory isn't fully drained before deletion. If the last attempt fails too, the temp
+        // directory is left behind: cleanup failure is not a correctness issue (issue #3165).
         for (var i = 0; i < 3; i++)
         {
             try
@@ -30,9 +31,10 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
                 Directory.Delete(_tempDir, recursive: true);
                 return;
             }
-            catch (IOException) when (i < 2)
+            catch (IOException)
             {
-                Thread.Sleep(100);
+                if (i < 2)
+                    Thread.Sleep(100);
             }
         }
     }
