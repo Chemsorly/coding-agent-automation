@@ -767,26 +767,17 @@ public sealed class DistributedAgentRegistryServiceTests
     }
 
     [Fact]
-    public async Task GetByAgentId_AfterTheRegistrationWriteCompletedAndTheHashExpired_ReturnsNull()
+    public void GetByAgentId_AfterTheRegistrationWriteCompletedAndTheHashExpired_ReturnsNull()
     {
-        var store = new RegistrationWriteBlockingFakeRedisStore();
-        var sut = new DistributedAgentRegistryService(store, Log.Logger);
-        sut.Register(Msg("agent-1"), "conn-1");
-        store.ReleaseRegistrationWrite();
-        await WaitUntilAsync(() => store.Inner.HashGetAllAsync("agent:agent-1").Result.Length > 0);
+        // FakeRedisStore completes synchronously, so the whole registration write, including clearing
+        // the pending flag, has finished when Register returns. (Waiting for the hash to appear in the
+        // blocking store is not enough: the write still refreshes the TTL and updates the sets first.)
+        _sut.Register(Msg("agent-1"), "conn-1");
 
-        store.Inner.ForceExpire("agent:agent-1");
+        _store.ForceExpire("agent:agent-1");
 
-        sut.GetByAgentId(new AgentId("agent-1")).Should().BeNull(
+        _sut.GetByAgentId(new AgentId("agent-1")).Should().BeNull(
             "once the write has landed, a TTL-expired hash means the agent is gone; the snapshot is not a fallback");
-    }
-
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!condition() && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
-        condition().Should().BeTrue("the condition must hold within 5 s");
     }
 
     [Fact]
@@ -885,7 +876,6 @@ public sealed class DistributedAgentRegistryServiceTests
         warning.Properties["Field"].ToString().Should().Contain("activeJobId");
         warning.Properties["AgentId"].ToString().Should().Contain("agent-1");
     }
-
 
     [Fact]
     public async Task UpdateAgentFieldAsync_WhenRedisFaults_DoesNotThrow()
