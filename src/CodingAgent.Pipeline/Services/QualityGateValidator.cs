@@ -66,7 +66,7 @@ public class QualityGateValidator : IQualityGateValidator
         {
             if (Directory.Exists(testResultsRoot))
             {
-                Directory.Delete(testResultsRoot, recursive: true);
+                DeleteDirectoryRecursive(testResultsRoot);
                 _logger.Debug("Cleaned up previous test results at {TestResultsRoot}", testResultsRoot);
             }
         }
@@ -87,6 +87,13 @@ public class QualityGateValidator : IQualityGateValidator
             _logger.Warning(ex, "Failed to clean up quality gates output at {QualityGatesDir}", qualityGatesDir);
         }
     }
+
+    /// <summary>
+    /// Recursively deletes the stale TestResults directory in <see cref="CleanWorkspacePrologue"/>.
+    /// Overridable so tests can make the delete throw. File permissions cannot do that when the
+    /// tests run as root.
+    /// </summary>
+    private protected virtual void DeleteDirectoryRecursive(string path) => Directory.Delete(path, recursive: true);
 
     /// <summary>
     /// Iterates all QGCs in order, stopping on first failure, and returns the aggregate report.

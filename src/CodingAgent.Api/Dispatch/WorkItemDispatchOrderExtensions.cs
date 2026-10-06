@@ -18,8 +18,7 @@ internal static class WorkItemDispatchOrderExtensions
     ///   <item><c>PriorityWeight</c> DESC — manual items (100) before automated (0) within a tier.</item>
     ///   <item><c>CreatedAt</c> ASC — FIFO tiebreaker within the same tier and weight.</item>
     /// </list>
-    /// Decision: <c>decisions.md</c> "Dispatch priority: static ordering Review &gt; Decomp &gt; Impl &gt; Consolidation"
-    /// and "PriorityWeight: secondary sort key within RunType tier".
+    /// Decision: <c>decisions.md</c> "Dispatch priority: static ordering Review &gt; Decomposition &gt; Implementation &gt; Consolidation".
     /// </summary>
     internal static IOrderedQueryable<WorkItemEntity> ApplyDispatchOrder(
         this IQueryable<WorkItemEntity> source) =>
