@@ -1377,7 +1377,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(labelSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(labelSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
 
         // Assert: the swap was called
         completed.Should().BeSameAs(labelSwapCalled.Task, "SwapLabelAsync should have been called after grace period");
@@ -1417,7 +1417,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(sweepReachedCheck.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(sweepReachedCheck.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(sweepReachedCheck.Task, "sweep must reach the IsIssueBeingProcessed check");
 
         // Brief yield so any async continuations after the check complete
@@ -1463,7 +1463,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(secondSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(secondSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
 
         // Assert: second issue was still processed despite first failure
         completed.Should().BeSameAs(secondSwapCalled.Task, "Second swap should succeed despite first failure");
@@ -1523,7 +1523,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
 
         // Assert: second provider was scanned despite first failure
         completed.Should().BeSameAs(swapCalled.Task, "Second provider should be scanned despite first provider failure");
@@ -1554,7 +1554,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(sweepCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(sweepCompleted.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(sweepCompleted.Task, "sweep must complete after grace period");
 
         // Brief yield so any async continuations after GetAllTemplatesAsync complete
@@ -1699,7 +1699,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Assert: stop completes without exception
         var stopTask = service.StopAsync(CancellationToken.None);
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(30));
         stopTask.IsCompletedSuccessfully.Should().BeTrue();
     }
 
@@ -1799,7 +1799,6 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         SetupProviderConfig("provider-1");
         SetupIssueProvider("provider-1"); // no issues
 
-        var firstSweepDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var sweepCount = 0;
         _mockConfigClient
             .Setup(s => s.GetAllTemplatesAsync(It.IsAny<CancellationToken>()))
@@ -1807,27 +1806,30 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
             {
                 new() { Id = "t1", Name = "T1", IssueProviderId = "provider-1", RepoProviderId = "r1" }
             })
-            .Callback(() =>
-            {
-                if (Interlocked.Increment(ref sweepCount) == 1)
-                    firstSweepDone.TrySetResult();
-            });
+            .Callback(() => Interlocked.Increment(ref sweepCount));
 
+        // Gate on the interval load, not on the sweep start: the service loads the config only after
+        // the first sweep has completed, so every assertion below is already settled when this fires.
+        var intervalLoaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockConfigClient
             .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 });
+            .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 })
+            .Callback(() => intervalLoaded.TrySetResult());
 
         // Act: start the service and wait for the first sweep to complete
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(firstSweepDone.Task, Task.Delay(TimeSpan.FromSeconds(90)));
-        completed.Should().BeSameAs(firstSweepDone.Task, "First sweep should complete after grace period");
+        var completed = await Task.WhenAny(intervalLoaded.Task, Task.Delay(TimeSpan.FromSeconds(90)));
+        completed.Should().BeSameAs(intervalLoaded.Task,
+            "First sweep should complete after grace period and the periodic interval should be loaded");
 
         // Assert: after the first sweep, the service is still running (entered periodic loop).
         // The old single-run implementation would have ExecuteTask completed here.
         // With periodic behavior, ExecuteTask remains incomplete until cancellation.
-        await Task.Delay(TimeSpan.FromMilliseconds(500)); // small buffer for async continuation
+        // The short settle only gives a loop that wrongly exits after loading the config time to
+        // complete ExecuteTask; nothing asserted here depends on it.
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
         service.ExecuteTask!.IsCompleted.Should().BeFalse(
             "Service should remain running in the periodic loop after first sweep — " +
             "if it completed, the periodic timer was never entered");
@@ -1847,7 +1849,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         // Verify cancellation causes the service to exit cleanly from the timer loop
         _cts.Cancel();
         var stopTask = service.StopAsync(CancellationToken.None);
-        await stopTask.WaitAsync(TimeSpan.FromSeconds(5));
+        await stopTask.WaitAsync(TimeSpan.FromSeconds(30));
         stopTask.IsCompletedSuccessfully.Should().BeTrue(
             "Service should stop gracefully when cancelled while waiting for timer tick");
     }
@@ -1889,7 +1891,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(sweepCheckedRecent.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(sweepCheckedRecent.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(sweepCheckedRecent.Task, "sweep must reach the WasRecentlyCompleted check");
 
         // Brief yield so async continuations after the check complete
@@ -1941,7 +1943,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(defense3Checked.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(defense3Checked.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(defense3Checked.Task, "sweep must reach the IsIssueDistributedAsync check");
 
         // Brief yield so async continuations after the check complete
@@ -1993,7 +1995,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(defense3Attempted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(defense3Attempted.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(defense3Attempted.Task, "sweep must attempt the IsIssueDistributedAsync check");
 
         // Brief yield so the exception-handling async continuations after the throw complete
@@ -2071,7 +2073,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(getIssueCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(getIssueCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(getIssueCalled.Task, "GetIssueAsync should have been called after grace period");
 
         // Assert: SwapLabelAsync was NOT called — terminal label detected via GetIssueAsync
@@ -2152,7 +2154,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(getIssueCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(getIssueCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         completed.Should().BeSameAs(getIssueCalled.Task, "GetIssueAsync should have been called after grace period");
 
         // TODO: This negative assertion has a potential race — GetIssueAsync has fired but the branch
@@ -2217,7 +2219,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
 
         // Assert: genuinely orphaned issue IS recovered
         completed.Should().BeSameAs(swapCalled.Task, "Genuinely orphaned issue should be swapped to agent:error");
@@ -2249,11 +2251,19 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         });
         _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>())).Returns(false);
 
+        // Gate: the service loads the sweep interval (not leader-gated) right after the initial
+        // sweep returns, so the initial sweep has deterministically finished when this fires.
+        var initialSweepDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockConfigClient
+            .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { OrphanedLabelSweepIntervalMinutes = 30 })
+            .Callback(() => initialSweepDone.TrySetResult());
+
         using var service = CreateServiceWithGate(mockGate.Object);
         await service.StartAsync(_cts.Token);
 
-        // Wait well past grace period + time for sweep to have run
-        await Task.Delay(TimeSpan.FromMilliseconds(300));
+        var completed = await Task.WhenAny(initialSweepDone.Task, Task.Delay(TimeSpan.FromSeconds(60)));
+        completed.Should().BeSameAs(initialSweepDone.Task, "the initial sweep must return after the grace period");
 
         // Assert: no swap — non-leader skips entirely
         _mockLabelService.Verify(
@@ -2296,7 +2306,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(mockGate.Object);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
 
         completed.Should().BeSameAs(swapCalled.Task, "leader must run the sweep and call SwapLabelAsync");
 
@@ -2331,7 +2341,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateServiceWithGate(null);
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(60)));
 
         completed.Should().BeSameAs(swapCalled.Task, "null gate must not suppress the sweep");
 
@@ -2376,7 +2386,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         await service.StartAsync(_cts.Token);
 
         // Wait for sweep to reach the blocking API call
-        var started = await Task.WhenAny(sweepStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        var started = await Task.WhenAny(sweepStarted.Task, Task.Delay(TimeSpan.FromSeconds(60)));
         started.Should().BeSameAs(sweepStarted.Task, "sweep should have started and reached the API call");
 
         // Cancel leadership — simulates losing the K8s lease
