@@ -526,15 +526,15 @@ internal static class RepositoryGitOperations
         // Perform interactive-less rebase: replay branch commits on top of origin/main.
         var rebaseOptions = new RebaseOptions();
         var rebaseResult = repo.Rebase.Start(repo.Head, baseBranch, baseBranch, identity, rebaseOptions);
+        var conflictFiles = new List<string>();
 
         if (rebaseResult.Status == RebaseStatus.Conflicts)
         {
             // Collect conflicting files
-            var conflictFiles = repo.Index.Conflicts
+            conflictFiles.AddRange(repo.Index.Conflicts
                 .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
-                .Where(p => p != null)
-                .Distinct()
-                .ToList();
+                .OfType<string>()
+                .Distinct());
 
             Log.Warning(
                 "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}. Force-resolving keeping main's version (main wins). Conflicts: {@ConflictFiles}",
@@ -558,7 +558,7 @@ internal static class RepositoryGitOperations
                     .Distinct()
                     .ToList();
 
-                foreach (var f in additionalConflicts.Where(f => !conflictFiles.Contains(f)))
+                foreach (var f in additionalConflicts.Where(f => !conflictFiles.Contains(f!)))
                     conflictFiles.Add(f!);
 
                 Log.Warning(
@@ -572,19 +572,29 @@ internal static class RepositoryGitOperations
             Log.Information(
                 "Rebase: force-resolved {ConflictCount} file(s) keeping main's version (main wins), rebase completed. New HEAD={NewHeadSha}",
                 conflictFiles.Count, repo.Head.Tip.Sha[..8]);
+        }
 
+        if (mergeBase is not null)
+        {
+            foreach (var path in DropBranchRenamesOfFilesMainChanged(repo, workspacePath, mergeBase, previousHead, baseBranch.Tip, identity)
+                         .Where(path => !conflictFiles.Contains(path)))
+                conflictFiles.Add(path);
+        }
+
+        if (conflictFiles.Count > 0)
+        {
             return new MergeResult
             {
                 Success = true,
                 HasConflicts = true,
                 ForceResolved = true,
-                ConflictFiles = conflictFiles!,
+                ConflictFiles = conflictFiles,
                 MergeBaseSha = mergeBase?.Sha,
                 PreviousHeadSha = previousHead.Sha,
                 BaseHeadSha = baseBranch.Tip.Sha,
                 ForceResolvedContext = mergeBase is null
                     ? Array.Empty<ForceResolvedFileContext>()
-                    : BuildForceResolvedContext(repo, mergeBase, previousHead, baseBranch.Tip, conflictFiles!)
+                    : BuildForceResolvedContext(repo, mergeBase, previousHead, baseBranch.Tip, conflictFiles)
             };
         }
 
@@ -683,6 +693,49 @@ internal static class RepositoryGitOperations
             File.Delete(filePath);
         repo.Index.Remove(pathToRemove);
         return true;
+    }
+
+    /// <summary>
+    /// libgit2's rebase does no rename detection, so a branch rename replays as a deletion plus an
+    /// addition. Where main changed, renamed or deleted the old path, main's side is kept for it (by
+    /// the conflict resolution, or because both sides deleted it), but the branch's copy still lands
+    /// at the new path: the file as it was before main's change, next to main's version, or code
+    /// main deleted coming back. Main is authoritative for the whole file, so the copy is dropped as
+    /// well and both paths are reported for the agent to re-apply. Commits the drop, if any, and
+    /// returns the old and new path of each dropped rename.
+    /// </summary>
+    private static List<string> DropBranchRenamesOfFilesMainChanged(
+        Repository repo, WorkspacePath workspacePath, Commit mergeBase, Commit previousHead, Commit baseHead, Identity identity)
+    {
+        var dropped = new List<string>();
+        var renames = repo.Diff.Compare<TreeChanges>(mergeBase.Tree, previousHead.Tree,
+            new CompareOptions { Similarity = SimilarityOptions.Renames }).Renamed;
+
+        foreach (var rename in renames)
+        {
+            var mainChangedOldPath = mergeBase.Tree[rename.OldPath]?.Target.Id != baseHead.Tree[rename.OldPath]?.Target.Id;
+            if (!mainChangedOldPath || baseHead.Tree[rename.Path] is not null || repo.Head.Tip.Tree[rename.Path] is null)
+                continue;
+
+            var filePath = Path.Combine(workspacePath, rename.Path.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(filePath))
+                File.Delete(filePath);
+            repo.Index.Remove(rename.Path);
+            dropped.Add(rename.OldPath);
+            dropped.Add(rename.Path);
+            Log.Warning(
+                "Rebase: dropped the branch's rename {OldPath} -> {NewPath}, main changed the old path (main wins)",
+                rename.OldPath, rename.Path);
+        }
+
+        if (dropped.Count > 0)
+        {
+            repo.Index.Write();
+            var signature = new Signature(identity, DateTimeOffset.UtcNow);
+            repo.Commit("Drop renamed copies of files main changed (rework rebase, main wins)", signature, signature);
+        }
+
+        return dropped;
     }
 
     private const int MaxContextCommitsPerFile = 20;

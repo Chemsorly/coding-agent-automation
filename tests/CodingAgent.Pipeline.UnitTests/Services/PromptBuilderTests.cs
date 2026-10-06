@@ -188,6 +188,7 @@ public class PromptBuilderTests
         result.Should().Contain("Main is authoritative");
         result.Should().Contain(AgentWorkspacePaths.ReworkContextFilePath);
         result.Should().Contain("outside this issue's scope");
+        result.Should().Contain("never by restoring files from your branch's earlier commits");
     }
 
     [Fact]
@@ -549,6 +550,7 @@ public class PromptBuilderTests
         result.Should().Contain("outside this issue's scope");
         result.Should().Contain("`src/Foo.cs`");
         result.Should().NotContain("incoming");
+        result.Should().Contain("Do not restore a file, or part of one, from your branch's earlier commits");
     }
 
     [Fact]
