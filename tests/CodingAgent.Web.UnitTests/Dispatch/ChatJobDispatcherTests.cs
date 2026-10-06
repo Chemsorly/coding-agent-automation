@@ -146,7 +146,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -180,7 +180,7 @@ public class ChatJobDispatcherTests
             .Callback<V1Secret, string, CancellationToken>((s, _, _) => keySecret = s)
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -204,7 +204,7 @@ public class ChatJobDispatcherTests
         jobClientMock.Setup(c => c.CreateSecretAsync(It.IsAny<V1Secret>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("secrets are forbidden"));
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
 
         var act = () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -234,7 +234,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -264,7 +264,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         var result = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -277,7 +277,7 @@ public class ChatJobDispatcherTests
     public async Task DispatchChatPodAsync_AgentNeverConnects_ThrowsChatPodTimeoutException()
     {
         var jobClientMock = CreateJobClientMock();
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             options: CreateOptions(connectTimeoutSeconds: 1));
 
@@ -304,7 +304,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -355,7 +355,7 @@ public class ChatJobDispatcherTests
               providerType: "kiro"
               maxConcurrent: 5
             """);
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object, templateStore: templateStoreMulti);
 
         var act = () => dispatcher.DispatchChatPodAsync("kiro,node", null, null, CancellationToken.None);
@@ -380,7 +380,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         createdJob!.Spec.BackoffLimit.Should().Be(0);
@@ -406,7 +406,7 @@ public class ChatJobDispatcherTests
             .Returns(Task.CompletedTask);
 
         var options = CreateOptions(chatSessionMaxDuration: maxDuration);
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry, options: options);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry, options: options);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         createdJob!.Spec.ActiveDeadlineSeconds.Should().Be(maxDuration);
@@ -432,7 +432,7 @@ public class ChatJobDispatcherTests
             .Returns(Task.CompletedTask);
 
         var options = CreateOptions(gracePeriod: gracePeriod);
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry, options: options);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry, options: options);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         createdJob!.Spec.Template.Spec.TerminationGracePeriodSeconds.Should().Be(gracePeriod);
@@ -456,7 +456,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
@@ -479,7 +479,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
@@ -503,7 +503,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             templateStore: CreateTemplateStore(providerType: "opencode"));
@@ -532,7 +532,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         var dispatchIdFromLabel = createdJob!.Metadata.Labels["caa/chat-session-id"];
@@ -558,7 +558,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, "claude-opus-4.8", "high", CancellationToken.None);
 
         var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
@@ -584,7 +584,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, "auto", "auto", CancellationToken.None);
 
         var envVars = createdJob!.Spec.Template.Spec.Containers[0].Env;
@@ -612,7 +612,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         createdJob!.Metadata.Labels["caa/chat-selector"].Should()
@@ -632,7 +632,7 @@ public class ChatJobDispatcherTests
             .Callback<V1Job, string, CancellationToken>((j, _, _) => createdJobName = j.Metadata.Name)
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             options: CreateOptions(connectTimeoutSeconds: 1));
 
@@ -665,7 +665,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -682,7 +682,7 @@ public class ChatJobDispatcherTests
         // RecoverSessionsAsync was removed — StartAsync must return immediately without any K8s call.
         // Jobs active before restart drain via ActiveDeadlineSeconds.
         var jobClientMock = CreateJobClientMock();
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
 
         var act = async () => await dispatcher.StartAsync(CancellationToken.None);
         await act.Should().NotThrowAsync();
@@ -713,7 +713,7 @@ public class ChatJobDispatcherTests
             .Returns(Task.CompletedTask);
 
         // No leader election service passed — any replica is treated the same
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         // Must NOT throw — no leader gate
         var act = async () => await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
@@ -744,7 +744,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -776,7 +776,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -823,7 +823,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             hubContext: hubContextMock.Object);
@@ -839,7 +839,7 @@ public class ChatJobDispatcherTests
     [Fact]
     public async Task TerminateChatSessionAsync_SessionNotFound_ReturnsGracefully()
     {
-        var dispatcher = CreateDispatcher();
+        await using var dispatcher = CreateDispatcher();
 
         var act = async () => await dispatcher.TerminateChatSessionAsync("unknown-agent", CancellationToken.None);
         await act.Should().NotThrowAsync();
@@ -873,7 +873,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         // Wait for the watcher to see the terminal job and exit
@@ -946,7 +946,7 @@ public class ChatJobDispatcherTests
         // Use the internal constructor to inject the stalled watcher mock so the test is
         // deterministic: the mock never calls cleanupCallback, ensuring ForceDeleteAndCleanupAsync
         // always wins the entry.Cleaned CAS and calls DeleteJobAsync.
-        var dispatcher = new ChatJobDispatcher(
+        await using var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
@@ -1009,7 +1009,7 @@ public class ChatJobDispatcherTests
                     return neverFinishes.Task;
                 });
 
-        var dispatcher = new ChatJobDispatcher(
+        await using var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
@@ -1077,7 +1077,7 @@ public class ChatJobDispatcherTests
             ChatIdleTimeoutSeconds = 3600            // far above idle threshold — no idle-kill race
         };
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options);
@@ -1269,7 +1269,7 @@ public class ChatJobDispatcherTests
         // Use the internal constructor to inject the stalled watcher mock so the test is
         // deterministic: the mock never calls cleanupCallback, ensuring ForceDeleteAndCleanupAsync
         // always wins the entry.Cleaned CAS and calls Deregister.
-        var dispatcher = new ChatJobDispatcher(
+        await using var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
@@ -1323,7 +1323,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         agentId.Should().Be(capturedJobName, "returned agentId must equal job name");
@@ -1365,7 +1365,7 @@ public class ChatJobDispatcherTests
         var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
         options.ChatIdleTimeoutSeconds = 2; // 2s without a heartbeat → kill
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
@@ -1416,7 +1416,7 @@ public class ChatJobDispatcherTests
         options.ChatIdleTimeoutSeconds = 2;
 
         var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
@@ -1492,7 +1492,7 @@ public class ChatJobDispatcherTests
         var sharedRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
 
         // Dispatcher A — owns the watcher, uses shared Redis
-        var dispatcherA = CreateDispatcher(
+        await using var dispatcherA = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registryA,
             options: options,
@@ -1500,7 +1500,7 @@ public class ChatJobDispatcherTests
 
         // Dispatcher B — "remote replica": separate registry (no WatcherEntry), same Redis
         var registryB = CreateRegistry(); // no agents registered on B
-        var dispatcherB = CreateDispatcher(
+        await using var dispatcherB = CreateDispatcher(
             jobClient: CreateJobClientMock().Object,
             registry: registryB,
             options: options,
@@ -1580,7 +1580,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
@@ -1640,7 +1640,7 @@ public class ChatJobDispatcherTests
         redisMock.Setup(r => r.SetAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<StackExchange.Redis.When>()))
             .ReturnsAsync(true);
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
@@ -1696,7 +1696,7 @@ public class ChatJobDispatcherTests
         // FakeRedisStore with no heartbeat key written — GetAsync returns null → (true, null)
         // → falls back to local LastClientHeartbeatTicks which are stale (no heartbeat sent)
         var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
@@ -1744,7 +1744,7 @@ public class ChatJobDispatcherTests
         options.ChatIdleTimeoutSeconds = 2;
 
         // No Redis — CreateDispatcher default passes redis: null
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
@@ -2149,7 +2149,7 @@ public class ChatJobDispatcherTests
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
 
-        var dispatcher = new ChatJobDispatcher(
+        await using var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             CreateTemplateStore(),
@@ -2231,7 +2231,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -2263,7 +2263,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -2298,7 +2298,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -2327,7 +2327,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -2355,7 +2355,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         var ticksBefore = DateTimeOffset.UtcNow.UtcTicks;
@@ -2392,7 +2392,7 @@ public class ChatJobDispatcherTests
             .Returns(Task.CompletedTask);
 
         var fakeRedis = new CodingAgent.Web.TestUtilities.FakeRedisStore();
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             redis: fakeRedis);
@@ -2447,7 +2447,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         // Wait for watcher to exit naturally (sees terminal job → calls CleanupSession once)
@@ -2480,7 +2480,7 @@ public class ChatJobDispatcherTests
         var jobClientMock = CreateJobClientMock();
 
         // Agent never connects — causes the internal timeout to fire
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             options: CreateOptions(connectTimeoutSeconds: 1));
 

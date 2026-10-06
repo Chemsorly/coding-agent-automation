@@ -195,7 +195,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, "claude-opus-4.8", "high", CancellationToken.None);
 
@@ -225,7 +225,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
@@ -252,7 +252,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         // cannot be mistakenly picked up as the activity under test.
         var countBefore = _capturedActivities.Count;
 
-        var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 1));
+        await using var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 1));
 
         await Assert.ThrowsAsync<ChatPodTimeoutException>(
             () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
@@ -288,7 +288,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         await dispatcher.TerminateChatSessionAsync(capturedJobName!, CancellationToken.None);
@@ -305,7 +305,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
     [Fact]
     public async Task TerminateChatSessionAsync_SessionNotFound_CreatesTerminateActivity_NotFoundOutcome()
     {
-        var dispatcher = CreateDispatcher();
+        await using var dispatcher = CreateDispatcher();
 
         await dispatcher.TerminateChatSessionAsync("nonexistent-agent", CancellationToken.None);
 
@@ -446,7 +446,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
                 })
                 .Returns(Task.CompletedTask);
 
-            var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object, registry: registry);
+            await using var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object, registry: registry);
             await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
             var dispatchLogs = events
@@ -463,7 +463,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         public async Task DispatchChatPodAsync_Timeout_LogsWarning()
         {
             var (logger, events) = CreateCapturingLogger();
-            var dispatcher = CreateDispatcher(logger, options: CreateOptions(connectTimeoutSeconds: 1));
+            await using var dispatcher = CreateDispatcher(logger, options: CreateOptions(connectTimeoutSeconds: 1));
 
             await Assert.ThrowsAsync<ChatPodTimeoutException>(
                 () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
@@ -499,7 +499,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
 
-            var dispatcher = CreateDispatcher(
+            await using var dispatcher = CreateDispatcher(
                 logger,
                 jobClient: jobClientMock.Object,
                 registry: registry,
@@ -534,7 +534,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             var (logger, _) = CreateCapturingLogger();
             var jobClientMock = CreateJobClientMock();
 
-            var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object);
+            await using var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object);
 
             var act = () => dispatcher.StartAsync(CancellationToken.None);
             await act.Should().NotThrowAsync("StartAsync must be a no-op");
@@ -558,7 +558,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             var options = CreateOptions();
             options.ChatReplicaCount = 2;
             // redis = null — CreateDispatcher already omits the redis argument, so _redis is null
-            var dispatcher = CreateDispatcher(logger, options: options);
+            await using var dispatcher = CreateDispatcher(logger, options: options);
 
             await dispatcher.StartAsync(CancellationToken.None);
 
@@ -573,7 +573,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         {
             var (logger, events) = CreateCapturingLogger();
             var options = CreateOptions(); // ChatReplicaCount defaults to 1
-            var dispatcher = CreateDispatcher(logger, options: options);
+            await using var dispatcher = CreateDispatcher(logger, options: options);
 
             await dispatcher.StartAsync(CancellationToken.None);
 
