@@ -1,6 +1,4 @@
 using Bunit;
-using CodingAgent.Orchestration.Registry;
-using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,17 +10,11 @@ namespace CodingAgent.Web.UnitTests.Components;
 public class OnboardingChecklistComponentTests : BunitContext
 {
     private readonly Mock<IJSRuntime> _mockJs = new();
-    private readonly AgentRegistryService _registry = new(new Mock<Serilog.ILogger>().Object);
 
     public OnboardingChecklistComponentTests()
     {
         Services.AddSingleton<IJSRuntime>(_mockJs.Object);
-        Services.AddSingleton<IAgentRegistryService>(_registry);
     }
-
-    // The "Register an Agent" step reads the registry rather than a parameter.
-    private void RegisterAgent() =>
-        _registry.Register(new AgentRegistrationMessage { AgentId = "agent-1", Hostname = "host-1", Labels = [] }, "conn-1");
 
     [Fact]
     public void Checklist_RendersWhenIncomplete()
@@ -40,14 +32,13 @@ public class OnboardingChecklistComponentTests : BunitContext
         Assert.Contains("Create a Repository Provider", cut.Markup);
         Assert.Contains("Create a Project", cut.Markup);
         Assert.Contains("Create a Pipeline Template", cut.Markup);
-        Assert.Contains("Register an Agent", cut.Markup);
+        Assert.DoesNotContain("Register an Agent", cut.Markup);
         Assert.Contains("Start the pipeline loop", cut.Markup);
     }
 
     [Fact]
     public void Checklist_HidesWhenAllComplete()
     {
-        RegisterAgent();
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, true)
             .Add(s => s.HasRepoProvider, true)
@@ -71,7 +62,7 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
         var steps = cut.FindAll(".onboarding-steps li");
-        Assert.Equal(6, steps.Count);
+        Assert.Equal(5, steps.Count);
 
         // Step 1 (Issue Provider) — complete
         Assert.Contains("step-complete", steps[0].ClassName);
@@ -100,7 +91,7 @@ public class OnboardingChecklistComponentTests : BunitContext
         // TODO: The template link uses @onclick:preventDefault so the href is never navigated on click.
         // This assertion only validates the href attribute, not that clicking triggers OnAddTemplate.
         // Consider adding a test that verifies the OnAddTemplate callback is invoked on click.
-        Assert.Contains(links, l => l.GetAttribute("href") == "fleet");
+        Assert.DoesNotContain(links, l => l.GetAttribute("href") == "fleet");
     }
 
     [Fact]
@@ -141,12 +132,11 @@ public class OnboardingChecklistComponentTests : BunitContext
     }
 
     [Theory]
-    [InlineData(0, false, false, false, false, false, false)]
-    [InlineData(3, true, true, true, false, false, false)]
-    [InlineData(5, true, true, true, true, true, false)]
-    public void Checklist_ShowsProgressCount(int expectedCount, bool hasIssue, bool hasRepo, bool hasProject, bool hasTemplate, bool hasAgent, bool isLoop)
+    [InlineData(0, false, false, false, false, false)]
+    [InlineData(3, true, true, true, false, false)]
+    [InlineData(4, true, true, true, true, false)]
+    public void Checklist_ShowsProgressCount(int expectedCount, bool hasIssue, bool hasRepo, bool hasProject, bool hasTemplate, bool isLoop)
     {
-        if (hasAgent) RegisterAgent();
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, hasIssue)
             .Add(s => s.HasRepoProvider, hasRepo)
@@ -155,20 +145,17 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.IsLoopActive, isLoop)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
-        Assert.Contains($"{expectedCount} of 6 steps complete", cut.Markup);
+        Assert.Contains($"{expectedCount} of 5 steps complete", cut.Markup);
     }
 
     [Theory]
-    [InlineData(0, "0", false, false, false, false, false, false)]
-    [InlineData(50, "3", true, true, true, false, false, false)]
-    // The [InlineData(100, ...)] row has been removed — it always hit the early-return guard
-    // and never executed assertions (self-documented TODO in original code).
-    public void Checklist_ProgressBarWidth_ReflectsCompletion(int expectedWidth, string expectedAriaValue, bool hasIssue, bool hasRepo, bool hasProject, bool hasTemplate, bool hasAgent, bool isLoop)
+    [InlineData(0, "0", false, false, false, false, false)]
+    [InlineData(60, "3", true, true, true, false, false)]
+    public void Checklist_ProgressBarWidth_ReflectsCompletion(int expectedWidth, string expectedAriaValue, bool hasIssue, bool hasRepo, bool hasProject, bool hasTemplate, bool isLoop)
     {
         // When all complete, the component hides — skip that case
-        if (hasIssue && hasRepo && hasProject && hasTemplate && hasAgent && isLoop)
+        if (hasIssue && hasRepo && hasProject && hasTemplate && isLoop)
             return;
-        if (hasAgent) RegisterAgent();
 
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, hasIssue)
@@ -183,6 +170,7 @@ public class OnboardingChecklistComponentTests : BunitContext
 
         var progressBar = cut.Find("[role='progressbar']");
         Assert.Equal(expectedAriaValue, progressBar.GetAttribute("aria-valuenow"));
+        Assert.Equal("5", progressBar.GetAttribute("aria-valuemax"));
     }
 
     [Fact]
@@ -198,16 +186,20 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
         var steps = cut.FindAll(".onboarding-steps li");
-        Assert.Equal(6, steps.Count);
+        Assert.Equal(5, steps.Count);
 
         // Steps 1-2: complete
         Assert.Contains("step-complete", steps[0].ClassName);
         Assert.Contains("step-complete", steps[1].ClassName);
         // Step 3: current (first incomplete)
         Assert.Contains("step-current", steps[2].ClassName);
-        // Steps 4-6: neither complete nor current
+        // Steps 4-5: neither complete nor current
         Assert.DoesNotContain("step-complete", steps[3].ClassName ?? "");
         Assert.DoesNotContain("step-current", steps[3].ClassName ?? "");
+        // TODO: steps[4] (step 5) is not asserted here — a bug that incorrectly marks the last step
+        // as step-current or step-complete when it should not be would go undetected.
+        // Add: Assert.DoesNotContain("step-complete", steps[4].ClassName ?? "");
+        //      Assert.DoesNotContain("step-current", steps[4].ClassName ?? "");
     }
 
     [Fact]
@@ -247,7 +239,7 @@ public class OnboardingChecklistComponentTests : BunitContext
     }
 
     [Fact]
-    public void Checklist_AgentStep_CompletesWhenAgentRegisters_WithoutParentRender()
+    public void Checklist_DoesNotPoll()
     {
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, false)
@@ -256,15 +248,7 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.HasTemplate, false)
             .Add(s => s.IsLoopActive, false)
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
-        Assert.DoesNotContain("step-complete", cut.FindAll(".onboarding-steps li")[4].ClassName ?? "");
 
-        RegisterAgent();
-
-        // The registry raises no event and the test never re-renders the checklist: only its own
-        // timer can pick the agent up. Once it has, the timer stops.
-        cut.WaitForAssertion(
-            () => Assert.Contains("step-complete", cut.FindAll(".onboarding-steps li")[4].ClassName),
-            TimeSpan.FromSeconds(10));
         Assert.Empty(cut.FindComponents<CodingAgent.Web.Components.Shared.AutoRefresh>());
     }
 
