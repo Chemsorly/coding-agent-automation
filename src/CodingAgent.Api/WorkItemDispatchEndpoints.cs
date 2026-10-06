@@ -322,6 +322,7 @@ public static class WorkItemDispatchEndpoints
         DispatchLifecycleService lifecycle,
         JobTemplateStore templateStore,
         DispatchWorkItemService dispatchService,
+        DispatchTemplateResolver templateResolver,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -357,7 +358,10 @@ public static class WorkItemDispatchEndpoints
         // See docs/architecture/concurrency-model.md — "PVC Dispatch Race in Multi-Replica Deployments".
         // A distributed lock (Postgres advisory lock) would be required to guarantee the one-200/one-503
         // invariant across replicas.
-        var (concurrencyBySelector, pvcResult) = await dispatchService.BuildDispatchPreambleAsync(db, lifecycle, ct);
+        // This path has no profile fallback, but the snapshot must still count the active items that
+        // DispatchPendingWorkItem dispatched through it under this template's selector (issue #2777),
+        // hence the resolver.
+        var (concurrencyBySelector, pvcResult) = await dispatchService.BuildDispatchPreambleAsync(db, lifecycle, templateResolver, ct);
 
         // Normalize and sanitize the selector for the gate check and log messages.
         var normalizedReqSelector = JobTemplateStore.NormalizeLabels(request.AgentSelector ?? "");

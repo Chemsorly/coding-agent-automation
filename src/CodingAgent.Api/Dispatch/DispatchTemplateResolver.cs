@@ -30,8 +30,18 @@ internal sealed class DispatchTemplateResolver
     /// <param name="callerName">Name of the calling service (for log differentiation).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Resolved template and effective selector, or (null, null) if resolution fails.</returns>
+    public Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(
+        string agentSelector, string callerName, CancellationToken ct) =>
+        ResolveTemplateViaProfileAsync(agentSelector, callerName, warnOnExpansion: true, ct);
+
+    /// <inheritdoc cref="ResolveTemplateViaProfileAsync(string, string, CancellationToken)"/>
+    /// <param name="warnOnExpansion">
+    /// <c>false</c> for a caller that re-resolves the selectors of already-dispatched items on every request
+    /// (the concurrency snapshot), so the expansion warning is logged when an item is dispatched, not on
+    /// every request while it runs.
+    /// </param>
     public async Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(
-        string agentSelector, string callerName, CancellationToken ct)
+        string agentSelector, string callerName, bool warnOnExpansion, CancellationToken ct)
     {
         if (_agentProfileStore is null)
             return (null, null);
@@ -57,7 +67,7 @@ internal sealed class DispatchTemplateResolver
         var profileSelector = AgentSelectorKey.From(profile.MatchLabels);
 
         var template = _templateProvider.Resolve(profileSelector);
-        if (template is not null)
+        if (template is not null && warnOnExpansion)
         {
             Log.Warning("{Caller}: AgentSelector [{Selector}] required profile expansion to resolve template. " +
                 "Upstream code path may not be setting AgentSelector to full profile.MatchLabels. " +
