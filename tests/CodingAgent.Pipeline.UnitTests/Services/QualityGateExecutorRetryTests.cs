@@ -242,6 +242,45 @@ public class QualityGateExecutorRetryTests
             "identical failures across attempts point to infrastructure, not code");
     }
 
+    [Fact]
+    public async Task RateLimitedAttempt_AddsNoPriorAttemptHistory()
+    {
+        var config = CreateConfig(maxRetries: 3);
+        SetupValidatorAlwaysFails();
+        var fixPrompts = new List<string>();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Quality gates failed (attempt"))
+                    fixPrompts.Add(req.Prompt);
+            })
+            .ReturnsAsync(() => fixPrompts.Count == 1
+                ? new AgentResult
+                {
+                    ExitCode = 1,
+                    OutputLines = ["HTTP 429: rate limited"],
+                    ErrorCategory = AgentErrorCategory.ProviderRateLimit
+                }
+                : new AgentResult
+                {
+                    ExitCode = 0,
+                    OutputLines = AgentFixOutputLines,
+                    Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
+                });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        fixPrompts.Should().HaveCountGreaterThanOrEqualTo(3);
+        fixPrompts[1].Should().NotContain("Prior attempt failures",
+            "a rate-limited attempt ran no fix, so re-sending attempt 1 has no earlier attempt to show");
+        fixPrompts[2].Should().Contain("Attempt 1:").And.Contain("Attempt 2:").And.NotContain("Attempt 0:",
+            "the history has one entry per fix attempt, numbered from 1");
+    }
+
     // ── Mixed Gate Results — Retry Prompt Content ────────────────────────────
 
     [Fact]
