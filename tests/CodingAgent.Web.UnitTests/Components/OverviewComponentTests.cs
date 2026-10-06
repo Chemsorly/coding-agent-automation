@@ -7,6 +7,7 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 using Moq;
 
 namespace CodingAgent.Web.UnitTests.Components;
@@ -54,6 +55,8 @@ public class OverviewComponentTests : BunitContext
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
         Services.AddSingleton(new CockpitState());
+        // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
+        Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
     private static Mock<IPipelineApiRunHistoryClient> BuildEmptyRunHistoryMock()
@@ -110,6 +113,27 @@ public class OverviewComponentTests : BunitContext
         // The card must show "1" — the connected count — and must not contain a "/" denominator
         valueText.Should().Be("1", "the Agents stat card must show only the online count");
         valueText.Should().NotContain("/", "the Agents stat card must not show a denominator");
+    }
+
+    // ── Refresh controls ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Issue #2339: every live-data page offers the same refresh controls (manual refresh button,
+    /// auto-refresh interval selector, saved interval). Overview had lost them to a fixed 10 s timer.
+    /// </summary>
+    [Fact]
+    public void Header_HasTheSharedRefreshBarWithAPersistedInterval()
+    {
+        RegisterOverviewServices(new Mock<IPipelineApiAgentClient>());
+
+        var cut = Render<Overview>();
+
+        var refreshBar = cut.FindComponent<CodingAgent.Web.Components.Shared.RefreshBar>();
+        refreshBar.Instance.StorageKey.Should().Be("autoRefresh.overview");
+        cut.Find(".cockpit-page-header").InnerHtml.Should().Contain("Refresh",
+            "the refresh button sits in the page header like on the other live-data pages");
+        cut.FindComponents<CodingAgent.Web.Components.Shared.AutoRefresh>().Should().BeEmpty(
+            "RefreshBar runs its own timer; a second fixed-interval timer would double the polling");
     }
 
     // TODO: Add a test verifying that a Disconnected agent is excluded from the displayed count.
