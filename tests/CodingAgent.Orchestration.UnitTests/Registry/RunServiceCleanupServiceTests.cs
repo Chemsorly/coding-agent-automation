@@ -232,17 +232,18 @@ public sealed class RunServiceCleanupServiceTests
             _store.Object, _logger.Object, leaderElection: null,
             sweepInterval: TimeSpan.FromMilliseconds(1));
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await ((IHostedService)svc).StartAsync(cts.Token);
+        // CancellationToken.None: a timed start token would stop the service on its own timer
+        // (BackgroundService links it into the stopping token); StopAsync stops it below.
+        await ((IHostedService)svc).StartAsync(CancellationToken.None);
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // The 30s deadline only bounds a stalled test host.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
             try { _store.Verify(s => s.SetMembersAsync("runs:active", It.IsAny<CancellationToken>()), Times.AtLeastOnce()); break; }
             catch (MockException) { await Task.Delay(20); }
         }
 
-        cts.Cancel();
         await ((IHostedService)svc).StopAsync(CancellationToken.None);
 
         _store.Verify(s => s.SetMembersAsync("runs:active", It.IsAny<CancellationToken>()), Times.AtLeastOnce(),
