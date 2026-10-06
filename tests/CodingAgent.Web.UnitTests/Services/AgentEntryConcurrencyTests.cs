@@ -13,6 +13,11 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// </summary>
 public class AgentEntryConcurrencyTests
 {
+    // The worker threads are raw threads: an exception escaping one (e.g. a failed Assert on a
+    // barrier timeout) crashes the whole test host. They record barrier timeouts instead, and
+    // the test thread asserts after joining them.
+    private static readonly TimeSpan BarrierTimeout = TimeSpan.FromSeconds(30);
+
     private readonly AgentRegistryService _registry;
     private readonly Mock<ILogger> _mockLogger;
 
@@ -32,6 +37,7 @@ public class AgentEntryConcurrencyTests
         const int iterations = 1_000;
         const int threadCount = 8;
         var barrier = new Barrier(threadCount);
+        var barrierTimeouts = 0;
         var tornReadDetected = false;
 
         // Act: spawn multiple threads performing different mutations concurrently
@@ -42,7 +48,7 @@ public class AgentEntryConcurrencyTests
             var threadIndex = t;
             threads[t] = new Thread(() =>
             {
-                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10))); // synchronize start for maximum contention
+                if (!barrier.SignalAndWait(BarrierTimeout)) Interlocked.Increment(ref barrierTimeouts); // synchronize start for maximum contention
 
                 for (int i = 0; i < iterations; i++)
                 {
@@ -94,6 +100,8 @@ public class AgentEntryConcurrencyTests
         foreach (var thread in threads)
             thread.Join();
 
+        barrierTimeouts.Should().Be(0, "all threads must start together for maximum contention");
+
         // Assert: no torn reads detected
         tornReadDetected.Should().BeFalse("concurrent mutations should not produce torn/inconsistent state");
 
@@ -112,6 +120,7 @@ public class AgentEntryConcurrencyTests
         const int iterations = 5_000;
         const int threadCount = 4;
         var barrier = new Barrier(threadCount + 1); // +1 for reader thread
+        var barrierTimeouts = 0;
         var invalidTimestampSeen = false;
 
         // Writer threads update heartbeat
@@ -120,7 +129,7 @@ public class AgentEntryConcurrencyTests
         {
             writers[t] = new Thread(() =>
             {
-                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
+                if (!barrier.SignalAndWait(BarrierTimeout)) Interlocked.Increment(ref barrierTimeouts);
                 for (int i = 0; i < iterations; i++)
                 {
                     _registry.UpdateHeartbeat("agent-hb", DateTimeOffset.UtcNow);
@@ -132,7 +141,7 @@ public class AgentEntryConcurrencyTests
         // Reader thread continuously checks the heartbeat is never default/zeroed
         var reader = new Thread(() =>
         {
-            Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
+            if (!barrier.SignalAndWait(BarrierTimeout)) Interlocked.Increment(ref barrierTimeouts);
             for (int i = 0; i < iterations * 2; i++)
             {
                 var ts = entry.LastHeartbeatAt;
@@ -150,6 +159,7 @@ public class AgentEntryConcurrencyTests
         reader.Join();
 
         // Assert
+        barrierTimeouts.Should().Be(0, "all threads must start together for maximum contention");
         invalidTimestampSeen.Should().BeFalse(
             "heartbeat timestamp should never be observed as default under concurrent writes");
     }
@@ -224,6 +234,7 @@ public class AgentEntryConcurrencyTests
         const int totalThreadCount = mutatorCount + readerCount + transitionCount;
 
         var barrier = new Barrier(totalThreadCount);
+        var barrierTimeouts = 0;
         Exception? caughtException = null;
         var exceptionLock = new object();
 
@@ -247,7 +258,7 @@ public class AgentEntryConcurrencyTests
             var localM = m;
             threads[idx++] = new Thread(() =>
             {
-                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
+                if (!barrier.SignalAndWait(BarrierTimeout)) Interlocked.Increment(ref barrierTimeouts);
                 try
                 {
                     for (int i = 0; i < iterations; i++)
@@ -271,7 +282,7 @@ public class AgentEntryConcurrencyTests
         {
             threads[idx++] = new Thread(() =>
             {
-                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
+                if (!barrier.SignalAndWait(BarrierTimeout)) Interlocked.Increment(ref barrierTimeouts);
                 try
                 {
                     for (int i = 0; i < iterations; i++)
@@ -312,7 +323,7 @@ public class AgentEntryConcurrencyTests
         {
             threads[idx++] = new Thread(() =>
             {
-                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
+                if (!barrier.SignalAndWait(BarrierTimeout)) Interlocked.Increment(ref barrierTimeouts);
                 try
                 {
                     for (int i = 0; i < iterations; i++)
@@ -338,6 +349,7 @@ public class AgentEntryConcurrencyTests
 
         // ── Assert ───────────────────────────────────────────────────────────────────
 
+        barrierTimeouts.Should().Be(0, "all threads must start together for maximum contention");
         caughtException.Should().BeNull(
             "entry.Labels must be an immutable array after Register; concurrent mutation of " +
             "the original List<string> must not affect the stored copy and must not cause " +
