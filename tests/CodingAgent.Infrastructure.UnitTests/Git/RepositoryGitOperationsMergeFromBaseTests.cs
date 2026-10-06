@@ -76,6 +76,35 @@ public sealed class RepositoryGitOperationsMergeFromBaseTests : IDisposable
     }
 
     [Fact]
+    public async Task FileAddedOnBothSides_KeepsMainsVersion()
+    {
+        CommitOnBranch("branch adds", ("added-on-both.txt", "branch version\n"));
+        CommitOnMain("main adds", ("added-on-both.txt", "main version\n"));
+
+        var result = await MergeFromBaseAsync();
+
+        result.ConflictFiles.Should().Equal("added-on-both.txt");
+        ReadWork("added-on-both.txt").Should().Be("main version\n");
+        AssertRebaseFinishedCleanly();
+    }
+
+    [Fact]
+    public async Task ConflictsInSeveralBranchCommits_ResolvesEachStepKeepingMain()
+    {
+        CommitOnBranch("first branch commit", ("shared.txt", "branch version\n"));
+        CommitOnBranch("second branch commit", ("added-on-both.txt", "branch version\n"));
+        CommitOnMain("main change", ("shared.txt", "main version\n"), ("added-on-both.txt", "main version\n"));
+
+        var result = await MergeFromBaseAsync();
+
+        result.ConflictFiles.Should().BeEquivalentTo(["shared.txt", "added-on-both.txt"],
+            "the second replayed commit conflicts too and is resolved in its own step");
+        ReadWork("shared.txt").Should().Be("main version\n");
+        ReadWork("added-on-both.txt").Should().Be("main version\n");
+        AssertRebaseFinishedCleanly();
+    }
+
+    [Fact]
     public async Task FileDeletedOnMainAndChangedOnBranch_DeletesFile()
     {
         CommitOnBranch("branch change", ("deleted-on-main.txt", "branch version\n"));
