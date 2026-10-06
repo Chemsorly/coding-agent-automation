@@ -31,7 +31,7 @@ public sealed class BlockedIssuesService
     /// </summary>
     internal static readonly IReadOnlySet<string> NotReadyLabels = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
-        // DispatchIneligibleLabels: Done, Error, NeedsRefinement, WontDo, Cancelled
+        // DispatchIneligibleLabels: Done, Error, NeedsRefinement, WontDo, Cancelled (EpicReview is listed with the epic labels)
         AgentLabels.Done,
         AgentLabels.Error,
         AgentLabels.NeedsRefinement,
