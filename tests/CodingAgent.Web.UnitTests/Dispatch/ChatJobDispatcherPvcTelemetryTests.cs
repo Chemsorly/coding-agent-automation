@@ -22,17 +22,23 @@ namespace CodingAgent.Web.UnitTests.Dispatch;
 /// Requirements: AC from issue #3285 — no hardcoded "kiro" literal in PvcUtilization tags.
 /// </summary>
 /// <remarks>
-/// Must be in [Collection("Metrics")] because <see cref="ChatTelemetry.PvcUtilization"/> is a
-/// static <see cref="UpDownCounter{T}"/> on the process-global
-/// <see cref="WorkDistributionTelemetry.Meter"/>. Any <see cref="MeterListener"/> subscribed to
-/// that meter observes Add() calls from ALL concurrent test threads. [Collection("Metrics")]
-/// serializes this class against other MeterListener-based tests to prevent measurement leakage.
+/// <see cref="ChatTelemetry.PvcUtilization"/> is a static <see cref="UpDownCounter{T}"/> on the
+/// process-global <see cref="WorkDistributionTelemetry.Meter"/>, so a <see cref="MeterListener"/>
+/// observes Add() calls from every test running in parallel — [Collection("Metrics")] does not
+/// cover the dispatcher tests in other classes that emit pool="kiro". The listener therefore only
+/// records measurements emitted on the test's own flow (see <see cref="TestFlow"/>).
 /// </remarks>
 [Collection("Metrics")]
 public sealed class ChatJobDispatcherPvcTelemetryTests
 {
     private const string TestNamespace = "coding-agent";
     private const string TestSelector = "kiro,dotnet";
+
+    // UpDownCounter.Add invokes MeterListener callbacks synchronously on the emitting flow, and
+    // every emission under test runs on the test's flow (CleanupSession called directly, or
+    // RegisterWatcher / ForceDeleteAndCleanupAsync awaited from it). Tagging each test with its
+    // own AsyncLocal value filters out measurements from tests running in parallel.
+    private static readonly AsyncLocal<object?> TestFlow = new();
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -98,7 +104,7 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
     /// <summary>
     /// Creates a <see cref="MeterListener"/> that captures (value, pool-tag) pairs from
     /// <c>workdistribution.chat.pvc_utilization</c> on the static
-    /// <see cref="WorkDistributionTelemetry.Meter"/>.
+    /// <see cref="WorkDistributionTelemetry.Meter"/>, emitted on the calling test's flow only.
     ///
     /// Caller disposes the listener (use <c>using</c>).
     /// <see cref="MeterListener.Start"/> is called inside this helper — invoke it BEFORE the Act.
@@ -107,6 +113,9 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
         CreatePvcUtilizationListener()
     {
         var measurements = new ConcurrentBag<(long Value, string Pool)>();
+        // This helper is synchronous, so the value lands on the calling test's flow.
+        var flow = new object();
+        TestFlow.Value = flow;
         var listener = new MeterListener();
 
         listener.InstrumentPublished = (instrument, l) =>
@@ -121,6 +130,7 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
 
         listener.SetMeasurementEventCallback<long>((_, value, tags, _) =>
         {
+            if (!ReferenceEquals(TestFlow.Value, flow)) return;
             string pool = "";
             foreach (var tag in tags)
                 if (tag.Key == "pool") { pool = tag.Value?.ToString() ?? ""; break; }
@@ -248,10 +258,7 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
         dispatcher.CleanupSession(agentKey, entry, "dotnet_opencode", "completed");
 
         // Assert: pool tag must be "opencode", not "kiro".
-        // Filter to measurements with Value == -1 to guard against concurrent test leakage:
-        // this test is in [Collection("Metrics")] which serializes against other Metrics tests,
-        // but the global meter can receive +1 increments from unrelated test setup in parallel
-        // test classes. CleanupSession always emits exactly one measurement with Value == -1.
+        // The listener only sees this test's flow; CleanupSession emits exactly one measurement, Value == -1.
         var decrements = measurements.Where(m => m.Value == -1L).ToList();
         decrements.Should().Contain(m => m.Pool == "opencode",
             "CleanupSession must emit PvcUtilization -1 with pool='opencode' for a non-Kiro entry — " +
@@ -330,7 +337,9 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
             ChatTerminationGracePeriodSeconds = 1
         };
 
-        var dispatcher = new ChatJobDispatcher(
+        // DisposeAsync (via await using) cancels _shutdownCts → stops any remaining background
+        // watcher tasks so they cannot outlive the test.
+        await using var dispatcher = new ChatJobDispatcher(
             jobClientMock.Object,
             CreateHubContextMock().Object,
             JobTemplateStore.LoadFromYaml("""
@@ -363,21 +372,10 @@ public sealed class ChatJobDispatcherPvcTelemetryTests
         try { await dispatcher.TerminateChatSessionAsync(capturedJobName!, cts.Token); }
         catch (OperationCanceledException) { /* expected */ }
 
-        // TODO [WARNING]: Task.Delay(500) is a fixed timing barrier that may be insufficient
-        // on a heavily loaded CI runner, making this assertion non-deterministically flaky.
-        // ForceDeleteAndCleanupAsync runs on a Task.Run continuation; if that continuation
-        // has not emitted its PvcUtilization measurement within 500 ms, the assertion below
-        // will fail spuriously. Prefer a polling loop with a timeout (e.g. polling measurements
-        // every 10 ms up to 5 s) or inject a completion callback to get a deterministic signal.
-        // ForceDeleteAndCleanupAsync runs on a Task.Run continuation; allow it to settle.
-        await Task.Delay(500);
-
         // Assert the ForceDeleteAndCleanupAsync -1 decrement was captured with the correct pool tag.
+        // TerminateChatSessionAsync awaits ForceDeleteAndCleanupAsync, so the -1 has been emitted
+        // by the time it returns.
         measurements.Should().Contain(m => m.Value == -1L && m.Pool == "kiro",
             "ForceDeleteAndCleanupAsync must emit PvcUtilization -1 with pool='kiro' for a Kiro agent");
-
-        // Dispose the dispatcher to cancel _shutdownCts → stops any remaining background watcher
-        // tasks so they cannot leak PvcUtilization measurements into subsequent tests' listeners.
-        await dispatcher.DisposeAsync();
     }
 }
