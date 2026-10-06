@@ -335,13 +335,18 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
                 // CleanupAsync (in finally) will re-arm via the linked token check below.
                 // Fall through to finally, then re-enter the outer while to wait for leadership.
             }
-            catch (Exception ex) when (!_stopRequested)
+            catch (OperationCanceledException) when (_stopRequested)
             {
                 // _stopRequested is set by StopLoop() which cancels _loopCts. Because _loopCts.Token
                 // is NOT linked into the outer `linked` CTS, an OperationCanceledException from the
                 // StopLoop path has neither `linked.Token` nor `stoppingToken` cancelled, so it falls
-                // through the two when-filtered OCE catches above. The `!_stopRequested` guard here
-                // ensures that OCE is silently absorbed (CleanupAsync(false) still fires in finally).
+                // through the two when-filtered OCE catches above (e.g. from SnapshotCycleConfigAsync,
+                // which runs outside RunMultiTemplateLoopAsync's try). Absorb it silently: it is not an
+                // error, and an exception escaping ExecuteAsync stops the whole host.
+                // CleanupAsync(false) still fires in finally.
+            }
+            catch (Exception ex)
+            {
                 _logger.Error(ex, "Pipeline loop encountered an unexpected error");
             }
             finally
