@@ -263,7 +263,7 @@ replicas, but it plays no part in PVC selection.
 
 | Endpoint | Caller | Cross-replica guard |
 |---|---|---|
-| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop`, for all queued work | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns `503` (`lock_timeout`). |
+| `POST /api/work-items/{id}/dispatch` (`DispatchPendingWorkItem`) | Scheduler `WorkItemDispatchLoop`, for all queued work | Postgres advisory lock `dispatch-selector:{selector}`, held from before the PVC query until the WorkItem is `Dispatched`. A lock timeout (60 s) returns an empty `503`, counted as a `lock_timeout` dispatch attempt. |
 | `POST /api/work-items/dispatch` (`DispatchWorkItem`) | Web Run page re-dispatch | None: the PVC availability is read outside any lock. |
 
 ### Remaining race windows

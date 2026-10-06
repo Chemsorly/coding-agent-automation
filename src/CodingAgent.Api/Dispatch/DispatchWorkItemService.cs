@@ -183,8 +183,8 @@ internal sealed class DispatchWorkItemService
     /// <para>
     /// <paramref name="effectiveSelector"/> is the canonical selector: on the profile-fallback path
     /// it is the profile's normalized labels (e.g. <c>"dotnet,kiro"</c>), not the item's partial
-    /// selector (e.g. <c>"dotnet"</c>), so the Job label, the dispatch metrics and the concurrency
-    /// increment in <c>FinalizeDispatchAsync</c> use the same key as the concurrency gate (issue #2777).
+    /// selector (e.g. <c>"dotnet"</c>), so the Job's <c>caa/agent-selector</c> label and the
+    /// dispatch metrics name the template's selector, as on the direct-resolve path (issue #2777).
     /// </para>
     /// </summary>
     internal static PendingWorkItemProjection BuildProjectionFromQuickCheck(
@@ -792,7 +792,10 @@ internal sealed class DispatchWorkItemService
         var sanitizedEffectiveSelector = LogSanitizer.SanitizeForLog(effectiveSelector);
 
         // Build the projection for the shared dispatch helper (issue #2988). Its AgentSelector is the
-        // canonical effectiveSelector, so FinalizeDispatchAsync increments the key the gate checks (#2777).
+        // canonical effectiveSelector, which the Job label and the dispatch metrics carry (#2777).
+        // NOTE: BuildConcurrencySnapshotAsync counts active items by their stored AgentSelector, which
+        // stays the item's own partial selector, so an item dispatched through the profile fallback is
+        // not counted under the canonical key the gate checks on later requests.
         var projection = BuildProjectionFromQuickCheck(quickCheck, effectiveSelector);
 
         // Gate + context construction + lifecycle execution via shared helper (issue #2890).
