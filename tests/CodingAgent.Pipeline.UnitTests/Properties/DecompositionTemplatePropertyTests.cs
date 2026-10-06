@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using FsCheck;
 using FsCheck.Xunit;
@@ -73,8 +74,6 @@ public class DecompositionTemplatePropertyTests
                 new() { Id = repoProviderId, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" }
             });
 
-        // Use a TCS to signal the first poll completion rather than relying on wall-clock delay.
-        var pollSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var decompositionPolled = false;
         var mockFactory = new Mock<IProviderFactory>();
         mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -91,8 +90,6 @@ public class DecompositionTemplatePropertyTests
                         {
                             decompositionPolled = true;
                         }
-                        // Signal that at least one poll cycle has executed
-                        pollSignal.TrySetResult();
                         return Task.FromResult(new PagedResult<IssueSummary>
                         {
                             Items = new List<IssueSummary>(),
@@ -116,17 +113,10 @@ public class DecompositionTemplatePropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        if (enabled)
-        {
-            // Wait for the signal that the provider was called (poll cycle ran), with a generous
-            // timeout that won't flake even on heavily loaded CI runners.
-            await Task.WhenAny(pollSignal.Task, Task.Delay(3000));
-        }
-        else
-        {
-            // When the template is disabled no polling occurs at all; wait briefly to confirm silence.
-            await Task.Delay(300);
-        }
+        // A disabled template fails StartLoopAsync validation (returned above), so the loop is
+        // polling here. Wait for a complete cycle: every enabled queue (issues, PRs, decomposition)
+        // has been polled by then, so the absence of a decomposition poll is meaningful.
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
         await Task.Delay(50);
@@ -200,8 +190,6 @@ public class DecompositionTemplatePropertyTests
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigs);
 
-        // Use a TCS to signal the first poll completion rather than relying on wall-clock delay.
-        var pollSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var decompositionPolled = false;
         var mockFactory = new Mock<IProviderFactory>();
         mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -216,8 +204,6 @@ public class DecompositionTemplatePropertyTests
                         {
                             decompositionPolled = true;
                         }
-                        // Signal that at least one poll cycle has executed
-                        pollSignal.TrySetResult();
                         return Task.FromResult(new PagedResult<IssueSummary>
                         {
                             Items = new List<IssueSummary>(),
@@ -241,16 +227,9 @@ public class DecompositionTemplatePropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        if (issueProviderExists && repoProviderExists)
-        {
-            // Both providers present — wait for a real poll cycle to fire, with a generous timeout.
-            await Task.WhenAny(pollSignal.Task, Task.Delay(3000));
-        }
-        else
-        {
-            // Missing a provider — no poll will occur; wait briefly to confirm silence.
-            await Task.Delay(300);
-        }
+        // A missing provider fails StartLoopAsync validation (returned above), so both providers
+        // exist here. Wait for a complete cycle, which includes the decomposition poll.
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
         await Task.Delay(50);
