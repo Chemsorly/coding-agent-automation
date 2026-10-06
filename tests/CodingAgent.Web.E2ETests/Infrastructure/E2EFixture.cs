@@ -387,22 +387,29 @@ public sealed class E2EFixture : IAsyncLifetime
         if (_jobController is not null)
             await _jobController.DisposeAsync();
 
-        await Factory.DisposeAsync();
-        // TODO [WARNING]: _apiFactory is disposed before _schedulerFactory. The Scheduler host
-        // holds PipelineLoopService which maintains an HttpClient pointed at the API host. If the
-        // loop is still running when the API factory is disposed, in-flight HTTP requests from the
-        // Scheduler to the API receive ObjectDisposedException or HttpRequestException on background
-        // threads. The prior disposal order (Scheduler before API) was safer. Tests must call
-        // ResetAllAsync() (which stops the loop) before DisposeAsync to avoid this window; any
-        // test that does not properly stop the loop may surface background-thread exceptions as
-        // unrelated failures in teardown.
-        if (_apiFactory is not null)
-            await _apiFactory.DisposeAsync();
-        if (_schedulerFactory is not null)
-            await _schedulerFactory.DisposeAsync();
-        if (_realJobControllerFactory is not null)
-            await _realJobControllerFactory.DisposeAsync();
+        // Dispose hosts in dependency order: Blazor → Scheduler → API → JobController. The Scheduler's
+        // loop calls the API, so it stops before the API goes away (#3181).
+        await DisposeHostAsync(Factory);
+        await DisposeHostAsync(_schedulerFactory);
+        await DisposeHostAsync(_apiFactory);
+        await DisposeHostAsync(_realJobControllerFactory);
 
         E2ETestDefaults.ClearDatabaseEnvironment();
+    }
+
+    private static async Task DisposeHostAsync(IAsyncDisposable? host)
+    {
+        if (host is null)
+            return;
+        try
+        {
+            await host.DisposeAsync();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Chat-test circuit teardown runs async TerminateChatSessionAsync calls that can still be in
+            // flight when a host's DI container disposes its singletons. That race is not a test failure,
+            // and reporting it as a collection-cleanup failure would hide real ones (#3181).
+        }
     }
 }
