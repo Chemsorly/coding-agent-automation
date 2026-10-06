@@ -556,15 +556,15 @@ public class IssueContextBuilderImageExtractionFailureTests
             result!.IssueDetail.Images.Should().BeEmpty(
                 "dispatch must continue with empty Images when extraction throws");
 
-            // Assert: a Warning-level log event was emitted containing the issue identifier
-            // TODO: replace ContainSingle with Contain (at-least-one) or narrow the filter with a
-            // specific message-template substring (e.g. "image extraction failed") so that a second
-            // unrelated Warning emitted by BuildIssueContextAsync doesn't cause a misleading failure.
+            // Assert: a Warning-level log event was emitted containing the issue identifier.
+            // The global Log.Logger also receives warnings from tests running in parallel (several
+            // use "org/repo#42"), so match on this test's own extraction exception as well.
             // TODO: also assert e.Properties.ContainsKey("IssueIdentifier") to verify the structured
             // log property is present, rather than relying solely on RenderMessage() string matching
             // (RenderMessage is fragile if IssueIdentifier.ToString() format ever changes).
             capturedEvents.Should().ContainSingle(
                 e => e.Level == LogEventLevel.Warning
+                     && e.Exception != null && e.Exception.Message == "simulated extraction failure"
                      && e.RenderMessage().Contains("org/repo#42"),
                 "a Warning including the issue identifier must be logged on extraction failure");
         }
