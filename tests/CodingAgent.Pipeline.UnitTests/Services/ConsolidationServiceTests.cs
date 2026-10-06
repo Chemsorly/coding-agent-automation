@@ -152,7 +152,7 @@ public sealed class ConsolidationServiceTests
 
         run.Should().NotBeNull();
         distributionStartedAt.Should().NotBeNull();
-        run!.StartedAtUtc.Should().BeOnOrBefore(distributionStartedAt!.Value,
+        run.StartedAtUtc.Should().BeOnOrBefore(distributionStartedAt.Value,
             "the run starts when it is handed to the distributor, not when the distributor returns");
     }
 

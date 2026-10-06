@@ -744,9 +744,9 @@ public sealed class DistributedAgentRegistryServiceTests
         var result = sut.GetByAgentId(new AgentId("agent-1"));
 
         result.Should().NotBeNull("a just-registered agent must be visible before its Redis hash is written");
-        result!.ConnectionId.Should().Be("conn-1");
+        result.ConnectionId.Should().Be("conn-1");
         result.Hostname.Should().Be(Msg("agent-1").Hostname);
-        result.Labels.Should().BeEquivalentTo(["dotnet", "kiro"]);
+        result.Labels.Should().BeEquivalentTo("dotnet", "kiro");
         result.Status.Should().Be(AgentStatus.Idle);
         store.ReleaseRegistrationWrite();
     }

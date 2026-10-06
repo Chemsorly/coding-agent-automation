@@ -984,7 +984,7 @@ public class ChatJobDispatcherTests
             {
                 createdJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
-                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-disposed");
+                RegisterChatAgent(registry, createdJobName, dispatchId, "conn-disposed");
             })
             .Returns(Task.CompletedTask);
 
