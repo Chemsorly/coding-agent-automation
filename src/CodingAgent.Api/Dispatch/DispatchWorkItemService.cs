@@ -823,7 +823,8 @@ internal sealed class DispatchWorkItemService
             return TypedResults.Ok(new DispatchPendingResponse(false, "no_template"));
         }
 
-        // Build the projection for the shared dispatch helper (issue #2988).
+        // Build the projection for the shared dispatch helper (issue #2988). Its AgentSelector is the
+        // canonical effectiveSelector, which the Job label and the dispatch metrics carry (#2777).
         var projection = BuildProjectionFromQuickCheck(quickCheck, effectiveSelector);
 
         // Gate + context construction + lifecycle execution via shared helper (issue #2890).

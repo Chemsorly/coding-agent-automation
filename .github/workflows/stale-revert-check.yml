@@ -1,0 +1,50 @@
+name: Stale Revert Check
+
+# Flags a PR that deletes lines main merged after the PR's work began without re-adding them
+# elsewhere: the mark of a stale branch (a conflict resolved in favour of the old version, or an
+# agent re-applying an old copy of a file). Until #3325 the rework rebase did this silently and
+# squash merges reverted other PRs' changes. An intentional deletion is acknowledged by mentioning
+# the reverted PR (#N) in the PR description; `edited` re-runs the check when the description changes.
+#
+# Report-only: findings are warning annotations on the diff plus the step summary, and the run
+# passes. The pipeline treats any failed workflow run on its branch as CI for its agent to fix, and
+# some findings are deliberate rewrites of fresh code. Add --fail to the script call to make it block.
+#
+# No concurrency group: an `edited` run has the same head SHA as the push run it would cancel, and
+# the pipeline reads a cancelled run on its head SHA as a CI failure. Runs are short and read-only.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  stale-revert-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Full history: the check blames deleted lines at the merge base and walks main's
+      # first-parent history to find when each blamed change landed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Test the check
+        run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
+
+      # The PR description is untrusted text: it reaches the script only through an environment
+      # variable written to a file, never interpolated into the script itself.
+      - name: Check for stale reverts
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          printf '%s' "${PR_BODY}" > "${RUNNER_TEMP}/pr-body.md"
+          python3 .github/scripts/stale_revert_check.py \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            --pr-body-file "${RUNNER_TEMP}/pr-body.md"

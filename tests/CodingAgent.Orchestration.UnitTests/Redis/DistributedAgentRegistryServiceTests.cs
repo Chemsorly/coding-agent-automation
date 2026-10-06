@@ -726,13 +726,59 @@ public sealed class DistributedAgentRegistryServiceTests
     // sequential post-condition invariants: that after a deregister + idle/all-agents refresh,
     // the cache correctly reflects the deregistered state. These are valid regression tests for
     // the overall behavior even though they cannot exercise the exact race window.
-    // TODO (WARNING): The three GetByAgentId snapshot-fallback tests (GetByAgentId_ReturnsEntry_FromLocalSnapshot_WhenRedisReturnsEmpty,
-    // GetByAgentId_ReturnsNull_AfterDeregister_EvenWithRedisPending, GetByAgentId_ReturnsNull_AfterDeregister_SnapshotFallbackDoesNotResurrect)
-    // and the AlwaysEmptyHashRedisStore helper were removed as part of the _allAgentsCache fix (issue #2219).
-    // These tests covered the _localSnapshot → GetAgentRaw fallback path introduced in issue #2144.
-    // Their removal leaves the snapshot-fallback branch uncovered: a regression that broke snapshot
-    // fallback (e.g., removing the _localSnapshot lookup in GetAgentRaw) would not be caught.
-    // Consider restoring them or adding equivalent coverage for the fire-and-forget registration gap.
+
+    // ── GetByAgentId — _localSnapshot fallback during the registration write (issue #2144) ──
+    // Register() writes the Redis hash fire-and-forget. While that write is in flight, GetAgentRaw
+    // falls back to the node-local snapshot so a just-registered agent is visible. The store below
+    // holds the registration's HashSetAsync open to keep the write in flight.
+
+    [Fact]
+    public async Task GetByAgentId_WhileTheRegistrationWriteIsPending_ReturnsTheLocalSnapshot()
+    {
+        var store = new RegistrationWriteBlockingFakeRedisStore();
+        var sut = new DistributedAgentRegistryService(store, Log.Logger);
+
+        sut.Register(Msg("agent-1", ["dotnet", "kiro"]), "conn-1");
+        await store.RegistrationWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var result = sut.GetByAgentId(new AgentId("agent-1"));
+
+        result.Should().NotBeNull("a just-registered agent must be visible before its Redis hash is written");
+        result.ConnectionId.Should().Be("conn-1");
+        result.Hostname.Should().Be(Msg("agent-1").Hostname);
+        result.Labels.Should().BeEquivalentTo("dotnet", "kiro");
+        result.Status.Should().Be(AgentStatus.Idle);
+        store.ReleaseRegistrationWrite();
+    }
+
+    [Fact]
+    public async Task GetByAgentId_DeregisteredWhileTheRegistrationWriteIsPending_ReturnsNull()
+    {
+        var store = new RegistrationWriteBlockingFakeRedisStore();
+        var sut = new DistributedAgentRegistryService(store, Log.Logger);
+        sut.Register(Msg("agent-1"), "conn-1");
+        await store.RegistrationWriteStarted.WaitAsync(TimeSpan.FromSeconds(5));
+
+        sut.Deregister(new AgentId("agent-1"));
+
+        sut.GetByAgentId(new AgentId("agent-1")).Should().BeNull(
+            "the snapshot fallback must not bring back an agent that deregistered");
+        store.ReleaseRegistrationWrite();
+    }
+
+    [Fact]
+    public void GetByAgentId_AfterTheRegistrationWriteCompletedAndTheHashExpired_ReturnsNull()
+    {
+        // FakeRedisStore completes synchronously, so the whole registration write, including clearing
+        // the pending flag, has finished when Register returns. (Waiting for the hash to appear in the
+        // blocking store is not enough: the write still refreshes the TTL and updates the sets first.)
+        _sut.Register(Msg("agent-1"), "conn-1");
+
+        _store.ForceExpire("agent:agent-1");
+
+        _sut.GetByAgentId(new AgentId("agent-1")).Should().BeNull(
+            "once the write has landed, a TTL-expired hash means the agent is gone; the snapshot is not a fallback");
+    }
 
     [Fact]
     public async Task GetIdleAgentsAsync_CacheExcludesDeregisteredAgent_AfterDeregisterAndRefresh()
@@ -814,17 +860,22 @@ public sealed class DistributedAgentRegistryServiceTests
             "deregistered agent must not be counted as Busy after DeregisterAsync completes");
     }
 
-    // TODO (WARNING): UpdateAgentFieldAsync_WhenRedisFaults_LogsWarningAndDoesNotThrow was removed
-    // as part of the _allAgentsCache fix (issue #2219) along with its FaultingRedisStore and
-    // CaptureSink helpers. The production fault-handling path in UpdateAgentFieldAsync — the
-    // catch (Exception ex) when (ex is not OperationCanceledException) block, the Warning log,
-    // and the no-throw guarantee — is now completely uncovered. A regression removing the try/catch
-    // or breaking the warning log would not be caught by the test suite. Restore or replace:
-    //   - UpdateAgentFieldAsync_WhenRedisFaults_LogsWarningAndDoesNotThrow
-    //   - FaultingRedisStore (or a parameterised variant to cover ExistsAsync, HashSetFieldAsync,
-    //     and ExpireAsync fault injection)
-    //   - CaptureSink (or use TestUtilities.CaptureSink if one exists)
-    // These are unrelated to the _allAgentsCache race and should be restored in a follow-up.
+    [Fact]
+    public async Task UpdateAgentFieldAsync_WhenRedisFaults_LogsOneWarningNamingTheFieldAndAgent()
+    {
+        // Issue #2283: a swallowed Redis fault must still be visible to operators.
+        var sink = new LogEventCaptureSink();
+        var logger = new LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(sink).CreateLogger();
+        var sut = new DistributedAgentRegistryService(new HashSetFieldFaultingFakeRedisStore(), logger);
+        sut.Register(Msg("agent-1"), "conn-1");
+
+        await sut.UpdateAgentFieldAsync(new AgentId("agent-1"), "activeJobId", "run-fault");
+
+        var warning = sink.Events.Should().ContainSingle(e => e.Level == Serilog.Events.LogEventLevel.Warning).Subject;
+        warning.Exception.Should().NotBeNull("the Redis fault must be attached to the warning");
+        warning.Properties["Field"].ToString().Should().Contain("activeJobId");
+        warning.Properties["AgentId"].ToString().Should().Contain("agent-1");
+    }
 
     [Fact]
     public async Task UpdateAgentFieldAsync_WhenRedisFaults_DoesNotThrow()
@@ -1679,4 +1730,60 @@ internal sealed class HashSetFieldFaultingFakeRedisStore : IRedisStore
     public Task<bool> ExistsAsync(string key) => _inner.ExistsAsync(key);
     public Task<bool> PingAsync() => _inner.PingAsync();
     public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => _inner.ScriptEvaluateAsync(script, keys, values);
+}
+
+/// <summary>
+/// An <see cref="IRedisStore"/> decorator that holds <see cref="HashSetAsync"/> (the first write of
+/// <c>Register()</c>'s fire-and-forget registration) open until <see cref="ReleaseRegistrationWrite"/>
+/// is called, so tests can observe the registry while the registration write is in flight (issue #2144).
+/// </summary>
+internal sealed class RegistrationWriteBlockingFakeRedisStore : IRedisStore
+{
+    private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public FakeRedisStore Inner { get; } = new();
+
+    /// <summary>Completes once the registration's HashSetAsync is in flight.</summary>
+    public Task RegistrationWriteStarted => _started.Task;
+
+    public void ReleaseRegistrationWrite() => _release.TrySetResult();
+
+    public async Task HashSetAsync(string key, StackExchange.Redis.HashEntry[] fields)
+    {
+        _started.TrySetResult();
+        await _release.Task;
+        await Inner.HashSetAsync(key, fields);
+    }
+
+    public Task<bool> HashSetFieldAsync(string key, string field, string value) => Inner.HashSetFieldAsync(key, field, value);
+    public Task<bool> SetAsync(string key, string value, TimeSpan? expiry = null, StackExchange.Redis.When when = StackExchange.Redis.When.Always) => Inner.SetAsync(key, value, expiry, when);
+    public Task<string?> GetAsync(string key) => Inner.GetAsync(key);
+    public Task<bool> SetIfNotExistsAsync(string key, string value, TimeSpan expiry) => Inner.SetIfNotExistsAsync(key, value, expiry);
+    public Task<bool> DeleteAsync(string key) => Inner.DeleteAsync(key);
+    public Task<bool> ExpireAsync(string key, TimeSpan expiry) => Inner.ExpireAsync(key, expiry);
+    public Task<bool> ExpireAtAsync(string key, DateTimeOffset expiry) => Inner.ExpireAtAsync(key, expiry);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key) => Inner.HashGetAllAsync(key);
+    public Task<StackExchange.Redis.HashEntry[]> HashGetAllAsync(string key, CancellationToken ct) => Inner.HashGetAllAsync(key, ct);
+    public Task<long> SetAddAsync(string key, string value) => Inner.SetAddAsync(key, value);
+    public Task<long> SetRemoveAsync(string key, string value) => Inner.SetRemoveAsync(key, value);
+    public Task<string[]> SetMembersAsync(string key) => Inner.SetMembersAsync(key);
+    public Task<string[]> SetMembersAsync(string key, CancellationToken ct) => Inner.SetMembersAsync(key, ct);
+    public Task<long> SetCardinalityAsync(string key) => Inner.SetCardinalityAsync(key);
+    public Task<long> ListRightPushAsync(string key, string[] values) => Inner.ListRightPushAsync(key, values);
+    public Task ListTrimAsync(string key, long start, long stop) => Inner.ListTrimAsync(key, start, stop);
+    public Task<string[]> ListRangeAsync(string key, long start, long stop) => Inner.ListRangeAsync(key, start, stop);
+    public Task<bool> ExistsAsync(string key) => Inner.ExistsAsync(key);
+    public Task<bool> PingAsync() => Inner.PingAsync();
+    public Task<StackExchange.Redis.RedisResult> ScriptEvaluateAsync(string script, StackExchange.Redis.RedisKey[] keys, StackExchange.Redis.RedisValue[] values) => Inner.ScriptEvaluateAsync(script, keys, values);
+}
+
+/// <summary>Collects log events written through a test-local Serilog logger.</summary>
+internal sealed class LogEventCaptureSink : Serilog.Core.ILogEventSink
+{
+    private readonly System.Collections.Concurrent.ConcurrentQueue<Serilog.Events.LogEvent> _events = new();
+
+    public IReadOnlyCollection<Serilog.Events.LogEvent> Events => _events;
+
+    public void Emit(Serilog.Events.LogEvent logEvent) => _events.Enqueue(logEvent);
 }

@@ -29,9 +29,8 @@
             <h1>Overview</h1>
             <span class="cockpit-page-sub">Fleet status at a glance</span>
         </div>
+        <RefreshBar OnRefresh="RefreshDataAsync" StorageKey="autoRefresh.overview" />
     </div>
-
-    <AutoRefresh IntervalSeconds="10" OnTick="RefreshDataAsync" />
 
     <!-- loop status hero (Spec 049: the loop spans every project, so global roles only) -->
     @if (Access.HasGlobalRead)

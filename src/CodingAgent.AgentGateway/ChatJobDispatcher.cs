@@ -630,12 +630,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            // TODO [WARNING]: entry.WatcherCts.CancelAsync() can throw ObjectDisposedException if
-            // CleanupSession (which disposes WatcherCts) has already run on the watcher thread before
-            // this grace-period catch fires. The race window is widened by the new catch(Exception) fault
-            // path in ChatSessionWatcher which calls CleanupSession("faulted") earlier than the prior code.
-            // Fix: wrap CancelAsync() in try/catch(ObjectDisposedException).
-            // See review finding: DotNetSpecialist WARNING @ ChatJobDispatcher.cs:551.
+            // CleanupSession on the watcher thread disposes WatcherCts and can run before this
+            // grace-period catch (for example on ChatSessionWatcher's "faulted" path; issue #2202).
             try { await entry.WatcherCts.CancelAsync(); }
             catch (ObjectDisposedException) { /* WatcherCts already disposed by CleanupSession on the watcher thread — safe to ignore */ }
             activity?.SetTag(TagOutcome, "force_delete");

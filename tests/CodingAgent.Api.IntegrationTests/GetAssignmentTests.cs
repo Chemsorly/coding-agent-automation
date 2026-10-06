@@ -120,8 +120,10 @@ public sealed class GetAssignmentTests
         private readonly Func<JobDistributionRequest, PipelineProject, Task<JobDistributionRequest?>> _enrich;
         public int CallCount { get; private set; }
 
-        public FakeAssignmentEnricher(Func<JobDistributionRequest, PipelineProject, Task<JobDistributionRequest?>> enrich)
-            : base(Serilog.Log.Logger) // logger-only protected ctor; real deps unused (EnrichAsync overridden)
+        public FakeAssignmentEnricher(
+            Func<JobDistributionRequest, PipelineProject, Task<JobDistributionRequest?>> enrich,
+            Serilog.ILogger? logger = null)
+            : base(logger ?? Serilog.Log.Logger) // logger-only protected ctor; real deps unused (EnrichAsync overridden)
         {
             _enrich = enrich;
         }
@@ -1024,6 +1026,47 @@ public sealed class GetAssignmentTests
         okResult.Should().NotBeNull();
         okResult!.Value!.ProjectSecrets.Should().BeNull(
             "no secrets should be injected when the project is not found in the store");
+    }
+
+    [Fact]
+    public async Task GetAssignment_NonNullProjectId_ProjectNotFound_LogsWarningWithProjectAndWorkItem()
+    {
+        // ARRANGE: the project was deleted after the work item was queued (issue #2639)
+        var dbFactory = CreateDbFactory($"InjectSecrets-ProjectNotFoundWarning-{Guid.NewGuid():N}");
+        var projectStore = CreateProjectStore([], []);
+        var projectId = Guid.NewGuid();
+        var payloadJson = JsonSerializer.Serialize(MakeMinimalRequest() with { ProjectId = projectId }, PipelineJsonOptions.Default);
+        var id = await SeedWorkItemAsync(dbFactory, WorkItemStatus.Dispatched, payloadJson);
+
+        var sink = new CapturingSink();
+        var logger = new Serilog.LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(sink).CreateLogger();
+        var enricher = new FakeAssignmentEnricher((r, p) => Task.FromResult<JobDistributionRequest?>(r with
+        {
+            ProviderConfigs = [],
+            QualityGateConfigs = [],
+            ReviewerConfigs = [],
+            McpServers = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+        }), logger);
+
+        // ACT
+        await WorkItemAgentEndpoints.GetAssignment(id, dbFactory, projectStore, enricher);
+
+        // ASSERT: the run still starts without secrets, but operators can see why
+        var warning = sink.Events.Should().ContainSingle(e => e.Level == Serilog.Events.LogEventLevel.Warning,
+            "a missing project means the run goes out without ProjectSecrets, which must not be silent").Subject;
+        warning.Properties["ProjectId"].ToString().Should().Contain(projectId.ToString());
+        warning.Properties["JobId"].ToString().Should().Contain(id.ToString());
+    }
+
+    /// <summary>Collects log events written through a test-local Serilog logger.</summary>
+    private sealed class CapturingSink : Serilog.Core.ILogEventSink
+    {
+        private readonly System.Collections.Concurrent.ConcurrentBag<Serilog.Events.LogEvent> _events = new();
+
+        public IReadOnlyCollection<Serilog.Events.LogEvent> Events => _events;
+
+        public void Emit(Serilog.Events.LogEvent logEvent) => _events.Add(logEvent);
     }
 
     [Fact]

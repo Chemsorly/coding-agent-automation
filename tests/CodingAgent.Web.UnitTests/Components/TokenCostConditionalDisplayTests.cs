@@ -109,6 +109,8 @@ public class TokenCostConditionalDisplayTests : BunitContext
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
         Services.AddSingleton(new CockpitState());
+        // IJSRuntime is required by RefreshBar (injected via @inject IJSRuntime JS).
+        Services.AddSingleton(Mock.Of<IJSRuntime>());
     }
 
     private static Mock<IPipelineApiAgentClient> BuildEmptyAgentsMock()
