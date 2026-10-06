@@ -111,7 +111,9 @@ public sealed partial class WorkItemStatusTransitionService
         if (request.Status == WorkItemStatus.Running)
         {
             var recovered = await _transitionService.TryRecoverFromInfrastructureFailureAsync(
-                id, WorkItemStatus.Running, ct: ct);
+                id, WorkItemStatus.Running,
+                mutate: entity => ApplyStatusMutation(entity, request),
+                ct: ct);
             if (recovered)
                 return StatusTransitionOutcome.Transitioned;
             // false → not a recoverable race; fall through to TransitionDetailedAsync.
