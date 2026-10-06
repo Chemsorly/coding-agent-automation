@@ -403,15 +403,10 @@ public partial class QualityGateExecutor
             // hasQualityGateOutput=true and direct the agent to an empty quality-gates directory.
             // Fix: propagate a "files were written" flag from WriteGateOutput into GateResult.
             // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs
-            // NOTE [WARNING]: This call site re-derives hasQualityGateOutput independently instead of using
-            // the priorRetryErrors overload of BuildQualityGateRetryPrompt. As a result, the prior-attempt
-            // history section is never emitted in the main retry loop. If this omission is intentional
-            // (history section was noisy), document it; if accidental, switch to the priorRetryErrors
-            // overload and pass run.RetryErrors.ToArray().
-            // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:457
+            // The priorRetryErrors overload derives hasQualityGateOutput the same way and, from the
+            // second retry on, adds the "Prior attempt failures" history (issue #2364).
             var retryPromptSummary = BuildQualityGateRetryPrompt(report, pendingAttemptNum, config.MaxRetries,
-                hasQualityGateOutput: !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
-                    || report.Tests?.IsInfrastructureFailure == true));
+                run.RetryErrors.ToArray());
 
             run.ChatHistory.Enqueue(new ChatEntry
             {

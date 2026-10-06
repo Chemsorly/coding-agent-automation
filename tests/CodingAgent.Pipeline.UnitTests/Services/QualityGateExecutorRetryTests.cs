@@ -206,6 +206,42 @@ public class QualityGateExecutorRetryTests
             Times.Once);
     }
 
+    // ── Prior Attempt History — Retry Prompt Content (issue #2364) ───────────
+
+    [Fact]
+    public async Task SecondRetry_PromptContainsPriorAttemptFailures()
+    {
+        var config = CreateConfig(maxRetries: 3);
+        SetupValidatorAlwaysFails();
+        var fixPrompts = new List<string>();
+
+        _mockAgent.Setup(a => a.ExecuteAsync(
+                It.IsAny<AgentRequest>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, _, _) =>
+            {
+                if (req.Prompt.Contains("Quality gates failed (attempt"))
+                    fixPrompts.Add(req.Prompt);
+            })
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = AgentFixOutputLines,
+                Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 }
+            });
+
+        await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
+
+        fixPrompts.Should().HaveCountGreaterThanOrEqualTo(2);
+        fixPrompts[0].Should().NotContain("Prior attempt failures",
+            "the first retry has no earlier attempt to show");
+        fixPrompts[1].Should().Contain("Prior attempt failures",
+            "from the second retry on, the agent must see the earlier failures to spot a repeating pattern");
+        fixPrompts[1].Should().Contain("All prior attempts produced identical failures",
+            "identical failures across attempts point to infrastructure, not code");
+    }
+
     // ── Mixed Gate Results — Retry Prompt Content ────────────────────────────
 
     [Fact]
