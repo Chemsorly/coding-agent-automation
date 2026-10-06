@@ -243,8 +243,9 @@ public class RefreshBarComponentTests : BunitContext
             return (Task)restartMethod.Invoke(instance, null)!;
         });
 
-        // Wait for the first tick (up to 5 seconds at a 1-second interval).
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the first tick. The timer fires at 1s; 30s only bounds a hang, since the tick runs on the
+        // thread pool and a stalled test process can delay it by several seconds.
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(30)));
 
         completed.Should().Be(tcs.Task,
             "OnRefresh must fire automatically without any user interaction with the interval selector");
@@ -349,8 +350,8 @@ public class RefreshBarComponentTests : BunitContext
             return (Task)restartMethod.Invoke(instance, null)!;
         });
 
-        // Wait for the second call (up to 10 seconds — first tick throws, second tick should still fire).
-        var completed = await Task.WhenAny(secondCallTcs.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        // Wait for the second call (first tick throws, second tick should still fire at ~2s; 30s only bounds a hang).
+        var completed = await Task.WhenAny(secondCallTcs.Task, Task.Delay(TimeSpan.FromSeconds(30)));
 
         completed.Should().Be(secondCallTcs.Task,
             "auto-refresh loop must survive a transient callback exception and continue firing; " +
@@ -407,13 +408,13 @@ public class RefreshBarComponentTests : BunitContext
             return (Task)restartMethod.Invoke(instance, null)!;
         });
 
-        // Wait for the first tick (up to 5 seconds — the timer fires at 1s intervals).
-        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the first tick (the timer fires at 1s intervals; 30s only bounds a hang).
+        var completed = await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(30)));
 
         callCount.Should().BeGreaterThan(0,
             "auto-refresh timer must invoke OnRefresh at least once after the interval elapses; " +
             "a broken RunTickLoopAsync (e.g. the fire-and-forget removed) would leave callCount at 0");
-        completed.Should().Be(tcs.Task, "OnRefresh must fire within 5 seconds of a 1-second interval being set");
+        completed.Should().Be(tcs.Task, "OnRefresh must fire after a 1-second interval is set");
     }
 
     // ── StorageKey persistence tests ──────────────────────────────────────────
