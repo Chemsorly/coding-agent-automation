@@ -411,7 +411,11 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
                 // Non-fatal — do not abort the test if the pre-close screenshot fails.
             }
 
-            await Page.CloseAsync();
+            // Leave the page instead of closing it: both fire pagehide, whose sendBeacon to
+            // _blazor/disconnect disposes the circuit at once. CloseAsync can kill the renderer
+            // before the beacon goes out; the circuit then only counts as disconnected and is kept
+            // for the 3-minute DisconnectedCircuitRetentionPeriod, so DisposeAsync never runs in time.
+            await Page.GotoAsync("about:blank");
 
             // ── Assert: agent receives CancelChat within a short timeout ──────
             // TODO [WARNING]: DisposeK8sChatAsync only runs when _isChatActive && !string.IsNullOrEmpty
