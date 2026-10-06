@@ -70,7 +70,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
         {
             // 1. Clone brain repo
             Directory.CreateDirectory(workspacePath);
-            Logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}",
+            Logger.Information("Cloning brain repo for consolidation run {RunId} into {Workspace}", // NOSONAR S6664 — one progress log per consolidation phase
                 job.JobId, workspacePath);
 
             await RunWithTracingAsync("BrainConsolidation.Clone", job.JobId, async _ =>

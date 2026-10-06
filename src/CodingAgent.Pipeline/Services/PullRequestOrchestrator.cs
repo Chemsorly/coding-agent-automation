@@ -232,7 +232,7 @@ public sealed class PullRequestOrchestrator
         {
             // PR already exists for this branch (e.g., from a previous run that wasn't detected as rework).
             // Look up the existing PR via GetAgentPullRequestsAsync.
-            _logger.Information("Pipeline {RunId} draft PR already exists for branch {BranchName}, looking up existing PR",
+            _logger.Information("Pipeline {RunId} draft PR already exists for branch {BranchName}, looking up existing PR", // NOSONAR S6667 — expected "already exists" response; the message says so
                 run.RunId, run.BranchName);
 
             var existingPrs = await repoProvider.GetAgentPullRequestsAsync(run.IssueIdentifier, ct);
@@ -372,7 +372,7 @@ public sealed class PullRequestOrchestrator
         }
         catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
         {
-            _logger.Information("Pipeline {RunId} {Message}", run.RunId, noCommitLogMessage);
+            _logger.Information("Pipeline {RunId} {Message}", run.RunId, noCommitLogMessage); // NOSONAR S6667 — expected "No changes to commit"; the message says so
         }
 
         await repoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);

@@ -157,7 +157,7 @@ public partial class AgentPhaseExecutor
                 if (attempt < maxRetries)
                 {
                     var logException = ex.InnerException ?? ex;
-                    _logger.Warning(logException, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying",
+                    _logger.Warning(logException, "Pipeline {RunId} analysis attempt {Attempt}/{MaxAttempts} failed, retrying", // NOSONAR S6667 — logs the unwrapped inner exception on purpose
                         run.RunId, attempt + 1, maxRetries + 1);
                     run.ChatHistory.Enqueue(new ChatEntry
                     {

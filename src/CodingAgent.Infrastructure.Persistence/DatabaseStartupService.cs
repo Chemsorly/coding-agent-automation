@@ -116,7 +116,7 @@ public sealed class DatabaseStartupService
 
         if (migrateOnStartup)
         {
-            _logger.Information("Database:MigrateOnStartup is true — acquiring migration lock");
+            _logger.Information("Database:MigrateOnStartup is true — acquiring migration lock"); // NOSONAR S6664 — one log per migration step
 
             await using var lockHandle = await _lockProvider.AcquireAsync(MigrationLockKey, ct);
 

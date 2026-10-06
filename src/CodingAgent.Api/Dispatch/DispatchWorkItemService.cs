@@ -961,7 +961,7 @@ internal sealed class DispatchWorkItemService
             // PostgresDistributedLockProvider retries with pg_try_advisory_lock for up to 60s.
             // A timeout means another call has held the lock for that entire window (e.g. a slow
             // K8s API response). Return 503 — transient, the Scheduler should retry next cycle.
-            Log.Warning(
+            Log.Warning( // NOSONAR S6667 — expected lock timeout; the message says so
                 "DispatchPendingWorkItem: advisory lock acquisition timed out for selector {Selector} — returning 503",
                 LogSanitizer.SanitizeForLog(normalizedSelector));
             WorkDistributionTelemetry.RecordDispatchAttempt("transient", "lock_timeout");

@@ -198,7 +198,7 @@ public sealed partial class AgentHub
             // (unregistered provider type), HttpRequestException (provider network errors), etc.
             // OperationCanceledException is intentionally re-raised so the hub method respects
             // connection-abort cancellation.
-            _logger.Warning(
+            _logger.Warning(ex,
                 "RequestLabelChange fallback failed for job {JobId} (label={Label}): {Message} — label swap skipped",
                 SanitizeForLog(jobId), SanitizeForLog(newLabel), ex.Message);
         }

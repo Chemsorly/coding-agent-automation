@@ -52,7 +52,7 @@ public sealed class ReadinessDrainService : IHostedLifecycleService
         }
         catch (OperationCanceledException)
         {
-            _logger.Warning("Readiness drain delay was cancelled — proceeding with shutdown immediately");
+            _logger.Warning("Readiness drain delay was cancelled — proceeding with shutdown immediately"); // NOSONAR S6667 — expected cancellation; the message says so
         }
 
         _logger.Information("Readiness drain complete — proceeding with shutdown");

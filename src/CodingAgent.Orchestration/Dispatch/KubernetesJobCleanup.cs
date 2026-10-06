@@ -56,7 +56,7 @@ public sealed class KubernetesJobCleanup : IJobCleanupStrategy
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
         {
             // Job already deleted (e.g., by ReconciliationService race) — expected, not a warning
-            _logger.Debug(
+            _logger.Debug( // NOSONAR S6667 — expected 404; the message says so
                 "KubernetesJobCleanup: K8s Job for run {RunId} already deleted (404)",
                 runId);
         }

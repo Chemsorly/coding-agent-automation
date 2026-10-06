@@ -354,7 +354,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to re-register agent {AgentId} after initial retry pipeline, starting extended recovery", _agentId);
+            _logger.Error(ex, "Failed to re-register agent {AgentId} after initial retry pipeline, starting extended recovery", _agentId); // NOSONAR S6664 — Error starts extended recovery; the later Fatal reports that it failed
 
             var ct = _hostApplicationLifetime.ApplicationStopping;
             for (var i = 0; i < 3; i++)
@@ -374,7 +374,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
-                    _logger.Information("Extended re-registration cancelled during shutdown for agent {AgentId}", _agentId);
+                    _logger.Information("Extended re-registration cancelled during shutdown for agent {AgentId}", _agentId); // NOSONAR S6667 — expected shutdown cancellation; the message says so
                     // TODO [WARNING]: Consider TrySetCanceled() here instead of TrySetResult() to
                     // accurately signal waiters that registration did not complete due to shutdown.
                     // Using TrySetResult() suggests success to callers, which may then attempt hub

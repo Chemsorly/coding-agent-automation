@@ -339,7 +339,7 @@ internal static class RepositoryGitOperations
             {
                 var category = PushErrorClassifier.Classify(ex.Message);
                 var message = PushErrorClassifier.GetActionableMessage(category, branchName?.Value);
-                Log.Error("Push failed for branch {BranchName}: {PushError} (category={Category})",
+                Log.Error(ex, "Push failed for branch {BranchName}: {PushError} (category={Category})",
                     branchName?.Value ?? "unknown", ex.Message, category);
 
                 switch (category)

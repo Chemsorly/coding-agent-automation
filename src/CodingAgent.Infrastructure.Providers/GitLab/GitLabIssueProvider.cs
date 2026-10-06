@@ -321,7 +321,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
-            Log.Warning("Issue #{IssueIid} not found when checking state in project {ProjectId}", iid, ProjectId);
+            Log.Warning("Issue #{IssueIid} not found when checking state in project {ProjectId}", iid, ProjectId); // NOSONAR S6667 — expected 404; the message says so
             return false;
         }
     }

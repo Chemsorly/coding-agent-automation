@@ -111,7 +111,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            _logger.Information("Orphaned label recovery service stopping");
+            _logger.Information("Orphaned label recovery service stopping"); // NOSONAR S6667 — expected shutdown cancellation; the message says so
         }
     }
 

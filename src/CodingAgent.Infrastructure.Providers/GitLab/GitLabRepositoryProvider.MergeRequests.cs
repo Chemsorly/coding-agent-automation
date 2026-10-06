@@ -152,7 +152,7 @@ public partial class GitLabRepositoryProvider
         catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             // Branch already gone — treat as success (no-op)
-            Log.Debug("Housekeeping: branch {BranchName} not found in project {ProjectId} — already deleted",
+            Log.Debug("Housekeeping: branch {BranchName} not found in project {ProjectId} — already deleted", // NOSONAR S6667 — expected 404; the message says so
                 branchName, ProjectId);
         }
     }
