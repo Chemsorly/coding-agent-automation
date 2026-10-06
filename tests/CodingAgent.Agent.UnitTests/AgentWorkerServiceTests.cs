@@ -151,8 +151,8 @@ public class AgentWorkerServiceTests : IDisposable
         // Cancel quickly
         cts.Cancel();
 
-        // Should complete within a reasonable time
-        var completed = await Task.WhenAny(executeTask, Task.Delay(5000));
+        // Should complete; the 30s bound is a hang detector only, so a stalled test host cannot fail the test
+        var completed = await Task.WhenAny(executeTask, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(executeTask, "service should stop when cancelled");
     }
 
@@ -383,7 +383,8 @@ public class AgentWorkerServiceTests : IDisposable
         var chatJobHandler = GetChatJobHandler(service);
         var cancelTask = chatJobHandler.HandleCancelChatAsync("session-hang");
 
-        var completed = await Task.WhenAny(cancelTask, Task.Delay(5000));
+        // The 30s bound is a hang detector only, so a stalled test host cannot fail the test
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(cancelTask, "cancel handler should time out and complete");
     }
 

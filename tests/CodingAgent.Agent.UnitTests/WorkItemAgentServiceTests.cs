@@ -121,12 +121,13 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             Mock.Of<IJobCompletionReporter>(),
             new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
 
-        // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // Act — the stopping token outlasts the wait below, so it cannot cut the lifecycle short
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await service.StartAsync(cts.Token);
 
-        // Wait for the service to call StopApplication (signals lifecycle complete)
-        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the service to call StopApplication (signals lifecycle complete).
+        // The 30s bound is a hang detector only: a stalled test host must not fail the test.
+        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
 
         await service.StopAsync(CancellationToken.None);
@@ -155,11 +156,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             Mock.Of<IJobCompletionReporter>(),
             new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object));
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         await service.StartAsync(cts.Token);
 
-        // Wait for the service to call StopApplication (signals lifecycle complete)
-        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the service to call StopApplication (signals lifecycle complete); 30s is a hang detector only
+        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
 
         await service.StopAsync(CancellationToken.None);

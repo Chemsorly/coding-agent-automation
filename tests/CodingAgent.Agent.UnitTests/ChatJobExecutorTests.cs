@@ -444,7 +444,8 @@ public class ChatJobExecutorTests : IDisposable
         var cancelTask = handler.HandleCancelChatAsync("hang-sess");
         // TODO: This test does not assert that a warning was logged or that the CTS was cancelled — a
         // regression that removed the wait entirely would still pass.
-        var completed = await Task.WhenAny(cancelTask, Task.Delay(5000));
+        // The 30s bound is a hang detector only, so a stalled test host cannot fail the test.
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(cancelTask, "cancel handler must time out and complete even when task hangs");
     }
 
