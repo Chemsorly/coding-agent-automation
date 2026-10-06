@@ -462,6 +462,62 @@ jobs:
             push_signed_manifest "${{ matrix.tag }}-${VERSION}"
           fi
 
+  # Container image scanning — Trivy scans every pushed image for HIGH/CRITICAL CVEs that have a
+  # fix and uploads the result to code scanning (Security tab), one category per image. Report
+  # only: findings never fail the job. It scans the SHA tag from the registry, so no image is
+  # passed between jobs. It is a job of its own with no secrets and no id-token, so a compromised
+  # scanner can neither read the registry credentials nor sign images. The Trivy action and
+  # releases were hijacked through moved tags (CVE-2026-33634), hence the digest pin.
+  image-scan:
+    needs: [docker-push]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      # Upload of the scan result to code scanning.
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tag: coding-agent-web }
+          - { tag: coding-agent-api }
+          - { tag: coding-agent-jobcontroller }
+          - { tag: coding-agent-scheduler }
+          - { tag: coding-agent-kiro }
+          - { tag: coding-agent-opencode }
+          - { tag: coding-agent-claude }
+
+    steps:
+      # Trivy reads .trivyignore from the checkout; upload-sarif needs the repository.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve image reference
+        id: image
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "ref=docker.io/chemsorly/coding-agent:${{ matrix.tag }}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      # amd64 only: both architectures build from the same Dockerfile and package sources, so their
+      # findings are near-identical, and every scan pulls the whole image.
+      - name: Scan ${{ matrix.tag }}
+        uses: docker://aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa
+        with:
+          args: >-
+            image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed
+            --platform linux/amd64 --image-src remote --timeout 20m --no-progress
+            --format sarif --output trivy.sarif
+            ${{ steps.image.outputs.ref }}
+
+      - name: Upload scan result to code scanning
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-${{ matrix.tag }}
+
   # Chart publishing — only on tag pushes (release)
   publish-chart:
     needs: [build-and-test, helm-lint, docker-push]
