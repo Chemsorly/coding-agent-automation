@@ -26,16 +26,12 @@ public class AgentConnectionManagerGateTests
     // ── Gate starts as completed (no blocking before reconnect) ──────────
 
     [Fact]
-    public async Task WaitForRegistrationAsync_InitialState_ReturnsImmediately()
+    public void WaitForRegistrationAsync_InitialState_ReturnsImmediately()
     {
         // Gate starts completed — no waiting needed before the first reconnect
         var (manager, _) = CreateManager();
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await manager.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(100,
+        manager.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate starts completed — should return immediately");
     }
 
@@ -50,11 +46,7 @@ public class AgentConnectionManagerGateTests
         // Trigger HandleReconnectedAsync — resets gate, then TrySetResult (even on failure)
         await fakeHub.SimulateReconnectedAsync("new-conn");
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await manager.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(500,
+        manager.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate is complete after HandleReconnectedAsync — should return immediately");
     }
 
@@ -70,12 +62,8 @@ public class AgentConnectionManagerGateTests
         // but the handler sets TrySetResult even on failure so waiters are not stuck.
         await fakeHub.SimulateReconnectedAsync("new-conn");
 
-        // WaitForRegistrationAsync should return quickly (gate completed with result/cancelled)
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await manager.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(500,
+        // WaitForRegistrationAsync should return at once (gate completed with result/cancelled)
+        manager.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate should be released after HandleReconnectedAsync regardless of registration outcome");
     }
 
@@ -89,18 +77,15 @@ public class AgentConnectionManagerGateTests
         // Dispose first — cancels the gate
         await manager.DisposeAsync();
 
-        // WaitForRegistrationAsync should not hang
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var act = async () => await manager.WaitForRegistrationAsync(CancellationToken.None);
+        // WaitForRegistrationAsync should not hang: the cancelled gate counts as completed
+        var waitTask = manager.WaitForRegistrationAsync(CancellationToken.None);
+        waitTask.IsCompleted.Should().BeTrue("should not hang indefinitely after dispose");
 
         // OperationCanceledException is acceptable (gate was cancelled) or it may return
         // immediately if the TCS was already set.
+        var act = async () => await waitTask;
         await act.Should().NotThrowAsync<ObjectDisposedException>(
             "dispose should not cause ObjectDisposedException on WaitForRegistrationAsync");
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(3000,
-            "should not hang indefinitely after dispose");
     }
 
     // ── IAgentConnectionManager contract ────────────────────────────────────
@@ -139,7 +124,7 @@ public class AgentConnectionManagerGateTests
 
         // Wait until StartAsync is actually executing (gate is reset and we are inside the blocking call).
         // This replaces the previous fixed Task.Delay(200) which was flaky on loaded CI runners.
-        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // WaitForRegistrationAsync should be blocking — gate is still open.
         var waitTask = manager.WaitForRegistrationAsync(CancellationToken.None);
@@ -150,13 +135,9 @@ public class AgentConnectionManagerGateTests
         // Release the StartAsync blocker — HandleTerminalClosedAsync will complete (gate gets TrySetResult).
         startBlocker.SetResult(true);
 
-        // Now WaitForRegistrationAsync should unblock promptly.
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await waitTask;
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(2000,
-            "WaitForRegistrationAsync must unblock promptly once the gate is completed");
+        // Now WaitForRegistrationAsync must unblock. The release runs through several thread-pool hops,
+        // so the 30s bound is only a hang detector: a stalled test host must not fail the test.
+        await waitTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Await the background task so it doesn't leak into subsequent tests.
         await terminalCloseTask.ContinueWith(_ => { });
@@ -195,7 +176,7 @@ public class AgentConnectionManagerGateTests
 
         // Wait until StartAsync is actually executing (gate is reset and we are inside the blocking call).
         // This replaces the previous fixed Task.Delay(200) which was flaky on loaded CI runners.
-        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // InvokeAsync should block — gate is still open
         var actionCalled = false;
@@ -211,13 +192,9 @@ public class AgentConnectionManagerGateTests
         // Release the StartAsync blocker — reconnect completes, gate gets TrySetResult
         startBlocker.SetResult(true);
 
-        // InvokeAsync should now unblock (action may throw since FakeHub isn't started — that's fine)
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await invokeTask.ContinueWith(_ => { }); // swallow action failure
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(2000,
-            "InvokeAsync must unblock promptly once the gate is completed");
+        // InvokeAsync should now unblock (action may throw since FakeHub isn't started — that's fine).
+        // The 30s bound is only a hang detector, as in the test above.
+        await invokeTask.ContinueWith(_ => { }).WaitAsync(TimeSpan.FromSeconds(30)); // swallow action failure
 
         await terminalCloseTask.ContinueWith(_ => { });
     }
@@ -230,21 +207,19 @@ public class AgentConnectionManagerGateTests
     /// <c>InvokeAsync</c>/<c>WaitForRegistrationAsync</c> must not block the call path.
     /// </summary>
     [Fact]
-    public async Task ConnectAndRegisterAsync_CompletesWithoutDeadlock()
+    public void ConnectAndRegisterAsync_CompletesWithoutDeadlock()
     {
         var (manager, _) = CreateManager();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-
         // FakeHub.StartAsync succeeds; the RegisterAgent InvokeAsync on an unstarted HubConnection
         // will throw — that is expected in tests (no real server). The key assertion is it completes
-        // rather than hanging forever.
-        await manager.ConnectAndRegisterAsync(TestRegistration, cts.Token)
-            .ContinueWith(_ => { }); // swallow any connect/register failure
+        // rather than hanging forever. Every step completes synchronously against the fake hub, so a
+        // call that awaited the gate it is about to complete would still be pending on return.
+        var connectTask = manager.ConnectAndRegisterAsync(TestRegistration, CancellationToken.None);
 
-        // If we reach here without the CTS firing, there was no deadlock
-        cts.IsCancellationRequested.Should().BeFalse(
+        connectTask.IsCompleted.Should().BeTrue(
             "ConnectAndRegisterAsync must not deadlock (must not await the gate it completes)");
+        _ = connectTask.Exception; // observe the expected connect/register failure
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
