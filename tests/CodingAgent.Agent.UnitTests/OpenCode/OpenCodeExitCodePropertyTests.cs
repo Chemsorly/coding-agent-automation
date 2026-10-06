@@ -29,7 +29,7 @@ public class OpenCodeExitCodePropertyTests
     /// **Validates: Requirements 1.3, 3.5**
     /// </summary>
     [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
-    public async void SuccessfulResponse_ReturnsExitCodeZero(SuccessOutcome outcome)
+    public async Task SuccessfulResponse_ReturnsExitCodeZero(SuccessOutcome outcome)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -56,7 +56,7 @@ public class OpenCodeExitCodePropertyTests
     /// **Validates: Requirements 3.6, 10.2**
     /// </summary>
     [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
-    public async void HttpErrorResponse_ReturnsExitCodeOne(HttpErrorOutcome outcome)
+    public async Task HttpErrorResponse_ReturnsExitCodeOne(HttpErrorOutcome outcome)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -86,7 +86,7 @@ public class OpenCodeExitCodePropertyTests
     /// **Validates: Requirements 3.9**
     /// </summary>
     [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
-    public async void TimeoutExpiration_ReturnsExitCode124(TimeoutOutcome outcome)
+    public async Task TimeoutExpiration_ReturnsExitCode124(TimeoutOutcome outcome)
     {
         // Arrange
         // Use a custom handler that delays the message endpoint response
@@ -116,7 +116,7 @@ public class OpenCodeExitCodePropertyTests
     /// **Validates: Requirements 10.2**
     /// </summary>
     [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
-    public async void MalformedJsonResponse_ReturnsExitCodeOne(MalformedJsonOutcome outcome)
+    public async Task MalformedJsonResponse_ReturnsExitCodeOne(MalformedJsonOutcome outcome)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -146,7 +146,7 @@ public class OpenCodeExitCodePropertyTests
     /// **Validates: Requirements 3.3**
     /// </summary>
     [Property(Arbitrary = [typeof(ExitCodeArbitrary)], MaxTest = 20)]
-    public async void SessionCreationFailure_ReturnsExitCodeOne(SessionFailureOutcome outcome)
+    public async Task SessionCreationFailure_ReturnsExitCodeOne(SessionFailureOutcome outcome)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();

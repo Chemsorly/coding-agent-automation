@@ -29,7 +29,7 @@ public class OpenCodeRequestBodyPropertyTests
     /// **Validates: Requirements 1.2, 3.4**
     /// </summary>
     [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 20)]
-    public async void RequestBody_ContainsExactPromptInCorrectStructure(PromptInput input)
+    public async Task RequestBody_ContainsExactPromptInCorrectStructure(PromptInput input)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -88,7 +88,7 @@ public class OpenCodeRequestBodyPropertyTests
     /// **Validates: Requirements 1.2, 3.4**
     /// </summary>
     [Property(Arbitrary = [typeof(PromptStringArbitrary)], MaxTest = 20)]
-    public async void RequestBody_OmitsModelField(PromptInput input)
+    public async Task RequestBody_OmitsModelField(PromptInput input)
     {
         // Arrange — create context WITH a model configured (model is server-side only, not sent in request)
         var modelName = "anthropic/claude-sonnet-4-20250514";
