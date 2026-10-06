@@ -789,7 +789,9 @@ public static partial class PromptBuilder
             sb.AppendLine();
             sb.AppendLine("The branch was rebased onto the latest main. Main is authoritative: the following " +
                 "files had conflicts, so they were **force-resolved by keeping main's version** and your " +
-                "branch's changes to them were dropped. The files contain no conflict markers.");
+                "branch's conflicting changes to them were dropped. Changes from your other commits that " +
+                "applied cleanly may still be in them. Where your branch had renamed a file main changed, the " +
+                "renamed copy was removed and both names are listed. The files contain no conflict markers.");
             sb.AppendLine();
             foreach (var file in conflictFiles)
                 sb.AppendLine($"- `{file}`");
@@ -801,6 +803,8 @@ public static partial class PromptBuilder
             sb.AppendLine("Re-apply only what this issue still needs, on top of main's version:");
             sb.AppendLine("- Do not re-apply a change that is outside this issue's scope.");
             sb.AppendLine("- Do not re-apply a change that main has since made in another way. Keep main's way.");
+            sb.AppendLine("- Do not restore a file, or part of one, from your branch's earlier commits or its `origin/` " +
+                "copy: that reverts main's changes. Edit the files as they are now.");
             sb.AppendLine();
         }
         else if (conflictFiles.Count > 0)
@@ -960,6 +964,7 @@ public static partial class PromptBuilder
             sb.AppendLine("since your branch point, and main's commits that touched the file.");
             sb.AppendLine("Your analysis must decide what to re-apply on top of main: only what this issue still needs.");
             sb.AppendLine("Plan to drop changes that are outside this issue's scope, and changes main has since made in another way.");
+            sb.AppendLine("Plan the re-application as edits to main's version, never by restoring files from your branch's earlier commits.");
         }
         else
         {
