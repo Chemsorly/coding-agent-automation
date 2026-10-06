@@ -483,7 +483,16 @@ public class AssignmentEnricher
                 return message;
 
             var project = await store.GetProjectByIdAsync(request.ProjectId.Value.ToString(), ct);
-            if (project?.Secrets is { Count: > 0 })
+            if (project is null)
+            {
+                // The project was deleted after the work item was queued (issue #2639).
+                _logger.Warning(
+                    "InjectProjectSecretsAsync: project {ProjectId} not found — WorkItem {JobId} will run without ProjectSecrets",
+                    request.ProjectId.Value, message.JobId);
+                return message;
+            }
+
+            if (project.Secrets is { Count: > 0 })
                 return message with { ProjectSecrets = project.Secrets };
 
             return message;

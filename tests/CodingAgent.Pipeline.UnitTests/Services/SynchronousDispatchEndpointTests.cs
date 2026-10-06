@@ -1802,31 +1802,12 @@ public sealed class DispatchPendingWorkItemEndpointTests
     // ── Test 18: Profile fallback — projection.AgentSelector must be the canonical selector ──
 
     /// <summary>
-    /// Characterization test for issue #2777 (selector-key mismatch on profile-fallback path).
-    ///
-    /// When <c>DispatchPendingWorkItem</c> resolves a template via the profile fallback (item has
-    /// partial selector "dotnet", profile expands it to canonical "dotnet,kiro"), the
-    /// <see cref="PendingWorkItemProjection.AgentSelector"/> written into the context must equal the
-    /// canonical selector "dotnet,kiro" — not the raw normalized input "dotnet".
-    ///
-    /// Observability: after a successful dispatch, the in-memory concurrency dictionary passed to
-    /// <see cref="DispatchLifecycleService.ExecuteDispatchLifecycleAsync"/> is mutated by
-    /// <c>FinalizeDispatchAsync</c>, which keys the increment on <c>item.AgentSelector</c>.
-    /// If the projection carries the wrong key ("dotnet"), the increment lands under "dotnet"; if
-    /// it carries the correct key ("dotnet,kiro"), it lands under "dotnet,kiro". We assert the
-    /// increment landed under the canonical key.
-    ///
-    /// This test fails against the current (broken) code because <c>projection.AgentSelector</c>
-    /// is set to <c>normalizedSelector</c> ("dotnet") rather than the resolved canonical selector.
-    /// It passes after the fix that propagates <c>effectiveSelector</c>.
+    /// Issue #2777: when <c>DispatchPendingWorkItem</c> resolves a template via the profile fallback
+    /// (item selector "dotnet", profile labels "dotnet,kiro"), the dispatched item carries the canonical
+    /// selector "dotnet,kiro", the same key the concurrency gate checks, not the partial input "dotnet".
+    /// <see cref="JobSpecBuilder"/> copies <c>item.AgentSelector</c> into the Job's
+    /// <c>caa/agent-selector</c> label (commas become dots), so the label is the observable.
     /// </summary>
-    // TODO [WARNING]: This test does NOT actually assert that projection.AgentSelector equals the
-    // canonical selector "dotnet,kiro". It only verifies that dispatch succeeded (200 OK),
-    // LoadAgentProfilesAsync was called once, and CreateJobAsync was called once — all of which
-    // would also pass against the pre-fix broken code. The primary acceptance criterion for the
-    // projection.AgentSelector value (criterion 1) is covered by Test 19 instead. Consider either
-    // removing this test (its coverage is a subset of Test 19's) or restructuring it to assert
-    // the stored AgentSelector on the dispatched WorkItemEntity equals "dotnet,kiro".
     [Fact]
     public async Task DispatchPendingWorkItem_ProfileFallback_SetsProjectionAgentSelectorToCanonicalSelector()
     {
@@ -1850,69 +1831,33 @@ public sealed class DispatchPendingWorkItemEndpointTests
                 }
             });
 
+        var capturedJobs = new List<k8s.Models.V1Job>();
         var k8sMock = new Mock<IKubernetesJobClient>();
         k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<k8s.Models.V1Job, string, CancellationToken>((job, _, _) => capturedJobs.Add(job))
             .Returns(Task.CompletedTask);
         var lifecycle = CreateLifecycleService(k8sMock.Object, ["pvc-0"]);
         var resolver = CreateTemplateResolver(templateStore, profileStoreMock.Object);
         var lockProvider = CreateNoOpLockProvider();
 
-        // We observe the projection.AgentSelector value indirectly via the concurrencyBySelector
-        // dictionary that DispatchPendingWorkItem constructs and passes to ExecuteDispatchLifecycleAsync.
-        // After a successful dispatch, FinalizeDispatchAsync increments concurrencyBySelector[item.AgentSelector].
-        // Because DispatchPendingWorkItem uses the same dictionary reference throughout, we can inspect
-        // it by building our own and observing it post-dispatch via a wrapping approach.
-        //
-        // Simpler approach: verify via the DispatchLifecycleContext.ConcurrencyBySelector.
-        // We seed ZERO active items in the DB, so the concurrency map starts empty.
-        // After dispatch: the increment must be keyed on "dotnet,kiro" (canonical), not "dotnet" (partial).
-        // We can't directly read the map from outside the endpoint, but we CAN verify the net effect:
-        // a second dispatch attempt for a new item with selector "dotnet" and maxConcurrent=1 will be
-        // blocked only if the increment was recorded under the key that the gate checks.
-
-        // Act: dispatch the first item
+        // Act
         var result = await CreateDispatchService(templateStore).DispatchPendingWorkItemAsync(
             entity.Id, dbFactory, lifecycle, resolver, lockProvider, CancellationToken.None);
 
-        // Assert: dispatch succeeded
+        // Assert: dispatch succeeded via the profile fallback
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>>(
             "profile fallback must resolve the template and dispatch the item");
         var ok18 = (Microsoft.AspNetCore.Http.HttpResults.Ok<DispatchPendingResponse>)result;
         ok18.Value!.Dispatched.Should().BeTrue();
-
-        // Assert: the profile fallback path was actually entered (not the direct-resolve path)
         profileStoreMock.Verify(
             ps => ps.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()),
             Times.Once,
             "LoadAgentProfilesAsync must be called exactly once — confirming the profile-fallback path was taken, not the direct-resolve path");
 
-        // Assert: the K8s job was created with the canonical selector embedded in the job spec context.
-        // JobSpecBuilder.Build receives ctx.AgentSelector = item.AgentSelector. After the fix,
-        // item.AgentSelector == "dotnet,kiro". We verify by capturing the V1Job spec passed to
-        // CreateJobAsync and checking its label value.
-
-        // TODO [WARNING]: The capture setup below is dead code — CreateJobAsync was already called
-        // during the Act step above, before this re-setup runs. The callback will never fire and
-        // capturedJobs will always be empty. Any assertion added on capturedJobs would vacuously pass
-        // (false negative). The canonical-selector assertion is covered by Test 19 instead.
-        // This block should either be removed or the test restructured to capture before the Act step.
-        var capturedJobs = new List<k8s.Models.V1Job>();
-        k8sMock.Setup(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<k8s.Models.V1Job, string, CancellationToken>((job, _, _) => capturedJobs.Add(job))
-            .Returns(Task.CompletedTask);
-
-        // For the AgentSelector assertion, we dispatch a second item to get a fresh K8s call.
-        // (The first call already completed above; re-using it here would require a second dispatch.)
-        // Instead: verify via the concurrencyBySelector increment — the most direct observable.
-        // Seed a second pending item with the same partial selector "dotnet" and maxConcurrent: 1.
-        // If the first dispatch incremented under "dotnet,kiro", the second should be blocked (409)
-        // when we use a fresh template store with maxConcurrent: 1 and seed ONE active item under "dotnet,kiro".
-        // This is Test 19. For THIS test, we verify only via profileStoreMock.Verify (which confirms
-        // the fallback was used) and that dispatch succeeded (i.e., the template was resolved).
-        // The canonical-selector increment assertion is covered by Test 19.
-        k8sMock.Verify(k => k.CreateJobAsync(It.IsAny<k8s.Models.V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
-            Times.Once,
-            "K8s job must have been created exactly once on the profile-fallback path");
+        // Assert: the Job carries the canonical selector
+        capturedJobs.Should().ContainSingle("K8s job must have been created exactly once on the profile-fallback path");
+        capturedJobs[0].Metadata.Labels["caa/agent-selector"].Should().Be("dotnet.kiro",
+            "the dispatched item's AgentSelector must be the canonical profile selector 'dotnet,kiro', not the partial 'dotnet'");
     }
 
     // ── Test 19: Profile fallback — concurrency gate uses canonical selector ──

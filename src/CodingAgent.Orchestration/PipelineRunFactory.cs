@@ -102,7 +102,7 @@ public static class PipelineRunFactory
             // NOTE: InitiatedBy null fallback — "rehydrated" is a reasonable default for
             // dispatch callers that don't supply an explicit value. Each call site can pass
             // its own fallback via request.InitiatedBy if more specificity is needed.
-            InitiatedBy = request.InitiatedBy ?? "rehydrated",
+            InitiatedBy = request.InitiatedBy ?? InitiatedByConstants.Rehydrated,
             AgentId = agentId,
             StartedAt = startedAt,
             ReviewPrBranchName = request.LinkedPullRequest?.BranchName ?? string.Empty,

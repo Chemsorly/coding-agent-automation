@@ -133,6 +133,30 @@ public sealed class ConsolidationServiceTests
     }
 
     [Fact]
+    public async Task TriggerAsync_StartedAtUtc_IsTakenBeforeTheWorkItemIsDistributed()
+    {
+        // Issue #3209: the API call behind DistributeAsync can take seconds under load, so the run's
+        // start time is taken before it, not when it returns.
+        DateTimeOffset? distributionStartedAt = null;
+        _mockWorkDistributor
+            .Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                distributionStartedAt = DateTimeOffset.UtcNow;
+                await Task.Delay(200);
+                return new DistributionResult(Success: true, WorkItemId: "wi-started-at", ErrorMessage: null);
+            });
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        distributionStartedAt.Should().NotBeNull();
+        run.StartedAtUtc.Should().BeOnOrBefore(distributionStartedAt.Value,
+            "the run starts when it is handed to the distributor, not when the distributor returns");
+    }
+
+    [Fact]
     public async Task TriggerAsync_WithNoDefaultRequiredAgentLabels_CreatesPendingRun()
     {
         // When DefaultRequiredAgentLabels is not configured and no SelectorResolver is injected,

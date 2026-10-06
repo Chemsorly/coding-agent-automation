@@ -447,6 +447,37 @@ public sealed class PostStatusIdempotencyTests
     }
 
     /// <summary>
+    /// Regression test for issue #2459: recovering a timed-out WorkItem must not drop the late
+    /// Running report itself. Its AgentId and BranchName are persisted like on the normal path.
+    /// </summary>
+    [Fact]
+    public async Task WhenItemIsFailedWithTimeoutReason_PostStatusRunning_PersistsTheReportedFields()
+    {
+        var opts = CreateDbOptions();
+        var item = await SeedWorkItemAsync(opts, WorkItemStatus.Failed,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.Timeout);
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Running,
+            AgentId = "agent-late-7",
+            BranchName = "feature/auto-2459-late-running",
+        };
+
+        var result = await WorkItemAgentEndpoints.PostStatus(
+            item.Id, request, CreateTransitionService(opts), new Mock<IRunLifecycleManager>().Object,
+            dbFactory: CreateDbFactory(opts));
+
+        result.Should().BeOfType<Ok>();
+        await using var db = new TestPipelineDbContext(opts);
+        var updated = await db.WorkItems.FindAsync(item.Id);
+        updated!.Status.Should().Be(WorkItemStatus.Running);
+        updated.AssignedAgentId.Should().Be("agent-late-7",
+            "the recovered Running report names the agent that is actually running the item");
+        updated.BranchName.Should().Be("feature/auto-2459-late-running");
+    }
+
+    /// <summary>
     /// Regression test for issue #2459.
     /// PostStatus(Running) on a WorkItem in Failed state with FailureReason=AgentError must
     /// continue to return HTTP 400 — AgentError is not a recoverable race-induced failure and

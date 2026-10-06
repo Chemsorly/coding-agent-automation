@@ -369,6 +369,10 @@ public partial class QualityGateExecutor
         // produces stale entries in the failure-feedback prompt and draft PR summary that were never
         // associated with actual fix attempts. Consider gating the enqueue on a "real work was done"
         // condition, or filtering stale entries before building the failure-feedback prompt.
+        // The retry prompt's history uses attemptFailures instead: one entry per fix attempt, so a
+        // transient or session-restart iteration (same attempt number again) adds nothing to it.
+        var attemptFailures = new List<string>();
+        var lastRecordedAttempt = 0;
         while (!report.AllPassed && run.RetryCount < config.MaxRetries)
         {
             // Compute the pending attempt number for logging/prompts without modifying run.RetryCount
@@ -379,6 +383,11 @@ public partial class QualityGateExecutor
             var pendingAttemptNum = run.RetryCount + 1;
             var errorSummary = BuildQualityGateErrorSummary(report);
             run.RetryErrors.Enqueue(errorSummary);
+            if (pendingAttemptNum != lastRecordedAttempt)
+            {
+                attemptFailures.Add(errorSummary);
+                lastRecordedAttempt = pendingAttemptNum;
+            }
 
             _logger.Information("Pipeline {RunId} quality gates failed, auto-retry {RetryCount}/{MaxRetries}", run.RunId, pendingAttemptNum, config.MaxRetries);
             callbacks.EmitOutputLine($"🔄 Quality gates failed, retrying (attempt {pendingAttemptNum}/{config.MaxRetries})");
@@ -403,15 +412,10 @@ public partial class QualityGateExecutor
             // hasQualityGateOutput=true and direct the agent to an empty quality-gates directory.
             // Fix: propagate a "files were written" flag from WriteGateOutput into GateResult.
             // See review finding: Correctness WARNING — QualityGateExecutor.RetryLoop.cs
-            // NOTE [WARNING]: This call site re-derives hasQualityGateOutput independently instead of using
-            // the priorRetryErrors overload of BuildQualityGateRetryPrompt. As a result, the prior-attempt
-            // history section is never emitted in the main retry loop. If this omission is intentional
-            // (history section was noisy), document it; if accidental, switch to the priorRetryErrors
-            // overload and pass run.RetryErrors.ToArray().
-            // See review finding: DotNetSpecialist WARNING — QualityGateExecutor.RetryLoop.cs:457
+            // The priorRetryErrors overload derives hasQualityGateOutput the same way and, from the
+            // second retry on, adds the "Prior attempt failures" history (issue #2364).
             var retryPromptSummary = BuildQualityGateRetryPrompt(report, pendingAttemptNum, config.MaxRetries,
-                hasQualityGateOutput: !(report.QgcResults.Any(r => r.Tests?.IsInfrastructureFailure == true)
-                    || report.Tests?.IsInfrastructureFailure == true));
+                attemptFailures);
 
             run.ChatHistory.Enqueue(new ChatEntry
             {

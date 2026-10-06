@@ -3,6 +3,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -15,7 +16,7 @@ namespace CodingAgent.Agent.Executors;
 /// Executes refactoring detection: clones the code repo, runs the holistic analysis
 /// agent prompt, parses proposals from the workspace, and creates GitHub issues.
 /// </summary>
-public sealed class RefactoringExecutor : ConsolidationExecutorBase
+public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
 {
     protected override string ExecutorName => "Refactoring detection";
 
@@ -704,7 +705,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     {
         var createdIssues = new List<CreatedIssueInfo>();
         string? firstFailureHint = null;
-        var proposalsToProcess = proposals.Take(maxProposals);
+        var proposalsToProcess = TopologicalSortProposals(proposals.Take(maxProposals).ToList());
         var labels = autoDispatch
             ? new[] { AgentLabels.Generated, AgentLabels.Next }
             : new[] { AgentLabels.Generated };
@@ -733,14 +734,12 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                     labels,
                     ct);
 
+                // DependsOn entries use the raw titles from the same JSON array; the sanitized
+                // title (the one the tracker shows) is registered too (issue #1450).
                 resolver.Register(proposal.Title, result.Identifier, result.Url, SingleTrackerProviderId);
+                if (!string.Equals(proposal.Title.Trim(), sanitizedTitle, StringComparison.OrdinalIgnoreCase))
+                    resolver.Register(sanitizedTitle, result.Identifier, result.Url, SingleTrackerProviderId);
 
-                // TODO: resolver.Register uses the raw proposal.Title while CreateIssueAsync is
-                // called with sanitizedTitle — the issue in the tracker is created under the
-                // sanitized title, but the resolver key is the raw title. This is internally
-                // consistent (DependsOn references from sibling proposals also use raw titles), but
-                // means a DependsOn entry that matches the sanitized title instead of the raw title
-                // will silently fail to resolve. No test currently covers this mismatch scenario.
                 // TODO: resolver.Register is placed immediately after the awaited CreateIssueAsync
                 // and before createdIssues.Add/logging. If the try block grows with additional
                 // awaitable calls between Register and the catch, a failure there would leave the
@@ -795,11 +794,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         {
             sb.AppendLine("## Prerequisites");
             sb.AppendLine();
-            // TODO: SanitizeMarkdown does not escape #N patterns (e.g., "proposal #1") which GitHub
-            // auto-links to unrelated issues. Consider restoring #N autolink escaping (previously
-            // handled by a dedicated SanitizePrerequisite method) to prevent misleading cross-references.
             foreach (var prereq in proposal.Prerequisites.Where(p => p is not null))
-                sb.AppendLine($"- {SanitizeMarkdown(prereq)}");
+                sb.AppendLine($"- {SanitizePrerequisite(prereq)}");
             sb.AppendLine();
         }
 
@@ -929,10 +925,73 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     internal static string SanitizeTitle(string title) => TextSanitizer.SanitizeTitle(title);
 
     /// <summary>
+    /// Orders proposals so that a proposal comes after the proposals it lists in
+    /// <see cref="RefactoringProposal.DependsOn"/>, keeping the original order otherwise.
+    /// Issues are created in this order, so a dependency's issue number is known when its
+    /// dependent's "Depends on #N" line is resolved. Falls back to the original order on a cycle.
+    /// Kahn's algorithm; the batch is capped at a handful of proposals (issue #1450).
+    /// </summary>
+    internal static IReadOnlyList<RefactoringProposal> TopologicalSortProposals(IReadOnlyList<RefactoringProposal> proposals)
+    {
+        if (proposals.Count <= 1)
+            return proposals;
+
+        // Title lookup is trimmed and case-insensitive, like DependencyResolver.
+        var titleToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < proposals.Count; i++)
+            titleToIndex.TryAdd(proposals[i].Title.Trim(), i);
+
+        var inDegree = new int[proposals.Count];
+        var dependents = new List<int>[proposals.Count];
+        for (var i = 0; i < proposals.Count; i++)
+            dependents[i] = [];
+
+        for (var i = 0; i < proposals.Count; i++)
+        {
+            foreach (var dependency in proposals[i].DependsOn ?? [])
+            {
+                if (!string.IsNullOrWhiteSpace(dependency)
+                    && titleToIndex.TryGetValue(dependency.Trim(), out var dependencyIndex)
+                    && dependencyIndex != i)
+                {
+                    inDegree[i]++;
+                    dependents[dependencyIndex].Add(i);
+                }
+            }
+        }
+
+        var ready = new Queue<int>(Enumerable.Range(0, proposals.Count).Where(i => inDegree[i] == 0));
+        var sorted = new List<RefactoringProposal>(proposals.Count);
+        while (ready.Count > 0)
+        {
+            var index = ready.Dequeue();
+            sorted.Add(proposals[index]);
+            foreach (var dependent in dependents[index])
+            {
+                if (--inDegree[dependent] == 0)
+                    ready.Enqueue(dependent);
+            }
+        }
+
+        return sorted.Count == proposals.Count ? sorted : proposals;
+    }
+
+    /// <summary>
     /// Escapes markdown-sensitive characters to prevent injection in GitHub issues.
     /// Delegates to <see cref="TextSanitizer.SanitizeMarkdown"/>.
     /// </summary>
     private static string SanitizeMarkdown(string value) => TextSanitizer.SanitizeMarkdown(value);
+
+    /// <summary>
+    /// Sanitizes a prerequisite like <see cref="SanitizeMarkdown"/> and wraps bare <c>#N</c> in a
+    /// code span. Agents write "proposal #1", and GitHub would link that to unrelated issue 1.
+    /// The lookbehind leaves "C# 12" and "F#8" alone (issue #1450).
+    /// </summary>
+    private static string SanitizePrerequisite(string value) =>
+        HashNumberPattern().Replace(SanitizeMarkdown(value), "`#$1`");
+
+    [GeneratedRegex(@"(?<![A-Za-z])#(\d+)")]
+    private static partial Regex HashNumberPattern();
 
     /// <summary>
     /// Formats the refactoring run summary with issue count and identifiers.

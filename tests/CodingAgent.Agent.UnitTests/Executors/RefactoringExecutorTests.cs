@@ -1,3 +1,4 @@
+using System.Globalization;
 using AwesomeAssertions;
 using CodingAgent.Agent.Executors;
 using CodingAgent.Pipeline;
@@ -1078,12 +1079,148 @@ public class RefactoringExecutorTests : IDisposable
         capturedBody!.Should().NotContain("Depends on #");
     }
 
-    // TODO: Add a test covering a forward-reference DependsOn (Proposal A depends on Proposal B
-    // that appears later in the batch). Because DependencyResolver.Register is called only after a
-    // successful CreateIssueAsync, B's title is not yet registered when A's Resolve runs, so the
-    // reference is silently dropped — same behaviour as an unresolvable title. A test would document
-    // and guard this "forward references are silently omitted" contract so that any future attempt
-    // to pre-register titles doesn't regress the sequential-registration approach.
+    [Fact]
+    public async Task ExecuteAsync_ProposalDependsOnALaterProposal_CreatesTheDependencyFirst()
+    {
+        // Proposal A lists B, which comes later in the batch. Proposals are created in dependency
+        // order (issue #1450), so B exists when A's dependency line is resolved.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract class from service",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Extract the dispatch run creator.",
+                    "rationale": "Too many responsibilities.",
+                    "dependsOn": ["Remove dead code cluster"]
+                },
+                {
+                    "title": "Remove dead code cluster",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Delete unused methods.",
+                    "rationale": "285 lines of dead code."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, proposalsJson))
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
+
+        var createdTitles = new List<string>();
+        var capturedBodies = new List<string>();
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((title, body, _, _) =>
+            {
+                createdTitles.Add(title);
+                capturedBodies.Add(body);
+            })
+            .ReturnsAsync(() => new CreatedIssueResult
+            {
+                Identifier = (1000 + capturedBodies.Count).ToString(CultureInfo.InvariantCulture),
+                Url = $"https://github.com/test/repo/issues/{1000 + capturedBodies.Count}"
+            });
+
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        createdTitles.Should().Equal("Remove dead code cluster", "Extract class from service");
+        capturedBodies[0].Should().NotContain("Depends on #");
+        capturedBodies[1].Should().StartWith("Depends on #1001");
+    }
+
+    // ─── Topological sort of proposals (issue #1450) ────────────────────────────
+
+    private static RefactoringProposal Proposal(
+        string title, IReadOnlyList<string>? dependsOn = null, IReadOnlyList<string>? prerequisites = null) => new()
+    {
+        Title = title,
+        AffectedFiles = ["x"],
+        Description = "d",
+        Rationale = "r",
+        DependsOn = dependsOn,
+        Prerequisites = prerequisites
+    };
+
+    [Fact]
+    public void TopologicalSortProposals_IndependentProposals_KeepsTheirOrder()
+    {
+        var sorted = RefactoringExecutor.TopologicalSortProposals([Proposal("A"), Proposal("B"), Proposal("C")]);
+
+        sorted.Select(p => p.Title).Should().Equal("A", "B", "C");
+    }
+
+    [Fact]
+    public void TopologicalSortProposals_DependentProposal_MovesAfterItsDependency()
+    {
+        var sorted = RefactoringExecutor.TopologicalSortProposals(
+            [Proposal("B depends on A", ["A is independent"]), Proposal("A is independent")]);
+
+        sorted.Select(p => p.Title).Should().Equal("A is independent", "B depends on A");
+    }
+
+    [Fact]
+    public void TopologicalSortProposals_Cycle_KeepsTheOriginalOrder()
+    {
+        var sorted = RefactoringExecutor.TopologicalSortProposals([Proposal("A", ["B"]), Proposal("B", ["A"])]);
+
+        sorted.Select(p => p.Title).Should().Equal("A", "B");
+    }
+
+    [Fact]
+    public void TopologicalSortProposals_DependencyOutsideTheBatch_IsIgnored()
+    {
+        var sorted = RefactoringExecutor.TopologicalSortProposals(
+            [Proposal("A", ["External issue not in batch"]), Proposal("B")]);
+
+        sorted.Select(p => p.Title).Should().Equal("A", "B");
+    }
+
+    // ─── Autolink escaping in prerequisites (issue #1450) ───────────────────────
+
+    [Fact]
+    public void FormatIssueBody_PrerequisiteWithHashNumber_EscapesTheAutolink()
+    {
+        var proposal = Proposal("Extract class",
+            prerequisites: ["Complete proposal #1 (dead code removal)", "After #2 is merged"]);
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        // GitHub turns a bare #N into a link to issue N, which is unrelated to the proposal numbering.
+        body.Should().Contain("- Complete proposal `#1` (dead code removal)");
+        body.Should().Contain("- After `#2` is merged");
+    }
+
+    [Fact]
+    public void FormatIssueBody_PrerequisiteWithLanguageName_IsNotEscaped()
+    {
+        var proposal = Proposal("Use primary constructors", prerequisites: ["Requires C# 12 and F#8 support"]);
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- Requires C# 12 and F#8 support");
+    }
+
+    [Fact]
+    public void FormatIssueBody_PrerequisiteWithoutHashNumber_PassesThrough()
+    {
+        var proposal = Proposal("Rename", prerequisites: ["Add characterization tests for X before refactoring"]);
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- Add characterization tests for X before refactoring");
+    }
 
     // TODO: Add a test covering the case where the first proposal fails to be created (mock throws)
     // and a later proposal lists its title in DependsOn. Because the catch block swallows per-proposal

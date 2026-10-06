@@ -966,6 +966,68 @@ public class ChatJobDispatcherTests
             "force-delete must be called when watcher does not complete within grace period");
     }
 
+    // ─── 24b. TerminateChatSessionAsync — WatcherCts already disposed (issue #2202) ─
+
+    /// <summary>
+    /// Regression for #2218 (issue #2202): CleanupSession on the watcher thread disposes WatcherCts.
+    /// If that happens before the grace period expires, TerminateChatSessionAsync must still take the
+    /// force-delete path instead of throwing ObjectDisposedException from WatcherCts.CancelAsync().
+    /// </summary>
+    [Fact]
+    public async Task TerminateChatSessionAsync_WatcherCtsAlreadyDisposed_DoesNotThrowAndForceDeletes()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName, dispatchId, "conn-disposed");
+            })
+            .Returns(Task.CompletedTask);
+
+        // A watcher that never finishes and has already disposed the entry's WatcherCts.
+        var neverFinishes = new TaskCompletionSource();
+        var watcher = new Mock<IChatSessionWatcher>();
+        watcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, entry, _, _, _) =>
+                {
+                    entry.WatcherCts.Dispose();
+                    return neverFinishes.Task;
+                });
+
+        var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            CreateOptions(gracePeriod: 1),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: watcher.Object);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var act = async () => await dispatcher.TerminateChatSessionAsync(createdJobName!, CancellationToken.None);
+
+        await act.Should().NotThrowAsync(
+            "a WatcherCts already disposed by CleanupSession must not abort the termination");
+        jobClientMock.Verify(c => c.DeleteJobAsync(createdJobName!, TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Once, "the stalled session must still be force-deleted");
+        neverFinishes.TrySetResult();
+    }
+
     // ─── 25. TerminateChatSessionAsync — zombie watcher cancelled after grace-period expiry (issue #2143) ─
 
     /// <summary>

@@ -181,21 +181,19 @@ internal sealed class DispatchWorkItemService
     /// <c>DispatchPendingWorkItem</c>'s fast-path query (issue #2988).
     ///
     /// <para>
-    /// <strong>Profile-fallback note:</strong> <paramref name="normalizedSelector"/> is the
-    /// partial normalized form (e.g. <c>"dotnet"</c>), NOT the canonical selector resolved by
-    /// the profile fallback (e.g. <c>"dotnet,kiro"</c>). This matches the existing behavior
-    /// and the documented TODO in <c>DispatchPendingWorkItem</c>. Do NOT pass
-    /// <c>effectiveSelector</c> here — that would silently change the behavior and break
-    /// Tests 18 and 19 which characterize the current state.
+    /// <paramref name="effectiveSelector"/> is the canonical selector: on the profile-fallback path
+    /// it is the profile's normalized labels (e.g. <c>"dotnet,kiro"</c>), not the item's partial
+    /// selector (e.g. <c>"dotnet"</c>), so the Job's <c>caa/agent-selector</c> label and the
+    /// dispatch metrics name the template's selector, as on the direct-resolve path (issue #2777).
     /// </para>
     /// </summary>
     internal static PendingWorkItemProjection BuildProjectionFromQuickCheck(
         DispatchQuickCheck quickCheck,
-        string normalizedSelector) =>
+        string effectiveSelector) =>
         new PendingWorkItemProjection
         {
             Id = quickCheck.Id,
-            AgentSelector = normalizedSelector,
+            AgentSelector = effectiveSelector,
             CreatedAt = quickCheck.CreatedAt,
             TimeoutSeconds = quickCheck.TimeoutSeconds,
             TaskType = quickCheck.TaskType,
@@ -793,16 +791,12 @@ internal sealed class DispatchWorkItemService
             : normalizedSelector;
         var sanitizedEffectiveSelector = LogSanitizer.SanitizeForLog(effectiveSelector);
 
-        // Build the projection for the shared dispatch helper (issue #2988).
-        // TODO [WARNING]: When the profile fallback resolves the template, projection.AgentSelector is
-        // set to normalizedSelector (e.g. "dotnet"), not to the template's canonical labels (e.g. "dotnet,kiro").
-        // FinalizeDispatchAsync will increment concurrencyBySelector["dotnet"] rather than ["dotnet,kiro"].
-        // Active items stored with selector "kiro,dotnet" are counted under a different normalized key
-        // ("dotnet,kiro"), so IsAtConcurrencyLimit may under-count on the profile-fallback path and
-        // allow over-dispatch when maxConcurrent is tight. The same gap exists in FinalizeDispatchAsync
-        // (see its // TODO: Use effectiveSelector comment). Fix both together when the effectiveSelector
-        // propagation is resolved.
-        var projection = BuildProjectionFromQuickCheck(quickCheck, normalizedSelector);
+        // Build the projection for the shared dispatch helper (issue #2988). Its AgentSelector is the
+        // canonical effectiveSelector, which the Job label and the dispatch metrics carry (#2777).
+        // NOTE: BuildConcurrencySnapshotAsync counts active items by their stored AgentSelector, which
+        // stays the item's own partial selector, so an item dispatched through the profile fallback is
+        // not counted under the canonical key the gate checks on later requests.
+        var projection = BuildProjectionFromQuickCheck(quickCheck, effectiveSelector);
 
         // Gate + context construction + lifecycle execution via shared helper (issue #2890).
         // ExpectedInitialStatus is Pending (the default) — this item already exists as Pending;

@@ -396,7 +396,8 @@ public static class PipelineTelemetry
     public static readonly Counter<long> HousekeepingFailed = Meter.CreateCounter<long>(
         "pipeline.housekeeping.failed", UnitUpdate, "Server-side branch updates that threw an exception");
     public static readonly Counter<long> HousekeepingSkipped = Meter.CreateCounter<long>(
-        "pipeline.housekeeping.skipped", UnitUpdate, "PRs skipped during candidate selection (not behind, null, draft, active rework, in-flight)");
+        "pipeline.housekeeping.skipped", UnitUpdate,
+        "PRs skipped for policy reasons during candidate selection, tagged by skip_reason (active_run | in_flight | cooldown)");
     public static readonly Counter<long> HousekeepingEvicted = Meter.CreateCounter<long>(
         "pipeline.housekeeping.evicted", UnitUpdate, "In-flight entries removed (CI resolved or PR merged/label removed)");
     public static readonly Counter<long> HousekeepingConflictReworkTriggered = Meter.CreateCounter<long>(
