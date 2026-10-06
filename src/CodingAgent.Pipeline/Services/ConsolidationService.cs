@@ -117,6 +117,8 @@ public sealed class ConsolidationService : IConsolidationService
 
         // ── 4. Build a unique RunId for this trigger ──────────────────────────
         var runId = Guid.NewGuid().ToString();
+        // Taken before DistributeAsync: the API call behind it can take seconds under load (issue #3209).
+        var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
         // ── 5. Build and submit the JobDistributionRequest ───────────────────
@@ -171,12 +173,6 @@ public sealed class ConsolidationService : IConsolidationService
         }
 
         // ── 7. Build and return the result ────────────────────────────────────
-        // TODO [WARNING]: StartedAtUtc is captured here, after DistributeAsync returns. Under load,
-        // DistributeAsync (HTTP call to the Pipeline API) can take several seconds, so StartedAtUtc
-        // on the returned record can be materially later than the actual start of the consolidation
-        // operation. This affects the accuracy of the "Started" column in the run-history table.
-        // Fix: capture DateTimeOffset.UtcNow before the DistributeAsync call (step 4) and pass it
-        // through, or record the timestamp at WorkItem creation time in the API layer.
         var triggerResult = new ConsolidationTriggerResult(
             RunId: runId,
             Type: type,
@@ -184,7 +180,7 @@ public sealed class ConsolidationService : IConsolidationService
             TemplateName: templateName,
             ProjectId: projectId,
             ProjectName: projectName,
-            StartedAtUtc: DateTimeOffset.UtcNow,
+            StartedAtUtc: startedAtUtc,
             WorkItemId: result.WorkItemId);
 
         _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem {WorkItemId} created as Pending)",
