@@ -114,7 +114,8 @@ public class ChatJobDispatcherTests
         JobTemplateStore? templateStore = null,
         AgentRegistryService? registry = null,
         DispatchServiceOptions? options = null,
-        CodingAgent.Orchestration.Redis.IRedisStore? redis = null)
+        CodingAgent.Orchestration.Redis.IRedisStore? redis = null,
+        ILogger? logger = null)
     {
         return new ChatJobDispatcher(
             jobClient ?? CreateJobClientMock().Object,
@@ -122,7 +123,7 @@ public class ChatJobDispatcherTests
             templateStore ?? CreateTemplateStore(),
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
-            Mock.Of<ILogger>(),
+            logger ?? Mock.Of<ILogger>(),
             redis);
     }
 
@@ -1767,7 +1768,7 @@ public class ChatJobDispatcherTests
     /// <see cref="ChatJobDispatcher.TerminateChatSessionAsync"/> call that raced the idle-kill path),
     /// the CAS guard in <see cref="TryTriggerIdleKillAsync"/> must prevent a second
     /// <see cref="TerminateChatSessionAsync"/> invocation. <see cref="IKubernetesJobClient.DeleteJobAsync"/>
-    /// must be called at most once.
+    /// must be called exactly once.
     /// </summary>
     [Fact]
     public async Task WatcherIdleKill_WhenTerminatingAlreadySet_IdleKillSkipped()
@@ -1775,6 +1776,11 @@ public class ChatJobDispatcherTests
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
         string? createdJobName = null;
+        var idleKillSkipped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var logger = new LoggerConfiguration()
+            .MinimumLevel.Verbose()
+            .WriteTo.Sink(new SignalingLogSink("idle-kill skipped", idleKillSkipped))
+            .CreateLogger();
 
         jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
@@ -1788,46 +1794,45 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
-        options.ChatIdleTimeoutSeconds = 2; // short so idle-kill fires promptly
+        // Idle timeout 2s; the grace period is long so the watcher keeps polling while the explicit
+        // termination waits — the test ends the grace period itself once the guard has fired.
+        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 60);
+        options.ChatIdleTimeoutSeconds = 2;
 
-        var dispatcher = CreateDispatcher(
+        await using var dispatcher = CreateDispatcher(
             jobClient: jobClientMock.Object,
             registry: registry,
             options: options,
-            redis: new CodingAgent.Web.TestUtilities.FakeRedisStore());
+            redis: new CodingAgent.Web.TestUtilities.FakeRedisStore(),
+            logger: logger);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // Set entry.Terminating = 1 via the production path BEFORE the watcher's idle timeout fires.
-        // TerminateChatSessionAsync does Interlocked.Exchange(ref entry.Terminating, 1) and also
-        // sends CancelChat + waits for the watcher (with grace period). We call it in a background
-        // task so it does not block the test's idle-kill observation window.
-        var terminateTask = Task.Run(async () =>
-            await dispatcher.TerminateChatSessionAsync(new CodingAgent.Pipeline.Models.AgentId(createdJobName!), CancellationToken.None));
+        // TerminateChatSessionAsync sets entry.Terminating = 1 synchronously, before its first await,
+        // so calling it directly (not via Task.Run) sets the flag before the watcher can reach its
+        // idle timeout. A late-scheduled Task.Run could start after the watcher's own idle-kill had
+        // already deleted the job and removed the session, and then delete it a second time.
+        using var terminateCts = new CancellationTokenSource();
+        var terminateTask = dispatcher.TerminateChatSessionAsync(
+            new CodingAgent.Pipeline.Models.AgentId(createdJobName!), terminateCts.Token);
 
-        // Wait for both the explicit termination and the watcher to finish
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        // Once the session has been idle for 2s, the watcher's idle-kill check must hit the
+        // Terminating guard instead of starting a second termination.
+        await idleKillSkipped.Task.WaitAsync(TimeSpan.FromSeconds(60));
+
+        // End the grace period: the explicit termination force-deletes the job.
+        await terminateCts.CancelAsync();
         await terminateTask;
 
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         watcherDone.Should().BeTrue("watcher must exit (terminated by the explicit TerminateChatSessionAsync)");
 
-        // DeleteJobAsync must be called at most once — the CAS guard must prevent the watcher's
-        // idle-kill from triggering a second TerminateChatSessionAsync → second DeleteJobAsync.
-        // TODO [WARNING]: Times.AtMostOnce() passes when DeleteJobAsync is called 0 OR 1 times.
-        // This weakens the assertion: if TerminateChatSessionAsync never calls DeleteJobAsync
-        // (e.g. due to a regression in the force-delete path), the test still passes with 0 calls.
-        // Times.Once() would be the correct constraint — exactly one DeleteJobAsync from the explicit
-        // termination path, proving both that termination happened AND that the CAS guard prevented
-        // a second call. AtMostOnce() was chosen because the test has an inherent race (Task.Run vs
-        // watcher idle-kill) making it uncertain which path fires first; however that race means the
-        // test may not robustly cover the CAS-guard-fires scenario at all. Consider restructuring the
-        // test to guarantee TerminateChatSessionAsync sets Terminating=1 before the idle timeout fires.
-        // See review findings: Correctness WARNING and TestQuality WARNING.
+        // Exactly one DeleteJobAsync, from the explicit termination — the CAS guard must prevent the
+        // watcher's idle-kill from triggering a second TerminateChatSessionAsync → second DeleteJobAsync.
         jobClientMock.Verify(c => c.DeleteJobAsync(
             It.Is<string>(n => n == createdJobName), TestNamespace, It.IsAny<CancellationToken>()),
-            Times.AtMostOnce(),
-            "DeleteJobAsync must be called at most once — CAS guard prevents double idle-kill");
+            Times.Once(),
+            "DeleteJobAsync must be called exactly once — CAS guard prevents double idle-kill");
     }
 
     // ─── 26. WatchJobUntilTerminalAsync — fault guard ─────────────────────────
@@ -2183,6 +2188,20 @@ public class ChatJobDispatcherTests
         : Serilog.Core.ILogEventSink
     {
         public void Emit(Serilog.Events.LogEvent logEvent) => events.Add(logEvent);
+    }
+
+    /// <summary>
+    /// Serilog sink that completes <paramref name="signal"/> once a log event's message template
+    /// contains <paramref name="templateText"/>.
+    /// </summary>
+    private sealed class SignalingLogSink(string templateText, TaskCompletionSource signal)
+        : Serilog.Core.ILogEventSink
+    {
+        public void Emit(Serilog.Events.LogEvent logEvent)
+        {
+            if (logEvent.MessageTemplate.Text.Contains(templateText, StringComparison.Ordinal))
+                signal.TrySetResult();
+        }
     }
 
     // ─── WatcherEntry field routing characterization tests ───────────────────
