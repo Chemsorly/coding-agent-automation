@@ -56,17 +56,22 @@ public class DatabaseStartupServiceTests
     [Fact]
     public async Task WaitForDatabaseConnectionAsync_CancellationAbortsDuringRetry()
     {
-        // Always fails; cancellation fires during the delay after first failure
+        // Always fails; the retry delay runs on fake time, so it never elapses on its own and the
+        // cancellation below always lands during the delay after the first failure. (A real 500ms
+        // CTS armed before the call fired before the first probe whenever the test thread stalled.)
+        var fakeTime = new FakeTimeProvider();
         var probe = new FakeProbe(failCount: 100);
-        var service = CreateService(probe);
+        var service = CreateService(probe, timeProvider: fakeTime);
+        using var cts = new CancellationTokenSource();
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+        var task = service.WaitForDatabaseConnectionAsync(cts.Token);
+        Assert.False(task.IsCompleted, "Task should be waiting on the retry delay");
 
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => service.WaitForDatabaseConnectionAsync(cts.Token));
+        await cts.CancelAsync();
 
-        // At least 1 attempt was made before cancellation
-        Assert.True(probe.AttemptCount >= 1);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => task);
+        // Exactly 1 attempt was made before cancellation
+        Assert.Equal(1, probe.AttemptCount);
     }
 
     [Fact]
@@ -95,15 +100,19 @@ public class DatabaseStartupServiceTests
         var task = service.WaitForDatabaseConnectionAsync(CancellationToken.None);
 
         // Pump fake time past each retry backoff until the retry sequence exhausts. The tiny real
-        // yield lets the awaiting continuation observe each advance; the real deadline is only a
-        // safety net against an unexpected hang (the loop normally finishes in well under a second).
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // yield lets the awaiting continuation observe each advance; an advance that lands before
+        // the next delay is scheduled is simply repeated on the next iteration. The real deadline
+        // is only a safety net against an unexpected hang (the loop normally finishes in well under
+        // a second), and the task is checked before awaiting it: once the pumping stops, the
+        // remaining fake delays never elapse and awaiting the task would hang the test.
+        var deadline = DateTime.UtcNow.AddSeconds(60);
         while (!task.IsCompleted && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);
             fakeTime.Advance(DatabaseStartupService.MaxDelay);
         }
 
+        Assert.True(task.IsCompleted, "the retry sequence must exhaust once fake time passes every backoff");
         var caught = await Assert.ThrowsAsync<InvalidOperationException>(async () => await task);
         Assert.Contains($"after {DatabaseStartupService.MaxRetryAttempts} attempts", caught.Message);
         Assert.Equal(DatabaseStartupService.MaxRetryAttempts, probe.AttemptCount);
