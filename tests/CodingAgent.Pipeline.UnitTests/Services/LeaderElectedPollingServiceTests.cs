@@ -86,8 +86,11 @@ public class LeaderElectedPollingServiceTests
         var newLeaderCts = new CancellationTokenSource();
         SetLeaderState(leaderElection, isLeader: true, newLeaderCts);
 
-        // Poll until a new cycle fires after re-acquisition (≤2s leader-wait + 1s poll)
-        deadline = DateTime.UtcNow.AddSeconds(10);
+        // Poll until a new cycle fires after re-acquisition (≤2s leader-wait; the new term polls at once).
+        // The deadline is a margin for stalled runners: when the test process stalls past it, this loop's
+        // check can run before the service's queued wake-up and fail although the service works. A 10s
+        // deadline failed that way in an agent quality gate run (#3412).
+        deadline = DateTime.UtcNow.AddSeconds(30);
         while (service.PollCycleCount <= countAfterLoss && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
