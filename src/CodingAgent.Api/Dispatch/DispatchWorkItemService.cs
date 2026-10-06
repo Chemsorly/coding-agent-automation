@@ -111,6 +111,12 @@ internal sealed class DispatchWorkItemService
     }
 
     /// <summary>
+    /// The <see cref="JobTemplate"/> for <paramref name="agentSelector"/> by direct lookup, without the
+    /// profile fallback. Used by <c>DispatchWorkItem</c>, which answers 422 for a selector without a template.
+    /// </summary>
+    internal JobTemplate? ResolveTemplate(string agentSelector) => _templateStore.Resolve(agentSelector);
+
+    /// <summary>
     /// Resolves the <see cref="JobTemplate"/> an item stored with <paramref name="agentSelector"/> is
     /// dispatched under, and the selector that template is keyed on: a direct lookup of the normalized
     /// selector first, then the profile fallback, which expands a partial selector such as <c>"dotnet"</c>

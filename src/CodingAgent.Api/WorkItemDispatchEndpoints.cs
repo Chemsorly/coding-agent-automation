@@ -320,7 +320,6 @@ public static class WorkItemDispatchEndpoints
         IDbContextFactory<PipelineDbContext> dbFactory,
         IOrchestratorRunService runService,
         DispatchLifecycleService lifecycle,
-        JobTemplateStore templateStore,
         DispatchWorkItemService dispatchService,
         DispatchTemplateResolver templateResolver,
         CancellationToken ct = default)
@@ -328,7 +327,7 @@ public static class WorkItemDispatchEndpoints
         ArgumentNullException.ThrowIfNull(request);
 
         // Template resolution: selector → JobTemplate
-        var template = templateStore.Resolve(request.AgentSelector ?? "");
+        var template = dispatchService.ResolveTemplate(request.AgentSelector ?? "");
         if (template is null)
         {
             Log.Warning("DispatchWorkItem: no job template for selector {Selector} — returning 422",

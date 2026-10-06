@@ -133,7 +133,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 200 OK with WorkItemId
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -181,7 +181,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 409 Conflict
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>();
@@ -232,7 +232,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, CreateRunService(), CreateLifecycleService(), templateStore,
+            request, dbFactory, CreateRunService(), CreateLifecycleService(),
             new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(profileStoreMock.Object, templateStore),
             CancellationToken.None);
 
@@ -274,7 +274,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 503 Service Unavailable
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -296,7 +296,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 422 Unprocessable Entity (permanent config error — no job template for selector).
         // Distinct from 409 (transient capacity) so callers can distinguish permanent vs transient failures.
@@ -322,7 +322,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
         okResult.Should().NotBeNull();
@@ -354,7 +354,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: dispatch Review request first (as Scheduler would select it first)
         var reviewResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            reviewRequest, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            reviewRequest, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: Review dispatched successfully as Dispatched
         var reviewOk = reviewResult as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -394,7 +394,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: dispatch Review first (as the Scheduler's priority ordering guarantees)
         var reviewResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            reviewRequest, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            reviewRequest, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: Review is dispatched — K8s Job created, WorkItem=Dispatched
         var reviewOk = reviewResult as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -413,7 +413,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: dispatch Implementation — concurrency limit is now reached (Review occupies the slot)
         var implResult = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            implRequest, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            implRequest, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: Implementation blocked by concurrency limit
         implResult.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Conflict<string>>(
@@ -469,9 +469,9 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act: both calls run concurrently, sharing the same lifecycle (same _pvcSelectLock).
         var task1 = WorkItemDispatchEndpoints.DispatchWorkItem(
-            request1, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request1, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
         var task2 = WorkItemDispatchEndpoints.DispatchWorkItem(
-            request2, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request2, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         var results = await Task.WhenAll(task1, task2);
 
@@ -519,7 +519,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 503 returned
         var statusResult = result as Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult;
@@ -558,7 +558,7 @@ public sealed class SynchronousDispatchEndpointTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 200 OK — PVC gate was skipped for non-kiro template
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -593,7 +593,7 @@ public sealed class SynchronousDispatchEndpointTests
         var request = MakeRequest() with { TimeoutSeconds = 0 };
 
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "dispatch must succeed so we can verify the stored TimeoutSeconds");
@@ -626,7 +626,7 @@ public sealed class SynchronousDispatchEndpointTests
         var request = MakeRequest() with { TimeoutSeconds = -1 };
 
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "dispatch must succeed so we can verify the stored TimeoutSeconds");
@@ -675,7 +675,7 @@ public sealed class SynchronousDispatchEndpointTests
         var request = MakeRequest() with { TimeoutSeconds = customTimeout };
 
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>>(
             "dispatch must succeed so we can verify the stored TimeoutSeconds");
@@ -2875,7 +2875,7 @@ public sealed class UniqueViolationIdempotentRetryTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 200 OK — item is active (Dispatched), idempotent retry succeeds
         var ok = result as Microsoft.AspNetCore.Http.HttpResults.Ok<Guid>;
@@ -2906,7 +2906,7 @@ public sealed class UniqueViolationIdempotentRetryTests
 
         // Act
         var result = await WorkItemDispatchEndpoints.DispatchWorkItem(
-            request, dbFactory, runService, lifecycle, templateStore, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
+            request, dbFactory, runService, lifecycle, new DispatchWorkItemService(templateStore), new DispatchTemplateResolver(null, templateStore), CancellationToken.None);
 
         // Assert: 409 Conflict — existing item is non-active (Failed)
         var conflict = result as Microsoft.AspNetCore.Http.HttpResults.Conflict<string>;
