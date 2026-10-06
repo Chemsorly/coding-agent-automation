@@ -14,7 +14,8 @@ namespace CodingAgent.Scheduler.UnitTests;
 
 /// <summary>
 /// Unit tests for <see cref="WorkItemDispatchLoop"/>.
-/// Uses a fast tick interval (1ms) so the service fires within the test window.
+/// Most tests call PollAndDispatchAsync directly; loop tests use a fast tick interval (1ms) and run
+/// the service until a mock signals the call they assert on (see <see cref="BackgroundServiceRunner"/>).
 /// All tests are in the SchedulerTiming collection to serialize against other PeriodicTimer tests.
 /// </summary>
 [Collection("Metrics")]
@@ -80,16 +81,6 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
             TimeoutSeconds = 3600
         };
 
-    private static async Task RunPollerForDurationAsync(WorkItemDispatchLoop poller, TimeSpan duration)
-    {
-        using var cts = new CancellationTokenSource();
-        await poller.StartAsync(cts.Token);
-        await Task.Delay(duration, CancellationToken.None);
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        try { await poller.StopAsync(stopCts.Token); } catch { }
-        poller.Dispose();
-    }
-
     // ── Leader gating ─────────────────────────────────────────────────────
 
     [Fact]
@@ -105,7 +96,7 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
             .ReturnsAsync(DispatchPendingResult.Dispatched);
 
         // Use PollAndDispatchAsync directly instead of the BackgroundService loop to avoid
-        // wall-clock timing flakiness: the loop-based approach (RunPollerForDurationAsync)
+        // wall-clock timing flakiness: a loop-based approach that runs for a fixed duration
         // depends on the service starting and firing a tick within a fixed window, which can
         // fail under CI load. PollAndDispatchAsync executes exactly one poll cycle deterministically.
         var poller = new WorkItemDispatchLoop(
@@ -123,9 +114,12 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
     [Fact]
     public async Task WhenNotLeader_ShouldNotCallApi()
     {
-        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(false);
+        // The second leader check proves the first skipped tick ran to completion.
+        var secondCheck = new CallSignal(2);
+        _mockLeaderGate.SetupGet(g => g.IsLeader).Callback(() => secondCheck.Hit()).Returns(false);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreatePoller(), secondCheck.Reached,
+            "the loop must keep checking leadership on every tick");
 
         _mockClient.Verify(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.Never(), "non-leader must not poll the work item endpoint");
@@ -136,8 +130,11 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
     {
         // null gate = dev / single-replica mode
         // Set up mock before constructing loop to avoid unconfigured mock on first poll.
+        // Runs the BackgroundService loop (not PollAndDispatchAsync) because the gate check lives in ExecuteAsync.
+        var polled = new CallSignal();
         _mockClient
             .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .Callback(() => polled.Hit())
             .ReturnsAsync([]);
 
         var poller = new WorkItemDispatchLoop(
@@ -147,7 +144,7 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
             rateLimitPerSecond: 100,
             interval: TimeSpan.FromMilliseconds(1));
 
-        await RunPollerForDurationAsync(poller, TimeSpan.FromMilliseconds(2000));
+        await BackgroundServiceRunner.RunUntilAsync(poller, polled.Reached, "null gate must not suppress polling");
 
         _mockClient.Verify(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "null gate must not suppress polling");
@@ -170,14 +167,22 @@ public sealed class WorkItemDispatchLoopTests : IDisposable
             .Setup(c => c.DispatchPendingAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DispatchPendingResult.Dispatched);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
+        // Trigger a single poll cycle directly (not via BackgroundService loop) — deterministic
+        // regardless of how long the test host takes to schedule a timer tick.
+        var poller = new WorkItemDispatchLoop(
+            _mockClient.Object,
+            _mockLeaderGate.Object,
+            _mockLogger.Object,
+            rateLimitPerSecond: 100);
+        await poller.PollAndDispatchAsync(CancellationToken.None);
+        poller.Dispose();
 
         _mockClient.Verify(c => c.DispatchPendingAsync(id1, It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce());
+            Times.Once());
         _mockClient.Verify(c => c.DispatchPendingAsync(id2, It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce());
+            Times.Once());
         _mockClient.Verify(c => c.DispatchPendingAsync(id3, It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce());
+            Times.Once());
     }
 
     // ── Per-selector stop-on-409 ──────────────────────────────────────────
