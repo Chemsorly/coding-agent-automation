@@ -426,8 +426,8 @@ public class AgentCodingPageComponentTests : BunitContext
 
         // Checklist auto-hides when not all steps are complete, but since templates/providers exist
         // the issue provider, repo provider, and template steps are satisfied.
-        // All 6 steps need to be true for AllComplete to hide the checklist.
-        // With default setup: has issue provider, repo provider, template — but no project or agent or loop active.
+        // All 5 steps need to be true for AllComplete to hide the checklist.
+        // With default setup: has issue provider, repo provider, template — but no project or loop active.
         // So checklist still shows (not all complete). Verify it IS visible but shows completed steps.
         Assert.Contains("Getting Started", component.Markup);
     }

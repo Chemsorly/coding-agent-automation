@@ -1,16 +1,9 @@
 @implements IAsyncDisposable
 @inject Microsoft.JSInterop.IJSRuntime JS
-@inject CodingAgent.Orchestration.Registry.IAgentRegistryService Registry
 
 @if (_initialized && !_dismissed && !AllComplete)
 {
-    @* The agent registry raises no change events and the page re-renders only when the loop
-       status changes, so redraw while the agent step is still waiting. *@
-    @if (!HasAgent)
-    {
-        <AutoRefresh IntervalSeconds="3" OnTick="StateHasChanged" />
-    }
-    var completedCount = new[] { HasIssueProvider, HasRepoProvider, HasProject, HasTemplate, HasAgent, IsLoopActive }.Count(x => x);
+    var completedCount = new[] { HasIssueProvider, HasRepoProvider, HasProject, HasTemplate, IsLoopActive }.Count(x => x);
     var foundCurrent = false;
 
     <section class="onboarding-checklist">
@@ -20,10 +13,10 @@
         </div>
         <p class="onboarding-description">Complete these steps to run your first pipeline:</p>
         <div class="onboarding-progress">
-            <div class="progress-bar" role="progressbar" aria-valuenow="@completedCount" aria-valuemin="0" aria-valuemax="6">
-                <div class="progress-fill" style="width: @((int)Math.Round(completedCount * 100.0 / 6))%"></div>
+            <div class="progress-bar" role="progressbar" aria-valuenow="@completedCount" aria-valuemin="0" aria-valuemax="5">
+                <div class="progress-fill" style="width: @((int)Math.Round(completedCount * 100.0 / 5))%"></div>
             </div>
-            <span class="progress-text">@completedCount of 6 steps complete</span>
+            <span class="progress-text">@completedCount of 5 steps complete</span>
         </div>
         <ol class="onboarding-steps">
             <li class="@StepClass(HasIssueProvider, ref foundCurrent)">
@@ -45,10 +38,6 @@
                 @if (HasTemplate) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <a href="agent-coding" @onclick="OnAddTemplate" @onclick:preventDefault>Create a Pipeline Template</a>
             </li>
-            <li class="@StepClass(HasAgent, ref foundCurrent)">
-                @if (HasAgent) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
-                <a href="fleet">Register an Agent</a>
-            </li>
             <li class="@StepClass(IsLoopActive, ref foundCurrent)">
                 @if (IsLoopActive) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <span class="step-text">Start the pipeline loop</span>
@@ -69,9 +58,7 @@
     [Parameter, EditorRequired] public bool IsLoopActive { get; set; }
     [Parameter] public EventCallback OnAddTemplate { get; set; }
 
-    private bool HasAgent => Registry.GetAllAgents().Count > 0;
-
-    private bool AllComplete => HasIssueProvider && HasRepoProvider && HasProject && HasTemplate && HasAgent && IsLoopActive;
+    private bool AllComplete => HasIssueProvider && HasRepoProvider && HasProject && HasTemplate && IsLoopActive;
 
     private static string StepClass(bool isComplete, ref bool foundCurrent)
     {
