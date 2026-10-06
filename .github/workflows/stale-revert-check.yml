@@ -9,13 +9,12 @@ name: Stale Revert Check
 # Report-only: findings are warning annotations on the diff plus the step summary, and the run
 # passes. The pipeline treats any failed workflow run on its branch as CI for its agent to fix, and
 # some findings are deliberate rewrites of fresh code. Add --fail to the script call to make it block.
+#
+# No concurrency group: an `edited` run has the same head SHA as the push run it would cancel, and
+# the pipeline reads a cancelled run on its head SHA as a CI failure. Runs are short and read-only.
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -31,6 +30,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Test the check
         run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v

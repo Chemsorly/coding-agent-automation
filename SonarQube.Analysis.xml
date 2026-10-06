@@ -12,8 +12,11 @@
        matching zero tests (see the csproj for the full note). Without this exclusion the scanner
        therefore measures E2E harness code as production code — its fixtures and factories count
        against new-code coverage, and the four deliberately parallel WebApplicationFactory classes
-       count as duplication. -->
-  <Property Name="sonar.exclusions">**/Migrations/**,tests/CodingAgent.Web.TestUtilities/**,tests/CodingAgent.Web.E2ETests/**</Property>
+       count as duplication.
+
+       .github/scripts holds CI helper scripts (Python), not product code. They run their own unit
+       tests in the workflow that uses them, and no Python coverage report reaches the scanner. -->
+  <Property Name="sonar.exclusions">**/Migrations/**,tests/CodingAgent.Web.TestUtilities/**,tests/CodingAgent.Web.E2ETests/**,.github/scripts/**</Property>
 
   <!-- Rule-level suppressions that cannot be expressed inline. -->
   <Property Name="sonar.issue.ignore.multicriteria">e2ecopy,inclusterhttp</Property>

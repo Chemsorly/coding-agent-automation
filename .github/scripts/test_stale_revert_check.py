@@ -7,12 +7,16 @@ script against it as CI would: as a subprocess with --base and --head.
 Run: python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
 """
 
+import contextlib
+import importlib.util
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 SCRIPT = Path(__file__).resolve().parent / "stale_revert_check.py"
 
@@ -207,6 +211,27 @@ class StaleRevertCheckTests(unittest.TestCase):
         self.assertNotIn(y[:7], out)
         self.assertIn("#202", summary)
 
+    def test_g_a_path_git_quotes_is_blamed_unquoted(self):
+        name = 'src/we"ird.cs'
+        self.repo.write(name, BASE)
+        self.repo.commit("add weird", T0 + 10)
+        self.repo.git("checkout", "-q", "-b", "pr", "main")
+        self.repo.write(name, BASE + [PR_LINE])
+        self.repo.commit("feat: PR work", T1)
+        self.repo.git("checkout", "-q", "main")
+        self.repo.write(name, BASE[:2] + MAIN_LINES + BASE[2:])
+        self.repo.commit("feat: Retry failed jobs (#101)", T2)
+        self.repo.git("checkout", "-q", "pr")
+        self.repo.git("rebase", "-q", "main", committer=T3)
+        self.repo.write(name, BASE + [PR_LINE])
+        self.repo.commit("feat: PR work, continued", T3)
+
+        code, out, summary = self.repo.run_check()
+
+        self.assertEqual(code, 1, out)
+        self.assertIn("::error file=src/we\"ird.cs,line=3::", out)
+        self.assertIn("#101", summary)
+
     def test_generated_paths_are_ignored(self):
         self.repo.write("src/Migrations/Snapshot.cs", BASE)
         self.repo.commit("add migration", T0 + 10)
@@ -244,6 +269,34 @@ class StaleRevertCheckTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("::warning", result.stdout)
+
+
+class InternalErrorTests(unittest.TestCase):
+    """A bug or git failure in the check must not fail the run unless --fail is set."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("stale_revert_check", SCRIPT)
+        self.check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.check)
+
+    def run_main(self, *extra):
+        out = io.StringIO()
+        with mock.patch.object(self.check, "find_stale_reverts", side_effect=RuntimeError("boom")), \
+                contextlib.redirect_stdout(out):
+            code = self.check.main(["--base", "a", "--head", "b", "--summary-file", os.devnull, *extra])
+        return code, out.getvalue()
+
+    def test_an_internal_error_is_a_warning_and_passes(self):
+        code, out = self.run_main()
+
+        self.assertEqual(code, 0, out)
+        self.assertIn("::warning title=Stale revert check failed::", out)
+        self.assertIn("boom", out)
+
+    def test_with_fail_an_internal_error_fails(self):
+        code, out = self.run_main("--fail")
+
+        self.assertEqual(code, 1, out)
 
 
 if __name__ == "__main__":

@@ -13,10 +13,12 @@ Usage: stale_revert_check.py --base SHA --head SHA [--pr-body-file PATH] [--summ
 By default findings are reported as warning annotations and the step summary, and the exit code is 0:
 the pipeline treats any failed workflow run on its branch as CI for its agent to fix, and some findings
 are deliberate rewrites of fresh code. With --fail, findings are error annotations and the exit code
-is 1. A history too shallow to check always exits 0.
+is 1. A history too shallow to check always exits 0, and so does an error in the check itself
+unless --fail is set.
 """
 
 import argparse
+import codecs
 import html
 import os
 import re
@@ -65,6 +67,19 @@ def is_trivial(text):
     return re.sub(r"\W+", " ", text).strip() in TRIVIAL_WORDS
 
 
+def header_path(row):
+    """The path of a `--- a/...` or `+++ b/...` diff header, or None for /dev/null.
+
+    Git C-quotes a path holding a quote, backslash or control character (`"a/we\\"ird.cs"`).
+    """
+    path = row[4:].rstrip("\t")
+    if path == "/dev/null":
+        return None
+    if path.startswith('"') and path.endswith('"'):
+        path = codecs.escape_decode(path[1:-1].encode("utf-8"))[0].decode("utf-8", "replace")
+    return path[2:]
+
+
 def parse_diff(merge_base, head):
     """Diff the PR against the merge base and return (deleted, added).
 
@@ -80,9 +95,9 @@ def parse_diff(merge_base, head):
         if row.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
         elif not in_hunk and row.startswith("--- "):
-            old_path = None if row == "--- /dev/null" else row[6:].rstrip("\t")
+            old_path = header_path(row)
         elif not in_hunk and row.startswith("+++ "):
-            new_path = None if row == "+++ /dev/null" else row[6:].rstrip("\t")
+            new_path = header_path(row)
         elif match := HUNK.match(row):
             old_line, in_hunk = int(match[1]), True
         elif in_hunk and row.startswith("-"):
@@ -106,7 +121,14 @@ def blame(merge_base, deleted):
         for _, group in groupby(enumerate(sorted(lines)), key=lambda pair: pair[1] - pair[0]):
             numbers = [line for _, line in group]
             options += ["-L", f"{numbers[0]},{numbers[-1]}"]
-        for row in git("blame", "-w", "--porcelain", *options, merge_base, "--", path).splitlines():
+        try:
+            rows = git("blame", "-w", "--porcelain", *options, merge_base, "--", path).splitlines()
+        except subprocess.CalledProcessError:
+            # E.g. a path that is not valid UTF-8, which the decoded diff could not name exactly.
+            print(f"::warning title=Stale revert check::Could not blame {escape(path)}; "
+                  "its deleted lines are not checked.")
+            continue
+        for row in rows:
             if match := BLAME_HEADER.match(row):
                 origin[(path, int(match[2]))] = match[1]
     return origin
@@ -236,7 +258,11 @@ def main(argv=None):
     pr_body = "" if not args.pr_body_file else \
         Path(args.pr_body_file).read_text(encoding="utf-8", errors="replace")
 
-    findings = find_stale_reverts(args.base, args.head, pr_body)
+    try:
+        findings = find_stale_reverts(args.base, args.head, pr_body)
+    except Exception as error:  # a bug or git failure in the check is not a finding
+        print(f"::warning title=Stale revert check failed::{escape(f'{type(error).__name__}: {error}')}")
+        return 1 if args.fail else 0
     if findings is None:
         print("::warning title=Stale revert check skipped::No merge base between "
               f"{args.base} and {args.head}: the history is too shallow (check out with fetch-depth: 0).")
