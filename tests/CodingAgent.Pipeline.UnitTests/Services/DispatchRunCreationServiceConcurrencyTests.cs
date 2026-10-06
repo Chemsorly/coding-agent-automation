@@ -65,7 +65,7 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         const int concurrentCallers = 10;
         var barrier = new Barrier(concurrentCallers);
 
-        var tasks = Enumerable.Range(0, concurrentCallers).Select(_ => Task.Run(async () =>
+        var tasks = Enumerable.Range(0, concurrentCallers).Select(_ => RunOnOwnThread(async () =>
         {
             barrier.SignalAndWait();
             return await _service.CreateDispatchedRunAsync(
@@ -92,7 +92,7 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         const int concurrentCallers = 5;
         var barrier = new Barrier(concurrentCallers);
 
-        var tasks = Enumerable.Range(0, concurrentCallers).Select(_ => Task.Run(async () =>
+        var tasks = Enumerable.Range(0, concurrentCallers).Select(_ => RunOnOwnThread(async () =>
         {
             barrier.SignalAndWait();
             return await _service.CreateDispatchedRunAsync(
@@ -115,7 +115,7 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         const int concurrentCallers = 5;
         var barrier = new Barrier(concurrentCallers);
 
-        var tasks = Enumerable.Range(0, concurrentCallers).Select(i => Task.Run(async () =>
+        var tasks = Enumerable.Range(0, concurrentCallers).Select(i => RunOnOwnThread(async () =>
         {
             barrier.SignalAndWait();
             return await _service.CreateDispatchedRunAsync(
@@ -139,7 +139,7 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         const int concurrentCallers = 10;
         var barrier = new Barrier(concurrentCallers);
 
-        var tasks = Enumerable.Range(0, concurrentCallers).Select(_ => Task.Run(async () =>
+        var tasks = Enumerable.Range(0, concurrentCallers).Select(_ => RunOnOwnThread(async () =>
         {
             barrier.SignalAndWait();
             return await _service.ReserveRunIdAsync(
@@ -180,6 +180,15 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         secondRun.Should().BeNull();
         _service.IsIssueBeingProcessed("50", "issue-1").Should().BeTrue();
     }
+
+    /// <summary>
+    /// Starts <paramref name="caller"/> on a dedicated thread, so the barrier wait at its start blocks that
+    /// thread instead of a thread-pool thread. Blocking up to ten pool threads at once starved the pool
+    /// for seconds and stalled timing-sensitive tests running in parallel in the same process. The
+    /// barrier still releases all callers at the same instant.
+    /// </summary>
+    private static Task<T> RunOnOwnThread<T>(Func<Task<T>> caller) =>
+        Task.Factory.StartNew(caller, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap();
 
     public async ValueTask DisposeAsync()
     {
