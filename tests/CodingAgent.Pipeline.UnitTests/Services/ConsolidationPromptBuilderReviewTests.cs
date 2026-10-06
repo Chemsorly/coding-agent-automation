@@ -63,6 +63,14 @@ public class ConsolidationPromptBuilderReviewTests
     }
 
     [Fact]
+    public void BuildRefactoringReviewPrompt_RestrictsMarkersToSingleFindingLines()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().Contain("Start a line with a severity marker only when the line is a finding");
+    }
+
+    [Fact]
     public void BuildBrainConsolidationReviewPrompt_ContainsDiffFilePath()
     {
         var result = ConsolidationPromptBuilder.BuildBrainConsolidationReviewPrompt();

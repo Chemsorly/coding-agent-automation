@@ -508,6 +508,7 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine($"- If the {spec.SubjectShortName} are thorough and correct, state that explicitly (e.g., \"No issues found\"). Do NOT invent findings.");
         sb.AppendLine("- When stating no issues were found, do NOT echo severity marker syntax. Write \"No issues found\" — not \"No [CRITICAL] issues found\".");
+        sb.AppendLine($"- {PromptBuilder.FindingLineRule}");
         sb.AppendLine($"- {spec.DoNotModifyClause}");
 
         return sb.ToString();

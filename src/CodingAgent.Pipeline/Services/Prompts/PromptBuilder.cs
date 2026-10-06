@@ -48,6 +48,16 @@ public static partial class PromptBuilder
         "- If referenced code is missing, search for it. Adapt — never fabricate.\n";
 
     /// <summary>
+    /// Finding-line rule shared by every review prompt whose output SeverityParser counts. Only a line that
+    /// starts with a severity marker is a finding, so a marker that starts a wrapped line of prose is counted,
+    /// and a finding wrapped onto further lines loses its tail in the parsed message.
+    /// </summary>
+    internal const string FindingLineRule =
+        "Start a line with a severity marker only when the line is a finding, and keep each finding on that one line. " +
+        "Every line that starts with a marker is counted as a finding; when you name a severity anywhere else, " +
+        "write it as a plain word (\"no critical issues\").";
+
+    /// <summary>
     /// Calibration footer for code review prompts. Addresses LLM over-rejection bias
     /// (arXiv:2508.12358) by requiring burden-of-proof for severity levels, signaling that
     /// 0 findings is valid, and debiasing against developer framing (arXiv:2603.18740).
@@ -62,6 +72,8 @@ public static partial class PromptBuilder
         "- [WARNING] requires identifying specific code that deviates from best practice or could " +
         "fail under documented conditions. Vague \"might cause issues\" is not sufficient.\n" +
         "- [SUGGESTION] is for improvements that don't indicate a defect.\n\n" +
+        "FINDING LINES:\n" +
+        FindingLineRule + "\n\n" +
         "ACCURACY OVER THOROUGHNESS:\n" +
         "Scan the entire diff systematically, but only report findings you can support with " +
         "a specific code path or scenario. A review with 0 findings is a valid outcome when " +
