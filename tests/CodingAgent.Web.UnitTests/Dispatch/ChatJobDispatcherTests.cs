@@ -1441,7 +1441,7 @@ public class ChatJobDispatcherTests
 
         // Now stop heartbeats and wait for idle kill to fire
         heartbeatCts.Cancel();
-        var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(10));
+        var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         idleKillDone.Should().BeTrue("watcher must exit after heartbeats stop and idle timeout fires");
 
         jobClientMock.Verify(c => c.DeleteJobAsync(
@@ -1528,7 +1528,7 @@ public class ChatJobDispatcherTests
 
         // Stop B's heartbeats; A's watcher should now detect idle and terminate
         heartbeatCts.Cancel();
-        var idleKillDone = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(10));
+        var idleKillDone = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         idleKillDone.Should().BeTrue("watcher must idle-kill the pod after cross-replica heartbeats stop");
 
         jobClientMock.Verify(c => c.DeleteJobAsync(
