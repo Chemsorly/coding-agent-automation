@@ -74,9 +74,13 @@ public class LeaderElectedPollingServiceTests
         var countBeforeLoss = service.PollCycleCount;
         countBeforeLoss.Should().BeGreaterThan(0);
 
-        // Lose leadership
-        leaderCts.Cancel();
+        // Lose leadership: update IsLeader and LeaderToken BEFORE cancelling the CTS so the
+        // service never sees IsLeader=true with a stale (already-cancelled) LeaderToken.
+        // If the cancellation fires while IsLeader is still true, ExecuteAsync may immediately
+        // re-enter the leadership term with an already-cancelled linked token and spin in a tight
+        // loop until the state update is observed, preventing further poll cycles.
         SetLeaderState(leaderElection, isLeader: false, new CancellationTokenSource());
+        leaderCts.Cancel();
         // Brief fixed delay — just enough for the cancellation to propagate through the loop
         await Task.Delay(100);
 
