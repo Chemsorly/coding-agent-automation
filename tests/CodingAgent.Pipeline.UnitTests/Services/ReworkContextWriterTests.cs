@@ -43,6 +43,18 @@ public class ReworkContextWriterTests
         content.Should().Contain("outside this issue's scope");
     }
 
+    /// <summary>
+    /// The diff commands name the old branch head. Restoring a file from it, instead of editing
+    /// main's version, reverts main's changes all over again.
+    /// </summary>
+    [Fact]
+    public void Format_ForbidsRestoringFilesFromTheOldBranch()
+    {
+        var content = ReworkContextWriter.Format(ForceResolvedResult([ClassifierContext]));
+
+        content.Should().Contain("Do not restore a file, or part of one, from your branch's earlier commits");
+    }
+
     [Fact]
     public void Format_GivesTheGitCommandsForTheFullDiffs()
     {
