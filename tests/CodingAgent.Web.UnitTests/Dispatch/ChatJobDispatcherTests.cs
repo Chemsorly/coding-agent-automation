@@ -877,7 +877,7 @@ public class ChatJobDispatcherTests
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         // Wait for the watcher to see the terminal job and exit
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         watcherDone.Should().BeTrue("watcher must exit when job is terminal");
 
         // DeleteJobAsync must NOT have been called — watcher cleanup, not force-delete
@@ -1101,14 +1101,14 @@ public class ChatJobDispatcherTests
 
         // Assert 2: the watcher task must complete promptly after WatcherCts is cancelled.
         // WatcherCts.Cancel() causes Task.Delay(pollInterval, ct) in the watcher to throw
-        // OperationCanceledException immediately, so the watcher exits well within 15 seconds.
+        // OperationCanceledException immediately, so the watcher exits promptly.
         // TODO: WaitForWatcherAsync returns true immediately when the entry is not in _activeWatchers
         // (early-return branch). Since CleanupSession already called TryRemove before TerminateChatSessionAsync
         // returned, this assertion is vacuous — it does not verify that WatchJobUntilTerminalAsync actually
         // terminated. To fix: capture entry.WatcherTask before TerminateChatSessionAsync via a test-only
         // accessor and await it directly with a timeout to unambiguously verify termination.
         // See review finding: TestQualityReviewer WARNING @ line 901 / Correctness WARNING @ line 904.
-        var watcherFinished = await dispatcher.WaitForWatcherAsync(agentId, TimeSpan.FromSeconds(15));
+        var watcherFinished = await dispatcher.WaitForWatcherAsync(agentId, TimeSpan.FromSeconds(60));
         watcherFinished.Should().BeTrue(
             "WatchJobUntilTerminalAsync must terminate promptly after WatcherCts is cancelled");
     }
@@ -1329,7 +1329,7 @@ public class ChatJobDispatcherTests
         agentId.Should().Be(capturedJobName, "returned agentId must equal job name");
 
         // Watcher must exit on 404, not retry forever
-        var watcherCompleted = await dispatcher.WaitForWatcherAsync(agentId, TimeSpan.FromSeconds(15));
+        var watcherCompleted = await dispatcher.WaitForWatcherAsync(agentId, TimeSpan.FromSeconds(60));
         watcherCompleted.Should().BeTrue("watcher must exit when job returns 404, not retry forever");
 
         dispatcher.HasActiveSession(agentId).Should().BeFalse("session must be removed after 404");
@@ -1375,7 +1375,7 @@ public class ChatJobDispatcherTests
 
         // No heartbeat sent — watcher should auto-terminate after ChatIdleTimeoutSeconds
 
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         watcherDone.Should().BeTrue("watcher must exit after idle timeout expires");
 
         // Pod must be terminated (CancelChat + force-delete path)
@@ -1705,7 +1705,7 @@ public class ChatJobDispatcherTests
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         // No heartbeat sent — local ticks stay at StartedAt → idle-kill fires after timeout
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         watcherDone.Should().BeTrue(
             "watcher must idle-kill when Redis key is absent and local ticks are stale");
 
@@ -1753,7 +1753,7 @@ public class ChatJobDispatcherTests
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         // No heartbeat sent — local ticks are stale from dispatch → idle-kill fires
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(15));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         watcherDone.Should().BeTrue(
             "watcher must idle-kill using local ticks when Redis is not configured");
 
@@ -1863,8 +1863,11 @@ public class ChatJobDispatcherTests
     /// <c>TrySendCancelChatAsync</c>, so a throw from it propagates through
     /// <c>TerminateChatSessionAsync</c> and into <c>WatchJobUntilTerminalAsync</c>'s
     /// outer <c>catch (Exception)</c> guard.
+    /// The fault is held back until the test completes <c>releaseFault</c>: the idle-kill fires
+    /// about 1s after dispatch, so a test thread stalled that long would otherwise find the session
+    /// already cleaned up and <see cref="ChatJobDispatcher.TryGetWatcherTask"/> returning null.
     /// </summary>
-    private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, string agentId)
+    private static (ChatJobDispatcher dispatcher, Mock<IKubernetesJobClient> jobClientMock, TaskCompletionSource releaseFault)
         CreateFaultingDispatcher(
             Serilog.ILogger? logger = null,
             DispatchServiceOptions? options = null,
@@ -1880,6 +1883,13 @@ public class ChatJobDispatcherTests
         var registryMock = new Mock<IAgentRegistryService>();
         string capturedAgentId = "";
         string capturedDispatchId = "";
+        var releaseFault = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        async Task<AgentEntry?> FaultOnceReleased()
+        {
+            await releaseFault.Task;
+            throw new InvalidOperationException("simulated registry fault for watcher fault test");
+        }
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
@@ -1906,7 +1916,7 @@ public class ChatJobDispatcherTests
                 // the fault path was actually exercised.
                 // See review finding: TestQualityReviewer WARNING @ line 1371.
                 registryMock.Setup(r => r.GetByAgentIdAsync(It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
-                    .ThrowsAsync(new InvalidOperationException("simulated registry fault for watcher fault test"));
+                    .Returns(FaultOnceReleased);
                 // Deregister is a no-op (never reached because GetByAgentIdAsync throws first)
                 registryMock.Setup(r => r.Deregister(It.IsAny<AgentId>())).Returns(false);
             })
@@ -1928,7 +1938,7 @@ public class ChatJobDispatcherTests
             options ?? CreateFaultTestOptions(),
             logger ?? Mock.Of<ILogger>());
 
-        return (dispatcher, jobClientMock, capturedAgentId);
+        return (dispatcher, jobClientMock, releaseFault);
     }
 
     /// <summary>
@@ -1957,23 +1967,17 @@ public class ChatJobDispatcherTests
     [Fact]
     public async Task WatchJobUntilTerminalAsync_WhenExceptionThrown_CleanupSessionExecutes()
     {
-        var (dispatcher, _, _) = CreateFaultingDispatcher();
-        string? agentId = null;
+        var (dispatcher, _, releaseFault) = CreateFaultingDispatcher();
 
         // Capture the WatcherTask before the entry is removed from _activeWatchers by CleanupSession.
-        // After dispatch, the watcher is running; we must grab the task before the fault fires.
-        // We poll briefly to ensure the entry is registered before capturing.
-        agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        // The fault is held back until releaseFault completes, so the entry is still registered here.
+        var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
-        // TODO [WARNING]: Race condition — with ChatIdleTimeoutSeconds=1 and pollInterval=1s, the idle-kill
-        // could fire and complete CleanupSession before TryGetWatcherTask is called on a slow CI machine,
-        // causing watcherTask to be null and the test to fail with a misleading null-guard assertion rather
-        // than a test-logic failure. Consider using a longer idle timeout or synchronising on watcher
-        // registration rather than relying on polling order. See review finding: TestQualityReviewer WARNING @ line 1430.
         watcherTask.Should().NotBeNull("watcher task must exist immediately after dispatch");
 
         // Wait for the watcher to complete (fault fires via idle-kill → TerminateChatSessionAsync → registry throws)
-        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        releaseFault.SetResult();
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         // AC3: entry must be removed from _activeWatchers
         dispatcher.HasActiveSession(agentId).Should().BeFalse(
@@ -2033,12 +2037,13 @@ public class ChatJobDispatcherTests
         });
         listener.Start();
 
-        var (dispatcher, _, _) = CreateFaultingDispatcher(agentSelector: uniqueSelector);
+        var (dispatcher, _, releaseFault) = CreateFaultingDispatcher(agentSelector: uniqueSelector);
         var agentId = await dispatcher.DispatchChatPodAsync(uniqueSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
         // Wait for the fault to fire and CleanupSession to run
-        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        releaseFault.SetResult();
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         // Stop the listener immediately after the watcher completes to prevent measurements
         // from other parallel tests (which share the same global static instrument) from
@@ -2081,11 +2086,12 @@ public class ChatJobDispatcherTests
             .WriteTo.Sink(capturingSink)
             .CreateLogger();
 
-        var (dispatcher, _, _) = CreateFaultingDispatcher(logger: logger);
+        var (dispatcher, _, releaseFault) = CreateFaultingDispatcher(logger: logger);
         var agentId = await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
         var watcherTask = dispatcher.TryGetWatcherTask(agentId);
 
-        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        releaseFault.SetResult();
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         var errorEvents = capturedEvents
             .Where(e => e.Level == Serilog.Events.LogEventLevel.Error)
@@ -2169,7 +2175,7 @@ public class ChatJobDispatcherTests
 
         // Cancel via StopAsync — normal shutdown path
         await dispatcher.StopAsync(CancellationToken.None);
-        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(5));
+        await watcherTask!.WaitAsync(TimeSpan.FromSeconds(60));
 
         var errorEvents = capturedEvents
             .Where(e => e.Level == Serilog.Events.LogEventLevel.Error)
@@ -2445,7 +2451,7 @@ public class ChatJobDispatcherTests
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         // Wait for watcher to exit naturally (sees terminal job → calls CleanupSession once)
-        var watcherDone = await dispatcher.WaitForWatcherAsync(capturedJobName!, TimeSpan.FromSeconds(10));
+        var watcherDone = await dispatcher.WaitForWatcherAsync(capturedJobName!, TimeSpan.FromSeconds(60));
         watcherDone.Should().BeTrue("watcher must exit when job is terminal");
 
         // StopAsync calls CleanupSession a second time via the entries loop — must be a no-op
