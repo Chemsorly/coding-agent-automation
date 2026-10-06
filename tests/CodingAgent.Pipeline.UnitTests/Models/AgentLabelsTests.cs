@@ -23,16 +23,15 @@ public class AgentLabelsTests
 
     // ── DispatchIneligibleLabels regression guard ──────────────────────────
 
-    // TODO: TerminalLabels_IsSubsetOf_DispatchIneligibleLabels was removed when EpicReview was
-    // intentionally removed from DispatchIneligibleLabels. That test was the only structural guard
-    // ensuring all terminal labels are also dispatch-ineligible. With EpicReview now in TerminalLabels
-    // but not in DispatchIneligibleLabels, the subset invariant no longer holds universally.
-    // Consider replacing the removed test with one that explicitly documents which TerminalLabels are
-    // intentionally absent from DispatchIneligibleLabels (currently only EpicReview), so that future
-    // label additions to TerminalLabels that accidentally miss DispatchIneligibleLabels are caught.
+    // An epic awaiting plan approval must not be dispatched (decisions.md, "Epic decomposition:
+    // two-phase with human gate"). #2699 added it; #2697's stale rework rebase took it out again.
     [Fact]
-    public void DispatchIneligibleLabels_DoesNotContainEpicReview() =>
-        AgentLabels.DispatchIneligibleLabels.Should().NotContain(AgentLabels.EpicReview);
+    public void DispatchIneligibleLabels_ContainsEpicReview() =>
+        AgentLabels.DispatchIneligibleLabels.Should().Contain(AgentLabels.EpicReview);
+
+    [Fact]
+    public void TerminalLabels_IsSubsetOf_DispatchIneligibleLabels() =>
+        AgentLabels.TerminalLabels.Should().BeSubsetOf(AgentLabels.DispatchIneligibleLabels);
 
     // ── DualLabelResolutionPrecedence data-integrity guard ─────────────────
 
