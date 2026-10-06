@@ -71,7 +71,7 @@ Only one `agent:*` label should be present on an issue at a time (except during 
 1. **User** adds `agent:next` label to an issue that already has an open agent-created PR
 2. **Pipeline** detects the existing PR by matching the branch name pattern (`feature/auto-{issueNumber}-*`)
 3. **Pipeline** swaps label to `agent:in-progress`, enters rework mode
-4. **Pipeline** checks out the existing PR branch and rebases it onto main. Main is authoritative: where the branch and main changed the same file, main's version is kept and the branch's change to it is dropped. For each such file, `.agent/rework-context.md` records the dropped change, main's change and main's commits
+4. **Pipeline** checks out the existing PR branch and rebases it onto main. Main is authoritative: where the branch and main changed the same file, main's version is kept and the branch's change to it is dropped. A branch rename of a file main changed or deleted is dropped too, because the rebase does no rename detection and would otherwise leave the branch's stale copy next to main's version. For each such file, `.agent/rework-context.md` records the dropped change, main's change and main's commits
 5. **Pipeline** builds a rework prompt from the dropped files (if any) and/or PR review feedback. It tells the agent to re-apply only what the issue still needs, and not changes outside the issue's scope or changes main has since made in another way
 6. **Pipeline** re-runs code generation and quality gates using the rework prompt
 7. **Pipeline** pushes to the existing branch (updates the PR automatically) and refreshes the PR body with current quality gate results

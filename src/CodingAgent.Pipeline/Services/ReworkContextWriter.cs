@@ -55,7 +55,9 @@ public static class ReworkContextWriter
         sb.AppendLine();
         sb.AppendLine("The pipeline rebased this pull request's branch onto the latest main. " +
             "Main is authoritative: where your branch and main changed the same file, main's version was kept " +
-            "and your branch's changes to that file were dropped.");
+            "and your branch's conflicting changes to that file were dropped. Changes from your other commits " +
+            "that applied cleanly may still be in it. Where your branch had renamed a file main changed, the " +
+            "renamed copy was removed and both names are listed.");
         sb.AppendLine();
         sb.AppendLine("For each file below you get the change your branch had made (dropped), main's change since " +
             "your branch point (kept), and main's commits that touched the file. Use them to decide what to " +
@@ -64,6 +66,9 @@ public static class ReworkContextWriter
         sb.AppendLine($"- Re-apply only what this issue still needs (see `{AgentWorkspacePaths.IssueContextFilePath}`).");
         sb.AppendLine("- Do not re-apply a change that is outside this issue's scope.");
         sb.AppendLine("- Do not re-apply a change that main has since made in another way. Keep main's way.");
+        sb.AppendLine("- Do not restore a file, or part of one, from your branch's earlier commits or its `origin/` " +
+            "copy, and do not undo the diffs below in bulk: that reverts main's changes. Edit the files as they " +
+            "are now.");
         sb.AppendLine();
 
         var contexts = mergeResult.ForceResolvedContext

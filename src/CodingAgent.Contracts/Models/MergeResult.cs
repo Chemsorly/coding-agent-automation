@@ -11,8 +11,9 @@ public sealed class MergeResult
 
     /// <summary>
     /// When true, conflicts were force-resolved by keeping the base (main) version: main is
-    /// authoritative. The branch's changes to these files were dropped. The agent must
-    /// re-apply what the issue still needs on top of the current main state.
+    /// authoritative. The branch's conflicting changes to these files were dropped, and so was a
+    /// branch rename of a file main changed (both paths are listed). The agent must re-apply what
+    /// the issue still needs on top of the current main state.
     /// </summary>
     public bool ForceResolved { get; init; }
 
