@@ -526,53 +526,9 @@ internal static class RepositoryGitOperations
         // Perform interactive-less rebase: replay branch commits on top of origin/main.
         var rebaseOptions = new RebaseOptions();
         var rebaseResult = repo.Rebase.Start(repo.Head, baseBranch, baseBranch, identity, rebaseOptions);
-        var conflictFiles = new List<string>();
-
-        if (rebaseResult.Status == RebaseStatus.Conflicts)
-        {
-            // Collect conflicting files
-            conflictFiles.AddRange(repo.Index.Conflicts
-                .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
-                .OfType<string>()
-                .Distinct());
-
-            Log.Warning(
-                "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}. Force-resolving keeping main's version (main wins). Conflicts: {@ConflictFiles}",
-                headBranchName, baseBranchName, conflictFiles.Count,
-                rebaseResult.CompletedStepCount + 1, rebaseResult.TotalStepCount,
-                conflictFiles);
-
-            // Force-resolve all conflicts by keeping the base (main) side.
-            ForceResolveConflictsKeepingBase(repo, workspacePath);
-
-            // Continue the rebase after resolving conflicts
-            var continueIdentity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
-            var continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
-
-            // Handle any further conflicts in subsequent rebase steps
-            while (continueResult.Status == RebaseStatus.Conflicts)
-            {
-                var additionalConflicts = repo.Index.Conflicts
-                    .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
-                    .Where(p => p != null)
-                    .Distinct()
-                    .ToList();
-
-                foreach (var f in additionalConflicts.Where(f => !conflictFiles.Contains(f!)))
-                    conflictFiles.Add(f!);
-
-                Log.Warning(
-                    "Rebase: additional conflict(s) at step {CurrentStep}/{TotalSteps}, force-resolving. New conflicts: {@AdditionalConflicts}",
-                    continueResult.CompletedStepCount + 1, continueResult.TotalStepCount, additionalConflicts);
-
-                ForceResolveConflictsKeepingBase(repo, workspacePath);
-                continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
-            }
-
-            Log.Information(
-                "Rebase: force-resolved {ConflictCount} file(s) keeping main's version (main wins), rebase completed. New HEAD={NewHeadSha}",
-                conflictFiles.Count, repo.Head.Tip.Sha[..8]);
-        }
+        var conflictFiles = rebaseResult.Status == RebaseStatus.Conflicts
+            ? ForceResolveUntilRebaseCompletes(repo, workspacePath, rebaseResult, headBranchName, baseBranchName)
+            : new List<string>();
 
         if (mergeBase is not null)
         {
@@ -608,6 +564,60 @@ internal static class RepositoryGitOperations
             HasConflicts = false,
             ConflictFiles = Array.Empty<string>()
         };
+    }
+
+    /// <summary>
+    /// Force-resolves the conflicts of the stopped rebase step and of every later step that
+    /// conflicts, keeping main's side, until the rebase completes. Returns the conflicting files.
+    /// </summary>
+    private static List<string> ForceResolveUntilRebaseCompletes(
+        Repository repo, WorkspacePath workspacePath, RebaseResult rebaseResult,
+        string headBranchName, BranchName baseBranchName)
+    {
+        // Collect conflicting files
+        var conflictFiles = repo.Index.Conflicts
+            .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
+            .OfType<string>()
+            .Distinct()
+            .ToList();
+
+        Log.Warning(
+            "Rebase: branch {BranchName} onto origin/{BaseBranch} produced {ConflictCount} conflict(s) at step {CurrentStep}/{TotalSteps}. Force-resolving keeping main's version (main wins). Conflicts: {@ConflictFiles}",
+            headBranchName, baseBranchName, conflictFiles.Count,
+            rebaseResult.CompletedStepCount + 1, rebaseResult.TotalStepCount,
+            conflictFiles);
+
+        // Force-resolve all conflicts by keeping the base (main) side.
+        ForceResolveConflictsKeepingBase(repo, workspacePath);
+
+        // Continue the rebase after resolving conflicts
+        var continueIdentity = new Identity(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail);
+        var continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
+
+        // Handle any further conflicts in subsequent rebase steps
+        while (continueResult.Status == RebaseStatus.Conflicts)
+        {
+            var additionalConflicts = repo.Index.Conflicts
+                .Select(c => c.Ancestor?.Path ?? c.Ours?.Path ?? c.Theirs?.Path)
+                .OfType<string>()
+                .Distinct()
+                .ToList();
+
+            foreach (var f in additionalConflicts.Where(f => !conflictFiles.Contains(f)))
+                conflictFiles.Add(f);
+
+            Log.Warning(
+                "Rebase: additional conflict(s) at step {CurrentStep}/{TotalSteps}, force-resolving. New conflicts: {@AdditionalConflicts}",
+                continueResult.CompletedStepCount + 1, continueResult.TotalStepCount, additionalConflicts);
+
+            ForceResolveConflictsKeepingBase(repo, workspacePath);
+            continueResult = repo.Rebase.Continue(continueIdentity, new RebaseOptions());
+        }
+
+        Log.Information(
+            "Rebase: force-resolved {ConflictCount} file(s) keeping main's version (main wins), rebase completed. New HEAD={NewHeadSha}",
+            conflictFiles.Count, repo.Head.Tip.Sha[..8]);
+        return conflictFiles;
     }
 
     /// <summary>
