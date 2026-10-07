@@ -34,12 +34,28 @@ public sealed class AgentCodingPage
         await _page.WaitForCockpitPageReadyAsync();
 
         // The /agent-coding page has no "Loading…" cockpit-empty placeholder for the template
-        // table — it renders data synchronously after OnInitializedAsync completes. The circuit
-        // readiness check above only confirms the theme-toggle handler is attached, which happens
-        // slightly before the template HTTP fetch completes. Wait for the "Pipeline Job Templates"
-        // section heading which is rendered by TemplateTableSection regardless of whether
-        // templates are present, confirming the template data pass-down has completed.
-        await _page.WaitForSelectorAsync("h2:has-text('Pipeline Job Templates')", new() { Timeout = 15_000 });
+        // table — TemplateTableSection renders its data synchronously after OnInitializedAsync
+        // completes in the parent AgentCoding page. The circuit-readiness check above only confirms
+        // the theme-toggle handler is attached, which can happen while the template HTTP fetch is
+        // still in flight.
+        //
+        // Wait for TemplateTableSection to render its content: either the template table rows
+        // (when templates exist) or the "No pipeline job templates configured." empty message.
+        // Both are rendered only after the parent's OnInitializedAsync has finished fetching
+        // templates and passing them to the child component. The heading (h2) is NOT sufficient
+        // because it also appears in the prerendered HTML before the circuit connects.
+        await _page.WaitForFunctionAsync(
+            """
+            () => {
+                // Template table has data rows
+                if (document.querySelector('table.template-table tbody tr')) return true;
+                // Or the no-templates empty message is shown
+                const empties = document.querySelectorAll('.monitoring-empty');
+                return [...empties].some(e => e.textContent.includes('No pipeline job templates'));
+            }
+            """,
+            null,
+            new() { Timeout = 15_000 });
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>
