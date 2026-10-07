@@ -41,6 +41,8 @@ internal interface IChatSessionWatcher
 /// <inheritdoc cref="IChatSessionWatcher"/>
 internal sealed class ChatSessionWatcher : IChatSessionWatcher
 {
+    private const string ShutdownReason = "shutdown";
+
     private readonly IKubernetesJobClient _jobClient;
     private readonly IChatHeartbeatTracker? _heartbeatTracker;
     private readonly DispatchServiceOptions _options;
@@ -113,18 +115,18 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
                 }
                 catch (OperationCanceledException)
                 {
-                    cleanupCallback(entry.AgentId, entry, selectorEncoded, "shutdown");
+                    cleanupCallback(entry.AgentId, entry, selectorEncoded, ShutdownReason);
                     return;
                 }
             }
             // ct was already cancelled when the while-condition was evaluated
-            cleanupCallback(entry.AgentId, entry, selectorEncoded, "shutdown");
+            cleanupCallback(entry.AgentId, entry, selectorEncoded, ShutdownReason);
         }
         catch (OperationCanceledException)
         {
             // Normal cancellation (e.g. _shutdownCts fired, or WatcherCts cancelled by
             // TerminateChatSessionAsync). Not an error — no Error log.
-            cleanupCallback(entry.AgentId, entry, selectorEncoded, "shutdown");
+            cleanupCallback(entry.AgentId, entry, selectorEncoded, ShutdownReason);
         }
         catch (Exception ex)
         {
@@ -206,7 +208,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         await terminateCallback(entry.AgentId, CancellationToken.None).ConfigureAwait(false);
         // CleanupSession is gated by Interlocked.CompareExchange(ref entry.Cleaned, 1, 0),
         // so if force-delete already ran it, this is a safe no-op.
-        cleanupCallback(entry.AgentId, entry, selectorEncoded, "shutdown");
+        cleanupCallback(entry.AgentId, entry, selectorEncoded, ShutdownReason);
         return IdleKillResult.KillTriggered;
     }
 

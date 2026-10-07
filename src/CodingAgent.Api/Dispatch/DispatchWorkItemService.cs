@@ -42,6 +42,9 @@ namespace CodingAgent.Api.Dispatch;
 /// </summary>
 internal sealed class DispatchWorkItemService
 {
+    private const string DeferredResult = "deferred";
+    private const string NotPendingReason = "not_pending";
+
     private readonly JobTemplateStore _templateStore;
 
     public DispatchWorkItemService(JobTemplateStore templateStore)
@@ -769,8 +772,8 @@ internal sealed class DispatchWorkItemService
         {
             Log.Information("DispatchPendingWorkItem: WorkItem {WorkItemId} is not Pending (status={Status}) — returning 200/deferred",
                 id, quickCheck.Status);
-            WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "not_pending");
-            return TypedResults.Ok(new DispatchPendingResponse(false, "not_pending"));
+            WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
+            return TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason));
         }
 
         var agentSelector = quickCheck.AgentSelector;
@@ -819,7 +822,7 @@ internal sealed class DispatchWorkItemService
         if (template is null)
         {
             Log.Warning("DispatchPendingWorkItem: no job template for selector {Selector} — returning 200/deferred", sanitizedSelector);
-            WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "no_template");
+            WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, "no_template");
             return TypedResults.Ok(new DispatchPendingResponse(false, "no_template"));
         }
 
@@ -993,9 +996,9 @@ internal sealed class DispatchWorkItemService
             Log.Information(
                 "DispatchPendingWorkItem: WorkItem {WorkItemId} is no longer Pending after lock acquisition (status={Status}) — returning 200/deferred",
                 id, postLockCheck?.Status);
-            WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "not_pending");
+            WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, NotPendingReason);
             await acquiredLock.DisposeAsync();
-            return (null, TypedResults.Ok(new DispatchPendingResponse(false, "not_pending")));
+            return (null, TypedResults.Ok(new DispatchPendingResponse(false, NotPendingReason)));
         }
 
         return (acquiredLock, null);
@@ -1060,7 +1063,7 @@ internal sealed class DispatchWorkItemService
         {
             if (rewriteConcurrencyLimitAsDeferred)
             {
-                WorkDistributionTelemetry.RecordDispatchAttempt("deferred", "concurrency_limit");
+                WorkDistributionTelemetry.RecordDispatchAttempt(DeferredResult, "concurrency_limit");
                 return (TypedResults.Ok(new DispatchPendingResponse(false, "concurrency_limit")), DispatchInterpretOutcome.ConcurrencyLimitRewritten);
             }
             // DispatchWorkItem path: 409 passes through as-is.
