@@ -61,6 +61,31 @@ public static class BlazorPageExtensions
     }
 
     /// <summary>
+    /// Waits until the CockpitLayout's project switcher DOM value matches the value stored in
+    /// <c>localStorage['cockpit.selectedProjectId']</c>. This confirms that the layout's
+    /// <c>OnAfterRenderAsync</c> has completed its localStorage restore and any project-scoped
+    /// page has received the <c>OnProjectChanged</c> event and re-queried its data.
+    /// <para>
+    /// Call this after <see cref="WaitForCockpitPageReadyAsync"/> on pages whose content is
+    /// filtered by the selected project (e.g. /work), to avoid reading stale all-projects data
+    /// that was loaded before the localStorage restore fired.
+    /// </para>
+    /// </summary>
+    /// <param name="page">The page to wait on.</param>
+    /// <param name="timeoutMs">Maximum time to wait in milliseconds.</param>
+    public static Task WaitForProjectSwitcherRestoredAsync(this IPage page, int timeoutMs = 15_000)
+        => page.WaitForFunctionAsync(
+            """
+            () => {
+                const stored = localStorage.getItem('cockpit.selectedProjectId') ?? '';
+                const sel = document.querySelector('select[aria-label="Project scope"]');
+                return sel != null && sel.value === stored;
+            }
+            """,
+            null,
+            new() { Timeout = timeoutMs });
+
+    /// <summary>
     /// Waits for Blazor enhanced navigation to complete by listening for the 'enhancedload' event.
     /// Call before the action that triggers navigation, then await the returned task.
     /// </summary>

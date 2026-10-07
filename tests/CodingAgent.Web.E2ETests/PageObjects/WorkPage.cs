@@ -24,6 +24,12 @@ public sealed class WorkPage
         await _page.GotoAsync($"{_baseUrl}/work");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await _page.WaitForCockpitPageReadyAsync();
+        // The Work page loads its data in OnInitializedAsync using State.SelectedProjectId, but the
+        // CockpitLayout restores SelectedProjectId from localStorage in OnAfterRenderAsync (after
+        // the initial render). This means the first data load may use the wrong project scope.
+        // Wait until the project switcher DOM value matches localStorage so that any project-scoped
+        // re-query triggered by OnProjectChanged has already completed.
+        await _page.WaitForProjectSwitcherRestoredAsync();
     }
 
     private ILocator InFlightCard => _page.Locator(".cockpit-card:has(h2:has-text('In flight'))");
