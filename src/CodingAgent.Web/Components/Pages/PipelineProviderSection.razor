@@ -325,7 +325,7 @@
         _loadingRepos = false;
     }
 
-    private class PipelineProviderForm
+    private sealed class PipelineProviderForm
     {
         public string ProviderType { get; set; } = "GitHub";
         public string DisplayName { get; set; } = "";

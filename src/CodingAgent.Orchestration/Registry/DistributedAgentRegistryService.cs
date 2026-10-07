@@ -1010,7 +1010,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             AgentId = new AgentId(agentId),
             ConnectionId = connectionId,
             Hostname = hostname,
-            Labels = labels!,
+            Labels = labels,
             Status = status,
             RegisteredAt = registeredAt,
             LastHeartbeatAt = r.DateTimeOffset("lastHeartbeatAt"),

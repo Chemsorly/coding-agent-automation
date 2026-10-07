@@ -170,7 +170,10 @@ FROM toolchain AS kiro
 ARG TARGETARCH
 ARG STACK_LABELS
 
-# Install Kiro CLI as non-root user, with its auto-updates off (the image is the update channel)
+# Install Kiro CLI as non-root user, with its auto-updates off (the image is the update channel).
+# The installer and the settings call create the CLI database, which holds anonymous telemetry
+# session credentials and a telemetry client ID. It is deleted in the same layer so no image
+# ships it; the CLI recreates it on first use. The setting itself lives in ~/.kiro/settings.
 ARG KIRO_CLI_VERSION=2.10.0
 RUN mkdir -p /home/ubuntu/.kiro && \
     KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
@@ -180,7 +183,8 @@ RUN mkdir -p /home/ubuntu/.kiro && \
     unzip /tmp/kirocli.zip -d /tmp/kirocli && \
     /tmp/kirocli/kirocli/install.sh --no-confirm && \
     rm -rf /tmp/kirocli /tmp/kirocli.zip && \
-    kiro-cli settings "app.disableAutoupdates" "true"
+    kiro-cli settings "app.disableAutoupdates" "true" && \
+    rm -f /home/ubuntu/.local/share/kiro-cli/data.sqlite3*
 
 # Predefined agent labels: the agent tool and every stack in the image (overridable at runtime;
 # Kubernetes Jobs set them from their job template)

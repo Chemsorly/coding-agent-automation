@@ -37,25 +37,18 @@ public sealed class WorkItemCountsServiceTests
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
 
-    private static async Task RunPollerForDurationAsync(WorkItemCountsService poller, TimeSpan duration)
-    {
-        using var cts = new CancellationTokenSource();
-        await poller.StartAsync(cts.Token);
-        await Task.Delay(duration, CancellationToken.None);
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        try { await poller.StopAsync(stopCts.Token); } catch { }
-        poller.Dispose();
-    }
-
     [Fact]
     public async Task WhenLeader_CallsGetWorkItemCountsAsync()
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
+        var polled = new CallSignal();
         _mockClient
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => polled.Hit())
             .ReturnsAsync(new WorkItemCountsResponseDto([], null));
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
+        await BackgroundServiceRunner.RunUntilAsync(CreatePoller(), polled.Reached,
+            "the leader must poll work item counts");
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "leader must poll work item counts");
@@ -64,9 +57,11 @@ public sealed class WorkItemCountsServiceTests
     [Fact]
     public async Task WhenNotLeader_DoesNotCallApi()
     {
-        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(false);
+        var secondCheck = new CallSignal(2);
+        _mockLeaderGate.SetupGet(g => g.IsLeader).Callback(() => secondCheck.Hit()).Returns(false);
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreatePoller(), secondCheck.Reached,
+            "the poller must keep checking leadership on every tick");
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.Never(), "non-leader must not poll");
@@ -76,11 +71,14 @@ public sealed class WorkItemCountsServiceTests
     public async Task WhenApiThrows_LogsWarningAndDoesNotCrash()
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
+        var secondCall = new CallSignal(2);
         _mockClient
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => secondCall.Hit())
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        await RunPollerForDurationAsync(CreatePoller(), TimeSpan.FromMilliseconds(2000));
+        await BackgroundServiceRunner.RunUntilAsync(CreatePoller(), secondCall.Reached,
+            "the poller must keep polling after an API failure");
 
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.AtLeastOnce(), "API failure must log a warning");
@@ -94,8 +92,10 @@ public sealed class WorkItemCountsServiceTests
         // null gate = dev / single-replica mode
         // Set up the mock before constructing the service so the background task never sees
         // an unconfigured mock on the first poll (which fires immediately in ExecuteAsync).
+        var polled = new CallSignal();
         _mockClient
             .Setup(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => polled.Hit())
             .ReturnsAsync(new WorkItemCountsResponseDto([], null));
 
         var poller = new WorkItemCountsService(
@@ -104,9 +104,8 @@ public sealed class WorkItemCountsServiceTests
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
 
-        // Use the same 2000ms window as WhenLeader_CallsGetWorkItemCountsAsync to give the
-        // background task enough time to start and tick under parallel test-suite load.
-        await RunPollerForDurationAsync(poller, TimeSpan.FromMilliseconds(2000));
+        await BackgroundServiceRunner.RunUntilAsync(poller, polled.Reached,
+            "null gate = dev mode — the poller must poll unconditionally");
 
         _mockClient.Verify(c => c.GetWorkItemCountsAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "null gate must not suppress polling");

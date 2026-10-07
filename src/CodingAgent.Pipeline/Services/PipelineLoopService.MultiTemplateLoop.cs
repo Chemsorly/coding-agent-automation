@@ -916,7 +916,7 @@ public sealed partial class PipelineLoopService
         return true;
     }
 
-    private async Task DelayOrStop(TimeSpan interval, CancellationToken ct)
+    private static async Task DelayOrStop(TimeSpan interval, CancellationToken ct)
     {
         try
         {

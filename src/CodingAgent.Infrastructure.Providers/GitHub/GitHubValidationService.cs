@@ -75,7 +75,7 @@ public class GitHubValidationService
         }
     }
 
-    private async Task<(bool Success, string Message)> ValidateInstallationWithoutRepoAsync(
+    private static async Task<(bool Success, string Message)> ValidateInstallationWithoutRepoAsync(
         string token, string apiUrl)
     {
         try

@@ -552,7 +552,7 @@
         _loadingRepos = false;
     }
 
-    private class RepoProviderForm
+    private sealed class RepoProviderForm
     {
         public string ProviderType { get; set; } = "GitHub";
         public string DisplayName { get; set; } = "";
@@ -575,14 +575,14 @@
         public string GitLabProjectId { get; set; } = "";
     }
 
-    private class SecretEntry
+    private sealed class SecretEntry
     {
         public string Key { get; set; } = "";
         public string Value { get; set; } = "";
         public string? ValidationError { get; set; }
     }
 
-    private class SetupStepEntry
+    private sealed class SetupStepEntry
     {
         public string Name { get; set; } = "";
         public string Command { get; set; } = "";
