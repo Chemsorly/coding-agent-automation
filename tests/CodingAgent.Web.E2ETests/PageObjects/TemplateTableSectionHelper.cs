@@ -41,6 +41,11 @@ public sealed class TemplateTableSectionHelper
         await _page.GotoAsync($"{_baseUrl}/agent-coding");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await _page.WaitForCockpitPageReadyAsync();
+        // The /agent-coding page has no "Loading…" cockpit-empty placeholder — wait for the
+        // template table or the "no templates" empty message to confirm data has rendered.
+        await _page.WaitForSelectorAsync(
+            ".monitoring-table.template-table, .monitoring-empty",
+            new() { Timeout = 15_000 });
     }
 
     // ── Label preview helpers ─────────────────────────────────────────────

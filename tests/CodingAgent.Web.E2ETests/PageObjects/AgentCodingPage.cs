@@ -32,6 +32,14 @@ public sealed class AgentCodingPage
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         await _page.WaitForCockpitPageReadyAsync();
+
+        // The /agent-coding page has no "Loading…" cockpit-empty placeholder — the TemplateTableSection
+        // renders the table or a "No templates" message directly once OnInitializedAsync completes.
+        // Wait for either state to appear so that subsequent assertions on template-row contents
+        // (e.g. Remove buttons) do not race against the first interactive render cycle.
+        await _page.WaitForSelectorAsync(
+            ".monitoring-table.template-table, .monitoring-empty",
+            new() { Timeout = 15_000 });
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>

@@ -42,12 +42,21 @@ public static class BlazorPageExtensions
             new() { Timeout = timeoutMs });
 
     /// <summary>
-    /// Waits until a cockpit page is interactive and has finished its first data load.
+    /// Waits until a cockpit page is interactive and has finished its first data load,
+    /// including the project-scope restore that runs in <c>CockpitLayout.OnAfterRenderAsync</c>.
+    /// <para>
     /// Cockpit pages are prerendered with their data; when the circuit connects, the interactive
     /// component re-runs <c>OnInitializedAsync</c> and shows a "Loading…" placeholder until its API
-    /// calls return, and prerendered buttons have no handlers. This waits until the layout's theme
-    /// toggle has its Blazor handler (the circuit has rendered the page) and no
-    /// <c>.cockpit-empty</c> placeholder starting with "Loading" is left.
+    /// calls return, and prerendered buttons have no handlers. After the initial data load,
+    /// <c>CockpitLayout.RestoreSavedProjectScopeAsync</c> reads <c>localStorage</c> and may trigger
+    /// a second quiet refresh on project-scoped pages. This helper waits until:
+    /// </para>
+    /// <list type="number">
+    ///   <item>The layout's theme toggle has a Blazor event handler (circuit rendered the page).</item>
+    ///   <item>No <c>.cockpit-empty</c> placeholder starting with "Loading" is present.</item>
+    ///   <item>The project-scope <c>&lt;select&gt;</c> (if present) reflects the value stored in
+    ///         <c>localStorage</c>, confirming the scope-restore render has completed.</item>
+    /// </list>
     /// </summary>
     /// <param name="page">The page to wait on.</param>
     /// <param name="timeoutMs">Maximum time to wait in milliseconds, per step.</param>
@@ -56,6 +65,22 @@ public static class BlazorPageExtensions
         await page.WaitForInteractiveAsync(".cockpit-theme-toggle", timeoutMs);
         await page.WaitForFunctionAsync(
             "() => ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.trim().startsWith('Loading'))",
+            null,
+            new() { Timeout = timeoutMs });
+        // Wait until the project-scope <select> reflects the value persisted in localStorage.
+        // CockpitLayout.RestoreSavedProjectScopeAsync runs in OnAfterRenderAsync(firstRender)
+        // and calls State.SetProject, which fires OnProjectChanged on project-scoped pages and
+        // triggers a quiet data refresh. Polling until the select matches localStorage ensures
+        // that refresh has been triggered (and the select re-rendered) before assertions run.
+        // When no <select> is present (Fleet, About, Settings), the predicate returns true immediately.
+        await page.WaitForFunctionAsync(
+            """
+            () => {
+                const stored = (localStorage.getItem('cockpit.selectedProjectId') ?? '');
+                const sel = document.querySelector("select[aria-label='Project scope']");
+                return !sel || sel.value === stored;
+            }
+            """,
             null,
             new() { Timeout = timeoutMs });
     }
