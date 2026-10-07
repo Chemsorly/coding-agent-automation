@@ -33,29 +33,17 @@ public sealed class AgentCodingPage
 
         await _page.WaitForCockpitPageReadyAsync();
 
-        // The /agent-coding page has no "Loading…" cockpit-empty placeholder for the template
-        // table — TemplateTableSection renders its data synchronously after OnInitializedAsync
-        // completes in the parent AgentCoding page. The circuit-readiness check above only confirms
-        // the theme-toggle handler is attached, which can happen while the template HTTP fetch is
-        // still in flight.
+        // The CockpitLayout's theme toggle (checked by WaitForCockpitPageReadyAsync) can receive
+        // its Blazor event handler before AgentCoding's own OnInitializedAsync has finished
+        // fetching template data, because the layout renders in the first pass while the page
+        // component may still be awaiting its async initialization.
         //
-        // Wait for TemplateTableSection to render its content: either the template table rows
-        // (when templates exist) or the "No pipeline job templates configured." empty message.
-        // Both are rendered only after the parent's OnInitializedAsync has finished fetching
-        // templates and passing them to the child component. The heading (h2) is NOT sufficient
-        // because it also appears in the prerendered HTML before the circuit connects.
-        await _page.WaitForFunctionAsync(
-            """
-            () => {
-                // Template table has data rows
-                if (document.querySelector('table.template-table tbody tr')) return true;
-                // Or the no-templates empty message is shown
-                const empties = document.querySelectorAll('.monitoring-empty');
-                return [...empties].some(e => e.textContent.includes('No pipeline job templates'));
-            }
-            """,
-            null,
-            new() { Timeout = 15_000 });
+        // Wait for the loop-control section's buttons (Start Loop / Stop Loop) to be interactive.
+        // These buttons are in AgentCoding.razor itself with @onclick handlers; they only receive
+        // _blazorEvents_* properties after AgentCoding's own interactive render cycle completes —
+        // at which point IsLoopActive has been read and the template table reflects the correct
+        // state (with or without Remove buttons depending on whether the loop is running).
+        await _page.WaitForInteractiveAsync("[data-testid='loop-controls'] button");
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>
