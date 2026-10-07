@@ -447,12 +447,12 @@
         // triggered from. MaxBy rather than the first match: with includeActive the API puts in-flight
         // runs ahead of the paged history without re-sorting, so the list is not strictly newest first.
         _lastRuns.Clear();
-        foreach (var template in _templates)
+        foreach (var templateId in _templates.Select(t => t.Id))
         {
             foreach (var type in new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection })
             {
-                _lastRuns[(type, template.Id)] = _runHistory
-                    .Where(r => r.ConsolidationType == type && IsSameScope(r, template.Id))
+                _lastRuns[(type, templateId)] = _runHistory
+                    .Where(r => r.ConsolidationType == type && IsSameScope(r, templateId))
                     .MaxBy(r => r.StartedAtOffset);
             }
         }

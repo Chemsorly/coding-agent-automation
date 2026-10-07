@@ -382,7 +382,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         lock (_lock)
         {
-            IsLoopActive = false;
             // Capture _stopRequested BEFORE clearing it so the re-arm guard below can read the
             // value that was current when CleanupAsync entered the lock.
             // StopLoop() also acquires _lock, so if it arrived before CleanupAsync it already
@@ -390,6 +389,11 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             // If it arrives AFTER CleanupAsync takes the lock it will block until we release;
             // at that point the re-arm decision will already have been made correctly.
             var wasStopRequested = _stopRequested;
+            var rearm = rearmForLeaderReacquisition && !wasStopRequested;
+            // Assigned once: IsLoopActive is read without _lock (the status endpoint and
+            // LoopWatchdogService), so setting it to false and then back to true here would let a
+            // reader see a stopped loop that stays armed.
+            IsLoopActive = rearm;
             _stopRequested = false;
             CurrentIssueIdentifier = null;
             CurrentCycleTemplateIndex = 0;
@@ -402,13 +406,13 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             _loopCts?.Dispose();
             _loopCts = null;
 
-            if (rearmForLeaderReacquisition && !wasStopRequested)
+            if (rearm)
             {
                 // Leadership was lost mid-run. Re-arm the activation signal and a fresh loop CTS
                 // so that ExecuteAsync automatically re-enters RunMultiTemplateLoopAsync as soon
                 // as leadership is next acquired — without requiring another StartLoopAsync() call.
                 //
-                // IsLoopActive is restored to true: the operator's intent to run the loop is
+                // IsLoopActive stays true: the operator's intent to run the loop is
                 // preserved. The loop is not currently executing (waiting for leadership), but it
                 // will resume as soon as it becomes leader again.
                 //
@@ -418,7 +422,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
                 // short-circuit pass through RunMultiTemplateLoopAsync before CleanupAsync(false)
                 // fires. wasStopRequested captures the flag value at lock-entry time; _stopRequested
                 // itself is cleared above so the next StartLoopAsync() starts clean.
-                IsLoopActive = true;
                 _loopCts = new CancellationTokenSource();
                 _activationSignal.TrySetResult();
             }

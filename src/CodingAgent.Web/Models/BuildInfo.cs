@@ -9,11 +9,13 @@ namespace CodingAgent.Web.Models;
 /// </summary>
 public record BuildInfo
 {
+    private const string LocalValue = "local";
+
     [JsonPropertyName("commitSha")]
-    public string CommitSha { get; init; } = "local";
+    public string CommitSha { get; init; } = LocalValue;
 
     [JsonPropertyName("branch")]
-    public string Branch { get; init; } = "local";
+    public string Branch { get; init; } = LocalValue;
 
     [JsonPropertyName("buildTimestamp")]
     public string BuildTimestamp { get; init; } = "unknown";
@@ -25,7 +27,7 @@ public record BuildInfo
     public string RunNumber { get; init; } = "";
 
     [JsonPropertyName("imageTag")]
-    public string ImageTag { get; init; } = "local";
+    public string ImageTag { get; init; } = LocalValue;
 
     [JsonPropertyName("repositoryUrl")]
     public string RepositoryUrl { get; init; } = "https://github.com/Chemsorly/coding-agent-automation";
@@ -34,7 +36,7 @@ public record BuildInfo
     public string ShortSha => CommitSha.Length >= 7 ? CommitSha[..7] : CommitSha;
 
     [JsonIgnore]
-    public bool IsCI => CommitSha != "local";
+    public bool IsCI => CommitSha != LocalValue;
 
     [JsonIgnore]
     public string CommitUrl => IsCI && !string.IsNullOrEmpty(RepositoryUrl)

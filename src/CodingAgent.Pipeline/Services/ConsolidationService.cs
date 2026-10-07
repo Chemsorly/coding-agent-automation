@@ -10,6 +10,8 @@ namespace CodingAgent.Pipeline.Services;
 /// </summary>
 public sealed class ConsolidationService : IConsolidationService
 {
+    private const string GlobalScopeName = "Global";
+
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
@@ -69,7 +71,7 @@ public sealed class ConsolidationService : IConsolidationService
                 template.RepoProviderId, ProviderKind.Repository, ct);
         }
 
-        var templateName = template?.Name ?? "Global";
+        var templateName = template?.Name ?? GlobalScopeName;
         var projectName = project?.Name;
         var projectId = project?.Id;
 
@@ -104,7 +106,7 @@ public sealed class ConsolidationService : IConsolidationService
             // In tests that don't provide a distributor, this surfaces a clear diagnostic.
             _logger.Error(
                 "ConsolidationService: IWorkDistributor is not configured — cannot dispatch run for {Type}/{TemplateId}",
-                type, templateIdValue ?? "Global");
+                type, templateIdValue ?? GlobalScopeName);
             throw new InvalidOperationException(
                 "ConsolidationService requires IWorkDistributor to be injected via ConsolidationServiceDependencies. " +
                 "Ensure AddConsolidationServices passes WorkDistributor.");
@@ -168,7 +170,7 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Warning(
                 "ConsolidationService: duplicate rejected for {Type}/{TemplateId} — " +
                 "a live WorkItem already exists (API returned 409).",
-                type, templateIdValue ?? "Global");
+                type, templateIdValue ?? GlobalScopeName);
             return null;
         }
 
@@ -214,7 +216,7 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Warning(
                 "ConsolidationService: no agent profiles available for {Type}/{TemplateId} — " +
                 "re-trigger after profiles are loaded",
-                type, templateIdValue ?? "Global");
+                type, templateIdValue ?? GlobalScopeName);
         }
         return selectorLabels;
     }
@@ -250,7 +252,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             _logger.Error(ex,
                 "ConsolidationService: unexpected error calling DistributeAsync for {Type}/{TemplateId}",
-                type, templateIdValue ?? "Global");
+                type, templateIdValue ?? GlobalScopeName);
             return null;
         }
 
@@ -265,7 +267,7 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Error(
                 "ConsolidationService: permanent dispatch failure for {Type}/{TemplateId}: {Error}. " +
                 "No WorkItem created. Re-trigger after fixing the agent configuration.",
-                type, templateIdValue ?? "Global", result.ErrorMessage);
+                type, templateIdValue ?? GlobalScopeName, result.ErrorMessage);
         }
         else
         {
@@ -273,7 +275,7 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Warning(
                 "ConsolidationService: transient dispatch failure for {Type}/{TemplateId}: {Error}. " +
                 "Re-trigger to retry.",
-                type, templateIdValue ?? "Global", result.ErrorMessage);
+                type, templateIdValue ?? GlobalScopeName, result.ErrorMessage);
         }
         return null;
     }

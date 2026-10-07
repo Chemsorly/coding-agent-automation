@@ -532,6 +532,13 @@ public partial class LayerBoundaryTests
                 // HashToEntry object-initializer reading from Redis hash via RedisHashReader (issue #XXXX):
                 // constructs a new AgentEntry from a Redis HGETALL result; the object is not yet shared.
                 "ActiveJobId = r.OptionalString(\"activeJobId\"),",
+                // S1192 refactor (issue #3399): the string literal "activeJobId" was replaced with the
+                // constant ActiveJobIdField. These are the same category-(a) expressions as above —
+                // record `with {}` expressions producing a new snapshot record, not mutations of a shared
+                // live entry. The constant and literal resolve to identical runtime values.
+                "ActiveJobIdField => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
+                // HashToEntry object-initializer using constant instead of literal (S1192 refactor).
+                "ActiveJobId = r.OptionalString(ActiveJobIdField),",
             },
 
             // AgentEntryDtoFactory — DTO mapping: reads entry.ActiveJobId into a DTO; no write to a live entry.

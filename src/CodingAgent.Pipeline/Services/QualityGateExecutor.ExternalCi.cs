@@ -6,6 +6,8 @@ namespace CodingAgent.Pipeline.Services;
 
 public partial class QualityGateExecutor
 {
+    private const string ExternalCiName = "External CI";
+
     /// <summary>
     /// Determines which ValidateAsync overload to call based on the QGC context:
     /// - Non-empty QualityGateConfigs → multi-QGC validation
@@ -76,7 +78,7 @@ public partial class QualityGateExecutor
                 return BuildPrClosedReport(report);
 
             ciGate = CiPollingCoordinator.BuildCiGateResult(
-                ciResult.ciPassed, ciResult.ciStatus, ciResult.ciLogPaths, "CI", "External CI", context.Callbacks);
+                ciResult.ciPassed, ciResult.ciStatus, ciResult.ciLogPaths, "CI", ExternalCiName, context.Callbacks);
 
             // Propagate infrastructure failure flag so RunRetryLoopAsync can short-circuit LLM invocation
             if (ciResult.ciStatus.IsInfrastructureFailure)
@@ -93,13 +95,13 @@ public partial class QualityGateExecutor
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            ciGate = CiPollingCoordinator.BuildCiTimeoutGateResult(context.Config.ExternalCiTimeout, "External CI");
+            ciGate = CiPollingCoordinator.BuildCiTimeoutGateResult(context.Config.ExternalCiTimeout, ExternalCiName);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Pipeline {RunId} external CI check failed, treating as gate failure", context.Run.RunId);
-            ciGate = CiPollingCoordinator.BuildCiErrorGateResult("External CI", ex.Message);
+            ciGate = CiPollingCoordinator.BuildCiErrorGateResult(ExternalCiName, ex.Message);
         }
 
         return new QualityGateReport
@@ -189,7 +191,7 @@ public partial class QualityGateExecutor
             Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path)
             ExternalCi = new GateResult
             {
-                GateName = "External CI",
+                GateName = ExternalCiName,
                 Passed = false,
                 Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
             }
@@ -214,7 +216,7 @@ public partial class QualityGateExecutor
             Tests = report.Tests!,
             ExternalCi = new GateResult
             {
-                GateName = "External CI",
+                GateName = ExternalCiName,
                 Passed = true,
                 Details = "PR was merged — run ended Succeeded"
             }
@@ -237,7 +239,7 @@ public partial class QualityGateExecutor
             Tests = report.Tests!,
             ExternalCi = new GateResult
             {
-                GateName = "External CI",
+                GateName = ExternalCiName,
                 Passed = false,
                 Details = "PR was closed without merging — run ended Cancelled"
             }

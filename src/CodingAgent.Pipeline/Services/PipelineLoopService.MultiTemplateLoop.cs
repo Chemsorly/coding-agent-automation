@@ -189,13 +189,12 @@ public sealed partial class PipelineLoopService
         if (_stopRequested || ct.IsCancellationRequested) return false;
 
         lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} {(snapshot.EnabledTemplates.Count == 1 ? "template" : "templates")} every {(int)snapshot.Config.ClosedLoopPollInterval.TotalSeconds}s."; }
-        NotifyChange();
-        // Increment CycleCount before DelayOrStop so that tests waiting on CycleCount >= N
-        // observe the increment as soon as the dispatch work is done, without waiting for the
-        // full poll interval to elapse. Placed after the status-message update and NotifyChange
-        // so the UI reflects "cycle complete" at the same moment CycleCount becomes observable.
+        // Increment CycleCount before NotifyChange and DelayOrStop: OnChange handlers that read it
+        // see the completed cycle, and tests waiting on CycleCount >= N observe the increment as soon
+        // as the dispatch work is done, without waiting for the full poll interval to elapse.
         // The caller (RunMultiTemplateLoopAsync) no longer increments CycleCount after return.
         Interlocked.Increment(ref _cycleCount);
+        NotifyChange();
         await DelayOrStop(snapshot.Config.ClosedLoopPollInterval, ct);
         return true;
     }
@@ -867,10 +866,10 @@ public sealed partial class PipelineLoopService
         // Note: This allocates a dictionary per poll cycle, but given poll intervals are typically
         // seconds (default 30s), the allocation cost is negligible vs. the I/O in each cycle.
         var failureCounts = new Dictionary<string, int>(enabledTemplates.Count);
-        foreach (var t in enabledTemplates)
+        foreach (var templateId in enabledTemplates.Select(t => t.Id))
         {
-            var failures = _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0;
-            failureCounts[t.Id] = failures;
+            var failures = _templateStatuses.TryGetValue(templateId, out var s) ? s.ConsecutiveFailures : 0;
+            failureCounts[templateId] = failures;
         }
 
         // Delegate decision to circuit breaker (pure query — no state mutation)
@@ -907,10 +906,10 @@ public sealed partial class PipelineLoopService
         }
 
         // Reset per-template failure counters
-        foreach (var template in enabledTemplates)
+        foreach (var templateId in enabledTemplates.Select(t => t.Id))
         {
-            if (_templateStatuses.TryGetValue(template.Id, out var status) && status.ConsecutiveFailures > 0)
-                _templateStatuses[template.Id] = status with { ConsecutiveFailures = 0, LastError = null };
+            if (_templateStatuses.TryGetValue(templateId, out var status) && status.ConsecutiveFailures > 0)
+                _templateStatuses[templateId] = status with { ConsecutiveFailures = 0, LastError = null };
         }
 
         NotifyChange();
