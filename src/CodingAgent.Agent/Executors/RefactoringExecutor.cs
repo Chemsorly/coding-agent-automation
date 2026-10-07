@@ -193,21 +193,21 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         IIssueProvider issueProvider, IReadOnlyList<IssueSummary> issues, string jobId, CancellationToken ct)
     {
         var feedback = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var issue in issues)
+        foreach (var identifier in issues.Select(i => i.Identifier))
         {
             try
             {
-                var comments = await issueProvider.ListCommentsAsync(issue.Identifier, ct);
+                var comments = await issueProvider.ListCommentsAsync(identifier, ct);
                 var latest = comments
                     .Where(c => c.Body.Contains(CommentMarkers.IssueFeedback, StringComparison.Ordinal))
                     .MaxBy(c => c.CreatedAt);
                 if (latest is not null && FeedbackCommentFormatter.ReadSummary(latest.Body) is { } summary)
-                    feedback[issue.Identifier] = summary;
+                    feedback[identifier] = summary;
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 Logger.Warning(ex, "Failed to read the comments of issue {Identifier} in run {RunId}, skipping its feedback",
-                    issue.Identifier, jobId);
+                    identifier, jobId);
             }
         }
 

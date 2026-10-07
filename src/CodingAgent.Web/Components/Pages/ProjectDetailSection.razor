@@ -847,11 +847,8 @@
     {
         if (_secrets.Count == 0) return null;
         var dict = new Dictionary<string, string>();
-        foreach (var secret in _secrets)
-        {
-            if (!string.IsNullOrWhiteSpace(secret.Key))
-                dict[secret.Key] = secret.Value;
-        }
+        foreach (var secret in _secrets.Where(s => !string.IsNullOrWhiteSpace(s.Key)))
+            dict[secret.Key] = secret.Value;
         return dict.Count > 0 ? dict : null;
     }
 

@@ -118,10 +118,10 @@ public sealed partial class IssueImageExtractor
             .Select(match => (match.Groups[2].Value, match.Groups[1].Value)));
 
         // Reference images
-        foreach (Match match in ReferenceImagePattern().Matches(textWithoutThumbnails))
+        foreach (var groups in ReferenceImagePattern().Matches(textWithoutThumbnails).Select(m => m.Groups))
         {
-            var alt = match.Groups[1].Value;
-            var refKey = match.Groups[2].Value;
+            var alt = groups[1].Value;
+            var refKey = groups[2].Value;
             if (referenceDefinitions.TryGetValue(refKey, out var refUrl))
             {
                 extractedUrls.Add((refUrl, alt));
@@ -199,10 +199,10 @@ public sealed partial class IssueImageExtractor
         var definitions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var fullText = string.Join('\n', lines);
 
-        foreach (Match match in ReferenceLinkDefinitionPattern().Matches(fullText))
+        foreach (var groups in ReferenceLinkDefinitionPattern().Matches(fullText).Select(m => m.Groups))
         {
-            var key = match.Groups[1].Value;
-            var url = match.Groups[2].Value;
+            var key = groups[1].Value;
+            var url = groups[2].Value;
             definitions.TryAdd(key, url);
         }
 

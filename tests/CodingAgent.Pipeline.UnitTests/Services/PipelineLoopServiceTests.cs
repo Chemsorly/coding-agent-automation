@@ -2038,6 +2038,43 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// An OnChange handler that reads CycleCount when the "Cycle complete" status is published must
+    /// see the completed cycle: CycleCount is incremented before NotifyChange.
+    /// </summary>
+    [Fact]
+    public async Task Loop_CycleCompleteNotification_SeesIncrementedCycleCount()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>(),
+                Page = 1,
+                PageSize = PipelineConstants.DefaultPageSize,
+                HasMore = false
+            });
+
+        var svc = CreateService();
+        var countAtFirstCycleComplete = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        svc.OnChange += () =>
+        {
+            if (svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase))
+                countAtFirstCycleComplete.TrySetResult(svc.CycleCount);
+        };
+        using var cts = new CancellationTokenSource();
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        await BackgroundWait.SignalledAsync(countAtFirstCycleComplete.Task, "the loop should complete a poll cycle");
+        Assert.Equal(1, await countAtFirstCycleComplete.Task);
+
+        svc.StopLoop();
+        await BackgroundWait.StoppedAsync(svc);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    /// <summary>
     /// Acceptance criterion: status message uses correct plural when there are multiple templates.
     /// "Cycle complete. Polling 2 templates every Xs." — not "2 template".
     /// </summary>

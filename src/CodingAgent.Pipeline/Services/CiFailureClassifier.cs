@@ -79,13 +79,13 @@ public static class CiFailureClassifier
         var hasRateLimit = false;
         var hasAnyLogs = false;
 
-        foreach (var job in failedJobs)
+        foreach (var logContent in failedJobs.Select(j => j.LogContent))
         {
-            if (string.IsNullOrEmpty(job.LogContent))
+            if (string.IsNullOrEmpty(logContent))
                 continue;
 
             hasAnyLogs = true;
-            var log = job.LogContent.ReplaceLineEndings("\n");
+            var log = logContent.ReplaceLineEndings("\n");
 
             if (CodeFailurePatterns.Any(p => log.Contains(p, StringComparison.OrdinalIgnoreCase)))
                 hasCodeFailure = true;
