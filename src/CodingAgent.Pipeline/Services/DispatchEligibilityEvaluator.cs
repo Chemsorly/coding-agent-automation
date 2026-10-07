@@ -105,11 +105,8 @@ public sealed class DispatchEligibilityEvaluator
         if (labels is null || filterSet is null || labels.Count == 0)
             return DispatchEligibilityResult.Eligible();
 
-        foreach (var label in labels)
-        {
-            if (filterSet.Contains(label))
-                return DispatchEligibilityResult.FilteredByLabel();
-        }
+        if (labels.Any(l => filterSet.Contains(l)))
+            return DispatchEligibilityResult.FilteredByLabel();
 
         return DispatchEligibilityResult.Eligible();
     }

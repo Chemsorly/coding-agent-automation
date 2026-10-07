@@ -398,11 +398,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         // which can be set by concurrent parallel calls.
         if (onOutputLine is not null && !sseEmitted)
         {
-            foreach (var line in outputLines)
-            {
-                if (!string.IsNullOrWhiteSpace(line))
-                    onOutputLine(line);
-            }
+            foreach (var line in outputLines.Where(l => !string.IsNullOrWhiteSpace(l)))
+                onOutputLine(line);
         }
 
         return new AgentResult

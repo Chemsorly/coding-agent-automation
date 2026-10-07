@@ -267,11 +267,8 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         if (!line.StartsWith('|') || !line.EndsWith('|'))
             return false;
 
-        foreach (var c in line)
-        {
-            if (c != '|' && c != '-' && c != ':' && c != ' ')
-                return false;
-        }
+        if (line.Any(c => c != '|' && c != '-' && c != ':' && c != ' '))
+            return false;
 
         return line.Contains('-');
     }

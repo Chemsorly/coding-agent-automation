@@ -165,11 +165,8 @@ public static partial class PipelineFormatting
         // Count code fence markers (``` at line start) in the truncated text.
         // An odd count means a fence was left open.
         var fenceCount = 0;
-        foreach (var line in truncated.Split('\n'))
-        {
-            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal))
-                fenceCount++;
-        }
+        foreach (var line in truncated.Split('\n').Where(l => l.TrimStart().StartsWith("```", StringComparison.Ordinal)))
+            fenceCount++;
 
         if (fenceCount % 2 != 0)
             truncated += "\n```";
