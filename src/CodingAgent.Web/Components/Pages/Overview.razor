@@ -229,7 +229,7 @@
             _attnFailed = attn.FailedRuns.Count;
             _attnPlans = attn.PlansToApprove.Count;
         }
-        catch (OperationCanceledException) { return; }
+        catch (OperationCanceledException) { /* Component disposed while loading; nothing to update. */ }
         catch { /* Card keeps its last value; the next refresh retries. */ }
     }
 

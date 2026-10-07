@@ -155,6 +155,11 @@ public sealed class FindingsParserTests
         result[0].FilePath.Should().Be("src/Foo.cs");
     }
 
+    // TODO: Add a test for the leading '/' stripping branch in NormalizePath (FindingsParser.cs:226,
+    // `normalized.StartsWith('/')` → `normalized = normalized[1..]`). Currently only the "./" prefix
+    // is covered by Parse_LeadingDotSlash_IsStripped. A path like "[WARNING] /src/Foo.cs:5 — msg"
+    // exercises the '/' branch; without a test for it, a regression in that branch would go undetected.
+
     // ── RESOLVED skipping ─────────────────────────────────────────────────
 
     [Fact]

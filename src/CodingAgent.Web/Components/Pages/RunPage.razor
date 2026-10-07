@@ -113,7 +113,7 @@
                 {
                     <div class="cockpit-detail-item"><div class="k">Tokens</div><div class="v">@CostFormatter.FormatTokens(run.TotalTokens)</div></div>
                 }
-                @if (run.TotalCost is not null and > 0m)
+                @if (run.TotalCost is > 0m)
                 {
                     <div class="cockpit-detail-item"><div class="k">Cost</div><div class="v">@CostFormatter.FormatCost(run.TotalCost)</div></div>
                 }

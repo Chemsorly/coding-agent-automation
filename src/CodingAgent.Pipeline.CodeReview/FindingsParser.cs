@@ -223,7 +223,7 @@ public static partial class FindingsParser
         var normalized = path.Replace('\\', '/');
         if (normalized.StartsWith("./"))
             normalized = normalized[2..];
-        else if (normalized.StartsWith("/"))
+        else if (normalized.StartsWith('/'))
             normalized = normalized[1..];
         return normalized;
     }
@@ -247,7 +247,7 @@ public static partial class FindingsParser
             trimmed = trimmed[2..];
         else if (trimmed.StartsWith(" -"))
             trimmed = trimmed[2..];
-        else if (trimmed.StartsWith(":"))
+        else if (trimmed.StartsWith(':'))
             trimmed = trimmed[1..];
 
         return trimmed;
