@@ -43,6 +43,11 @@ public partial class AgentCoding : IDisposable
     private bool _stopPending;
     private bool _disposed;
 
+    // Set to true once OnInitializedAsync completes; reflected in data-page-ready="true" on the
+    // page root div so E2E tests can wait for it before asserting on content that requires
+    // PageService.InitializeAsync() (templates, providers, etc.) to have finished.
+    private bool _pageReady;
+
     // Template Table UI State
     private bool _showAddForm;
     private TemplateTableSection.TemplateFormModel _addForm = new();
@@ -132,6 +137,7 @@ public partial class AgentCoding : IDisposable
 
         _errorMessage = await PageService.InitializeAsync();
         _ = AutoDismissAgentSummary();
+        _pageReady = true;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)

@@ -41,9 +41,10 @@ public sealed class TemplateTableSectionHelper
         await _page.GotoAsync($"{_baseUrl}/agent-coding");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await _page.WaitForCockpitPageReadyAsync();
-        // Wait for the template select to be interactive: confirms AgentCoding.OnInitializedAsync
-        // (PageService.InitializeAsync) has completed and the template rows have rendered.
-        await _page.WaitForInteractiveAsync("[data-testid='template-select']");
+        // Wait for AgentCoding.OnInitializedAsync to complete (data-page-ready="true").
+        await _page.WaitForSelectorAsync(
+            ".cockpit-page[data-page-ready='true']",
+            new() { Timeout = 15_000 });
     }
 
     // ── Label preview helpers ─────────────────────────────────────────────
