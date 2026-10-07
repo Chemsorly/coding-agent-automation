@@ -14,7 +14,7 @@ public sealed class ImageDownloadService : IDisposable
 {
     private static readonly HashSet<string> AllowedContentTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "image/png", "image/jpeg", "image/webp", "image/gif"
+        "image/png", JpegMimeType, WebpMimeType, "image/gif"
     };
 
     private static readonly HashSet<string> AllowedExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -25,17 +25,17 @@ public sealed class ImageDownloadService : IDisposable
     private static readonly Dictionary<string, string> ContentTypeToExtension = new(StringComparer.OrdinalIgnoreCase)
     {
         ["image/png"] = ".png",
-        ["image/jpeg"] = ".jpg",
-        ["image/webp"] = ".webp",
+        [JpegMimeType] = ".jpg",
+        [WebpMimeType] = ".webp",
         ["image/gif"] = ".gif"
     };
 
     private static readonly Dictionary<string, byte[]> MagicBytesMap = new(StringComparer.OrdinalIgnoreCase)
     {
         ["image/png"] = [0x89, 0x50, 0x4E, 0x47],
-        ["image/jpeg"] = [0xFF, 0xD8, 0xFF],
+        [JpegMimeType] = [0xFF, 0xD8, 0xFF],
         ["image/gif"] = [0x47, 0x49, 0x46, 0x38],
-        ["image/webp"] = [0x52, 0x49, 0x46, 0x46] // "RIFF" prefix
+        [WebpMimeType] = [0x52, 0x49, 0x46, 0x46] // "RIFF" prefix
     };
 
     private const int MaxRedirects = 3;
@@ -44,6 +44,8 @@ public sealed class ImageDownloadService : IDisposable
     private const int MinBytesPerSecond = 1024;
     private const int MaxDimension = 8192;
     private const int MinDimension = 32;
+    private const string JpegMimeType = "image/jpeg";
+    private const string WebpMimeType = "image/webp";
 
     private readonly HttpClient _httpClient;
     private readonly ILogger? _logger;
@@ -493,7 +495,7 @@ public sealed class ImageDownloadService : IDisposable
             return false;
 
         // .jpg and .jpeg both map to image/jpeg
-        if (contentType.Equals("image/jpeg", StringComparison.OrdinalIgnoreCase))
+        if (contentType.Equals(JpegMimeType, StringComparison.OrdinalIgnoreCase))
         {
             return extension.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
                    extension.Equals(".jpeg", StringComparison.OrdinalIgnoreCase);
@@ -530,7 +532,7 @@ public sealed class ImageDownloadService : IDisposable
                 return false;
 
             // For WebP, also check bytes 8-11 for "WEBP"
-            if (contentType.Equals("image/webp", StringComparison.OrdinalIgnoreCase))
+            if (contentType.Equals(WebpMimeType, StringComparison.OrdinalIgnoreCase))
             {
                 if (fs.Length < 12)
                     return false;

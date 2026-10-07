@@ -203,6 +203,9 @@ await app.RunAsync();
 public partial class Program // NOSONAR S1118 — required for WebApplicationFactory<Program> in integration tests
 {
     private const string RunTypeKey = "run_type";
+    private const string ResultTag = "result";
+    private const string PhaseTag = "phase";
+    private const string ProviderTag = "provider";
 
     /// <summary>
     /// Emits <c>Add(0)</c> for all closed-tag combinations of the counters that must be pre-initialized.
@@ -234,11 +237,11 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
 
         // pipeline.run.sub_issues: 2 series (result=created / result=failed)
         foreach (var result in new[] { "created", "failed" })
-            PipelineTelemetry.RunSubIssues.Add(0, new KeyValuePair<string, object?>("result", result));
+            PipelineTelemetry.RunSubIssues.Add(0, new KeyValuePair<string, object?>(ResultTag, result));
 
         // pipeline.run.brain_updates: 2 series (result=pushed / result=none)
         foreach (var result in new[] { "pushed", "none" })
-            PipelineTelemetry.RunBrainUpdates.Add(0, new KeyValuePair<string, object?>("result", result));
+            PipelineTelemetry.RunBrainUpdates.Add(0, new KeyValuePair<string, object?>(ResultTag, result));
 
         EmitQualityGateResultPreInitCounters(runTypes);
 
@@ -308,7 +311,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                     PipelineTelemetry.RunQualityGateResults.Add(0,
                         new KeyValuePair<string, object?>(RunTypeKey, runType),
                         new KeyValuePair<string, object?>("gate", gate),
-                        new KeyValuePair<string, object?>("result", result),
+                        new KeyValuePair<string, object?>(ResultTag, result),
                         new KeyValuePair<string, object?>("infrastructure_failure", "false"));
 
                     if (gate != PipelineTelemetry.QualityGateResultGates.Compilation)
@@ -316,7 +319,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                         PipelineTelemetry.RunQualityGateResults.Add(0,
                             new KeyValuePair<string, object?>(RunTypeKey, runType),
                             new KeyValuePair<string, object?>("gate", gate),
-                            new KeyValuePair<string, object?>("result", result),
+                            new KeyValuePair<string, object?>(ResultTag, result),
                             new KeyValuePair<string, object?>("infrastructure_failure", "true"));
                     }
                 }
@@ -335,7 +338,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 {
                     PipelineTelemetry.RunAgentStalls.Add(0,
                         new KeyValuePair<string, object?>(RunTypeKey, runType),
-                        new KeyValuePair<string, object?>("phase", phase),
+                        new KeyValuePair<string, object?>(PhaseTag, phase),
                         new KeyValuePair<string, object?>("kind", kind));
                 }
             }
@@ -362,24 +365,24 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
                 {
                     PipelineTelemetry.RunTokens.Add(0,
                         new KeyValuePair<string, object?>(RunTypeKey, runType),
-                        new KeyValuePair<string, object?>("phase", phase),
-                        new KeyValuePair<string, object?>("provider", provider));
+                        new KeyValuePair<string, object?>(PhaseTag, phase),
+                        new KeyValuePair<string, object?>(ProviderTag, provider));
 
                     PipelineTelemetry.RunCostUsd.Add(0,
                         new KeyValuePair<string, object?>(RunTypeKey, runType),
-                        new KeyValuePair<string, object?>("phase", phase),
-                        new KeyValuePair<string, object?>("provider", provider));
+                        new KeyValuePair<string, object?>(PhaseTag, phase),
+                        new KeyValuePair<string, object?>(ProviderTag, provider));
 
                     PipelineTelemetry.RunAgentSessions.Add(0,
                         new KeyValuePair<string, object?>(RunTypeKey, runType),
-                        new KeyValuePair<string, object?>("phase", phase),
-                        new KeyValuePair<string, object?>("provider", provider),
+                        new KeyValuePair<string, object?>(PhaseTag, phase),
+                        new KeyValuePair<string, object?>(ProviderTag, provider),
                         new KeyValuePair<string, object?>("model", "unknown"));
 
                     PipelineTelemetry.RunAgentTime.Add(0,
                         new KeyValuePair<string, object?>(RunTypeKey, runType),
-                        new KeyValuePair<string, object?>("phase", phase),
-                        new KeyValuePair<string, object?>("provider", provider));
+                        new KeyValuePair<string, object?>(PhaseTag, phase),
+                        new KeyValuePair<string, object?>(ProviderTag, provider));
                 }
             }
         }
@@ -397,7 +400,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
             foreach (var provider in PipelineTelemetry.RunProviders.All)
             {
                 var runTypeTag = new KeyValuePair<string, object?>(RunTypeKey, runType);
-                var providerTag = new KeyValuePair<string, object?>("provider", provider);
+                var providerTag = new KeyValuePair<string, object?>(ProviderTag, provider);
 
                 foreach (var tokenType in PipelineTelemetry.TokenTypes.All)
                     PipelineTelemetry.RunTokenUsage.Add(0, runTypeTag, providerTag,
@@ -417,7 +420,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
             foreach (var status in PipelineTelemetry.RateLimitTags.Statuses)
             {
                 PipelineTelemetry.RunRateLimitEvents.Add(0,
-                    new KeyValuePair<string, object?>("provider", PipelineTelemetry.RunProviders.Claude),
+                    new KeyValuePair<string, object?>(ProviderTag, PipelineTelemetry.RunProviders.Claude),
                     new KeyValuePair<string, object?>("window", window),
                     new KeyValuePair<string, object?>("status", status));
             }

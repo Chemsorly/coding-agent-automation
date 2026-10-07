@@ -165,6 +165,9 @@ public sealed partial class WorkItemStatusTransitionService
     // "unknown" appears in ResolveRunContextAsync (2× early-exit returns + 1× fallback assignment)
     // and in RecordRunOutcomeMetrics (project_name fallback) — 4 uses across this class.
     private const string UnknownTag = "unknown";
+    private const string RunTypeTag = "run_type";
+    private const string PhaseTag = "phase";
+    private const string ProviderTag = "provider";
 
     /// <summary>
     /// Dispatches the run lifecycle event for a real (<see cref="TransitionResult.Transitioned"/>)
@@ -318,34 +321,34 @@ public sealed partial class WorkItemStatusTransitionService
             if (usage.Tokens > 0)
             {
                 PipelineTelemetry.RunTokens.Add(usage.Tokens,
-                    new KeyValuePair<string, object?>("run_type", runTypeTag),
-                    new KeyValuePair<string, object?>("phase", phase),
-                    new KeyValuePair<string, object?>("provider", provider));
+                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(PhaseTag, phase),
+                    new KeyValuePair<string, object?>(ProviderTag, provider));
             }
 
             if (usage.Cost is { } cost && cost > 0)
             {
                 PipelineTelemetry.RunCostUsd.Add((double)cost,
-                    new KeyValuePair<string, object?>("run_type", runTypeTag),
-                    new KeyValuePair<string, object?>("phase", phase),
-                    new KeyValuePair<string, object?>("provider", provider));
+                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(PhaseTag, phase),
+                    new KeyValuePair<string, object?>(ProviderTag, provider));
             }
 
             if (usage.SessionCount > 0)
             {
                 PipelineTelemetry.RunAgentSessions.Add(usage.SessionCount,
-                    new KeyValuePair<string, object?>("run_type", runTypeTag),
-                    new KeyValuePair<string, object?>("phase", phase),
-                    new KeyValuePair<string, object?>("provider", provider),
+                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(PhaseTag, phase),
+                    new KeyValuePair<string, object?>(ProviderTag, provider),
                     new KeyValuePair<string, object?>("model", usage.Model ?? UnknownTag));
             }
 
             if (usage.AgentTimeSeconds > 0)
             {
                 PipelineTelemetry.RunAgentTime.Add(usage.AgentTimeSeconds,
-                    new KeyValuePair<string, object?>("run_type", runTypeTag),
-                    new KeyValuePair<string, object?>("phase", phase),
-                    new KeyValuePair<string, object?>("provider", provider));
+                    new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
+                    new KeyValuePair<string, object?>(PhaseTag, phase),
+                    new KeyValuePair<string, object?>(ProviderTag, provider));
             }
         }
     }
@@ -356,8 +359,8 @@ public sealed partial class WorkItemStatusTransitionService
     /// </summary>
     private static void RecordUsageDetailMetrics(string runTypeTag, string provider, PhaseUsagePayload usage)
     {
-        var runTypeTagPair = new KeyValuePair<string, object?>("run_type", runTypeTag);
-        var providerTagPair = new KeyValuePair<string, object?>("provider", provider);
+        var runTypeTagPair = new KeyValuePair<string, object?>(RunTypeTag, runTypeTag);
+        var providerTagPair = new KeyValuePair<string, object?>(ProviderTag, provider);
 
         (string Type, long Count)[] tokenCounts =
         [
@@ -397,7 +400,7 @@ public sealed partial class WorkItemStatusTransitionService
         {
             KeyValuePair<string, object?>[] tags =
             [
-                new("provider", PipelineTelemetry.NormalizeRunProvider(observation.Provider)),
+                new(ProviderTag, PipelineTelemetry.NormalizeRunProvider(observation.Provider)),
                 new("window", PipelineTelemetry.RateLimitTags.NormalizeWindow(observation.Window)),
                 new("status", PipelineTelemetry.RateLimitTags.NormalizeStatus(observation.Status))
             ];
@@ -629,7 +632,7 @@ public sealed partial class WorkItemStatusTransitionService
         // 4-tag label set per Requirement 1: run_type, outcome, failure_reason, pipeline.project_name.
         // pipeline.project_name is excluded from pre-initialization (unbounded cardinality) per Req 7.
         PipelineTelemetry.RunOutcomes.Add(1,
-            new KeyValuePair<string, object?>("run_type", runTypeTag),
+            new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
             new KeyValuePair<string, object?>("outcome", outcome),
             new KeyValuePair<string, object?>("failure_reason", failureReasonTag),
             new KeyValuePair<string, object?>("pipeline.project_name", projectName ?? UnknownTag));
@@ -637,7 +640,7 @@ public sealed partial class WorkItemStatusTransitionService
         if (duration.HasValue && duration.Value.TotalSeconds >= 0)
         {
             PipelineTelemetry.RunDuration.Record(duration.Value.TotalSeconds,
-                new KeyValuePair<string, object?>("run_type", runTypeTag),
+                new KeyValuePair<string, object?>(RunTypeTag, runTypeTag),
                 new KeyValuePair<string, object?>("outcome", outcome));
         }
     }

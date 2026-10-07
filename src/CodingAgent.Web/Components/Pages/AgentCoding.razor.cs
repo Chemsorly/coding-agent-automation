@@ -13,6 +13,9 @@ namespace CodingAgent.Web.Components.Pages;
 
 public partial class AgentCoding : IDisposable
 {
+    private const string EnabledWord = "enabled";
+    private const string DisabledWord = "disabled";
+
     [Inject] private ILoopStatusService LoopService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
@@ -266,7 +269,7 @@ public partial class AgentCoding : IDisposable
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Template {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Template {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
@@ -282,7 +285,7 @@ public partial class AgentCoding : IDisposable
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Implementation {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Implementation {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
@@ -298,7 +301,7 @@ public partial class AgentCoding : IDisposable
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Review {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Review {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
@@ -314,7 +317,7 @@ public partial class AgentCoding : IDisposable
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Decomposition {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Decomposition {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
@@ -330,7 +333,7 @@ public partial class AgentCoding : IDisposable
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Housekeeping {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Housekeeping {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
@@ -346,7 +349,7 @@ public partial class AgentCoding : IDisposable
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         var prev = !args.enabled;
         var templateId = args.template.Id;
-        await _undoSnackbar.Show($"Branch cleanup {(args.enabled ? "enabled" : "disabled")}.", async () =>
+        await _undoSnackbar.Show($"Branch cleanup {(args.enabled ? EnabledWord : DisabledWord)}.", async () =>
         {
             var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
             if (current is null) return;
