@@ -41,6 +41,17 @@ public sealed class AgentCodingPage
         await _page.WaitForSelectorAsync(
             ".cockpit-page[data-page-ready='true']",
             new() { Timeout = 15_000 });
+
+        // Wait for the loop-controls section to reflect the current loop state. The web host's
+        // LoopStatusPollingService polls the Scheduler every ~1s; if a previous test left the
+        // loop running, it can take up to 1 poll cycle for the Start Loop button to appear.
+        // "Start Loop" is rendered only when LoopService.IsLoopActive is false, which means
+        // the polling service has confirmed the loop is stopped. Waiting for it guarantees
+        // IsLoopActive=false in the current render, so Remove buttons (which require !IsLoopActive)
+        // are present for tests that seed templates. Timeout is generous (5s > 1 poll cycle).
+        await _page.WaitForSelectorAsync(
+            "button:has-text('Start Loop')",
+            new() { Timeout = 5_000 });
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>
