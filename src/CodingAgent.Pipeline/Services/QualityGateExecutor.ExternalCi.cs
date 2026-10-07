@@ -188,7 +188,7 @@ public partial class QualityGateExecutor
         return new QualityGateReport
         {
             Compilation = report.Compilation,
-            Tests = report.Tests!, // null when Tests is null (build-only QGC / legacy deserialization path)
+            Tests = report.Tests, // null when Tests is null (build-only QGC / legacy deserialization path)
             ExternalCi = new GateResult
             {
                 GateName = ExternalCiName,
@@ -213,7 +213,7 @@ public partial class QualityGateExecutor
         return new QualityGateReport
         {
             Compilation = report.Compilation,
-            Tests = report.Tests!,
+            Tests = report.Tests,
             ExternalCi = new GateResult
             {
                 GateName = ExternalCiName,
@@ -236,7 +236,7 @@ public partial class QualityGateExecutor
         return new QualityGateReport
         {
             Compilation = report.Compilation,
-            Tests = report.Tests!,
+            Tests = report.Tests,
             ExternalCi = new GateResult
             {
                 GateName = ExternalCiName,

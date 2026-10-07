@@ -114,7 +114,7 @@ public sealed class VerifyBaselineStep : IPipelineStep
 
         try
         {
-            var report = await context.QualityGateValidator.ValidateAsync(context.Run.WorkspacePath!, qgcs, ct);
+            var report = await context.QualityGateValidator.ValidateAsync(context.Run.WorkspacePath, qgcs, ct);
             context.Run.BaselineHealthPassed = report.AllPassed;
 
             if (report.AllPassed)
