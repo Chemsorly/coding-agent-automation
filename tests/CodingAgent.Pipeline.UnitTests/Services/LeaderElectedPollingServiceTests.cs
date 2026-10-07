@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using AwesomeAssertions;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.LeaderElection;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Serilog;
@@ -86,8 +87,11 @@ public class LeaderElectedPollingServiceTests
         var newLeaderCts = new CancellationTokenSource();
         SetLeaderState(leaderElection, isLeader: true, newLeaderCts);
 
-        // Poll until a new cycle fires after re-acquisition (≤2s leader-wait + 1s poll)
-        deadline = DateTime.UtcNow.AddSeconds(10);
+        // Poll until a new cycle fires after re-acquisition (≤2s leader-wait; the new term polls at once).
+        // The deadline is a margin for stalled runners: when the test process stalls past it, this loop's
+        // check can run before the service's queued wake-up and fail although the service works. A 10s
+        // deadline failed that way in an agent quality gate run (#3412).
+        deadline = DateTime.UtcNow.AddSeconds(30);
         while (service.PollCycleCount <= countAfterLoss && DateTime.UtcNow < deadline)
             await Task.Delay(50);
 
@@ -109,14 +113,13 @@ public class LeaderElectedPollingServiceTests
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
         // Wait for at least one poll to confirm the service entered the loop
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (service.PollCycleCount == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref service.PollCycleCount) > 0,
+            "the service should poll once it is the leader");
 
         hostCts.Cancel();
 
         // Service should exit promptly after cancellation — WhenAny is the safety bound
-        var completed = await Task.WhenAny(executeTask, Task.Delay(5000));
+        var completed = await Task.WhenAny(executeTask, Task.Delay(BackgroundWait.Timeout));
         completed.Should().Be(executeTask, "ExecuteAsync should exit promptly on host stop");
     }
 
@@ -131,7 +134,7 @@ public class LeaderElectedPollingServiceTests
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
         // Wait for RunLeadershipTermAsync to be entered — event-driven via TCS
-        await service.RunLeadershipTermEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.RunLeadershipTermEntered.Task.WaitAsync(BackgroundWait.Timeout);
 
         service.RunLeadershipTermCalled.Should().BeTrue("should call overridden RunLeadershipTermAsync");
         service.PollCycleCount.Should().Be(0, "OnPollCycleAsync should NOT be called when RunLeadershipTermAsync is overridden");
@@ -149,13 +152,9 @@ public class LeaderElectedPollingServiceTests
 
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
-        // Poll until ≥3 cycles complete. With 1s intervals, this takes ~2s.
-        // 10s deadline is a generous bound for CI.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (service.PollCycleCount < 3 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-
-        service.PollCycleCount.Should().BeGreaterThanOrEqualTo(3,
+        // Poll until ≥3 cycles complete. With 1s intervals, this takes ~2s; the wait's bound only
+        // matters when the loop is broken (a stalled test process must not expire it first).
+        await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref service.PollCycleCount) >= 3,
             "should keep calling OnPollCycleAsync even after exceptions");
 
         hostCts.Cancel();
@@ -202,15 +201,8 @@ public class LeaderElectedPollingServiceTests
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
         // Wait for the exception to be thrown and handled (poll count > 1 means we recovered)
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        // TODO [WARNING]: PollCycleCount is a plain int field; Interlocked.Increment writes it but
-        // this spin-loop read is non-volatile. On Release builds with register caching, the test
-        // thread may never observe PollCycleCount >= 2 and spin to the deadline. Fix: use
-        // Volatile.Read(ref service.PollCycleCount) in the loop condition (requires making the
-        // field accessible, or adding a volatile-read helper property).
-        // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (service.PollCycleCount < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref service.PollCycleCount) >= 2,
+            "loop must continue after a transient HttpRequestException");
 
         hostCts.Cancel();
         await WaitForTaskCompletion(executeTask);
@@ -257,11 +249,8 @@ public class LeaderElectedPollingServiceTests
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
         // Wait for the exception to be thrown and handled
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        // TODO [WARNING]: PollCycleCount spin-loop read is non-volatile (same issue as above test method).
-        // Fix: use Volatile.Read in the loop condition. See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (service.PollCycleCount < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref service.PollCycleCount) >= 2,
+            "loop must continue after the non-transient exception");
 
         hostCts.Cancel();
         await WaitForTaskCompletion(executeTask);
@@ -297,11 +286,8 @@ public class LeaderElectedPollingServiceTests
         var executeTask = InvokeExecuteAsync(service, hostCts.Token);
 
         // After 3 throws the 4th call should succeed — wait for at least 4 cycles
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        // TODO [WARNING]: PollCycleCount spin-loop read is non-volatile (same issue as above test methods).
-        // Fix: use Volatile.Read in the loop condition. See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (service.PollCycleCount < 4 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref service.PollCycleCount) >= 4,
+            "loop must keep running after repeated transient exceptions");
 
         hostCts.Cancel();
         await WaitForTaskCompletion(executeTask);
@@ -360,15 +346,15 @@ public class LeaderElectedPollingServiceTests
 
         // Wait (event-driven) until RunLeadershipTermAsync has been entered — the service is now
         // inside await Task.Delay(Timeout.Infinite, ct) and will respond to cancellation.
-        await service.RunLeadershipTermEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await service.RunLeadershipTermEntered.Task.WaitAsync(BackgroundWait.Timeout);
 
         // Simultaneously cancel BOTH leadership and host stop — this is the race that triggered
         // the spurious Error log before the fix.
         leaderCts.Cancel();
         hostCts.Cancel();
 
-        // ExecuteAsync should exit promptly — 5s is a generous CI safety bound.
-        var completed = await Task.WhenAny(executeTask, Task.Delay(5000));
+        // ExecuteAsync should exit promptly — the delay is only a safety bound.
+        var completed = await Task.WhenAny(executeTask, Task.Delay(BackgroundWait.Timeout));
         completed.Should().Be(executeTask, "ExecuteAsync should exit promptly on simultaneous cancellation");
 
         // KEY ASSERTION: the task must have run to completion, not faulted.

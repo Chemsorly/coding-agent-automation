@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -178,19 +179,9 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
 
         await svc.StartLoopAsync();
 
-        // Wait for the Error log — the exception must escape SnapshotAndReconcileAsync
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                _mockLogger.Verify(
-                    l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
-                    Times.AtLeastOnce());
-                break;
-            }
-            catch (MockException) { await Task.Delay(30); }
-        }
+        // Wait for the loop to stop — the exception must escape SnapshotAndReconcileAsync, be
+        // logged at Error and stop the loop (CleanupAsync runs after the Error log)
+        await BackgroundWait.StoppedAsync(svc);
 
         _mockLogger.Verify(
             l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
@@ -265,7 +256,7 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
         // The poller should be called — snapshot was returned despite repo reconcile failure
         await WaitUntilAsync(
             () => pollCalled,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "poller must be called even when ReconcileRepoProviderCacheAsync throws (exception is swallowed)");
 
         // Warning must be logged for the swallowed exception
@@ -327,7 +318,7 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
         // The poller should be called — snapshot was returned despite stuck-items failure
         await WaitUntilAsync(
             () => pollCalled,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "poller must be called even when ReconcileStuckWorkItemsAsync throws (exception is swallowed)");
 
         // Warning must be logged
@@ -386,7 +377,7 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
         // Poller must run — empty set fallback does not abort the cycle
         await WaitUntilAsync(
             () => pollCalled,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "poller must be called when GetActiveIssueIdentifiersAsync throws (empty set fallback)");
 
         // Warning must be logged
@@ -453,7 +444,7 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
         // Wait for first cycle (with templates) to complete
         await WaitUntilAsync(
             () => cycleCount >= 1,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "at least one poll cycle must complete");
 
         // TODO: The fixed Task.Delay(200) is fragile under CI load — the second cycle may not have started
@@ -564,7 +555,7 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
         var started = await svc.StartLoopAsync();
         started.Should().BeTrue("loop must start with valid templates");
 
-        await secondCycleDone.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await BackgroundWait.SignalledAsync(secondCycleDone.Task, "the loop should run a second cycle");
 
         // Stop the loop immediately so cycle 3 cannot start and contaminate the log.
         // StopLoop() sets _stopRequested and cancels _loopCts, causing RunMultiTemplateLoopAsync
@@ -575,7 +566,7 @@ public sealed class PipelineLoopServiceSnapshotTests : IAsyncDisposable
         hostCts.Cancel();
 
         // Wait for the background service to fully stop so no further calls are made.
-        try { await executeTask.WaitAsync(TimeSpan.FromSeconds(5)); } catch { /* cancellation or timeout */ }
+        try { await executeTask.WaitAsync(BackgroundWait.Timeout); } catch { /* cancellation or timeout */ }
 
         // Snapshot the call log after the loop has stopped — this guarantees no cycle 3 calls
         // can appear after the snapshot, eliminating the race where cycle 3's LoadProviderConfigs_Issue

@@ -186,21 +186,22 @@ public class ChatDispatcherObservabilityTests : IDisposable
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
+        string? capturedJobName = null;
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
+                capturedJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
                 RegisterChatAgent(registry, "agent-trace-1", dispatchId);
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, "claude-opus-4.8", "high", CancellationToken.None);
 
-        var dispatchActivity = _capturedActivities
-            .FirstOrDefault(a => a.OperationName == "Chat.Dispatch");
+        var dispatchActivity = FindDispatchActivity(capturedJobName);
 
         dispatchActivity.Should().NotBeNull("Chat.Dispatch span must be created on success");
         dispatchActivity!.GetTagItem("agent_selector").Should().NotBeNull();
@@ -216,31 +217,35 @@ public class ChatDispatcherObservabilityTests : IDisposable
     {
         var jobClientMock = CreateJobClientMock();
         var registry = CreateRegistry();
+        string? capturedJobName = null;
 
         jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
             .Callback<V1Job, string, CancellationToken>((j, _, _) =>
             {
+                capturedJobName = j.Metadata.Name;
                 var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
                 RegisterChatAgent(registry, "agent-trace-2", dispatchId);
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        var dispatchActivity = _capturedActivities
-            // TODO: This selector is asymmetric with the timeout counterpart test, which filters by
-            // ActivityStatusCode.Error to avoid picking up unrelated parallel activities. If a parallel
-            // test produces a Chat.Dispatch activity with Error status before this test's own activity
-            // is captured, the assertion below (.NotBe(ActivityStatusCode.Error)) could fail spuriously.
-            // Consider applying the same status-filter pattern used in the timeout test (filter by
-            // ActivityStatusCode.Ok or use a per-test activity source to isolate captures).
-            .FirstOrDefault(a => a.OperationName == "Chat.Dispatch");
+        var dispatchActivity = FindDispatchActivity(capturedJobName);
 
         dispatchActivity.Should().NotBeNull();
         dispatchActivity!.Status.Should().NotBe(ActivityStatusCode.Error);
     }
+
+    /// <summary>
+    /// Finds this test's Chat.Dispatch activity by its job name. The listener captures every
+    /// <see cref="PipelineTelemetry.SourceName"/> activity in the process, including Chat.Dispatch
+    /// activities of dispatcher tests running in parallel (some of them with Error status).
+    /// </summary>
+    private Activity? FindDispatchActivity(string? jobName)
+        => _capturedActivities.FirstOrDefault(a => a.OperationName == "Chat.Dispatch"
+            && a.GetTagItem("job_name") as string == jobName);
 
     // ─── Tracing: Chat.Dispatch span on timeout ───────────────────────────────
 
@@ -252,7 +257,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         // cannot be mistakenly picked up as the activity under test.
         var countBefore = _capturedActivities.Count;
 
-        var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 1));
+        await using var dispatcher = CreateDispatcher(options: CreateOptions(connectTimeoutSeconds: 1));
 
         await Assert.ThrowsAsync<ChatPodTimeoutException>(
             () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
@@ -288,7 +293,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             })
             .Returns(Task.CompletedTask);
 
-        var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
         await dispatcher.TerminateChatSessionAsync(capturedJobName!, CancellationToken.None);
@@ -305,12 +310,15 @@ public class ChatDispatcherObservabilityTests : IDisposable
     [Fact]
     public async Task TerminateChatSessionAsync_SessionNotFound_CreatesTerminateActivity_NotFoundOutcome()
     {
-        var dispatcher = CreateDispatcher();
+        await using var dispatcher = CreateDispatcher();
+        // Unique, so the lookup below cannot pick up a Chat.Terminate activity of a parallel test.
+        var agentId = $"nonexistent-agent-{Guid.NewGuid():N}";
 
-        await dispatcher.TerminateChatSessionAsync("nonexistent-agent", CancellationToken.None);
+        await dispatcher.TerminateChatSessionAsync(agentId, CancellationToken.None);
 
         var terminateActivity = _capturedActivities
-            .FirstOrDefault(a => a.OperationName == "Chat.Terminate");
+            .FirstOrDefault(a => a.OperationName == "Chat.Terminate"
+                && a.GetTagItem("agent_id") as string == agentId);
 
         terminateActivity.Should().NotBeNull("Chat.Terminate span must be created even when session not found");
         // When no session is registered, TerminateChatSessionAsync attempts a best-effort direct
@@ -446,7 +454,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
                 })
                 .Returns(Task.CompletedTask);
 
-            var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object, registry: registry);
+            await using var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object, registry: registry);
             await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
             var dispatchLogs = events
@@ -463,7 +471,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         public async Task DispatchChatPodAsync_Timeout_LogsWarning()
         {
             var (logger, events) = CreateCapturingLogger();
-            var dispatcher = CreateDispatcher(logger, options: CreateOptions(connectTimeoutSeconds: 1));
+            await using var dispatcher = CreateDispatcher(logger, options: CreateOptions(connectTimeoutSeconds: 1));
 
             await Assert.ThrowsAsync<ChatPodTimeoutException>(
                 () => dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None));
@@ -499,7 +507,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
 
-            var dispatcher = CreateDispatcher(
+            await using var dispatcher = CreateDispatcher(
                 logger,
                 jobClient: jobClientMock.Object,
                 registry: registry,
@@ -534,7 +542,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             var (logger, _) = CreateCapturingLogger();
             var jobClientMock = CreateJobClientMock();
 
-            var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object);
+            await using var dispatcher = CreateDispatcher(logger, jobClient: jobClientMock.Object);
 
             var act = () => dispatcher.StartAsync(CancellationToken.None);
             await act.Should().NotThrowAsync("StartAsync must be a no-op");
@@ -558,7 +566,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             var options = CreateOptions();
             options.ChatReplicaCount = 2;
             // redis = null — CreateDispatcher already omits the redis argument, so _redis is null
-            var dispatcher = CreateDispatcher(logger, options: options);
+            await using var dispatcher = CreateDispatcher(logger, options: options);
 
             await dispatcher.StartAsync(CancellationToken.None);
 
@@ -573,7 +581,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
         {
             var (logger, events) = CreateCapturingLogger();
             var options = CreateOptions(); // ChatReplicaCount defaults to 1
-            var dispatcher = CreateDispatcher(logger, options: options);
+            await using var dispatcher = CreateDispatcher(logger, options: options);
 
             await dispatcher.StartAsync(CancellationToken.None);
 

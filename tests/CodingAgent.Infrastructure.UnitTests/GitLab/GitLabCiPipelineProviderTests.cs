@@ -144,6 +144,12 @@ public class GitLabCiPipelineProviderTests
     private const int TestProjectId = 42;
     private static readonly TimeSpan ShortPoll = TimeSpan.FromMilliseconds(20);
     private static readonly ILogger SilentLogger = new LoggerConfiguration().CreateLogger();
+
+    // Timeout for the tests that end on a terminal state: they do not exercise the timeout. The provider
+    // runs each NGitLab call through Task.Run, so a starved thread pool can hold the first poll back
+    // past any short budget and the timeout then returns Pending. A 60s budget still failed that way in
+    // a CPU-saturated run, so only a hang may reach this one.
+    private static readonly TimeSpan TerminalPollTimeout = TimeSpan.FromMinutes(10);
     // Sha1 requires exactly 40 hex characters
     private const string ValidSha = "abc123def456abc123def456abc123def456abc0";
 
@@ -234,7 +240,7 @@ public class GitLabCiPipelineProviderTests
         var mockClient = CreateMockClient(JobStatus.Success, pipelineId: 1, jobId: 10, jobStatus: JobStatus.Success);
         var provider = CreateProvider(mockClient);
 
-        var result = await provider.WaitForCompletionAsync("main", "abc123sha", TimeSpan.FromSeconds(10), CancellationToken.None);
+        var result = await provider.WaitForCompletionAsync("main", "abc123sha", TerminalPollTimeout, CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Passed);
     }
@@ -258,10 +264,7 @@ public class GitLabCiPipelineProviderTests
             jobTrace: expectedTrace);
         var provider = CreateProvider(mockClient);
 
-        // Use a generous timeout: the provider wraps synchronous NGitLab calls in Task.Run, and under
-        // heavy parallel test load thread-pool pressure can delay those tasks. 60 s is far above any
-        // realistic completion time while still failing the test if WaitForCompletionAsync truly hangs.
-        var result = await provider.WaitForCompletionAsync("main", "sha-fail", TimeSpan.FromSeconds(60), CancellationToken.None);
+        var result = await provider.WaitForCompletionAsync("main", "sha-fail", TerminalPollTimeout, CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs.Should().HaveCount(1);
@@ -356,7 +359,7 @@ public class GitLabCiPipelineProviderTests
 
         var provider = CreateProvider(mockClient);
 
-        var result = await provider.WaitForCompletionAsync("main", "sha-zero", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var result = await provider.WaitForCompletionAsync("main", "sha-zero", TerminalPollTimeout, CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs[0].LogContent.Should().BeNull("JobId=0 must be skipped during log enrichment");
@@ -380,7 +383,7 @@ public class GitLabCiPipelineProviderTests
             jobTrace: null);   // <-- fetch returns null
         var provider = CreateProvider(mockClient);
 
-        var result = await provider.WaitForCompletionAsync("main", "sha-nolog", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var result = await provider.WaitForCompletionAsync("main", "sha-nolog", TerminalPollTimeout, CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs[0].LogContent.Should().BeNull(

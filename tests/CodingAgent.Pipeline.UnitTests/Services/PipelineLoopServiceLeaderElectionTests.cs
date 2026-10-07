@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -118,23 +119,39 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
     private sealed class FakeLeaderGate : ILeaderGate
     {
         private CancellationTokenSource _cts = new();
+        private volatile bool _isLeader;
+        private volatile TaskCompletionSource _followerCheck = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public bool IsLeader { get; private set; }
+        public bool IsLeader
+        {
+            get
+            {
+                var isLeader = _isLeader;
+                if (!isLeader)
+                    _followerCheck.TrySetResult();
+                return isLeader;
+            }
+            private set => _isLeader = value;
+        }
+
         public CancellationToken LeaderToken => _cts.Token;
+
+        /// <summary>
+        /// Completes when the service checks <see cref="IsLeader"/> while this gate is a follower.
+        /// The loop service only checks it in its leader-wait loop, so after <see cref="LoseLeadership"/>
+        /// this means the service finished the term's cleanup and is waiting for leadership again.
+        /// </summary>
+        public Task FollowerCheck => _followerCheck.Task;
 
         /// <summary>Simulates acquiring leadership.</summary>
         public void AcquireLeadership()
         {
             // TODO [WARNING]: The previous _cts is replaced without being disposed, leaking one
             // CancellationTokenSource (and its OS wait handle) per acquire/lose cycle. Dispose the
-            // old instance before replacing it. Additionally, the assignment to _cts and subsequent
-            // write to IsLeader are not separated by a memory barrier (no `volatile`, `Interlocked`,
-            // or `lock`), so under the .NET memory model a reader on another thread could observe
-            // IsLeader == true before the new _cts assignment is visible, causing the linked CTS in
-            // ExecuteAsync to be built from the old (already-cancelled) token.
-            // Fix: dispose old CTS, then use Volatile.Write or a lock for both assignments.
+            // old instance before replacing it.
 
-            // Replace CTS first so LeaderToken is valid before IsLeader is observed as true.
+            // Replace CTS first so LeaderToken is valid before IsLeader is observed as true
+            // (the volatile write to _isLeader publishes the new _cts with it).
             _cts = new CancellationTokenSource();
             IsLeader = true;
         }
@@ -142,6 +159,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         /// <summary>Simulates losing leadership (cancels LeaderToken).</summary>
         public void LoseLeadership()
         {
+            _followerCheck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             IsLeader = false;
             _cts.Cancel();
         }
@@ -160,13 +178,13 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         return (Task)method.Invoke(service, [stoppingToken])!;
     }
 
-    private static async Task WaitUntil(Func<bool> condition, TimeSpan timeout, string failMessage)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (!condition() && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
-        condition().Should().BeTrue(failMessage);
-    }
+    /// <summary>Completes once the loop is in a poll cycle or between cycles.</summary>
+    private static Task LoopPollingAsync(PipelineLoopService svc, string because) =>
+        BackgroundWait.UntilAsync(
+            svc,
+            () => svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
+               || svc.StatusMessage.Contains("polling", StringComparison.OrdinalIgnoreCase),
+            because);
 
     // ── Tests ────────────────────────────────────────────────────────────
 
@@ -187,7 +205,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         started.Should().BeTrue();
 
         // Assert: loop becomes active immediately — no leader-wait delay
-        await WaitUntil(() => svc.IsLoopActive, TimeSpan.FromSeconds(5),
+        await BackgroundWait.UntilAsync(svc, () => svc.IsLoopActive,
             "loop should activate immediately when LeaderGate is null (Legacy mode)");
 
         // Cleanup
@@ -261,14 +279,9 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         // Act: acquire leadership
         gate.AcquireLeadership();
 
-        // Assert: loop enters polling within the leader-wait period (≤2s per tick) + CI overhead.
-        // We wait up to 10s to be safe under parallel suite load.
-        // Brain note: LeaderElectedPollingService pattern polls IsLeader every 2s.
-        await WaitUntil(
-            () => svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               || svc.StatusMessage.Contains("polling", StringComparison.OrdinalIgnoreCase),
-            TimeSpan.FromSeconds(10),
-            "loop should begin polling after leadership is acquired");
+        // Assert: loop enters polling within the leader-wait period (≤2s per tick). The wait is
+        // signalled by the loop's OnChange, so a stalled test process cannot expire it first.
+        await LoopPollingAsync(svc, "loop should begin polling after leadership is acquired");
 
         // Cleanup
         hostCts.Cancel();
@@ -294,25 +307,17 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for at least one poll cycle to confirm the loop is running
-        await WaitUntil(
-            () => svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               || svc.StatusMessage.Contains("polling", StringComparison.OrdinalIgnoreCase),
-            TimeSpan.FromSeconds(10),
-            "loop should start polling after leadership is acquired");
+        await LoopPollingAsync(svc, "loop should start polling after leadership is acquired");
 
         // Act: lose leadership
         gate.LoseLeadership();
 
-        // Assert: after leadership loss, the StatusMessage reverts (cleanup ran and re-armed)
-        // and IsLoopActive stays true (operator intent preserved).
-        // The service does NOT terminate (executeTask is not completed).
-        // TODO [WARNING]: The fixed Task.Delay(500) does not guarantee CleanupAsync has completed.
-        // IsLoopActive is briefly false between the start of CleanupAsync (which sets it to false)
-        // and the end of the re-arm block (which restores it to true). If the assertion races with
-        // that window, it will produce a false pass. Replace with:
-        //   await WaitUntil(() => svc.IsLoopActive, TimeSpan.FromSeconds(5), "...");
-        // which positively confirms the re-arm is done before asserting.
-        await Task.Delay(500); // give cleanup time to run
+        // Assert: after leadership loss, cleanup ran and re-armed, so IsLoopActive stays true
+        // (operator intent preserved) and the service does NOT terminate (executeTask is not completed).
+        // The service checks IsLeader again only after CleanupAsync has finished, so the follower
+        // check confirms the re-arm is done. IsLoopActive is briefly false inside CleanupAsync.
+        await BackgroundWait.SignalledAsync(gate.FollowerCheck,
+            "the service should finish cleanup and return to the leader-wait loop");
         executeTask.IsCompleted.Should().BeFalse(
             "ExecuteAsync should not exit when only leadership is lost (host is still running)");
         svc.IsLoopActive.Should().BeTrue(
@@ -344,30 +349,20 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for the loop to start polling
-        await WaitUntil(
-            () => svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               || svc.StatusMessage.Contains("polling", StringComparison.OrdinalIgnoreCase),
-            TimeSpan.FromSeconds(10),
-            "loop should start polling after leadership is acquired");
+        await LoopPollingAsync(svc, "loop should start polling after leadership is acquired");
 
         // Lose leadership
         gate.LoseLeadership();
 
-        // Wait for CleanupAsync to run (IsLoopActive is re-armed, StatusMessage clears)
-        // TODO [WARNING]: StatusMessage is cleared early in CleanupAsync (inside the lock, before
-        // the re-arm block). WaitUntil may therefore return as soon as StatusMessage is empty but
-        // *before* IsLoopActive is restored to true by the re-arm block. The subsequent
-        // svc.IsLoopActive.Should().BeTrue() assertion below can then catch the service in the brief
-        // window where cleanup has set IsLoopActive = false but hasn't yet re-armed it, producing
-        // a flaky false failure. Replace the WaitUntil condition with one that directly polls
-        // `svc.IsLoopActive` to confirm the re-arm is complete before asserting on it.
-        await WaitUntil(
-            () => !svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               && !svc.StatusMessage.Contains("polling", StringComparison.OrdinalIgnoreCase),
-            TimeSpan.FromSeconds(5),
-            "StatusMessage should clear after cleanup");
+        // Wait for CleanupAsync to finish. StatusMessage clears inside CleanupAsync's lock before
+        // the re-arm block restores IsLoopActive, so waiting for the cleared status could observe
+        // IsLoopActive=false in between. The service checks IsLeader again only after CleanupAsync
+        // has returned, so the follower check is the point where the re-arm is complete.
+        await BackgroundWait.SignalledAsync(gate.FollowerCheck,
+            "the service should finish cleanup and return to the leader-wait loop");
 
         // Confirm we are back in the leader-wait state (IsLoopActive=true but not cycling)
+        svc.StatusMessage.Should().BeEmpty("StatusMessage should clear after cleanup");
         svc.IsLoopActive.Should().BeTrue("CleanupAsync should re-arm IsLoopActive");
         // Do NOT call StartLoopAsync() again — this is what we're testing
 
@@ -375,10 +370,7 @@ public class PipelineLoopServiceLeaderElectionTests : IAsyncDisposable
         gate.AcquireLeadership();
 
         // Assert: loop auto-resumes polling — no second StartLoopAsync() needed
-        await WaitUntil(
-            () => svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               || svc.StatusMessage.Contains("polling", StringComparison.OrdinalIgnoreCase),
-            TimeSpan.FromSeconds(10),
+        await LoopPollingAsync(svc,
             "loop should auto-resume after leadership re-acquisition without a second StartLoopAsync() call");
 
         // Cleanup

@@ -213,16 +213,16 @@ public sealed class ReconciliationServiceTests
         // Act: signal early wake
         svc.RequestImmediateCycle();
 
-        // Assert: second cycle fires within 2s (not 30,000s poll interval).
-        // TODO: [WARNING] The 2-second deadline may be insufficient under CI thread-pool starvation;
-        // consider increasing to 5s for robustness.
+        // Assert: second cycle fires well before the 30,000s poll interval. The wake normally takes
+        // a few ms; the 30s deadline only bounds a stalled test host (a 2s deadline failed whenever
+        // the host stalled past it).
         //
         // IMPORTANT: capture triggeredCalls INSIDE the polling loop (before cancellation).
         // Capturing after stopCts.Cancel() + await executeTask would allow a cycle that was
         // already mid-flight at cancellation time to satisfy the assertion even if the triggered
-        // wake never fired within the 2-second window (false positive).
+        // wake never fired within the deadline (false positive).
         int triggeredCalls = callsAfterFirstCycle; // will be updated inside the loop
-        var wakeDeadline = DateTime.UtcNow.AddSeconds(2);
+        var wakeDeadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < wakeDeadline)
         {
             triggeredCalls = _k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync));
@@ -244,12 +244,16 @@ public sealed class ReconciliationServiceTests
     [Fact]
     public async Task WhenMultipleRequestImmediateCycleSignals_ProducesAtMostOneExtraCycle()
     {
-        // Arrange: slow down each ListJobsAsync call slightly so signals can accumulate mid-flight
+        // Arrange: hold the first cycle open until the test has fired every signal, so the signals
+        // deterministically arrive while a cycle is running (the scenario under test).
+        var cycleRunning = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCycle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _k8sClient
             .Setup(c => c.ListJobsAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(async (string _, string _, CancellationToken _) =>
             {
-                await Task.Delay(20, CancellationToken.None); // simulate cycle taking 20ms per internal call
+                cycleRunning.TrySetResult();
+                await releaseCycle.Task;
                 return new V1JobList { Items = [] };
             });
 
@@ -261,45 +265,36 @@ public sealed class ReconciliationServiceTests
         using var stopCts = new CancellationTokenSource();
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
-        // Wait until the first cycle has fully completed (all 3 ListJobsAsync calls are in).
-        // Polling is deterministic and CI-load-safe; a fixed Task.Delay(50) was insufficient
-        // on loaded machines because the service task may not have been scheduled in time.
-        var waitDeadline = DateTime.UtcNow.AddSeconds(10);
-        while (_k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync)) < 3
-               && DateTime.UtcNow < waitDeadline)
-        {
+        var entered = await Task.WhenAny(cycleRunning.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        entered.Should().BeSameAs(cycleRunning.Task, "the first reconciliation cycle must start");
+
+        // Fire 5 signals while the first cycle is running — all should collapse into at most 1 wake
+        svc.RequestImmediateCycle();
+        svc.RequestImmediateCycle();
+        svc.RequestImmediateCycle();
+        svc.RequestImmediateCycle();
+        svc.RequestImmediateCycle();
+        releaseCycle.TrySetResult();
+
+        // Wait for the first cycle plus the triggered one. Polls completed cycles instead of sleeping
+        // a fixed time: the 30s deadline only bounds a stalled test host.
+        var wakeDeadline = DateTime.UtcNow.AddSeconds(30);
+        while (svc.CompletedCycles < 2 && DateTime.UtcNow < wakeDeadline)
             await Task.Delay(10, CancellationToken.None);
-        }
+        svc.CompletedCycles.Should().BeGreaterThanOrEqualTo(2,
+            "the signals must trigger one cycle before the 30,000s poll interval expires");
 
-        // Capture the per-cycle baseline dynamically so the upper bound does not depend on
-        // a hardcoded assumption about how many ListJobsAsync calls each cycle makes.
-        var callsAfterCycleOne = _k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync));
-
-        // Fire 5 concurrent signals — all should collapse into at most 1 wake
-        svc.RequestImmediateCycle();
-        svc.RequestImmediateCycle();
-        svc.RequestImmediateCycle();
-        svc.RequestImmediateCycle();
-        svc.RequestImmediateCycle();
-
-        // Wait for the triggered cycle to complete, then a bit longer to confirm no extra cycles
+        // Settle briefly so a surplus cycle (signals not collapsing) would have run. A stalled host
+        // can only hide surplus cycles here, never fail the test.
         await Task.Delay(500);
 
         stopCts.Cancel();
         await executeTask;
 
-        // Each OnPollCycleAsync calls ListJobsAsync exactly 3 times (ReconcileOnce +
-        // CleanupOrphans + EnforceDispatchedTimeout). With a near-infinite poll interval
-        // (30,000s), only the natural start cycle + one triggered cycle should fire.
-        // - Minimum: callsAfterCycleOne + 1 triggered cycle worth of calls
-        // - Maximum: callsAfterCycleOne + 2 × callsAfterCycleOne (generous timing slack)
-        // The key invariant: 5 signals must not produce 5 extra cycles (which would be ≥ 18 calls)
-        var calls = _k8sClient.Invocations.Count(i => i.Method.Name == nameof(IKubernetesJobClient.ListJobsAsync));
-        calls.Should().BeGreaterThanOrEqualTo(callsAfterCycleOne + 1,
-            "at least one triggered cycle must have fired after the signals");
-        calls.Should().BeLessThanOrEqualTo(callsAfterCycleOne * 3,
-            "5 signals must collapse into at most 1 extra cycle (semaphore maxCount: 1); " +
-            "at most 2 full cycles beyond baseline = 3× per-cycle call count");
+        // With a near-infinite poll interval (30,000s), only the natural start cycle + one
+        // triggered cycle may run. 5 uncollapsed signals would produce 5 extra cycles.
+        svc.CompletedCycles.Should().BeLessThanOrEqualTo(2,
+            "5 signals must collapse into at most 1 extra cycle (semaphore maxCount: 1)");
     }
 
     // ── Transient exception log-level classification ──────────────────────────
@@ -506,16 +501,27 @@ public sealed class ReconciliationServiceTests
     /// <summary>
     /// Subclass that overrides <see cref="LeaderElectedPollingService.PollIntervalSeconds"/> to
     /// return a large value so tests don't have to wait 30 seconds for the natural timer to fire.
-    /// This lets us test the trigger wake path in isolation.
+    /// This lets us test the trigger wake path in isolation. Counts completed poll cycles so
+    /// tests can wait for whole cycles instead of inferring them from mock call counts.
     /// </summary>
     private sealed class TestableReconciliationService : ReconciliationService
     {
+        private int _completedCycles;
+
         // 30,000 seconds ≈ 8.3 hours — effectively infinite for tests
         protected override int PollIntervalSeconds => 30_000;
+
+        public int CompletedCycles => Volatile.Read(ref _completedCycles);
 
         public TestableReconciliationService(ILeaderElectionService leaderElection, ReconciliationLoop loop)
             : base(leaderElection, loop)
         {
+        }
+
+        protected override async Task OnPollCycleAsync(CancellationToken ct)
+        {
+            await base.OnPollCycleAsync(ct);
+            Interlocked.Increment(ref _completedCycles);
         }
     }
 

@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using Moq;
 
@@ -326,9 +327,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // In multi-template mode, all issues are skipped during dispatch (needs-refinement).
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         Assert.Equal(0, svc.ProcessedCount);
         Assert.Contains("Cycle complete", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
@@ -362,9 +361,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // In multi-template mode, all issues are skipped during dispatch.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         Assert.Equal(0, svc.ProcessedCount);
         Assert.Contains("Cycle complete", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
@@ -473,10 +470,8 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
         svc.StopLoop();
 
-        // Poll for loop to become inactive
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for loop to become inactive
+        await BackgroundWait.StoppedAsync(svc);
 
         Assert.False(svc.IsLoopActive);
 
@@ -500,6 +495,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public async Task Loop_PollingErrorLogsWarningAndContinues()
     {
         var callCount = 0;
+        var secondPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
@@ -507,6 +503,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 callCount++;
                 if (callCount == 1)
                     throw new HttpRequestException("Network error");
+                secondPoll.TrySetResult();
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
@@ -533,18 +530,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for at least 2 poll cycles (first fails with backoff, second succeeds)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (callCount < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.SignalledAsync(secondPoll.Task, "the loop should poll again after the failed poll");
 
         // Loop should still be active (didn't crash)
         Assert.True(svc.IsLoopActive);
         Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -577,18 +570,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for the loop to actually start processing (status message changes from initial)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.StatusMessage == "🔄 Loop starting…" && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.UntilAsync(svc, () => svc.StatusMessage != "🔄 Loop starting…",
+            "the loop should start processing");
         Assert.True(svc.IsLoopActive);
 
         // Simulate application shutdown
         cts.Cancel();
         try { await svc.StopAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token); } catch { }
 
-        var deadline2 = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline2)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         Assert.False(svc.IsLoopActive);
     }
 
@@ -643,15 +633,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Poll until at least one issue is processed — 15s to tolerate slow CI runners
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait until at least one issue is processed
+        await BackgroundWait.UntilAsync(svc, () => svc.ProcessedCount >= 1, "the loop should dispatch an issue");
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -693,15 +679,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for dispatch to happen — 15s to tolerate slow CI runners
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for dispatch to happen. ProcessedCount is updated after the dispatch round,
+        // before the cycle-complete notification.
+        await BackgroundWait.UntilAsync(svc, () => svc.ProcessedCount >= 1, "the loop should dispatch the new issue");
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -746,15 +729,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for both issues to be dispatched — 15s to tolerate slow CI runners
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (dispatchedIdentifiers.Count < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for both issues to be dispatched (the condition is re-checked on the loop thread)
+        await BackgroundWait.UntilAsync(svc, () => dispatchedIdentifiers.Count >= 2, "the loop should dispatch both issues");
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -1043,21 +1022,16 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // In multi-template mode, circuit breaker trips when ALL templates have failures >= threshold
-        // Wait for both IsCircuitBroken AND StatusMessage to stabilize (ARM weak memory ordering
-        // can cause the test thread to observe IsCircuitBroken=true before StatusMessage is updated).
-        // 15-second deadline guards against CI runner load spikes where loop iterations run slower.
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while ((!svc.IsCircuitBroken || !svc.StatusMessage.Contains("paused", StringComparison.OrdinalIgnoreCase))
-               && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for both IsCircuitBroken AND StatusMessage (the trip sets both, then notifies).
+        await BackgroundWait.UntilAsync(svc,
+            () => svc.IsCircuitBroken && svc.StatusMessage.Contains("paused", StringComparison.OrdinalIgnoreCase),
+            "the circuit breaker should trip");
 
         Assert.True(svc.IsCircuitBroken);
         Assert.Contains("paused", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -1066,6 +1040,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public async Task Loop_CircuitBreakerResume_ResetsAndContinuesPolling()
     {
         var callCount = 0;
+        var fourthPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
@@ -1074,6 +1049,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 // Fail first 3 (trip circuit breaker), then succeed after resume
                 if (callCount <= 3)
                     throw new HttpRequestException("Network error");
+                fourthPoll.TrySetResult();
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
@@ -1099,31 +1075,22 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.UntilAsync(svc, () => svc.IsCircuitBroken, "the circuit breaker should trip");
         Assert.True(svc.IsCircuitBroken);
 
         // Resume the loop
         svc.ResumeLoop();
         Assert.False(svc.IsCircuitBroken);
 
-        // Wait for successful poll after resume. Use a longer deadline here than the
-        // circuit-breaker-trip wait: after ResumeLoop(), the loop must complete a full
-        // SnapshotCycleConfigAsync (several mock store calls) before reaching ListOpenIssuesAsync
-        // for the 4th time. Under parallel test load this can take significantly longer than
-        // a simple state-flag transition.
-        deadline = DateTime.UtcNow.AddSeconds(15);
-        while (callCount < 4 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for the successful (4th) poll after resume: the loop must complete a full
+        // SnapshotCycleConfigAsync (several mock store calls) before reaching ListOpenIssuesAsync.
+        await BackgroundWait.SignalledAsync(fourthPoll.Task, "the loop should poll again after ResumeLoop()");
 
         Assert.True(svc.IsLoopActive);
         Assert.False(svc.IsCircuitBroken);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -1151,16 +1118,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.UntilAsync(svc, () => svc.IsCircuitBroken, "the circuit breaker should trip");
         Assert.True(svc.IsCircuitBroken);
 
         // Stop the loop while circuit breaker is active
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
 
         Assert.False(svc.IsLoopActive);
 
@@ -1172,6 +1135,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public async Task Loop_CircuitBreakerAutoResumes_AfterCooldownExpires()
     {
         var callCount = 0;
+        var fourthPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
@@ -1180,6 +1144,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 // Fail first 3 calls to trip the breaker, then succeed
                 if (callCount <= 3)
                     throw new HttpRequestException("Network error");
+                fourthPoll.TrySetResult();
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
@@ -1214,31 +1179,22 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        await tripped.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await BackgroundWait.SignalledAsync(tripped.Task, "the circuit breaker should trip");
 
-        // Wait for auto-resume after cooldown (no manual intervention needed).
-        // Use a 15-second deadline: the 1-second cooldown fires quickly in isolation, but under
-        // full parallel test suite load (~10 000 concurrent tests) the loop thread can be
-        // CPU-starved, making the SnapshotCycleConfigAsync round-trip that precedes the
-        // circuit-breaker wait significantly slower.  15 s matches the deadline used by the
-        // analogous Loop_CircuitBreakerResume_ResetsAndContinuesPolling test.
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for auto-resume after the 1-second cooldown (no manual intervention needed).
+        // The auto-resume resets the breaker and then notifies.
+        await BackgroundWait.UntilAsync(svc, () => !svc.IsCircuitBroken,
+            "the circuit breaker should auto-resume after the cooldown");
 
         Assert.False(svc.IsCircuitBroken);
         Assert.True(svc.IsLoopActive);
 
         // Verify polling continued after auto-resume
-        deadline = DateTime.UtcNow.AddSeconds(15);
-        while (callCount < 4 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.SignalledAsync(fourthPoll.Task, "the loop should poll again after the auto-resume");
         Assert.True(callCount >= 4, $"Expected at least 4 poll attempts (3 failures + 1 after resume), got {callCount}");
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -1247,6 +1203,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     public async Task Loop_RateLimitWaitsUntilReset_DoesNotIncrementFailures()
     {
         var callCount = 0;
+        var secondPoll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .Returns<int, int, IReadOnlyList<string>?, CancellationToken>((_, _, _, _) =>
@@ -1254,6 +1211,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 callCount++;
                 if (callCount == 1)
                     throw new RateLimitExceededException(DateTimeOffset.UtcNow.AddMilliseconds(300));
+                secondPoll.TrySetResult();
                 return Task.FromResult(new PagedResult<IssueSummary>
                 {
                     Items = new List<IssueSummary>(),
@@ -1278,19 +1236,15 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // Poll until at least 2 calls have been made
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (callCount < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait until the second call has been made (after the rate-limit reset)
+        await BackgroundWait.SignalledAsync(secondPoll.Task, "the loop should poll again after the rate-limit reset");
 
         // Rate limit should NOT count as a failure
         Assert.False(svc.IsCircuitBroken);
         Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -1370,9 +1324,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.UntilAsync(svc, () => svc.IsCircuitBroken, "the circuit breaker should trip");
         Assert.True(svc.IsCircuitBroken);
 
         // Simulate app shutdown while paused on circuit breaker
@@ -1410,16 +1362,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for circuit breaker to trip (all templates failing >= 2)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.UntilAsync(svc, () => svc.IsCircuitBroken, "the circuit breaker should trip");
 
         Assert.True(svc.IsCircuitBroken);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -1453,9 +1401,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartLoopAsync();
 
         // Wait for the loop to complete at least one iteration (reaches the ToDictionary call)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         Assert.True(svc.IsLoopActive);
         Assert.Contains("Cycle complete", svc.StatusMessage, StringComparison.OrdinalIgnoreCase);
@@ -1612,17 +1558,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await _loopService.StartAsync(cts.Token);
         await _loopService.StartLoopAsync();
 
-        // Wait for one full cycle
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!_loopService.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for one full cycle. If the wait gave up before housekeeping was reached, the
+        // StopLoop() below would skip housekeeping and the assertion would count 0 calls.
+        await BackgroundWait.CycleCompleteAsync(_loopService);
 
         // Stop immediately after first cycle completes so we count exactly one cycle
+        // (the next cycle starts only after the 60s poll interval)
         _loopService.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_loopService.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(_loopService);
 
         cts.Cancel();
         try { await _loopService.StopAsync(CancellationToken.None); } catch { }
@@ -1950,13 +1893,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     [Fact]
     public async Task Housekeeping_PassesAgentDonePrsFromPollerOutput()
     {
-        // TODO: The busy-wait loop below (while !StatusMessage.Contains("Cycle complete") + Task.Delay(50))
-        // is a fragile synchronisation mechanism. If "Cycle complete" wording changes, or if
-        // capturedDonePrs is written by the background callback after the deadline expires, the
-        // test can silently pass against stale/null data. capturedDonePrs has no volatile declaration
-        // so there is a benign data race between the assertion thread and the loop thread.
-        // Consider replacing the busy-wait with a TaskCompletionSource or SemaphoreSlim signalled
-        // from the mock callback to get a deterministic sync point.
         // Integration-style test: verifies the poller → RunHousekeepingAsync data flow.
         // The TemplatePoller filters agent PRs by branch prefix (PipelineConstants.BranchPrefix),
         // NOT by label. The repo provider mock must return a PR with a matching branch name.
@@ -2049,16 +1985,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await _loopService.StartAsync(cts.Token);
         await _loopService.StartLoopAsync();
 
-        // Wait for one full cycle
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!_loopService.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)
-               && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for one full cycle (housekeeping runs before the cycle completes)
+        await BackgroundWait.CycleCompleteAsync(_loopService);
 
         _loopService.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_loopService.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(_loopService);
         cts.Cancel();
         try { await _loopService.StopAsync(CancellationToken.None); } catch { }
 
@@ -2095,24 +2026,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
-        // TODO [WARNING]: The busy-wait above has a 5-second deadline but there is no assertion
-        // that the deadline was not exceeded before asserting message content. On a slow or
-        // contested CI machine, if the loop does not complete a cycle within 5s, Assert.Contains
-        // will run against whatever StatusMessage happens to be at that moment ("Loop starting…"
-        // or similar) and fail with a confusing message. Consider adding:
-        //   Assert.True(svc.StatusMessage.Contains("Cycle complete"), "Timed out waiting for cycle complete");
-        // before the content assertions, to make the timeout failure explicit.
         Assert.Contains("Polling 1 template every", svc.StatusMessage);
         Assert.DoesNotContain("1 templates", svc.StatusMessage);
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
@@ -2151,21 +2071,13 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase) && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
-        // TODO [WARNING]: Same timing fragility as Loop_WhenOneTemplate_CycleCompleteMessageUsesSingular —
-        // if the deadline is exceeded before "Cycle complete" appears, the assertions below will
-        // run against stale StatusMessage content and fail with a misleading message. Add an
-        // explicit deadline-exceeded assertion before the content checks.
         Assert.Contains("Polling 2 templates every", svc.StatusMessage);
         Assert.DoesNotContain("2 template every", svc.StatusMessage.Replace("2 templates", ""));
 
         svc.StopLoop();
-        deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.StoppedAsync(svc);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }

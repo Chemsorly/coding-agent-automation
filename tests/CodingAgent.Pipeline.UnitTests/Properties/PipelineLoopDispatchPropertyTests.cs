@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using FsCheck;
 using FsCheck.Xunit;
@@ -78,9 +79,7 @@ public class PipelineLoopDispatchPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for the cycle to complete (status changes to "Cycle complete")
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete") && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
         await Task.Delay(200);
@@ -172,9 +171,7 @@ public class PipelineLoopDispatchPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for the cycle to complete (status changes to "Cycle complete")
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete") && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
         await Task.Delay(200);
@@ -232,9 +229,7 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (!svc.IsCircuitBroken && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.UntilAsync(svc, () => svc.IsCircuitBroken, "the circuit breaker should trip");
 
         svc.IsCircuitBroken.Should().BeTrue("circuit breaker should trip when all templates are failing");
 
@@ -377,12 +372,8 @@ public class PipelineLoopDispatchPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait until the provider has been recreated (evicted after auth error, then recreated on next cycle)
-        // Use polling instead of fixed delay to avoid flakiness on slow CI runners.
-        // 15s deadline: under parallel CI load all test suites run simultaneously, and the async scheduler
-        // can starve the loop long enough to miss the 5s window. Standalone runs typically complete in ~1s.
-        var deadline = DateTime.UtcNow.AddSeconds(15);
-        while (Volatile.Read(ref createCountForAuthFail) < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await BackgroundWait.PollUntilAsync(() => Volatile.Read(ref createCountForAuthFail) >= 2,
+            "the provider should be recreated after the auth error eviction");
 
         svc.StopLoop();
         await Task.Delay(200);
@@ -438,22 +429,14 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        // Allow enough time for the loop to poll and populate the provider cache
-        var cacheDeadline = DateTime.UtcNow.AddSeconds(5);
-        while (DateTime.UtcNow < cacheDeadline)
-        {
-            lock (disposedProviders) { /* just sync */ }
-            await Task.Delay(100);
-            // Check if providers were created (factory was called)
-            if (mockFactory.Invocations.Count(i => i.Method.Name == "CreateIssueProvider") >= templates.Count)
-                break;
-        }
+        // Wait for a complete cycle: the provider cache is populated for every template by then.
+        // Stopping earlier would leave providers uncreated, and the disposal count would fall short.
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // The stop notification comes after the cleanup disposed the provider cache.
+        await BackgroundWait.StoppedAsync(svc);
 
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }

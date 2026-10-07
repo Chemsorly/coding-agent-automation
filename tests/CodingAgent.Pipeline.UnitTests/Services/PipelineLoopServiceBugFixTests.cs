@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -190,9 +191,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         svc.StopLoop();
 
         // Wait for the loop to fully stop
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should become inactive after StopLoop");
 
         // Assert: NO Error-level log event was emitted during the stop path.
@@ -300,9 +300,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         svc.StopLoop();
 
         // Wait for loop to become inactive
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should become inactive after StopLoop()");
 
         // Allow extra time to catch any spurious re-activation (the bug would re-set IsLoopActive=true)
@@ -449,7 +448,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
 
         // ExecuteAsync breaks out; WaitAsync may throw OCE if the task faulted via
         // the WaitAsync(stoppingToken) path — either outcome confirms line 262 was reached
-        try { await executeTask.WaitAsync(TimeSpan.FromSeconds(10)); }
+        try { await executeTask.WaitAsync(BackgroundWait.Timeout); }
         catch (OperationCanceledException) { /* expected — host stop fires OCE */ }
 
         executeTask.IsCompleted.Should().BeTrue("host token cancellation must terminate ExecuteAsync");
@@ -482,20 +481,9 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
 
         await svc.StartLoopAsync();
 
-        // Poll until _logger.Error fires (loop runs one cycle, hits the throw, logs Error).
-        // Timeout of 10s is generous — in practice it fires within one poll delay (~0ms).
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                _mockLogger.Verify(
-                    l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
-                    Times.AtLeastOnce());
-                break;
-            }
-            catch (MockException) { await Task.Delay(50); }
-        }
+        // The loop runs one cycle, hits the throw, logs Error and then stops (CleanupAsync runs
+        // after the Error log), so the stop is the point where the log has been written.
+        await BackgroundWait.StoppedAsync(svc);
 
         _mockLogger.Verify(
             l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
@@ -678,7 +666,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         //   DispatchFairRoundRobinAsync returns null (PrepareDistributionRequestAsync → null)
         //   → ExecuteCycleAsync evaluates `if (_stopRequested || ct.IsCancellationRequested) return false;`
         //   → _stopRequested is true (StopLoop() was called above) → returns false → housekeeping skipped.
-        await dispatchEnteredGate.WaitAsync(TimeSpan.FromSeconds(10))
+        await dispatchEnteredGate.WaitAsync(BackgroundWait.Timeout)
             .ContinueWith(t =>
             {
                 // Timed out waiting for dispatch entry — indicate failure by not releasing
@@ -688,9 +676,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         svc.StopLoop();
         dispatchReleaseGate.Release();
 
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should become inactive after StopLoop");
 
         // Assert: housekeeping mock was never invoked.
@@ -748,7 +735,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                 // Signal test thread: "housekeeping entered — safe to call StopLoop()"
                 housekeepingEnteredGate.Release();
                 // Block until the test thread has called StopLoop() and releases this gate
-                await housekeepingReleaseGate.WaitAsync(TimeSpan.FromSeconds(10));
+                await housekeepingReleaseGate.WaitAsync(BackgroundWait.Timeout);
                 // capturedSvc.StopLoop() has already been called by the test thread at this point
             });
 
@@ -789,8 +776,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Wait until the loop thread is inside housekeepingMock.ExecuteAsync (blocking on
         // housekeepingReleaseGate). This gives a deterministic synchronization point equivalent
         // to AC1's dispatchEnteredGate, eliminating the timing dependency that caused flakes.
-        var housekeepingEntered = await housekeepingEnteredGate.WaitAsync(TimeSpan.FromSeconds(15));
-        housekeepingEntered.Should().BeTrue("loop should reach housekeeping within 15s");
+        var housekeepingEntered = await housekeepingEnteredGate.WaitAsync(BackgroundWait.Timeout);
+        housekeepingEntered.Should().BeTrue("loop should reach housekeeping");
 
         // Call StopLoop() while housekeeping is blocked — sets _stopRequested=true
         svc.StopLoop();
@@ -800,9 +787,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         housekeepingReleaseGate.Release();
 
         // Wait for the loop to fully stop (CleanupAsync sets IsLoopActive=false)
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should become inactive after StopLoop() called from test thread");
 
         // Assert: housekeeping ran exactly once (stop was set DURING its one-and-only execution).
@@ -1026,9 +1012,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
 
         // Act: the loop reads ClosedLoopAutoStart=false on its own next config poll — no manual call needed.
         // Wait for the loop to detect the DB-written stop and exit.
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should stop within one cycle after ClosedLoopAutoStart=false is read from config");
 
         // Assert: loop is fully stopped
@@ -1080,9 +1065,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         var onChangeCountBeforeStop = Volatile.Read(ref onChangeCount);
 
         // Act: wait for DB-stop to be detected
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should stop after ClosedLoopAutoStart=false is read from config");
 
         // Assert: IsLoopActive is false
@@ -1126,9 +1110,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         svc.StopLoop();
 
         // Assert: loop stops cleanly
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop should become inactive after direct StopLoop() call");
 
         svc.IsLoopActive.Should().BeFalse(
@@ -1201,7 +1184,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // This confirms the loop ran and encountered the failure.
         await WaitUntilAsync(
             () => callCount >= 2,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "LoadPipelineConfigAsync must be called at least twice — once for validation, once in the first cycle");
 
         // Assert 1: loop stayed alive — IsLoopActive must still be true after the transient failure.
@@ -1240,6 +1223,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
     public async Task WhenConnectionRefusedSocketException_LoopShouldRetryAndNotLogError()
     {
         var callCount = 0;
+        var retried = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
@@ -1252,19 +1236,21 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
                     var socketEx = new System.Net.Sockets.SocketException(111); // ECONNREFUSED
                     throw new HttpRequestException("Connection refused (api.svc:8080)", socketEx);
                 }
+                if (callCount > 2)
+                    retried.TrySetResult();
                 return TestPipelineConfig.Default();
             });
 
         var svc = CreateService(leaderGate: null);
-        using var hostCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        // Outlives the wait below, so the loop is not stopped before it can retry.
+        using var hostCts = new CancellationTokenSource(BackgroundWait.Timeout * 2);
         _ = InvokeExecuteAsync(svc, hostCts.Token);
 
         await svc.StartLoopAsync();
 
-        // Wait until callCount > 2 — means the loop retried past the failing call
-        await WaitUntilAsync(
-            () => callCount > 2,
-            TimeSpan.FromSeconds(15),
+        // Wait until callCount > 2 — means the loop retried past the failing call. The retry
+        // follows a fixed 5s back-off, so the wait is signalled from the third config load.
+        await BackgroundWait.SignalledAsync(retried.Task,
             "loop must retry after SocketException(ECONNREFUSED) — callCount must exceed 2");
 
         // Loop must still be alive
@@ -1307,19 +1293,9 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         _ = InvokeExecuteAsync(svc, hostCts.Token);
         await svc.StartLoopAsync();
 
-        // Wait for the Error log — InvalidOperationException must still escape and be logged
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                _mockLogger.Verify(
-                    l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
-                    Times.AtLeastOnce());
-                break;
-            }
-            catch (MockException) { await Task.Delay(50); }
-        }
+        // Wait for the loop to stop — InvalidOperationException must still escape, be logged and
+        // stop the loop (CleanupAsync runs after the Error log)
+        await BackgroundWait.StoppedAsync(svc);
 
         _mockLogger.Verify(
             l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
@@ -1373,7 +1349,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         //   call 2 = first cycle tick (throws BrokenCircuitException → caught → null → delay+retry)
         await WaitUntilAsync(
             () => callCount >= 2,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "LoadPipelineConfigAsync must be called again in the first cycle and hit the open circuit");
 
         // The loop must have caught the transient and stayed alive rather than dying via
@@ -1422,7 +1398,7 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         // Wait until the loop has hit the timeout at least once (validation call + first failing cycle).
         await WaitUntilAsync(
             () => callCount >= 2,
-            TimeSpan.FromSeconds(10),
+            BackgroundWait.Timeout,
             "LoadPipelineConfigAsync must be called again in the first cycle and hit the timeout");
 
         svc.IsLoopActive.Should().BeTrue(
@@ -1484,9 +1460,8 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
         (await svc.StartLoopAsync()).Should().BeTrue("loop must start successfully before the test can proceed");
 
         // The loop must exit cleanly once cancellation surfaces mid-snapshot — IsLoopActive returns to false.
-        await WaitUntilAsync(
+        await BackgroundWait.UntilAsync(svc,
             () => !svc.IsLoopActive,
-            TimeSpan.FromSeconds(10),
             "loop must exit cleanly after cancellation surfaces during snapshot");
 
         // Intentional cancellation must NOT be swallowed-and-retried, and must NOT be logged as an error.

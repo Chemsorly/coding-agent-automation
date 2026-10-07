@@ -12,7 +12,9 @@ namespace CodingAgent.Scheduler.UnitTests;
 /// <summary>
 /// Unit tests for <see cref="LoopWatchdogService"/> — dormant-but-leader self-heal.
 ///
-/// Tests use a 1ms interval so the PeriodicTimer fires immediately without real-time waiting.
+/// Tests use a 1ms interval so the PeriodicTimer fires immediately without real-time waiting,
+/// and run the watchdog until a mock signals the call they assert on
+/// (see <see cref="BackgroundServiceRunner"/>).
 /// The <see cref="TimingTestCollection"/> serializes all timing-sensitive tests to avoid
 /// thread-pool starvation on loaded CI hosts.
 /// </summary>
@@ -50,16 +52,6 @@ public sealed class LoopWatchdogServiceTests
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
 
-    private static async Task RunWatchdogForDurationAsync(LoopWatchdogService watchdog, TimeSpan duration)
-    {
-        using var cts = new CancellationTokenSource();
-        await watchdog.StartAsync(cts.Token);
-        await Task.Delay(duration, CancellationToken.None);
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        try { await watchdog.StopAsync(stopCts.Token); } catch { }
-        watchdog.Dispose();
-    }
-
     /// <summary>
     /// When all three heal conditions are met (leader, loop dormant, auto-start true),
     /// the watchdog must call StartLoopAsync().
@@ -69,16 +61,18 @@ public sealed class LoopWatchdogServiceTests
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(false);
-        _mockLoopService.Setup(s => s.StartLoopAsync()).ReturnsAsync(true);
+        var healed = new CallSignal();
+        _mockLoopService.Setup(s => s.StartLoopAsync()).Callback(() => healed.Hit()).ReturnsAsync(true);
 
         // TODO: the mock always returns IsLoopActive=false, so the watchdog fires on every 1ms tick
-        //   for the full 500ms duration and StartLoopAsync is called hundreds of times. In production,
+        //   until the test stops it, and StartLoopAsync may be called many times. In production,
         //   a successful StartLoopAsync would flip IsLoopActive to true, causing the watchdog to back
         //   off. The current setup does not verify that the watchdog stops calling StartLoopAsync after
         //   a successful heal — a call-storm on StartLoopAsync would not be caught by this test.
         //   Consider sequencing the mock to return IsLoopActive=true after the first StartLoopAsync
         //   call to verify the back-off behaviour.
-        await RunWatchdogForDurationAsync(CreateWatchdog(_mockLeaderGate.Object), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(_mockLeaderGate.Object), healed.Reached,
+            "the watchdog tick must reach StartLoopAsync");
 
         _mockLoopService.Verify(s => s.StartLoopAsync(),
             Times.AtLeastOnce(),
@@ -92,10 +86,13 @@ public sealed class LoopWatchdogServiceTests
     [Fact]
     public async Task WhenNotLeader_WatchdogDoesNotCallStartLoopAsync()
     {
-        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(false);
+        // The second leader check proves the first tick ran to completion.
+        var secondCheck = new CallSignal(2);
+        _mockLeaderGate.SetupGet(g => g.IsLeader).Callback(() => secondCheck.Hit()).Returns(false);
         _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(false);
 
-        await RunWatchdogForDurationAsync(CreateWatchdog(_mockLeaderGate.Object), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(_mockLeaderGate.Object), secondCheck.Reached,
+            "the watchdog must keep checking leadership on every tick");
 
         _mockLoopService.Verify(s => s.StartLoopAsync(),
             Times.Never(),
@@ -112,9 +109,12 @@ public sealed class LoopWatchdogServiceTests
     public async Task WhenLoopAlreadyActive_WatchdogDoesNotCallStartLoopAsync()
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
-        _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(true);
+        // The second loop-state check proves the first tick ran to completion.
+        var secondCheck = new CallSignal(2);
+        _mockLoopService.SetupGet(s => s.IsLoopActive).Callback(() => secondCheck.Hit()).Returns(true);
 
-        await RunWatchdogForDurationAsync(CreateWatchdog(_mockLeaderGate.Object), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(_mockLeaderGate.Object), secondCheck.Reached,
+            "the watchdog must keep checking the loop state on every tick");
 
         _mockLoopService.Verify(s => s.StartLoopAsync(),
             Times.Never(),
@@ -133,11 +133,15 @@ public sealed class LoopWatchdogServiceTests
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(false);
+        // The second config read proves the first tick ran to completion.
+        var secondRead = new CallSignal(2);
         _mockConfigClient
             .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => secondRead.Hit())
             .ReturnsAsync(new PipelineConfiguration { ClosedLoopAutoStart = false });
 
-        await RunWatchdogForDurationAsync(CreateWatchdog(_mockLeaderGate.Object), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(_mockLeaderGate.Object), secondRead.Reached,
+            "the watchdog must keep reading ClosedLoopAutoStart on every tick");
 
         _mockLoopService.Verify(s => s.StartLoopAsync(),
             Times.Never(),
@@ -154,10 +158,12 @@ public sealed class LoopWatchdogServiceTests
     public async Task WhenNullLeaderGate_WatchdogHealsUnconditionally()
     {
         _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(false);
-        _mockLoopService.Setup(s => s.StartLoopAsync()).ReturnsAsync(true);
+        var healed = new CallSignal();
+        _mockLoopService.Setup(s => s.StartLoopAsync()).Callback(() => healed.Hit()).ReturnsAsync(true);
 
         // Pass null leader gate — simulates dev mode / single-replica deployment
-        await RunWatchdogForDurationAsync(CreateWatchdog(leaderGate: null), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(leaderGate: null), healed.Reached,
+            "null gate = dev mode — the watchdog tick must reach StartLoopAsync");
 
         _mockLoopService.Verify(s => s.StartLoopAsync(),
             Times.AtLeastOnce(),
@@ -173,11 +179,14 @@ public sealed class LoopWatchdogServiceTests
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(false);
-        _mockLoopService.Setup(s => s.StartLoopAsync()).ReturnsAsync(false);
+        // The second heal attempt proves the watchdog kept running after StartLoopAsync returned false.
+        var secondAttempt = new CallSignal(2);
+        _mockLoopService.Setup(s => s.StartLoopAsync()).Callback(() => secondAttempt.Hit()).ReturnsAsync(false);
 
         // Must not throw even when StartLoopAsync returns false
         var act = async () =>
-            await RunWatchdogForDurationAsync(CreateWatchdog(_mockLeaderGate.Object), TimeSpan.FromMilliseconds(500));
+            await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(_mockLeaderGate.Object), secondAttempt.Reached,
+                "the watchdog must keep attempting the heal after StartLoopAsync returned false");
 
         await act.Should().NotThrowAsync(
             "StartLoopAsync returning false must not crash the watchdog");
@@ -202,12 +211,16 @@ public sealed class LoopWatchdogServiceTests
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
         _mockLoopService.SetupGet(s => s.IsLoopActive).Returns(false);
+        // The second config read proves the watchdog kept running after the first one threw.
+        var secondRead = new CallSignal(2);
         _mockConfigClient
             .Setup(c => c.GetPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => secondRead.Hit())
             .ThrowsAsync(new HttpRequestException("API unreachable"));
 
         var act = async () =>
-            await RunWatchdogForDurationAsync(CreateWatchdog(_mockLeaderGate.Object), TimeSpan.FromMilliseconds(500));
+            await BackgroundServiceRunner.RunUntilAsync(CreateWatchdog(_mockLeaderGate.Object), secondRead.Reached,
+                "the watchdog must keep running after a config-fetch failure");
 
         await act.Should().NotThrowAsync(
             "a transient config-fetch failure must not crash the watchdog");

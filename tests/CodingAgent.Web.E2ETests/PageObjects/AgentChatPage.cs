@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -22,7 +23,10 @@ public sealed class AgentChatPage
     public async Task NavigateAsync()
     {
         await _page.GotoAsync($"{_baseUrl}/agent-chat");
-        await _page.WaitForSelectorAsync("#template-select", new() { Timeout = 15_000 });
+        // #template-select is prerendered: a selection made before the circuit attaches @bind's
+        // change handler is dropped, and the interactive render resets the select to "", which
+        // leaves the Launch button disabled for good.
+        await _page.WaitForInteractiveAsync("#template-select", 15_000);
     }
 
     /// <summary>Selects an agent type by its labels value in the template dropdown.</summary>

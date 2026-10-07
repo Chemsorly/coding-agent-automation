@@ -262,17 +262,19 @@ public class OpenCodeSessionStatusTests
         };
         var statusJson = JsonSerializer.Serialize(statuses, OpenCodeJson.JsonOptions);
 
-        var handler = new SessionStatusMockHandler(statusJson: statusJson, repeatResponse: true);
+        // Cancel from inside the first /session/status call: a timed CTS could fire before the first
+        // cycle on a stalled test host, while this stops the loop right after one cycle however slow it is.
+        using var cts = new CancellationTokenSource();
+        var handler = new SessionStatusMockHandler(statusJson: statusJson, repeatResponse: true)
+        {
+            OnSessionStatusCall = cts.Cancel
+        };
         var factory = new SimpleClientFactory(handler);
         var provider = new OpenCodeAgentProvider(factory, new Mock<ILogger>().Object);
 
-        // Cancel after enough time for one poll cycle to run (with fast initial delay override).
-        // Use 2000 ms instead of 200 ms to prevent flakiness under CI load — the initial delay
-        // is only 10 ms, so 2000 ms still guarantees cancellation fires after at least one cycle
-        // while giving the mock HTTP handler ample scheduling time to return.
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(2000));
-
-        await provider.PollAllSessionStatusesAsyncForTest(cts.Token, initialDelayMs: 10);
+        // The 30s bound is a hang detector only
+        await provider.PollAllSessionStatusesAsyncForTest(cts.Token, initialDelayMs: 10)
+            .WaitAsync(TimeSpan.FromSeconds(30));
 
         handler.SessionStatusCallCount.Should().BeGreaterThan(0,
             "at least one /session/status call must have been made before cancellation");
@@ -379,6 +381,9 @@ public class OpenCodeSessionStatusTests
 
         public int SessionStatusCallCount => _sessionStatusCallCount;
 
+        /// <summary>Invoked on every /session/status request, after the call is counted.</summary>
+        public Action? OnSessionStatusCall { get; init; }
+
         public SessionStatusMockHandler(
             string statusJson = "{}",
             HttpStatusCode statusCode = HttpStatusCode.OK,
@@ -397,6 +402,7 @@ public class OpenCodeSessionStatusTests
             if (path.Contains("/session/status"))
             {
                 Interlocked.Increment(ref _sessionStatusCallCount);
+                OnSessionStatusCall?.Invoke();
                 var response = new HttpResponseMessage(_statusCode)
                 {
                     Content = new StringContent(_statusJson, Encoding.UTF8, "application/json")

@@ -56,15 +56,11 @@ public sealed class ConnectionReconnectCoordinatorTests
     // ── Registration gate: initial state ────────────────────────────────────
 
     [Fact]
-    public async Task WaitForRegistrationAsync_InitialState_ReturnsImmediately()
+    public void WaitForRegistrationAsync_InitialState_ReturnsImmediately()
     {
         var (coordinator, _) = CreateCoordinator();
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await coordinator.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(100,
+        coordinator.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate starts completed — should return immediately without waiting");
     }
 
@@ -88,38 +84,30 @@ public sealed class ConnectionReconnectCoordinatorTests
     }
 
     [Fact]
-    public async Task WaitForRegistrationAsync_AfterCompleteGate_ReturnsImmediately()
+    public void WaitForRegistrationAsync_AfterCompleteGate_ReturnsImmediately()
     {
         var (coordinator, _) = CreateCoordinator();
 
         coordinator.ResetRegistrationGate();
         coordinator.CompleteRegistrationGate();
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await coordinator.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(200,
+        coordinator.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate is completed — should return immediately");
     }
 
     // ── Registration gate: cancel ────────────────────────────────────────────
 
     [Fact]
-    public async Task WaitForRegistrationAsync_AfterCancelGate_DoesNotHang()
+    public void WaitForRegistrationAsync_AfterCancelGate_DoesNotHang()
     {
         var (coordinator, _) = CreateCoordinator();
 
         coordinator.ResetRegistrationGate();
         coordinator.CancelRegistrationGate(CancellationToken.None);
 
-        // Should return quickly (OperationCanceledException is swallowed by WaitWithTimeoutAsync)
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await coordinator.WaitForRegistrationAsync(CancellationToken.None)
-            .ContinueWith(_ => { }); // swallow cancellation
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(3000,
+        // A cancelled gate counts as completed, so the wait returns synchronously. Asserting that
+        // instead of timing the call keeps a stalled test host from failing the test.
+        coordinator.WaitForRegistrationAsync(CancellationToken.None).IsCompleted.Should().BeTrue(
             "cancelled gate should not hang");
     }
 
@@ -158,15 +146,8 @@ public sealed class ConnectionReconnectCoordinatorTests
             appStoppingToken: CancellationToken.None);
 
         // Gate should be completed (reconnect succeeded)
-        // TODO [WARNING]: The BeLessThan(200ms) assertion below is a timing heuristic — it may produce
-        // spurious failures on loaded machines. Prefer asserting gate.Task.IsCompleted synchronously
-        // (or calling WaitForRegistrationAsync with a pre-cancelled token and asserting no throw) rather
-        // than relying on wall-clock elapsed time.
-        // (ConnectionReconnectCoordinatorTests.cs:163 — TestQualityReviewer review)
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await coordinator.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-        sw.ElapsedMilliseconds.Should().BeLessThan(200, "gate must be complete after successful reconnect");
+        coordinator.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
+            "gate must be complete after successful reconnect");
     }
 
     [Fact]
@@ -234,10 +215,8 @@ public sealed class ConnectionReconnectCoordinatorTests
             appStoppingToken: CancellationToken.None);
 
         // Gate must be completed so callers don't hang
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await coordinator.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-        sw.ElapsedMilliseconds.Should().BeLessThan(200, "gate must be released even after exhaustion");
+        coordinator.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
+            "gate must be released even after exhaustion");
     }
 
     [Fact]
@@ -331,7 +310,7 @@ public sealed class ConnectionReconnectCoordinatorTests
 
         // Wait until StartFunc has actually been entered before calling DisposeAsync,
         // guaranteeing the CAS race condition is exercised deterministically.
-        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await startEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Dispose concurrently — sets _hubManager to null, invalidating the CAS
         await coordinator.DisposeAsync();
@@ -359,13 +338,9 @@ public sealed class ConnectionReconnectCoordinatorTests
 
         await coordinator.DisposeAsync();
 
-        // WaitForRegistrationAsync should not hang after dispose
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await coordinator.WaitForRegistrationAsync(CancellationToken.None)
-            .ContinueWith(_ => { }); // swallow cancellation
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(3000, "DisposeAsync must cancel the gate");
+        // WaitForRegistrationAsync should not hang after dispose: the cancelled gate counts as completed
+        coordinator.WaitForRegistrationAsync(CancellationToken.None).IsCompleted.Should().BeTrue(
+            "DisposeAsync must cancel the gate");
     }
 
     [Fact]

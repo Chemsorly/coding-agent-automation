@@ -10,7 +10,8 @@ namespace CodingAgent.Scheduler.UnitTests;
 
 /// <summary>
 /// Tests for <see cref="RetentionSweepSchedulerService"/>.
-/// Uses a fast tick interval (1ms) so the service fires within the test window.
+/// Uses a fast tick interval (1ms) and runs the service until a mock signals the call each test
+/// asserts on (see <see cref="BackgroundServiceRunner"/>).
 /// </summary>
 [Collection("Metrics")]
 public sealed class RetentionSweepSchedulerServiceTests
@@ -37,27 +38,18 @@ public sealed class RetentionSweepSchedulerServiceTests
             _mockLogger.Object,
             interval: TimeSpan.FromMilliseconds(1));
 
-    private static async Task RunServiceForDurationAsync(RetentionSweepSchedulerService svc, TimeSpan duration)
-    {
-        using var hostCts = new CancellationTokenSource();
-        await svc.StartAsync(hostCts.Token);
-        await Task.Delay(duration, CancellationToken.None);
-        // Stop with a timeout — BackgroundService.StopAsync can hang if ExecuteAsync doesn't respond
-        using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        try { await svc.StopAsync(stopCts.Token); } catch { /* timeout or cancellation — ignore */ }
-        svc.Dispose();
-    }
-
     [Fact]
     public async Task WhenLeaderAndApiReturns200_ShouldCallApiAndNotLogError()
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
+        // The second sweep call proves the first tick, including its logging, ran to completion.
+        var secondSweep = new CallSignal(2);
         _mockClient.Setup(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => secondSweep.Hit())
             .ReturnsAsync(new RetentionSweepResultDto(5, 3, 2, 4));
 
-        // Use 500ms window (up from 50ms) so PeriodicTimer(1ms) reliably fires
-        // at least once even on a loaded CI host where thread-pool scheduling is delayed.
-        await RunServiceForDurationAsync(CreateService(), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateService(), secondSweep.Reached,
+            "the leader must trigger the retention sweep on every tick");
 
         _mockClient.Verify(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()),
             Times.AtLeastOnce(), "leader should trigger the retention sweep");
@@ -75,13 +67,14 @@ public sealed class RetentionSweepSchedulerServiceTests
     public async Task WhenLeaderAndNetworkError_ShouldLogWarningAndNotThrow()
     {
         _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(true);
+        // The second sweep call proves the first failed tick, including its Warning, ran to completion.
+        var secondSweep = new CallSignal(2);
         _mockClient.Setup(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()))
+            .Callback(() => secondSweep.Hit())
             .ThrowsAsync(new HttpRequestException("connection refused"));
 
-        // Use 2000ms window so PeriodicTimer(1ms) reliably fires at least once even on a
-        // loaded CI host where thread-pool scheduling is delayed (matching the comment in
-        // WhenLeaderAndApiReturns200 which was increased from 50ms to 500ms for the same reason).
-        await RunServiceForDurationAsync(CreateService(), TimeSpan.FromMilliseconds(2000));
+        await BackgroundServiceRunner.RunUntilAsync(CreateService(), secondSweep.Reached,
+            "a network error must not stop the sweep loop");
 
         _mockLogger.Verify(l => l.Warning(It.IsAny<Exception>(), It.IsAny<string>()),
             Times.AtLeastOnce(), "network error should log Warning");
@@ -92,9 +85,12 @@ public sealed class RetentionSweepSchedulerServiceTests
     [Fact]
     public async Task WhenNotLeader_ShouldNotCallApi()
     {
-        _mockLeaderGate.SetupGet(g => g.IsLeader).Returns(false);
+        // The second leader check proves the first skipped tick ran to completion.
+        var secondCheck = new CallSignal(2);
+        _mockLeaderGate.SetupGet(g => g.IsLeader).Callback(() => secondCheck.Hit()).Returns(false);
 
-        await RunServiceForDurationAsync(CreateService(), TimeSpan.FromMilliseconds(500));
+        await BackgroundServiceRunner.RunUntilAsync(CreateService(), secondCheck.Reached,
+            "the service must keep checking leadership on every tick");
 
         _mockClient.Verify(c => c.TriggerRetentionSweepAsync(It.IsAny<CancellationToken>()),
             Times.Never(), "non-leader should not trigger the sweep");

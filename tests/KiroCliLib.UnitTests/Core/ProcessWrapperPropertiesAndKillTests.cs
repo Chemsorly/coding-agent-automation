@@ -133,17 +133,26 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
         };
 
         using var wrapper = new ProcessWrapper(longRunningConfig, _logger);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Safety net only: the test cancels the first run itself below
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         // Start in background — will block until cancelled or process exits
         var firstTask = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
 
-        // Give the process a moment to start
-        await Task.Delay(300, CancellationToken.None);
+        // Wait until the first call has started its process (ProcessId is set from then on). A fixed
+        // delay is not enough on a stalled host: the second call then passes the guard and, on Linux,
+        // sleeps 999s. IsRunning is no signal on Windows, where cmd.exe exits at once; the guard
+        // throws there too, because the first process was started. 30s is a hang detector only.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (wrapper.ProcessId is null && !firstTask.IsCompleted && DateTime.UtcNow < deadline)
+            await Task.Delay(20, CancellationToken.None);
+        wrapper.ProcessId.Should().NotBeNull("the first StartAsync must have started its process");
 
-        // Second call must throw because the process is already running
+        // Second call must throw because the process is already running. Its own token bounds the
+        // test if a regression lets the call through, instead of waiting for `sleep 999`.
+        using var secondCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         await Assert.ThrowsAsync<InvalidOperationException>(async () =>
-            await wrapper.StartAsync("hello", _workspaceDir, useResume: false, CancellationToken.None));
+            await wrapper.StartAsync("hello", _workspaceDir, useResume: false, secondCts.Token));
 
         // Cancel the background task to clean up
         await cts.CancelAsync();
