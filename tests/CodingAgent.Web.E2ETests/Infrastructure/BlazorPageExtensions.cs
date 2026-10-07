@@ -42,51 +42,28 @@ public static class BlazorPageExtensions
             new() { Timeout = timeoutMs });
 
     /// <summary>
-    /// Waits until a cockpit page is interactive and has finished its first data load,
-    /// including the project-scope restore that runs in <c>CockpitLayout.OnAfterRenderAsync</c>.
+    /// Waits until a cockpit page is interactive and has finished its first data load.
     /// <para>
     /// Cockpit pages are prerendered with their data; when the circuit connects, the interactive
-    /// component re-runs <c>OnInitializedAsync</c> and shows a "Loading…" placeholder until its API
-    /// calls return, and prerendered buttons have no handlers. After the initial data load,
-    /// <c>CockpitLayout.RestoreSavedProjectScopeAsync</c> reads <c>localStorage</c> and may trigger
-    /// a second quiet refresh on project-scoped pages (e.g. Work). This helper waits until all of
-    /// the following are true:
+    /// component re-runs <c>OnInitializedAsync</c> and shows a "Loading…" placeholder until its
+    /// API calls return, and prerendered buttons have no handlers. This helper waits until the
+    /// layout's theme toggle has a Blazor event handler (circuit rendered the page) and no
+    /// <c>.cockpit-empty</c> placeholder starting with "Loading" is left.
     /// </para>
-    /// <list type="number">
-    ///   <item>The layout's theme toggle has a Blazor event handler (circuit rendered the page).</item>
-    ///   <item>The <c>&lt;p class="auth-authorizing"&gt;</c> placeholder is absent, confirming that
-    ///         <c>CockpitLayout._accessReady</c> is <c>true</c> and the page body has been rendered.
-    ///         The layout briefly shows this paragraph while its <c>OnInitializedAsync</c> runs on
-    ///         the reconnecting interactive circuit before <c>_accessReady</c> is restored.</item>
-    ///   <item>No <c>.cockpit-empty</c> placeholder starting with "Loading" or "Checking" is present.
-    ///         "Checking the provider backlog…" on the Work page disappears only after
-    ///         <c>HandleProjectChanged</c> completes its final <c>LoadBacklogAsync</c>, so this check
-    ///         also covers the project-filter quiet refresh triggered by the scope restore.</item>
-    /// </list>
+    /// <para>
+    /// For pages that need additional guarantees (e.g. template rows on /agent-coding, or
+    /// project-filtered data on /work), callers should add a targeted wait after this returns.
+    /// See <see cref="WorkPage.NavigateAsync"/> and <see cref="AgentCodingPage.NavigateAsync"/>
+    /// for examples.
+    /// </para>
     /// </summary>
     /// <param name="page">The page to wait on.</param>
     /// <param name="timeoutMs">Maximum time to wait in milliseconds, per step.</param>
     public static async Task WaitForCockpitPageReadyAsync(this IPage page, int timeoutMs = 15_000)
     {
         await page.WaitForInteractiveAsync(".cockpit-theme-toggle", timeoutMs);
-        // Wait until:
-        // (a) CockpitLayout._accessReady is true — no auth-authorizing paragraph. The layout sets
-        //     _accessReady = false at the start of OnInitializedAsync on the reconnecting circuit
-        //     and briefly replaces the page body with a loading paragraph, hiding rendered content.
-        // (b) All loading/checking placeholders are gone — covers both the initial "Loading X…"
-        //     data load AND the Work page's "Checking the provider backlog…" which disappears only
-        //     after HandleProjectChanged (triggered by RestoreSavedProjectScopeAsync) fully completes.
         await page.WaitForFunctionAsync(
-            """
-            () => {
-                if (document.querySelector('p.auth-authorizing')) return false;
-                const empties = [...document.querySelectorAll('.cockpit-empty')];
-                return !empties.some(e => {
-                    const t = e.textContent.trim();
-                    return t.startsWith('Loading') || t.startsWith('Checking');
-                });
-            }
-            """,
+            "() => ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.trim().startsWith('Loading'))",
             null,
             new() { Timeout = timeoutMs });
     }

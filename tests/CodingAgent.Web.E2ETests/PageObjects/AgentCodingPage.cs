@@ -32,6 +32,15 @@ public sealed class AgentCodingPage
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         await _page.WaitForCockpitPageReadyAsync();
+
+        // Wait for the template select to become interactive. WaitForCockpitPageReadyAsync waits
+        // for the layout's theme toggle to have Blazor handlers, but AgentCoding.OnInitializedAsync
+        // (which calls PageService.InitializeAsync to load templates) may still be running at that
+        // point. The template select [data-testid='template-select'] only gets its @onchange Blazor
+        // handler after OnInitializedAsync completes and the component re-renders with the loaded
+        // templates, so waiting for it to be interactive guarantees the Remove buttons (which render
+        // from _templates) are also present in the DOM.
+        await _page.WaitForInteractiveAsync("[data-testid='template-select']");
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>

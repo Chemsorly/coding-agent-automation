@@ -24,6 +24,23 @@ public sealed class WorkPage
         await _page.GotoAsync($"{_baseUrl}/work");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await _page.WaitForCockpitPageReadyAsync();
+        // Wait until the page's data-project-scope attribute matches the project stored in
+        // localStorage. Work.razor renders data-project-scope="@State.SelectedProjectId" on its
+        // root div. CockpitLayout.RestoreSavedProjectScopeAsync reads localStorage in
+        // OnAfterRenderAsync and calls State.SetProject, which triggers HandleProjectChanged →
+        // RefreshQuietAsync (HTTP) → StateHasChanged. The data-project-scope attribute is updated
+        // in that final re-render, so it matches localStorage only after the filtered data has
+        // been fetched and the component has re-rendered with the correct project scope.
+        await _page.WaitForFunctionAsync(
+            """
+            () => {
+                const stored = localStorage.getItem('cockpit.selectedProjectId') ?? '';
+                const page = document.querySelector('.cockpit-page[data-project-scope]');
+                return page !== null && page.dataset.projectScope === stored;
+            }
+            """,
+            null,
+            new() { Timeout = 15_000 });
     }
 
     private ILocator InFlightCard => _page.Locator(".cockpit-card:has(h2:has-text('In flight'))");
