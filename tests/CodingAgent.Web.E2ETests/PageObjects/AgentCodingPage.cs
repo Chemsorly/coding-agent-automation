@@ -33,17 +33,24 @@ public sealed class AgentCodingPage
 
         await _page.WaitForCockpitPageReadyAsync();
 
-        // The CockpitLayout's theme toggle (checked by WaitForCockpitPageReadyAsync) can receive
-        // its Blazor event handler before AgentCoding's own OnInitializedAsync has finished
-        // fetching template data, because the layout renders in the first pass while the page
-        // component may still be awaiting its async initialization.
+        // The template table's Remove/Edit buttons are gated on CanEdit (= Access.IsAdmin), and
+        // Access.IsAdmin starts as false (Grant = AccessGrant.None) until CockpitLayout's
+        // OnInitializedAsync completes its async RBAC evaluation. WaitForCockpitPageReadyAsync
+        // only confirms the circuit is connected (theme toggle handler attached) — which can fire
+        // while the RBAC task is still in flight, leaving Access.IsAdmin = false and the Actions
+        // column rendering empty <td></td> instead of the Remove button.
         //
-        // Wait for the loop-control section's buttons (Start Loop / Stop Loop) to be interactive.
-        // These buttons are in AgentCoding.razor itself with @onclick handlers; they only receive
-        // _blazorEvents_* properties after AgentCoding's own interactive render cycle completes —
-        // at which point IsLoopActive has been read and the template table reflects the correct
-        // state (with or without Remove buttons depending on whether the loop is running).
-        await _page.WaitForInteractiveAsync("[data-testid='loop-controls'] button");
+        // Wait for "button.btn-add" (the "+ Add Template" button rendered by TemplateTableSection
+        // when CanEdit=true AND IsLoopActive=false) to be interactive (have _blazorEvents_*).
+        // This button only receives a Blazor event handler after BOTH conditions are met:
+        //   1. Access.InitializeAsync() has resolved (CanEdit = IsAdmin = true), AND
+        //   2. The loop is not running (IsLoopActive = false).
+        // Both conditions are guaranteed at test navigation time (admin cookie + ResetAllAsync).
+        // Using WaitForInteractiveAsync (not just WaitForSelectorAsync) is critical: the
+        // prerendered DOM contains btn-add without _blazorEvents_*, and the first interactive
+        // render briefly removes it while CanEdit=false (RBAC not yet resolved). Only the second
+        // render (after RBAC completes) re-adds it with the @onclick handler attached.
+        await _page.WaitForInteractiveAsync("button.btn-add");
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>
