@@ -284,20 +284,20 @@ public sealed class AgentRegistryCleanupServiceTests
         var svc = new AgentRegistryCleanupService(_store.Object, _logger.Object,
             leaderElection: null, sweepInterval: TimeSpan.FromMilliseconds(1));
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Act: start the background service and wait for at least one sweep. Start with
+        // CancellationToken.None: BackgroundService links the start token into its stopping token,
+        // so a timed start token would stop the service on its own timer; StopAsync stops it below.
+        await ((IHostedService)svc).StartAsync(CancellationToken.None);
 
-        // Act: start the background service and wait for at least one sweep
-        await ((IHostedService)svc).StartAsync(cts.Token);
-
-        // Poll until SetMembersAsync is called (= at least one tick executed SweepAsync)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Poll until SetMembersAsync is called (= at least one tick executed SweepAsync).
+        // The 30s deadline only bounds a stalled test host.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline)
         {
             try { _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.AtLeastOnce()); break; }
             catch (MockException) { await Task.Delay(20); }
         }
 
-        cts.Cancel();
         await ((IHostedService)svc).StopAsync(CancellationToken.None);
 
         _store.Verify(s => s.SetMembersAsync("agents:all", It.IsAny<CancellationToken>()), Times.AtLeastOnce(),
@@ -321,15 +321,16 @@ public sealed class AgentRegistryCleanupServiceTests
         var svc = new AgentRegistryCleanupService(_store.Object, _logger.Object,
             leaderElection: null, sweepInterval: TimeSpan.FromMilliseconds(1));
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await ((IHostedService)svc).StartAsync(cts.Token);
+        // CancellationToken.None: a timed start token would stop the service on its own timer
+        // (BackgroundService links it into the stopping token); StopAsync stops it below.
+        await ((IHostedService)svc).StartAsync(CancellationToken.None);
 
-        // Wait until the second tick completes successfully (callCount >= 2)
-        var deadline = DateTime.UtcNow.AddSeconds(5);
+        // Wait until the second tick completes successfully (callCount >= 2).
+        // The 30s deadline only bounds a stalled test host.
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (DateTime.UtcNow < deadline && callCount < 2)
             await Task.Delay(20);
 
-        cts.Cancel();
         await ((IHostedService)svc).StopAsync(CancellationToken.None);
 
         callCount.Should().BeGreaterThanOrEqualTo(2,

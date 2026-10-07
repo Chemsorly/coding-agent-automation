@@ -10,6 +10,10 @@ namespace CodingAgent.Infrastructure.UnitTests;
 
 public class GitHubActionsPipelineProviderTests
 {
+    // Timeout for WaitForCompletionAsync tests that end on a terminal state: they do not exercise the
+    // timeout, and any shorter wall-clock budget lets a stalled test host turn the result into Pending.
+    private static readonly TimeSpan TerminalPollTimeout = TimeSpan.FromMinutes(10);
+
     private readonly Mock<IGitHubClient> _mockClient;
     private readonly Mock<IActionsClient> _mockActions;
     private readonly Mock<IActionsWorkflowsClient> _mockWorkflows;
@@ -117,9 +121,8 @@ public class GitHubActionsPipelineProviderTests
             });
         SetupJobs(1, new[] { CreateJob("build", WorkflowJobStatus.Completed, WorkflowJobConclusion.Success) });
 
-        // Use a generous timeout — this test validates polling behavior, not performance.
-        // On slow CI runners (GitHub Actions), mock overhead can exceed 10s for 3 poll iterations.
-        var result = await _provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromSeconds(60), CancellationToken.None);
+        // This test validates polling behavior, not the timeout, so it uses a timeout that only a hang reaches.
+        var result = await _provider.WaitForCompletionAsync("main", "abc", TerminalPollTimeout, CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Passed);
         callCount.Should().BeGreaterThanOrEqualTo(3);
@@ -132,13 +135,19 @@ public class GitHubActionsPipelineProviderTests
         SetupWorkflowRuns(new[] { run });
         SetupJobs(1, new[] { CreateJob("build", WorkflowJobStatus.InProgress, null) });
 
-        // Timeout must be long enough for at least one poll to complete (returning Running) before
-        // expiry. 100ms was too tight on loaded CI runners where mock overhead causes the provider
-        // to time out before the first poll returns, yielding Pending (lastStatus == null path).
-        // 1 second is ample for a synchronous mock while keeping the test fast.
-        var result = await _provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromSeconds(1), CancellationToken.None);
+        // A poll interval far beyond the timeout: after the first poll returns Running, the loop waits
+        // until the timeout cancels it, so no later poll races the timeout and the result can only be
+        // the first poll's status. The timeout only has to outlast that first poll, which completes
+        // synchronously against the mocks; 1s was not enough when CI stalled the test host mid-poll
+        // (the timeout fired first and Pending came back), so 5s leaves room for such a stall.
+        var provider = new GitHubActionsPipelineProvider(
+            new GitHubConnectionInfo("https://api.github.com", "owner", "repo"), _mockClient.Object, TimeSpan.FromHours(1));
+
+        var result = await provider.WaitForCompletionAsync("main", "abc", TimeSpan.FromSeconds(5), CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Running);
+        _mockRuns.Verify(r => r.List("owner", "repo", It.IsAny<WorkflowRunsRequest>()), Times.Once,
+            "only the first poll may run before the timeout");
     }
 
     [Theory]
@@ -202,7 +211,7 @@ public class GitHubActionsPipelineProviderTests
         _mockJobs.Setup(j => j.GetLogs("owner", "repo", failedJobId))
             .ReturnsAsync(logContent);
 
-        var result = await _provider.WaitForCompletionAsync("main", "abc123", TimeSpan.FromSeconds(5), CancellationToken.None);
+        var result = await _provider.WaitForCompletionAsync("main", "abc123", TerminalPollTimeout, CancellationToken.None);
 
         result.State.Should().Be(PipelineRunState.Failed);
         result.Jobs.Should().HaveCount(1);

@@ -11,9 +11,10 @@ public class OutputBatcherTests
     [Fact]
     public async Task FlushesAt50LinesThreshold()
     {
-        // Arrange
+        // Arrange — a ManualFlushTrigger that never ticks: with the real 250ms timer, a test thread
+        // descheduled mid-loop lets a timer flush take part of the batch before the threshold is hit
         var flushedBatches = new List<IReadOnlyList<string>>();
-        await using var batcher = new OutputBatcher();
+        await using var batcher = new OutputBatcher(new ManualFlushTrigger());
         batcher.OnFlush += batch =>
         {
             flushedBatches.Add(batch.ToList());
@@ -39,10 +40,12 @@ public class OutputBatcherTests
         // when the trigger fires (i.e., the timer tick path works correctly).
         var trigger = new ManualFlushTrigger();
         var flushedBatches = new List<IReadOnlyList<string>>();
+        var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var batcher = new OutputBatcher(trigger);
         batcher.OnFlush += batch =>
         {
             flushedBatches.Add(batch.ToList());
+            flushed.TrySetResult();
             return Task.CompletedTask;
         };
 
@@ -56,10 +59,9 @@ public class OutputBatcherTests
         // Fire the trigger — this simulates the 250ms timer tick
         trigger.Tick();
 
-        // Wait for the flush loop to process the tick (event-driven, no fixed delay)
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (flushedBatches.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
+        // Wait for the flush loop to process the tick (event-driven; the 30s bound is a hang
+        // detector only, so a stalled thread pool cannot fail the test)
+        await flushed.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert — trigger flush must have delivered both lines
         flushedBatches.Should().HaveCountGreaterThanOrEqualTo(1);
@@ -152,10 +154,12 @@ public class OutputBatcherManualTriggerTests
     {
         var trigger = new ManualFlushTrigger();
         var flushedBatches = new List<IReadOnlyList<string>>();
+        var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var batcher = new OutputBatcher(trigger);
         batcher.OnFlush += batch =>
         {
             flushedBatches.Add(batch.ToList());
+            flushed.TrySetResult();
             return Task.CompletedTask;
         };
 
@@ -168,10 +172,8 @@ public class OutputBatcherManualTriggerTests
         // Tick the trigger — this should cause a flush
         trigger.Tick();
 
-        // Give the flush loop a moment to process
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (flushedBatches.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
+        // Wait for the flush loop to process the tick (event-driven; 30s is a hang detector only)
+        await flushed.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         var allLines = flushedBatches.SelectMany(b => b).ToList();
         allLines.Should().Contain("line-a");
@@ -219,6 +221,7 @@ public class OutputBatcherManualTriggerTests
         var trigger = new ManualFlushTrigger();
         var secondFlushSaw = new List<string>();
         var firstFlushAttempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondFlushDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var batcher = new OutputBatcher(trigger);
 
@@ -234,21 +237,20 @@ public class OutputBatcherManualTriggerTests
             }
 
             secondFlushSaw.AddRange(batch);
+            secondFlushDone.TrySetResult();
             return Task.CompletedTask;
         };
 
         await batcher.AddLineAsync("first");
         trigger.Tick(); // First tick — flush throws
 
-        // Wait for the first flush attempt to complete before ticking again —
-        // event-driven avoids a fixed Task.Delay(50) that can be too short on loaded CI
-        await Task.WhenAny(firstFlushAttempted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // Wait for the first flush attempt to complete before ticking again, so "second" is not
+        // swept into the failing batch. Event-driven; the 30s bounds are hang detectors only.
+        await firstFlushAttempted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         await batcher.AddLineAsync("second");
         trigger.Tick(); // Second tick — flush succeeds
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (secondFlushSaw.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
+        await secondFlushDone.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         secondFlushSaw.Should().Contain("second", "batcher should survive an OnFlush exception");
     }
@@ -297,7 +299,7 @@ public class OutputBatcherManualTriggerTests
 
         // Wait until the first handler is definitely running before proceeding.
         // Event-driven: no fixed delay needed.
-        await firstHandlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await firstHandlerStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // The batcher's 20ms timeout will fire and abandon the first flush.
         // Queue "post-timeout" and fire the second tick — the gate must be free.
@@ -305,7 +307,7 @@ public class OutputBatcherManualTriggerTests
         trigger.Tick(); // Second tick — should proceed even though first was abandoned
 
         // Wait for the second flush handler to complete. Event-driven, no polling loop.
-        await secondFlushCompleted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await secondFlushCompleted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         secondFlushLines.Should().Contain("post-timeout",
             "batcher should continue delivering after a timed-out flush is abandoned");
@@ -315,28 +317,31 @@ public class OutputBatcherManualTriggerTests
     public async Task InfiniteFlushTimeout_WaitsForHandlerCompletion()
     {
         var trigger = new ManualFlushTrigger();
-        var tcs = new TaskCompletionSource<bool>();
+        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlerEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handlerCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var flushed = new List<string>();
 
         await using var batcher = new OutputBatcher(trigger, flushTimeout: Timeout.InfiniteTimeSpan);
         batcher.OnFlush += async batch =>
         {
+            handlerEntered.TrySetResult();
             await tcs.Task; // Block until released
             flushed.AddRange(batch);
+            handlerCompleted.TrySetResult();
         };
 
         await batcher.AddLineAsync("infinite-line");
         trigger.Tick();
 
-        // Handler is blocked — give a moment for the tick to reach SendBatchAsync
-        await Task.Delay(50);
+        // Handler is blocked — wait for the tick to reach it (event-driven; the 30s bounds in
+        // this test are hang detectors only)
+        await handlerEntered.Task.WaitAsync(TimeSpan.FromSeconds(30));
         flushed.Should().BeEmpty("handler still blocked");
 
         // Unblock the handler
         tcs.SetResult(true);
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (flushed.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(10);
+        await handlerCompleted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         flushed.Should().Contain("infinite-line", "handler should complete when unblocked");
     }

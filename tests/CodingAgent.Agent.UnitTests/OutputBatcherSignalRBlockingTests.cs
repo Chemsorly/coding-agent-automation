@@ -18,10 +18,12 @@ public class OutputBatcherSignalRBlockingTests
     [Fact]
     public async Task WhenOnFlushBlocks_AddLineAsyncIsNotBlocked()
     {
-        var flushStarted = new TaskCompletionSource();
-        var flushCanComplete = new TaskCompletionSource();
+        var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var flushCanComplete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var batcher = new OutputBatcher();
+        // A flush timeout longer than the 30s hang detectors below keeps the blocked flush in the
+        // send phase for the whole test, so only the lock design can let the agents through.
+        await using var batcher = new OutputBatcher(flushTimeout: TimeSpan.FromSeconds(60));
         batcher.OnFlush += async _ =>
         {
             flushStarted.TrySetResult();
@@ -36,8 +38,9 @@ public class OutputBatcherSignalRBlockingTests
         // The 50th line triggers flush which will block in OnFlush.
         var addLine50Task = Task.Run(async () => await batcher.AddLineAsync("line-49"));
 
-        // Wait for the flush to start (proves the send phase has begun)
-        var flushStartedInTime = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+        // Wait for the flush to start (proves the send phase has begun). The 30s bounds in this
+        // test are hang detectors only: a stalled test host must not fail it.
+        var flushStartedInTime = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         flushStartedInTime.Should().Be(flushStarted.Task, "flush should start when 50th line is added");
 
         // Parallel agents adding output lines should complete immediately
@@ -51,7 +54,7 @@ public class OutputBatcherSignalRBlockingTests
 
         // All agents should complete quickly (not blocked by the flush)
         var allAgents = Task.WhenAll(parallelAgent1, parallelAgent2, parallelAgent3);
-        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(allAgents,
             "all agents should complete immediately — AddLineAsync does not block on network I/O");
 
@@ -125,14 +128,11 @@ public class OutputBatcherSignalRBlockingTests
     [Fact]
     public async Task FlushHandlerWithTimeout_PreventsIndefiniteBlocking()
     {
-        var flushCount = 0;
-        var timedOutFlushes = 0;
+        var flushTimedOut = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var batcher = new OutputBatcher();
         batcher.OnFlush += async _ =>
         {
-            Interlocked.Increment(ref flushCount);
-
             // Simulate the FIXED pattern: OnFlush with a timeout
             using var flushCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
             try
@@ -143,7 +143,7 @@ public class OutputBatcherSignalRBlockingTests
             catch (OperationCanceledException)
             {
                 // Timeout fired — flush fails fast instead of blocking indefinitely
-                Interlocked.Increment(ref timedOutFlushes);
+                flushTimedOut.TrySetResult();
             }
         };
 
@@ -151,17 +151,15 @@ public class OutputBatcherSignalRBlockingTests
         for (var i = 0; i < 50; i++)
             await batcher.AddLineAsync($"line-{i}");
 
-        // Give time for the timeout to fire
-        await Task.Delay(300);
-
-        // Verify: the flush was attempted and timed out quickly
-        Interlocked.CompareExchange(ref flushCount, 0, 0).Should().BeGreaterThanOrEqualTo(1);
-        Interlocked.CompareExchange(ref timedOutFlushes, 0, 0).Should().BeGreaterThanOrEqualTo(1,
+        // Verify: the flush was attempted and timed out. Event-driven — the flush may run on the
+        // timer path rather than inline — and the 30s bounds in this test are hang detectors only.
+        var timedOut = await Task.WhenAny(flushTimedOut.Task, Task.Delay(TimeSpan.FromSeconds(30)));
+        timedOut.Should().Be(flushTimedOut.Task,
             "the flush timeout should fire, preventing indefinite lock hold");
 
         // Prove that subsequent AddLineAsync calls are NOT blocked
         var addTask = batcher.AddLineAsync("after-timeout-line");
-        var completed = await Task.WhenAny(addTask, Task.Delay(TimeSpan.FromSeconds(1)));
+        var completed = await Task.WhenAny(addTask, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(addTask,
             "AddLineAsync should complete quickly after the timed-out flush releases the lock");
     }

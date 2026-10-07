@@ -27,7 +27,7 @@ public class OpenCodeDiffMappingPropertyTests
     /// **Validates: Requirements 7.3, 7.4, 7.5**
     /// </summary>
     [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 20)]
-    public async void StatusMappingIsCorrect_AddedDeletedOrModified(DiffMappingInput input)
+    public async Task StatusMappingIsCorrect_AddedDeletedOrModified(DiffMappingInput input)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -73,7 +73,7 @@ public class OpenCodeDiffMappingPropertyTests
     /// **Validates: Requirements 7.3, 7.4, 7.5**
     /// </summary>
     [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 20)]
-    public async void LineCounts_ArePreservedExactly(DiffMappingInput input)
+    public async Task LineCounts_ArePreservedExactly(DiffMappingInput input)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -100,7 +100,7 @@ public class OpenCodeDiffMappingPropertyTests
     /// **Validates: Requirements 7.3, 7.4, 7.5**
     /// </summary>
     [Property(Arbitrary = [typeof(DiffMappingArbitrary)], MaxTest = 20)]
-    public async void HttpError_ReturnsEmptyList_WithoutThrowing(HttpErrorInput input)
+    public async Task HttpError_ReturnsEmptyList_WithoutThrowing(HttpErrorInput input)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();

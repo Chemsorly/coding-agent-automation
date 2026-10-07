@@ -19,16 +19,12 @@ public class AgentConnectionLifecycleGateTests
     // ── WaitForRegistrationAsync before any registration ─────────────────
 
     [Fact]
-    public async Task WaitForRegistrationAsync_InitialState_ReturnsImmediately()
+    public void WaitForRegistrationAsync_InitialState_ReturnsImmediately()
     {
         // Gate starts completed — no blocking before first reconnect
         var (lifecycle, _, _) = CreateLifecycle();
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await lifecycle.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(100,
+        lifecycle.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate starts completed — should return immediately");
     }
 
@@ -42,11 +38,7 @@ public class AgentConnectionLifecycleGateTests
         // HandleReconnectedAsync: registers gate reset at start, TrySetResult at end
         await lifecycle.HandleReconnectedAsync("conn-new");
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await lifecycle.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(500,
+        lifecycle.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate should be released after HandleReconnectedAsync");
     }
 
@@ -62,11 +54,7 @@ public class AgentConnectionLifecycleGateTests
         // All attempts fail → exhausted → TrySetResult + StopApplication
         await lifecycle.HandleTerminalClosedAsync(null, maxAttempts: 1, delayOverride: _ => TimeSpan.Zero);
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await lifecycle.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(500,
+        lifecycle.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate should be released even after exhaustion");
         stopCalled.Should().BeTrue();
     }
@@ -80,13 +68,9 @@ public class AgentConnectionLifecycleGateTests
 
         await lifecycle.DisposeAsync();
 
-        // Should not hang — either returns immediately or throws OperationCanceledException
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await lifecycle.WaitForRegistrationAsync(CancellationToken.None)
-            .ContinueWith(_ => { }); // swallow cancellation
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(3000,
+        // Should not hang: the gate cancelled by DisposeAsync counts as completed, so the wait
+        // returns synchronously (asserted instead of timed, so a stalled test host cannot fail it)
+        lifecycle.WaitForRegistrationAsync(CancellationToken.None).IsCompleted.Should().BeTrue(
             "should not hang after dispose");
     }
 
@@ -104,11 +88,7 @@ public class AgentConnectionLifecycleGateTests
         await lifecycle.HandleReconnectedAsync("conn-2");
 
         // After the second reconnect, the gate should again be completed
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await lifecycle.WaitForRegistrationAsync(CancellationToken.None);
-        sw.Stop();
-
-        sw.ElapsedMilliseconds.Should().BeLessThan(500,
+        lifecycle.WaitForRegistrationAsync(CancellationToken.None).IsCompletedSuccessfully.Should().BeTrue(
             "gate should be completed after second reconnect");
     }
 

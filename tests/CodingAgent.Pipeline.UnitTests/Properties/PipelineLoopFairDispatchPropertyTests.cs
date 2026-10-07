@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using FsCheck;
 using FsCheck.Fluent;
@@ -256,9 +257,8 @@ public class PipelineLoopFairDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!svc.StatusMessage.Contains("Cycle complete") && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for the cycle to complete: every template has had its dispatch opportunity by then.
+        await BackgroundWait.CycleCompleteAsync(svc);
 
         svc.StopLoop();
         await Task.Delay(200);

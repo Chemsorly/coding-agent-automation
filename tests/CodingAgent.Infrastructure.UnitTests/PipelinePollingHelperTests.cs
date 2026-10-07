@@ -108,23 +108,33 @@ public class PipelinePollingHelperTests
     [Fact]
     public async Task PollUntilCompleteAsync_Timeout_ReturnsLastStatus()
     {
-        // TODO: This test uses a single unchanging status object for all polls, so it cannot
-        // distinguish "returns the LAST status" from "returns any status ever seen". To properly
-        // verify the "last" semantics, use a multi-step scenario where the status changes between
-        // polls (e.g. sha-first then sha-last) and assert the final returned CommitSha equals
-        // the value from the most-recent poll before the timeout.
-        var runningStatus = MakeStatus(PipelineRunState.Running, "sha5");
+        // Two Running polls with different SHAs, then a third poll that never completes until the
+        // timeout cancels it. With a zero poll interval the first two polls run synchronously right
+        // after the timeout starts, so the timeout cannot overtake them and the result is always the
+        // second (last completed) poll. The 1s timeout only has to outlast those synchronous polls.
+        var pollCount = 0;
 
         var result = await PipelinePollingHelper.PollUntilCompleteAsync(
-            getRunStatusAsync: _ => Task.FromResult(runningStatus),
+            getRunStatusAsync: async linkedCt =>
+            {
+                switch (++pollCount)
+                {
+                    case 1: return MakeStatus(PipelineRunState.Running, "sha-first");
+                    case 2: return MakeStatus(PipelineRunState.Running, "sha-last");
+                    default:
+                        await Task.Delay(Timeout.InfiniteTimeSpan, linkedCt);
+                        throw new InvalidOperationException("unreachable: the timeout cancels this poll");
+                }
+            },
             enrichFailedJobsAsync: (s, _) => Task.FromResult(s),
             isTerminalState: s => s.State is PipelineRunState.Passed or PipelineRunState.Failed or PipelineRunState.Cancelled,
-            settings: new PipelinePollingSettings(TimeSpan.FromMilliseconds(10), TimeSpan.FromMilliseconds(80), "CI"),
+            settings: new PipelinePollingSettings(TimeSpan.Zero, TimeSpan.FromSeconds(1), "CI"),
             ct: CancellationToken.None,
             logger: SilentLogger);
 
         result.State.Should().Be(PipelineRunState.Running, "timeout should return the last observed status");
-        result.CommitSha.Should().Be("sha5");
+        result.CommitSha.Should().Be("sha-last", "the most recent completed poll, not an earlier one, is returned");
+        pollCount.Should().Be(3, "the third poll was still pending when the timeout fired");
     }
 
     [Fact]

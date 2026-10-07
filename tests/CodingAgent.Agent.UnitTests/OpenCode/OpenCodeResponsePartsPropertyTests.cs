@@ -27,7 +27,7 @@ public class OpenCodeResponsePartsPropertyTests
     /// **Validates: Requirements 1.4, 3.5**
     /// </summary>
     [Property(Arbitrary = [typeof(ResponsePartsArbitrary)], MaxTest = 20)]
-    public async void OnlyTextPartsAreExtracted_AndConcatenatedWithNewlines(ResponsePartsInput input)
+    public async Task OnlyTextPartsAreExtracted_AndConcatenatedWithNewlines(ResponsePartsInput input)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
@@ -74,7 +74,7 @@ public class OpenCodeResponsePartsPropertyTests
     /// **Validates: Requirements 1.4, 3.5**
     /// </summary>
     [Property(Arbitrary = [typeof(ResponsePartsArbitrary)], MaxTest = 20)]
-    public async void NonTextPartsAreExcludedFromOutput(NonTextOnlyInput input)
+    public async Task NonTextPartsAreExcludedFromOutput(NonTextOnlyInput input)
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();

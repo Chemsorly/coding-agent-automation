@@ -29,9 +29,14 @@ public class WorkItemHttpClientResilienceTests : IDisposable
 
         var services = new ServiceCollection();
         services.AddSingleton(new Mock<Serilog.ILogger>().Object);
+        // These tests assert how the handler retries status codes from WireMock, not its timeouts. On a
+        // stalled test host a 10s attempt timeout fired before WireMock handled any request, so every
+        // attempt timed out, the client still threw, and the server logged no request at all. The
+        // timeouts below are only reached by a hang; the HttpClient's own 100s default is disabled too.
         services.AddHttpClient<WorkItemHttpClient>(client =>
             {
                 client.BaseAddress = new Uri(_server.Url!);
+                client.Timeout = Timeout.InfiniteTimeSpan;
             })
             .AddStandardResilienceHandler(options =>
             {
@@ -39,9 +44,9 @@ public class WorkItemHttpClientResilienceTests : IDisposable
                 options.Retry.MaxRetryAttempts = 3;
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
                 options.Retry.UseJitter = false;
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(60);
-                options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(10);
-                options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(10);
+                options.AttemptTimeout.Timeout = TimeSpan.FromMinutes(4);
+                options.CircuitBreaker.SamplingDuration = TimeSpan.FromMinutes(8); // must be >= 2 * AttemptTimeout
                 options.CircuitBreaker.MinimumThroughput = 100; // High threshold to avoid tripping in tests
             });
 
@@ -175,8 +180,8 @@ public class WorkItemHttpClientResilienceTests : IDisposable
         // After all retries exhausted, should throw WorkItemFetchException
         await act.Should().ThrowAsync<WorkItemFetchException>();
 
-        // Should have been called multiple times (initial + retries)
-        _server.LogEntries.Count.Should().BeGreaterThan(1);
+        // Every attempt reached the server: the initial call plus MaxRetryAttempts (3) retries
+        _server.LogEntries.Should().HaveCount(4);
     }
 
     [Fact]
@@ -192,8 +197,8 @@ public class WorkItemHttpClientResilienceTests : IDisposable
         // After all retries exhausted, should throw WorkItemStatusPostException
         await act.Should().ThrowAsync<WorkItemStatusPostException>();
 
-        // Should have been called multiple times (initial + retries)
-        _server.LogEntries.Count.Should().BeGreaterThan(1);
+        // Every attempt reached the server: the initial call plus MaxRetryAttempts (3) retries
+        _server.LogEntries.Should().HaveCount(4);
     }
 
     // ── Test Helpers ─────────────────────────────────────────────────────

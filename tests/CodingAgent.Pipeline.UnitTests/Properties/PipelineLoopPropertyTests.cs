@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using FsCheck;
 using FsCheck.Xunit;
@@ -64,7 +65,7 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await WaitForConditionAsync(() => configCallCount >= 2, TimeSpan.FromSeconds(5));
+        await BackgroundWait.PollUntilAsync(() => configCallCount >= 2, "the loop should load the config again for its first cycle");
         svc.StopLoop();
         await Task.Delay(100);
         cts.Cancel();
@@ -118,7 +119,7 @@ public class PipelineLoopPropertyTests
 
         // Let multiple cycles run — wait until provider has been created
         var uniqueProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).Distinct().Count();
-        await WaitForConditionAsync(() => createCount >= uniqueProviderIds, TimeSpan.FromSeconds(5));
+        await BackgroundWait.PollUntilAsync(() => createCount >= uniqueProviderIds, "the loop should create a provider per unique issue provider ID");
         svc.StopLoop();
         await Task.Delay(100);
         cts.Cancel();
@@ -185,7 +186,7 @@ public class PipelineLoopPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for non-failing templates to be polled
-        await WaitForConditionAsync(() => { lock (polledIds) { return polledIds.Count > 0; } }, TimeSpan.FromSeconds(5));
+        await BackgroundWait.PollUntilAsync(() => { lock (polledIds) { return polledIds.Count > 0; } }, "the loop should poll the non-failing templates");
         svc.StopLoop();
         await Task.Delay(100);
         cts.Cancel();
@@ -256,7 +257,7 @@ public class PipelineLoopPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for rate limit to expire and recovery
-        await WaitForConditionAsync(() => callCount >= 1, TimeSpan.FromSeconds(5));
+        await BackgroundWait.PollUntilAsync(() => callCount >= 1, "the loop should poll the rate-limited provider");
         svc.StopLoop();
         await Task.Delay(100);
         cts.Cancel();
@@ -311,7 +312,7 @@ public class PipelineLoopPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         var enabledProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).ToHashSet();
-        await WaitForConditionAsync(() => { lock (createdForIds) { return createdForIds.Count > 0; } }, TimeSpan.FromSeconds(5));
+        await BackgroundWait.PollUntilAsync(() => { lock (createdForIds) { return createdForIds.Count > 0; } }, "the loop should create providers for the enabled templates");
         svc.StopLoop();
         await Task.Delay(100);
         cts.Cancel();
@@ -327,19 +328,6 @@ public class PipelineLoopPropertyTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Polls a condition every 25ms until it becomes true or the timeout expires.
-    /// Replaces fixed Task.Delay synchronization to eliminate timing-dependent flakiness.
-    /// </summary>
-    private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (!condition() && DateTime.UtcNow < deadline)
-        {
-            await Task.Delay(25);
-        }
-    }
 
     private static void SetupProviderConfigs(Mock<IConfigurationStore> mockStore, List<PipelineJobTemplate> templates)
     {

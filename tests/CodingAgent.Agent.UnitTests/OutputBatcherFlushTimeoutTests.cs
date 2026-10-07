@@ -36,8 +36,9 @@ public class OutputBatcherFlushTimeoutTests
         batcher.OnFlush += async _ =>
         {
             flushStarted.TrySetResult();
-            // Simulate a half-open TCP connection: InvokeAsync hangs indefinitely
-            await Task.Delay(TimeSpan.FromSeconds(30));
+            // Simulate a half-open TCP connection: InvokeAsync hangs for longer than the
+            // 30s hang detector below
+            await Task.Delay(TimeSpan.FromSeconds(60));
         };
 
         // Fill the buffer to 49 lines — no flush yet
@@ -48,18 +49,18 @@ public class OutputBatcherFlushTimeoutTests
         var triggerTask = Task.Run(async () => await batcher.AddLineAsync("trigger-flush"));
 
         // Wait for the blocking flush to start — no real-time dependency, just
-        // waiting for the threshold-triggered flush to reach OnFlush
-        var started = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        // waiting for the threshold-triggered flush to reach OnFlush. The 30s bounds in this
+        // test are hang detectors only: a stalled test host must not fail it.
+        var started = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         started.Should().Be(flushStarted.Task, "flush should start when buffer threshold is hit");
 
         // Now try to add another line — this caller is a parallel review agent.
         // The flush timeout (200ms) should release _flushGate, allowing AddLineAsync to proceed.
-        // Without the fix this blocks for ~30 seconds.
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // Without the fix this blocks for ~60 seconds.
         var parallelTask = Task.Run(async () =>
-            await batcher.AddLineAsync("parallel-agent-output", cts.Token));
+            await batcher.AddLineAsync("parallel-agent-output"));
 
-        var completedInTime = await Task.WhenAny(parallelTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completedInTime = await Task.WhenAny(parallelTask, Task.Delay(TimeSpan.FromSeconds(30)));
         completedInTime.Should().Be(parallelTask,
             "a parallel caller should not be blocked for the full duration of a hung flush handler; " +
             "the OutputBatcher should enforce a flush timeout that releases the lock");
@@ -90,21 +91,21 @@ public class OutputBatcherFlushTimeoutTests
 
         // 50th line triggers the blocking flush via threshold (no timer needed)
         var triggerTask = Task.Run(async () => await batcher.AddLineAsync("trigger"));
-        await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        await flushStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Simulate 3 parallel review agents trying to emit output
         // Each AddLineAsync acquires _lock (fast) — none cross the threshold alone,
         // so they don't call SendBatchAsync directly. They complete as soon as _lock is free.
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var agent1 = Task.Run(async () => await batcher.AddLineAsync("agent-1", cts.Token));
-        var agent2 = Task.Run(async () => await batcher.AddLineAsync("agent-2", cts.Token));
-        var agent3 = Task.Run(async () => await batcher.AddLineAsync("agent-3", cts.Token));
+        var agent1 = Task.Run(async () => await batcher.AddLineAsync("agent-1"));
+        var agent2 = Task.Run(async () => await batcher.AddLineAsync("agent-2"));
+        var agent3 = Task.Run(async () => await batcher.AddLineAsync("agent-3"));
 
-        // All agents should complete within 5s once the flush timeout releases _flushGate.
+        // All agents should complete once the flush timeout releases _flushGate.
         // AddLineAsync only blocks on _lock, not _flushGate, so these complete as soon as
-        // the triggered flush's lock release propagates.
+        // the triggered flush's lock release propagates. The 30s bound (half the hung
+        // handler's 60s) is a hang detector only: a stalled test host must not fail the test.
         var allAgents = Task.WhenAll(agent1, agent2, agent3);
-        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(5)));
+        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(allAgents,
             "all parallel review agents should unblock within a bounded time " +
             "when the flush handler is hung (flush timeout should release the lock)");

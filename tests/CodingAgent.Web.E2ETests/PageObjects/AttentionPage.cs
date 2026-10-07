@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -36,6 +37,11 @@ public sealed class AttentionPage
         await _page.GotoAsync($"{_baseUrl}/attention");
         // Wait for the h1 to appear (prerendered HTML)
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
+        // The prerendered HTML already holds the loaded sections and the blocked-count badge; the
+        // circuit then re-runs OnInitializedAsync and swaps them for "Loading…" until its API calls
+        // return. Wait for the circuit first so the badge wait below matches the interactive render
+        // (same race as KnowledgePage #3374 and InsightsPage #3378).
+        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", DefaultTimeout);
         // Wait for the loading card to disappear (Blazor Server data load)
         await WaitForLoadCompleteAsync();
     }
@@ -55,9 +61,9 @@ public sealed class AttentionPage
         //
         // The new guard waits for the blocked-count badge (data-testid="attention-blocked-count"),
         // which is always rendered in the else branch (after _loading = false) regardless of
-        // whether any attention sections have rows. This is the most stable sentinel: it is
-        // absent during prerender and the "Loading…" state, and always present once Blazor has
-        // finished its data round-trip and re-rendered the page.
+        // whether any attention sections have rows. Once the circuit is interactive it is absent
+        // during the "Loading…" state and present once Blazor has finished its data round-trip.
+        // The prerendered HTML also contains it, so callers must wait for the circuit first.
         await _page.WaitForSelectorAsync(
             "[data-testid='attention-blocked-count']",
             new() { Timeout = DefaultTimeout });

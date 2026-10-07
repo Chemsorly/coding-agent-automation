@@ -3,6 +3,7 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 using KiroCliLib.Core;
 using CodingAgent.Pipeline;
@@ -147,10 +148,13 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(_mockAgentProvider.Object);
     }
 
-    // Helper: start pipeline with a blocking agent so it stays "running"
-    private (Task<PipelineRun> pipelineTask, TaskCompletionSource<AgentResult> agentTcs) StartBlockingPipeline()
+    // Helper: start pipeline with a blocking agent so it stays "running". codeGenEntered completes
+    // once the pipeline is blocked inside the code generation agent call, which ignores the
+    // cancellation token: from then on the run can only move on when agentTcs completes.
+    private (Task<PipelineRun> pipelineTask, TaskCompletionSource<AgentResult> agentTcs, Task codeGenEntered) StartBlockingPipeline()
     {
         var agentTcs = new TaskCompletionSource<AgentResult>();
+        var codeGenEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var callCount = 0;
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, onLine) =>
@@ -162,11 +166,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
                     WriteAssessmentFile(req.WorkspacePath, "ready");
                     return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
                 }
+                codeGenEntered.TrySetResult();
                 return agentTcs.Task; // code generation blocks
             });
 
         var task = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        return (task, agentTcs);
+        return (task, agentTcs, codeGenEntered.Task);
     }
 
     /// <summary>
@@ -235,10 +240,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task CancelPipeline_DuringExecution_TransitionsToCancelled()
     {
-        var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        var (pipelineTask, agentTcs, codeGenEntered) = StartBlockingPipeline();
+        // Cancel only once the run is blocked in the code generation call. Cancelling while the run
+        // is still progressing lets the run's own cancellation path and CancelPipelineAsync both
+        // record the run in history.
+        await BackgroundWait.SignalledAsync(codeGenEntered, "the pipeline should reach code generation");
+        _service.ActiveRun!.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
 
         await _service.CancelPipelineAsync();
         agentTcs.TrySetCanceled();
@@ -723,6 +730,17 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
     // --- Stall detection ---
 
+    /// <summary>
+    /// Completes once the active run has <paramref name="count"/> system chat messages containing
+    /// <paramref name="text"/>. The stall monitor notifies after adding a message, so the condition is
+    /// re-checked on every state change instead of against a short wall-clock deadline.
+    /// </summary>
+    private Task WaitForSystemChatAsync(string text, int count = 1) =>
+        BackgroundWait.UntilAsync(
+            h => _service.OnChange += h, h => _service.OnChange -= h,
+            () => (_service.ActiveRun?.ChatHistory.Count(c => c.Role == ChatRole.System && c.Content.Contains(text)) ?? 0) >= count,
+            $"the stall monitor should add {count} system message(s) containing '{text}'");
+
     [Fact]
     public async Task StallMonitor_StaleLastOutputTime_AddsSystemChatWarning()
     {
@@ -755,9 +773,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await WaitForSystemChatAsync("no output for");
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await pipelineTask;
@@ -799,9 +815,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.ChatHistory.Count == 0 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await WaitForSystemChatAsync("agent process is no longer alive");
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await pipelineTask;
@@ -843,9 +857,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while ((_service.ActiveRun?.ChatHistory.Where(c => c.Role == ChatRole.System && c.Content.Contains("no output for")).Count() ?? 0) < 2 && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        await WaitForSystemChatAsync("no output for", count: 2);
 
         agentTcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await pipelineTask;
@@ -1360,15 +1372,20 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         // Use a blocking agent to keep pipeline running
         var tcs = new TaskCompletionSource<AgentResult>();
+        var agentEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-            .Returns(tcs.Task);
+            .Returns(() =>
+            {
+                agentEntered.TrySetResult();
+                return tcs.Task;
+            });
 
         var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Wait for pipeline to reach a running state
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!_service.IsRunning && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        // Wait for the pipeline to block in the first agent call: a running state it cannot leave
+        // until tcs completes, so the cancellation does not race the run
+        await BackgroundWait.SignalledAsync(agentEntered.Task, "the pipeline should reach the first agent call");
+        _service.IsRunning.Should().BeTrue();
 
         await _service.CancelPipelineAsync();
         tcs.TrySetCanceled();
@@ -1930,10 +1947,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task PipelineEvents_CancelledRun_EmitsCancelMessage()
     {
-        var (pipelineTask, agentTcs) = StartBlockingPipeline();
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (_service.ActiveRun?.CurrentStep != PipelineStep.GeneratingCode && DateTime.UtcNow < deadline)
-            await Task.Delay(50);
+        var (pipelineTask, agentTcs, codeGenEntered) = StartBlockingPipeline();
+        await BackgroundWait.SignalledAsync(codeGenEntered, "the pipeline should reach code generation");
 
         var outputLines = new List<string>();
         _service.OnOutputLine += line => outputLines.Add(line);
@@ -2614,27 +2629,29 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         // Track all state transitions
         var transitions = new List<PipelineStep>();
-        var reachedQualityGates = new TaskCompletionSource();
         _service.OnChange += () =>
         {
             if (_service.ActiveRun != null)
-            {
                 transitions.Add(_service.ActiveRun.CurrentStep);
-                if (_service.ActiveRun.CurrentStep == PipelineStep.RunningQualityGates)
-                    reachedQualityGates.TrySetResult();
-            }
         };
 
         // Block the validator with a TaskCompletionSource so the pipeline stays in RunningQualityGates
         var validatorTcs = new TaskCompletionSource<QualityGateReport>();
+        var validatorEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
-            .Returns(validatorTcs.Task);
+            .Returns(() =>
+            {
+                validatorEntered.TrySetResult();
+                return validatorTcs.Task;
+            });
 
         // Start the pipeline (analysis writes files and succeeds, code gen succeeds, then blocks at quality gates)
         var pipelineTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // Wait for pipeline to reach RunningQualityGates using event-based synchronization (not Task.Delay)
-        await reachedQualityGates.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Wait until the pipeline is blocked inside the validator (event-based, not Task.Delay). The
+        // RunningQualityGates transition comes before the validator call, so cancelling on the
+        // transition could race the run's own cancellation path.
+        await BackgroundWait.SignalledAsync(validatorEntered.Task, "the pipeline should reach the quality gates");
 
         // Cancel the pipeline while quality gates are running
         await _service.CancelPipelineAsync();

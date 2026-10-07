@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -27,14 +28,15 @@ public sealed class ConsolidationPage
 
         // Wait for the Consolidation header, then for the content sections to attach.
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // TODO(WARNING): `.monitoring-empty` matches the "Loading..." placeholder that renders
-        // immediately on first render (before OnInitializedAsync completes), so this wait can
-        // resolve before the Blazor Server circuit connects and actual data is fetched.
-        // Tests that need data-bearing state should add an explicit follow-up wait (e.g. wait for
-        // the loading indicator to disappear, or use WaitForFunctionAsync to poll _isLoading).
-        await _page.WaitForSelectorAsync(
-            ".consolidation-cards, .monitoring-empty",
-            new() { Timeout = 15_000, State = WaitForSelectorState.Attached });
+        // The prerendered HTML already holds the cards and the run table; the circuit then re-runs
+        // OnInitializedAsync and shows "Loading..." until LoadDataAsync returns. Reads (and clicks,
+        // which a prerendered button drops) must wait for the circuit, then for no placeholder.
+        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", 15_000);
+        await _page.WaitForFunctionAsync(
+            "() => !!document.querySelector('.consolidation-cards, .monitoring-empty') && " +
+            "![...document.querySelectorAll('.monitoring-empty')].some(e => e.textContent.trim() === 'Loading...')",
+            null,
+            new() { Timeout = 15_000 });
     }
 
     /// <summary>Gets the page title text.</summary>
