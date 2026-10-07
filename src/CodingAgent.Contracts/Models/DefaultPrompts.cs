@@ -6,10 +6,16 @@ namespace CodingAgent.Pipeline.Models;
 /// </summary>
 public static class DefaultPrompts
 {
+    private const string FocusAreasHeader = "FOCUS AREAS (flag only when a concrete defect exists):\n";
+    private const string DoNotFlagHeader = "DO NOT FLAG:\n";
+    private const string IgnoreUnchangedCodeRule = "- Issues in unchanged code outside the diff\n";
+    private const string IgnoreUnstagedFilesRule = "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n";
+    private const string ReportOnlyInstruction = "Do NOT fix anything. Only report findings.";
+
     public const string CodeReview =
         "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
+        FocusAreasHeader +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async/concurrent code\n" +
@@ -18,17 +24,17 @@ public static class DefaultPrompts
         "- Resources not properly released (file handles, connections, streams)\n" +
         "- Error handling gaps (swallowed exceptions, missing cleanup on failure)\n" +
         "- **Cross-boundary impacts** — trace each change through its callers and consumers. The most critical bugs appear at boundaries between components (authorization logic, API contracts, state machine transitions, serialization boundaries)\n\n" +
-        "DO NOT FLAG:\n" +
+        DoNotFlagHeader +
         "- Style preferences or naming conventions\n" +
         "- Missing XML documentation comments\n" +
         "- Theoretical risks requiring unlikely preconditions\n" +
-        "- Issues in unchanged code outside the diff\n" +
+        IgnoreUnchangedCodeRule +
         "- \"Consider using library X\" suggestions\n" +
         "- Performance micro-optimizations\n" +
         "- Missing nullable annotations on internal code\n" +
         "- Test code conventions\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
-        "Do NOT fix anything. Only report findings.";
+        IgnoreUnstagedFilesRule +
+        ReportOnlyInstruction;
 
     public const string Fix =
         "Review the findings above. Fix only items marked [CRITICAL]. " +
@@ -38,47 +44,47 @@ public static class DefaultPrompts
     public const string CorrectnessReview =
         "Review the changes against the original issue requirements. Use a sub-agent for the review. " +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
+        FocusAreasHeader +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async code\n" +
         "- Missing input validation on public API boundaries\n" +
         "- Edge cases not covered by the implementation\n" +
         "- **Cross-boundary impacts** — trace each change through its callers and consumers. The most critical bugs appear at component boundaries (API contracts, state transitions, serialization)\n\n" +
-        "DO NOT FLAG:\n" +
+        DoNotFlagHeader +
         "- Style preferences or naming conventions\n" +
         "- Missing XML documentation comments\n" +
         "- Theoretical risks requiring unlikely preconditions\n" +
-        "- Issues in unchanged code outside the diff\n" +
+        IgnoreUnchangedCodeRule +
         "- \"Consider using library X\" suggestions\n" +
         "- Performance micro-optimizations\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
-        "Do NOT fix anything. Only report findings.";
+        IgnoreUnstagedFilesRule +
+        ReportOnlyInstruction;
 
     public const string DotNetSpecialistReview =
         "Review the changes for .NET-specific issues. Output findings as a numbered list " +
         "with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
+        FocusAreasHeader +
         "- IDisposable resources not properly disposed (missing using/await using)\n" +
         "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
         "- DI lifetime mismatches (scoped service injected into singleton)\n" +
         "- CancellationToken not propagated through async call chains\n" +
         "- ArgumentNullException.ThrowIfNull missing on public method parameters\n" +
         "- Collections exposed as mutable (List<T> instead of IReadOnlyList<T>)\n\n" +
-        "DO NOT FLAG:\n" +
-        "- Issues in unchanged code outside the diff\n" +
+        DoNotFlagHeader +
+        IgnoreUnchangedCodeRule +
         "- Business logic correctness\n" +
         "- Style or formatting preferences\n" +
         "- Missing nullable annotations on internal code\n" +
         "- Test code conventions\n" +
         "- Suggestions to add more abstractions or interfaces\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
-        "Do NOT fix anything. Only report findings.";
+        IgnoreUnstagedFilesRule +
+        ReportOnlyInstruction;
 
     public const string SecurityReview =
         "Review the changes for security issues. Output findings as a numbered list with " +
         "severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
+        FocusAreasHeader +
         "- Hardcoded credentials, API keys, connection strings, or tokens\n" +
         "- SQL injection (string concatenation or interpolation in queries)\n" +
         "- Path traversal (user input used in file paths without validation)\n" +
@@ -89,22 +95,22 @@ public static class DefaultPrompts
         "- SSRF (user-controlled URLs passed to HTTP clients)\n" +
         "- Missing input validation or sanitization on external input boundaries\n" +
         "- Secrets or credentials in committed files\n\n" +
-        "DO NOT FLAG:\n" +
-        "- Issues in unchanged code outside the diff\n" +
+        DoNotFlagHeader +
+        IgnoreUnchangedCodeRule +
         "- General code correctness or .NET pattern issues\n" +
         "- Theoretical attacks requiring physical access or pre-existing compromise\n" +
         "- Missing HTTPS enforcement (infrastructure concern, not code)\n" +
         "- Test code, sample data, or placeholder values in test fixtures\n" +
         "- Dependency vulnerabilities (covered by external CI)\n" +
         "- General code quality or style issues\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
-        "Do NOT fix anything. Only report findings.";
+        IgnoreUnstagedFilesRule +
+        ReportOnlyInstruction;
 
     public const string TestQualityReview =
         "Review the changes for test quality issues. Focus exclusively on whether tests are " +
         "meaningful, effective, and actually validate the intended behavior. Output findings " +
         "as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
+        FocusAreasHeader +
         "- Tautological tests (assertions that pass regardless of implementation, e.g. Assert.True(true), asserting the mock returns what you told it to return)\n" +
         "- Tests that don't exercise the changed behavior (test exists but wouldn't fail if the fix were reverted)\n" +
         "- Assertions that are too weak (checking only non-null or collection non-empty when specific values matter)\n" +
@@ -114,15 +120,15 @@ public static class DefaultPrompts
         "- Missing boundary conditions (off-by-one, empty inputs, max values, concurrent access)\n" +
         "- Test setup that masks bugs (overly permissive mocks that hide real integration failures)\n" +
         "- Assertions on wrong granularity (testing an entire object equality when only one property changed)\n\n" +
-        "DO NOT FLAG:\n" +
+        DoNotFlagHeader +
         "- Test naming conventions or style preferences\n" +
         "- Production code issues (correctness, .NET patterns, security)\n" +
         "- Missing tests for unchanged code outside the diff\n" +
         "- Test infrastructure or framework choice\n" +
         "- Suggestions to add property-based tests unless the code has clear invariants\n" +
         "- Minor test organization preferences (file placement, class grouping)\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
-        "Do NOT fix anything. Only report findings.";
+        IgnoreUnstagedFilesRule +
+        ReportOnlyInstruction;
 
     public const string AcceptanceCriteriaReview =
         "Review the changes against the acceptance criteria from the original issue. " +
@@ -143,12 +149,12 @@ public static class DefaultPrompts
         "do not invent findings.\n\n" +
         "If the issue has no acceptance criteria section, check whether the " +
         "implementation addresses the issue description and stated goals instead.\n\n" +
-        "DO NOT FLAG:\n" +
+        DoNotFlagHeader +
         "- Code correctness, .NET patterns, security, or test quality issues (covered by dedicated review agents)\n" +
         "- Style or formatting preferences\n" +
         "- Suggestions to add features beyond what the issue requests\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
-        "Do NOT fix anything. Only report findings.";
+        IgnoreUnstagedFilesRule +
+        ReportOnlyInstruction;
 
     public const string Analysis =
         "Analyze the codebase in context of the following issue. Read the issue carefully, " +
@@ -182,7 +188,7 @@ public static class DefaultPrompts
         "- **Test gaps** — Missing test coverage that should be called out\n" +
         "- **Feasibility issues** — Approaches that won't work given the current architecture\n" +
         "- **Acceptance criteria gaps** — Requirements from the issue that the plan doesn't address\n\n" +
-        "DO NOT FLAG:\n" +
+        DoNotFlagHeader +
         "- Style preferences in the analysis writing\n" +
         "- Minor wording improvements\n" +
         "- Theoretical concerns that are unlikely in practice\n" +
@@ -288,12 +294,12 @@ public static class DefaultPrompts
         "- [WARNING]: the fix belongs in another repository. Name the repository, the file and what has to change there; " +
         "it cannot be fixed in this change.\n" +
         "- [SUGGESTION]: an alignment that is not needed for correctness.\n\n" +
-        "DO NOT FLAG:\n" +
+        DoNotFlagHeader +
         "- Correctness, security, test quality or stack-specific issues inside this repository (other reviewers cover them)\n" +
         "- Problems in other repositories that the change neither touches nor depends on\n" +
         "- Differences between repositories that the project steering or a current decision allows\n" +
         "- Outdated documentation that the change neither touches nor relies on\n" +
         "- Style or formatting preferences\n" +
-        "- Untracked or unstaged files shown by `git status` (the pipeline auto-stages all files before commit)\n\n" +
+        IgnoreUnstagedFilesRule +
         "Do NOT fix anything, and never modify the other repositories. Only report findings.";
 }

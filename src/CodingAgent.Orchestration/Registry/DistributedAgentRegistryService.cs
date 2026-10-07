@@ -82,6 +82,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private static string AgentKey(string agentId) => $"agent:{agentId}";
     private const string AgentsAllKey = "agents:all";
     private const string AgentsIdleKey = "agents:idle";
+    private const string BusySinceField = "busySince";
+    private const string DisconnectedAtField = "disconnectedAt";
+    private const string ActiveJobIdField = "activeJobId";
+    private const string ActiveChatSessionIdField = "activeChatSessionId";
+    private const string DisabledField = "disabled";
+    private const string OrphanRestoredAtField = "orphanRestoredAt";
 
     // ── Register ──────────────────────────────────────────────────────
 
@@ -458,14 +464,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var fields = new List<HashEntry> { new("status", newStatus.ToString()) };
 
         if (newStatus == AgentStatus.Busy)
-            fields.Add(new HashEntry("busySince", now.ToString("O")));
+            fields.Add(new HashEntry(BusySinceField, now.ToString("O")));
         else
-            fields.Add(new HashEntry("busySince", ""));
+            fields.Add(new HashEntry(BusySinceField, ""));
 
         if (newStatus == AgentStatus.Disconnected)
-            fields.Add(new HashEntry("disconnectedAt", now.ToString("O")));
+            fields.Add(new HashEntry(DisconnectedAtField, now.ToString("O")));
         else if (newStatus == AgentStatus.Idle)
-            fields.Add(new HashEntry("disconnectedAt", ""));
+            fields.Add(new HashEntry(DisconnectedAtField, ""));
 
         await _store.HashSetAsync(key, fields.ToArray());
         // Refresh the TTL whenever status is written — ensures any write path that calls
@@ -793,10 +799,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     private static AgentEntry WithAgentField(AgentEntry current, string field, string? value) => field switch
     {
-        "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-        "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-        "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
-        "orphanRestoredAt" => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+        ActiveJobIdField => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+        ActiveChatSessionIdField => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+        DisabledField => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+        OrphanRestoredAtField => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
         _ => current
     };
 
@@ -850,10 +856,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             addValueFactory: CreateDeregistrationRaceSentinel,
             updateValueFactory: (_, current) => field switch
             {
-                "activeJobId" => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                "orphanRestoredAt" => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
-                "activeChatSessionId" => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                "disabled" => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+                ActiveJobIdField => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+                OrphanRestoredAtField => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+                ActiveChatSessionIdField => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+                DisabledField => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
                 _ => current
             });
         RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId.Value, committedField,
@@ -996,8 +1002,8 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
         _ = System.DateTimeOffset.TryParse(registeredAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var registeredAt);
 
-        // Bool("disabled") returns false on absent/unparseable — equivalent to ?? "false" before TryParse.
-        var disabled = r.Bool("disabled");
+        // Bool(DisabledField) returns false on absent/unparseable — equivalent to ?? "false" before TryParse.
+        var disabled = r.Bool(DisabledField);
 
         return new AgentEntry
         {
@@ -1009,11 +1015,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             RegisteredAt = registeredAt,
             LastHeartbeatAt = r.DateTimeOffset("lastHeartbeatAt"),
             LastJobCompletedAt = r.DateTimeOffsetOrNull("lastJobCompletedAt"),
-            DisconnectedAt = r.DateTimeOffsetOrNull("disconnectedAt"),
-            BusySince = r.DateTimeOffsetOrNull("busySince"),
-            OrphanRestoredAt = r.DateTimeOffsetOrNull("orphanRestoredAt"),
-            ActiveJobId = r.OptionalString("activeJobId"),
-            ActiveChatSessionId = r.OptionalString("activeChatSessionId"),
+            DisconnectedAt = r.DateTimeOffsetOrNull(DisconnectedAtField),
+            BusySince = r.DateTimeOffsetOrNull(BusySinceField),
+            OrphanRestoredAt = r.DateTimeOffsetOrNull(OrphanRestoredAtField),
+            ActiveJobId = r.OptionalString(ActiveJobIdField),
+            ActiveChatSessionId = r.OptionalString(ActiveChatSessionIdField),
             Disabled = disabled
         };
     }
@@ -1030,12 +1036,12 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             new HashEntry("registeredAt", entry.RegisteredAt.ToString("O")),
             new HashEntry("lastHeartbeatAt", entry.LastHeartbeatAt.ToString("O")),
             new HashEntry("lastJobCompletedAt", entry.LastJobCompletedAt?.ToString("O") ?? ""),
-            new HashEntry("disconnectedAt", entry.DisconnectedAt?.ToString("O") ?? ""),
-            new HashEntry("busySince", entry.BusySince?.ToString("O") ?? ""),
-            new HashEntry("activeJobId", entry.ActiveJobId ?? ""),
-            new HashEntry("activeChatSessionId", entry.ActiveChatSessionId ?? ""),
-            new HashEntry("disabled", entry.Disabled.ToString()),
-            new HashEntry("orphanRestoredAt", entry.OrphanRestoredAt?.ToString("O") ?? "")
+            new HashEntry(DisconnectedAtField, entry.DisconnectedAt?.ToString("O") ?? ""),
+            new HashEntry(BusySinceField, entry.BusySince?.ToString("O") ?? ""),
+            new HashEntry(ActiveJobIdField, entry.ActiveJobId ?? ""),
+            new HashEntry(ActiveChatSessionIdField, entry.ActiveChatSessionId ?? ""),
+            new HashEntry(DisabledField, entry.Disabled.ToString()),
+            new HashEntry(OrphanRestoredAtField, entry.OrphanRestoredAt?.ToString("O") ?? "")
         ];
     }
 }

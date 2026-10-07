@@ -12,6 +12,8 @@ namespace CodingAgent.Infrastructure.GitHub;
 /// </summary>
 public abstract class GitHubProviderBase : IAsyncDisposable
 {
+    private const string OutcomeTag = "outcome";
+
     private readonly GitHubClientProvider _clientProvider;
     private readonly ResiliencePipeline _resiliencePipeline;
     private readonly TimeProvider _timeProvider;
@@ -162,7 +164,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
 
                     GitHubTelemetry.ApiRequests.Add(1,
                         new KeyValuePair<string, object?>("operation", operationName),
-                        new KeyValuePair<string, object?>("outcome", "success"));
+                        new KeyValuePair<string, object?>(OutcomeTag, "success"));
                     return result;
                 }
                 catch (Octokit.NotFoundException)
@@ -171,7 +173,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
                     // Do NOT wrap in PipelineRateLimitExceededException.
                     GitHubTelemetry.ApiRequests.Add(1,
                         new KeyValuePair<string, object?>("operation", operationName),
-                        new KeyValuePair<string, object?>("outcome", "not_found"));
+                        new KeyValuePair<string, object?>(OutcomeTag, "not_found"));
                     throw;
                 }
                 catch (Octokit.RateLimitExceededException)
@@ -179,7 +181,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
                     // Retried by Polly — emitted once per attempt.
                     GitHubTelemetry.ApiRequests.Add(1,
                         new KeyValuePair<string, object?>("operation", operationName),
-                        new KeyValuePair<string, object?>("outcome", "rate_limited"));
+                        new KeyValuePair<string, object?>(OutcomeTag, "rate_limited"));
                     throw;
                 }
                 catch (AbuseException)
@@ -187,7 +189,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
                     // Retried by Polly — emitted once per attempt.
                     GitHubTelemetry.ApiRequests.Add(1,
                         new KeyValuePair<string, object?>("operation", operationName),
-                        new KeyValuePair<string, object?>("outcome", "rate_limited"));
+                        new KeyValuePair<string, object?>(OutcomeTag, "rate_limited"));
                     throw;
                 }
                 catch (Exception)
@@ -196,7 +198,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
                     // transient HttpRequestException, 5xx ApiException, and any other exception.
                     GitHubTelemetry.ApiRequests.Add(1,
                         new KeyValuePair<string, object?>("operation", operationName),
-                        new KeyValuePair<string, object?>("outcome", "error"));
+                        new KeyValuePair<string, object?>(OutcomeTag, "error"));
                     throw;
                 }
             }, context);
