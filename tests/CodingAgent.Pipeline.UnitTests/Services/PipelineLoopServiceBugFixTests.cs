@@ -19,7 +19,9 @@ namespace CodingAgent.Pipeline.UnitTests;
 ///   RunMultiTemplateLoopAsync. Because _loopCts.Token is NOT linked into the outer `linked`
 ///   CTS, the OCE escapes to ExecuteAsync's generic catch(Exception) and was logged at Error level
 ///   as an "unexpected error" — a false alarm.
-///   Fix: add `when (!_stopRequested)` to the generic catch filter.
+///   Fix: absorb that OCE in its own `catch (OperationCanceledException) when (_stopRequested)`.
+///   (A `when (!_stopRequested)` filter on the generic catch let it escape ExecuteAsync instead,
+///   which stops the host: <see cref="WhenStopLoopCalledDuringConfigSnapshot_LoopCanBeRestarted"/>.)
 ///
 /// Fix 2 (spurious re-arm): <see cref="WhenStopLoopCalledDuringRearm_ShouldNotRerunLoop"/>
 ///   If StopLoop() is called between leadership loss and re-acquisition, CleanupAsync
@@ -205,6 +207,56 @@ public sealed class PipelineLoopServiceBugFixTests : IAsyncDisposable
             l => l.Error(It.IsAny<Exception>(), "Pipeline loop encountered an unexpected error"),
             Times.Never(),
             "The specific false-alarm error message must not appear when StopLoop() is called");
+
+        // Cleanup
+        hostCts.Cancel();
+    }
+
+    /// <summary>
+    /// StopLoop() while a cycle is still reading its config snapshot. SnapshotCycleConfigAsync runs
+    /// outside RunMultiTemplateLoopAsync's try and rethrows the loop-token OCE, so it reaches
+    /// ExecuteAsync. An exception escaping ExecuteAsync faults the BackgroundService, and the
+    /// default BackgroundServiceExceptionBehavior.StopHost then stops the whole Scheduler host.
+    /// The service must instead absorb it and wait for the next StartLoopAsync.
+    /// </summary>
+    [Fact]
+    public async Task WhenStopLoopCalledDuringConfigSnapshot_LoopCanBeRestarted()
+    {
+        // Arrange: the loop's snapshot read blocks until its token is cancelled. StartLoopAsync's own
+        // read passes CancellationToken.None and is answered at once.
+        var snapshotReads = 0;
+        var firstSnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondSnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(async ct =>
+            {
+                if (ct.CanBeCanceled)
+                {
+                    (Interlocked.Increment(ref snapshotReads) == 1 ? firstSnapshot : secondSnapshot).TrySetResult();
+                    await Task.Delay(Timeout.Infinite, ct);
+                }
+                return TestPipelineConfig.Default();
+            });
+        var svc = CreateService(leaderGate: null);
+        using var hostCts = new CancellationTokenSource();
+        var executeTask = InvokeExecuteAsync(svc, hostCts.Token);
+
+        (await svc.StartLoopAsync()).Should().BeTrue("loop should start successfully");
+        await firstSnapshot.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // Act: stop while the snapshot read is in flight, then start again
+        svc.StopLoop();
+        await WaitUntilAsync(
+            () => !svc.IsLoopActive,
+            TimeSpan.FromSeconds(30),
+            "loop should become inactive after StopLoop");
+        (await svc.StartLoopAsync()).Should().BeTrue("loop should restart after StopLoop");
+
+        // Assert: ExecuteAsync is still alive and runs the restarted loop
+        var first = await Task.WhenAny(secondSnapshot.Task, executeTask, Task.Delay(TimeSpan.FromSeconds(30)));
+        executeTask.IsCompleted.Should().BeFalse(
+            "ExecuteAsync must keep running: once it ends without a host stop, the host stops itself");
+        first.Should().BeSameAs(secondSnapshot.Task, "the restarted loop must reach its next config snapshot");
 
         // Cleanup
         hostCts.Cancel();
