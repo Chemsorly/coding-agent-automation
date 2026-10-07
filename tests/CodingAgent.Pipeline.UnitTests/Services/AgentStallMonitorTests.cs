@@ -5,6 +5,7 @@ using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 using CodingAgent.Web.TestUtilities;
 
 namespace CodingAgent.Pipeline.UnitTests;
@@ -209,9 +210,9 @@ public class AgentStallMonitorTests
         // Advance 1 minute → poll tick fires, silence = 10m+1m = 11m > AgentTimeout=5m → KillAsync called
         fakeTime.Advance(TimeSpan.FromMinutes(1));
 
-        // KillAsync must be called promptly — no wall-clock dependency.
-        // 10s timeout is generous; the fake-time Advance unblocks the monitor synchronously.
-        await killCalled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // KillAsync must be called promptly — no wall-clock dependency. The bound is a hang
+        // detector only: the fake-time Advance unblocks the monitor, which then needs a thread-pool hop.
+        await BackgroundWait.SignalledAsync(killCalled.Task, "KillAsync must be called once silence exceeds AgentTimeout");
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
@@ -391,10 +392,10 @@ public class AgentStallMonitorTests
     // ── Polling helpers ────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Waits up to 15 seconds for the monitor to enqueue a ChatHistory entry.
+    /// Waits up to BackgroundWait.Timeout for the monitor to enqueue a ChatHistory entry.
     /// The wait is cheap because the monitor fires immediately after <c>fakeTime.Advance</c>
     /// unblocks its <c>Delay</c> — this loop typically exits on the first or second iteration.
-    /// The 15-second cap guards against ThreadPool scheduling delays on loaded CI runners.
+    /// The cap (BackgroundWait.Timeout) guards against ThreadPool scheduling delays on loaded CI runners.
     /// <para>
     /// When <paramref name="fakeTime"/> and <paramref name="advancePerTick"/> are provided,
     /// the clock is periodically re-advanced while waiting — recovering from the race where
@@ -408,7 +409,7 @@ public class AgentStallMonitorTests
         FakeTimeProvider? fakeTime = null,
         TimeSpan? advancePerTick = null)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(15);
+        var deadline = DateTime.UtcNow + BackgroundWait.Timeout;
         while (run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);
@@ -418,19 +419,19 @@ public class AgentStallMonitorTests
     }
 
     /// <summary>
-    /// Waits up to 15 seconds for <paramref name="condition"/> to hold.
+    /// Waits up to BackgroundWait.Timeout for <paramref name="condition"/> to hold.
     /// Periodically re-advances the fake clock by <paramref name="advancePerTick"/> to
     /// recover from the race where the initial <c>fakeTime.Advance</c> fired before the
     /// monitor's Task.Run loop had registered its first <c>timeProvider.Delay</c>. Without
     /// re-advancing, a single missed advance means the event never fires and the test
-    /// spins to the 15-second deadline — a flaky failure. (test quality review CRITICAL)
+    /// spins to the deadline — a flaky failure. (test quality review CRITICAL)
     /// </summary>
     private static async Task WaitForAsync(
         Func<bool> condition,
         FakeTimeProvider fakeTime,
         TimeSpan advancePerTick)
     {
-        var deadline = DateTime.UtcNow.AddSeconds(15);
+        var deadline = DateTime.UtcNow + BackgroundWait.Timeout;
         while (!condition() && DateTime.UtcNow < deadline)
         {
             await Task.Delay(10);
