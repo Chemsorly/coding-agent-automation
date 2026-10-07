@@ -25,22 +25,22 @@ public class TokenVendingServiceTests
         string? clientId = "client-123",
         string? installationId = "456",
         string? apiUrl = "https://api.github.com") => new()
-    {
-        Id = "repo-1",
-        Kind = ProviderKind.Repository,
-        ProviderType = "GitHub",
-        DisplayName = "Test Repo",
-        Settings = new Dictionary<string, string>
         {
-            [ProviderSettingKeys.PrivateKeyBase64] = privateKey ?? "",
-            [ProviderSettingKeys.ClientId] = clientId ?? "",
-            [ProviderSettingKeys.InstallationId] = installationId ?? "",
-            [ProviderSettingKeys.ApiUrl] = apiUrl ?? "",
-            [ProviderSettingKeys.Owner] = "test-owner",
-            [ProviderSettingKeys.Repo] = "test-repo",
-            [ProviderSettingKeys.BaseBranch] = "main"
-        }
-    };
+            Id = "repo-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.PrivateKeyBase64] = privateKey ?? "",
+                [ProviderSettingKeys.ClientId] = clientId ?? "",
+                [ProviderSettingKeys.InstallationId] = installationId ?? "",
+                [ProviderSettingKeys.ApiUrl] = apiUrl ?? "",
+                [ProviderSettingKeys.Owner] = "test-owner",
+                [ProviderSettingKeys.Repo] = "test-repo",
+                [ProviderSettingKeys.BaseBranch] = "main"
+            }
+        };
 
     [Fact]
     public void Constructor_NullLogger_Throws()
