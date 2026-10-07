@@ -148,15 +148,15 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         if (proposals.Count > cap)
         {
             var skippedProposals = proposals.Skip(cap);
-            foreach (var skipped in skippedProposals)
+            foreach (var title in skippedProposals.Select(p => p.Title))
             {
                 context.Logger.Information(
                     "Sub-issue '{Title}' not created: exceeds MaxDecompositionSubIssues cap of {Cap}",
-                    skipped.Title, cap);
+                    title, cap);
 
                 results.Add(new SubIssueCreationResult
                 {
-                    Title = skipped.Title,
+                    Title = title,
                     Success = false,
                     SkippedByCap = true,
                     FailureReason = $"Not created: exceeds the configured cap of {cap} sub-issues"
@@ -256,19 +256,15 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         // non-agent labels and agent:next / agent:generated are kept; all other agent:* labels
         // (e.g. agent:epic-approved, agent:done) are dropped to prevent bypassing hub validation.
         var labels = new List<string> { AgentLabels.Next, AgentLabels.Generated };
-        foreach (var label in proposal.Labels)
+        foreach (var label in proposal.Labels.Where(l => !string.IsNullOrWhiteSpace(l) && !labels.Contains(l, StringComparer.OrdinalIgnoreCase)))
         {
-            if (!string.IsNullOrWhiteSpace(label) &&
-                !labels.Contains(label, StringComparer.OrdinalIgnoreCase))
-            {
-                // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
-                if (!AgentLabels.All.Contains(label))
-                    labels.Add(label);
-                else
-                    context.Logger.Warning(
-                        "CreateSubIssues: dropping disallowed agent label '{Label}' from sub-issue '{Title}'",
-                        label, proposal.Title);
-            }
+            // Keep non-agent labels; drop any agent:* label that isn't already in the seed list.
+            if (!AgentLabels.All.Contains(label))
+                labels.Add(label);
+            else
+                context.Logger.Warning(
+                    "CreateSubIssues: dropping disallowed agent label '{Label}' from sub-issue '{Title}'",
+                    label, proposal.Title);
         }
 
         return labels;

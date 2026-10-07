@@ -181,11 +181,11 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 .Take(MaxHistorySize);
 
             var summaries = new List<PipelineRunSummary>();
-            foreach (var file in files)
+            foreach (var fullName in files.Select(f => f.FullName))
             {
                 try
                 {
-                    var json = File.ReadAllText(file.FullName);
+                    var json = File.ReadAllText(fullName);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
                     // TODO(#3025): Unlike the Postgres path (which has IsConsolidationGhost to filter
                     // legacy ghost rows), the file-backed service performs no ghost filtering here.
@@ -199,7 +199,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 }
                 catch (Exception ex)
                 {
-                    _logger.Warning(ex, "Failed to load run summary from {File}", file.FullName);
+                    _logger.Warning(ex, "Failed to load run summary from {File}", fullName);
                 }
             }
 

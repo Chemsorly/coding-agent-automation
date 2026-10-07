@@ -49,9 +49,9 @@
                     <label for="template-select">Agent Labels:</label>
                     <select id="template-select" @bind="_selectedTemplateLabels" @bind:after="OnTemplateSelected" class="chat-select">
                         <option value="">— Select agent type —</option>
-                        @foreach (var t in _templates)
+                        @foreach (var labels in _templates.Select(t => t.Labels))
                         {
-                            <option value="@t.Labels">@t.Labels</option>
+                            <option value="@labels">@labels</option>
                         }
                     </select>
                 </div>

@@ -224,6 +224,11 @@ public class CreateSubIssuesStepTests : IDisposable
             r.Success.Should().BeFalse();
             r.FailureReason.Should().Contain("cap");
         });
+        // TODO: These assertions do not verify the Title field of each SkippedByCap result nor that
+        // the Logger.Information call receives the correct title after the Select projection in
+        // CreateSubIssuesStep (site 19: skippedProposals.Select(p => p.Title)). A lambda that
+        // accidentally selects a different property (e.g. p.Body) would still pass these checks.
+        // Consider asserting r.Title == $"Issue {i}" for each skipped entry to lock in the projection.
     }
 
     [Fact]

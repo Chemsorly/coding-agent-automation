@@ -32,11 +32,8 @@ public interface IBrainUpdateService
         var lines = gitignoreContent.Split('\n');
         var trimmedEntry = entry.Trim();
 
-        foreach (var line in lines)
-        {
-            if (line.Trim() == trimmedEntry)
-                return gitignoreContent;
-        }
+        if (lines.Any(l => l.Trim() == trimmedEntry))
+            return gitignoreContent;
 
         var sb = new System.Text.StringBuilder(gitignoreContent);
         if (gitignoreContent.Length > 0 && !gitignoreContent.EndsWith('\n'))

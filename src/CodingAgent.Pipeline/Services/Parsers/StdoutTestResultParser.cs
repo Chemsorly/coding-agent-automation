@@ -69,15 +69,15 @@ public static class StdoutTestResultParser
     {
         var passed = 0; var failed = 0; var skipped = 0;
         var matched = false;
-        foreach (var match in Regex.Matches(output,
+        foreach (var groups in Regex.Matches(output,
             @"Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)).Cast<Match>())
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)).Cast<Match>().Select(m => m.Groups))
         {
             matched = true;
-            int.TryParse(match.Groups[1].Value, out var run);
-            int.TryParse(match.Groups[2].Value, out var failures);
-            int.TryParse(match.Groups[3].Value, out var errors);
-            int.TryParse(match.Groups[4].Value, out var skip);
+            int.TryParse(groups[1].Value, out var run);
+            int.TryParse(groups[2].Value, out var failures);
+            int.TryParse(groups[3].Value, out var errors);
+            int.TryParse(groups[4].Value, out var skip);
             passed += run - failures - errors - skip;
             failed += failures + errors;
             skipped += skip;
@@ -88,13 +88,13 @@ public static class StdoutTestResultParser
     private static (int Passed, int Failed, int Skipped) ParseDotNetPerAssemblyLines(string output)
     {
         var passed = 0; var failed = 0; var skipped = 0;
-        foreach (var match in Regex.Matches(output,
+        foreach (var groups in Regex.Matches(output,
             @"Passed:\s*(\d+),\s*Failed:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)).Cast<Match>())
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)).Cast<Match>().Select(m => m.Groups))
         {
-            if (int.TryParse(match.Groups[1].Value, out var p)) passed += p;
-            if (int.TryParse(match.Groups[2].Value, out var f)) failed += f;
-            if (int.TryParse(match.Groups[3].Value, out var s)) skipped += s;
+            if (int.TryParse(groups[1].Value, out var p)) passed += p;
+            if (int.TryParse(groups[2].Value, out var f)) failed += f;
+            if (int.TryParse(groups[3].Value, out var s)) skipped += s;
         }
         return (passed, failed, skipped);
     }
