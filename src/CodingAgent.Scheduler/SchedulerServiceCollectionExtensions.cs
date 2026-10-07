@@ -26,6 +26,8 @@ namespace CodingAgent.Scheduler;
 [ExcludeFromCodeCoverage(Justification = "Pure DI wiring — no unit-testable logic.")]
 public static class SchedulerServiceCollectionExtensions
 {
+    private const string BearerScheme = "Bearer";
+
     public static IServiceCollection AddSchedulerServices(
         this IServiceCollection services,
         string pipelineApiBaseUrl,
@@ -55,21 +57,21 @@ public static class SchedulerServiceCollectionExtensions
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddHttpClient<IPipelineApiWorkItemClient, PipelineApiWorkItemClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddHttpClient<IPipelineApiRunHistoryClient, PipelineApiRunHistoryClient>(c =>
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         services.AddHttpClient("TokenVending")
@@ -247,7 +249,7 @@ public static class SchedulerServiceCollectionExtensions
         {
             c.BaseAddress = new Uri(pipelineApiBaseUrl);
             c.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
         }).AddStandardResilienceHandler(o => o.CircuitBreaker.MinimumThroughput = 10);
 
         // Registered as a named singleton (in addition to IHostedService) so that
@@ -292,7 +294,7 @@ public static class SchedulerServiceCollectionExtensions
             var httpClient = factory.CreateClient("SchedulerToApi");
             httpClient.BaseAddress = new Uri(pipelineApiBaseUrl);
             httpClient.DefaultRequestHeaders.Authorization =
-                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+                new System.Net.Http.Headers.AuthenticationHeaderValue(BearerScheme, agentApiKey);
             return new HttpSchedulerApiClient(httpClient);
         });
 

@@ -62,6 +62,8 @@ public sealed record LabelSwapOptions
 /// </summary>
 public static class AgentLabelOperations
 {
+    private const string UnknownIdentifier = "unknown";
+
     private static readonly ILogger Logger = Log.ForContext(typeof(AgentLabelOperations));
     private static readonly LabelSwapOptions DefaultSwapOptions = new();
 
@@ -103,7 +105,7 @@ public static class AgentLabelOperations
         // if the operation is interrupted partway through.
         if (!string.IsNullOrEmpty(newLabel))
         {
-            effectiveLogger.Information("AgentLabelOperations: adding label {Label} (issue={IssueIdentifier})", newLabel, identifier ?? "unknown");
+            effectiveLogger.Information("AgentLabelOperations: adding label {Label} (issue={IssueIdentifier})", newLabel, identifier ?? UnknownIdentifier);
             await addLabel(newLabel, ct);
         }
 
@@ -156,14 +158,14 @@ public static class AgentLabelOperations
             {
                 logger.Warning(ex,
                     "AgentLabelOperations: removeLabel attempt {Attempt} failed for label {Label} on {Identifier} — retrying",
-                    attempt + 1, label, identifier ?? "unknown");
+                    attempt + 1, label, identifier ?? UnknownIdentifier);
                 await Task.Delay(TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)), ct);
             }
             catch (Exception ex)
             {
                 logger.Warning(ex,
                     "AgentLabelOperations: removeLabel exhausted retries for label {Label} on {Identifier} — partial swap; old label remains",
-                    label, identifier ?? "unknown");
+                    label, identifier ?? UnknownIdentifier);
 
                 if (throwOnRemoveExhaustion)
                     throw;
@@ -173,7 +175,7 @@ public static class AgentLabelOperations
                 exhaustionCounter.Add(1, new TagList
                 {
                     new("label", label),
-                    new("identifier", identifier ?? "unknown")
+                    new("identifier", identifier ?? UnknownIdentifier)
                 });
             }
         }

@@ -51,6 +51,8 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         nameof(AgentHub.UnsubscribeFromChatSession)
     };
 
+    private const string ReasonTag = "reason";
+
     private readonly IAgentRegistryService _registry;
     private readonly ILogger _logger;
 
@@ -112,7 +114,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             return;
 
         PipelineTelemetry.HubAuthRejections.Add(1,
-            new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.OperatorForbidden));
+            new KeyValuePair<string, object?>(ReasonTag, PipelineTelemetry.HubAuthRejectionReasons.OperatorForbidden));
         _logger.Warning(
             "Hub method {Method} rejected — operator connection {ConnectionId} may only invoke UI subscription methods",
             ctx.HubMethodName, ctx.Context.ConnectionId);
@@ -191,7 +193,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
                 : PipelineTelemetry.HubAuthRejectionReasons.NotRegistered;
 
             PipelineTelemetry.HubAuthRejections.Add(1,
-                new KeyValuePair<string, object?>("reason", rejectionReason));
+                new KeyValuePair<string, object?>(ReasonTag, rejectionReason));
 
             if (isReconnectRace)
                 _logger.Debug(
@@ -246,7 +248,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         if (ctx.HubMethodArguments.Count == 0 || ctx.HubMethodArguments[0] is not JobId jobId)
         {
             PipelineTelemetry.HubAuthRejections.Add(1,
-                new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
+                new KeyValuePair<string, object?>(ReasonTag, PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
             _logger.Warning(
                 "Hub method {Method} rejected — missing or invalid jobId parameter from agent {AgentId}",
                 ctx.HubMethodName, agent.AgentId);
@@ -256,7 +258,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
         if (!string.Equals(activeJobId, jobId.Value, StringComparison.Ordinal))
         {
             PipelineTelemetry.HubAuthRejections.Add(1,
-                new KeyValuePair<string, object?>("reason", PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
+                new KeyValuePair<string, object?>(ReasonTag, PipelineTelemetry.HubAuthRejectionReasons.JobMismatch));
             _logger.Warning(
                 "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
                 ctx.HubMethodName, LogSanitizer.SanitizeForLog(jobId.Value), agent.AgentId, activeJobId ?? "none");

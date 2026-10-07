@@ -21,6 +21,8 @@ namespace CodingAgent.Pipeline.Services;
 /// </remarks>
 public sealed class HousekeepingService : IHousekeepingService
 {
+    private const string MergeabilityStatusTag = "mergeability_status";
+
     private readonly IOrchestratorRunService _runService;
     private readonly IStaleBranchCleaner _staleBranchCleaner;
     private readonly IIssueReworkService _issueReworkService;
@@ -775,10 +777,10 @@ public sealed class HousekeepingService : IHousekeepingService
         int behind, int upToDate, int conflicted, int blocked, int unknown,
         KeyValuePair<string, object?> repoTag)
     {
-        if (behind > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(behind, repoTag, new KeyValuePair<string, object?>("mergeability_status", "behind"));
-        if (upToDate > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(upToDate, repoTag, new KeyValuePair<string, object?>("mergeability_status", "up_to_date"));
-        if (conflicted > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(conflicted, repoTag, new KeyValuePair<string, object?>("mergeability_status", "conflicted"));
-        if (blocked > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(blocked, repoTag, new KeyValuePair<string, object?>("mergeability_status", "blocked"));
-        if (unknown > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(unknown, repoTag, new KeyValuePair<string, object?>("mergeability_status", "unknown"));
+        if (behind > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(behind, repoTag, new KeyValuePair<string, object?>(MergeabilityStatusTag, "behind"));
+        if (upToDate > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(upToDate, repoTag, new KeyValuePair<string, object?>(MergeabilityStatusTag, "up_to_date"));
+        if (conflicted > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(conflicted, repoTag, new KeyValuePair<string, object?>(MergeabilityStatusTag, "conflicted"));
+        if (blocked > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(blocked, repoTag, new KeyValuePair<string, object?>(MergeabilityStatusTag, "blocked"));
+        if (unknown > 0) PipelineTelemetry.HousekeepingPrEvaluated.Add(unknown, repoTag, new KeyValuePair<string, object?>(MergeabilityStatusTag, "unknown"));
     }
 }
