@@ -20,10 +20,10 @@ public sealed class DetectReworkStep : IPipelineStep
             if (agentPrs.Count > 0)
             {
                 // Close all stale draft PRs
-                foreach (var pr in agentPrs.Where(p => p.IsDraft))
+                foreach (var prNumber in agentPrs.Where(p => p.IsDraft).Select(p => p.Number))
                 {
-                    await context.RepoProvider.ClosePullRequestAsync(pr.Number, ct);
-                    context.Callbacks.EmitOutputLine($"🗑️ Closed stale draft PR #{pr.Number}");
+                    await context.RepoProvider.ClosePullRequestAsync(prNumber, ct);
+                    context.Callbacks.EmitOutputLine($"🗑️ Closed stale draft PR #{prNumber}");
                 }
 
                 // TODO: This relies on GetAgentPullRequestsAsync filtering by open state at the provider level. If a future provider returns non-open PRs, add an explicit guard here to verify the candidate is still open before entering rework mode.

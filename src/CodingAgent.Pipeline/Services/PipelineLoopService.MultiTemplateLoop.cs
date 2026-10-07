@@ -866,10 +866,10 @@ public sealed partial class PipelineLoopService
         // Note: This allocates a dictionary per poll cycle, but given poll intervals are typically
         // seconds (default 30s), the allocation cost is negligible vs. the I/O in each cycle.
         var failureCounts = new Dictionary<string, int>(enabledTemplates.Count);
-        foreach (var t in enabledTemplates)
+        foreach (var templateId in enabledTemplates.Select(t => t.Id))
         {
-            var failures = _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0;
-            failureCounts[t.Id] = failures;
+            var failures = _templateStatuses.TryGetValue(templateId, out var s) ? s.ConsecutiveFailures : 0;
+            failureCounts[templateId] = failures;
         }
 
         // Delegate decision to circuit breaker (pure query — no state mutation)
@@ -906,10 +906,10 @@ public sealed partial class PipelineLoopService
         }
 
         // Reset per-template failure counters
-        foreach (var template in enabledTemplates)
+        foreach (var templateId in enabledTemplates.Select(t => t.Id))
         {
-            if (_templateStatuses.TryGetValue(template.Id, out var status) && status.ConsecutiveFailures > 0)
-                _templateStatuses[template.Id] = status with { ConsecutiveFailures = 0, LastError = null };
+            if (_templateStatuses.TryGetValue(templateId, out var status) && status.ConsecutiveFailures > 0)
+                _templateStatuses[templateId] = status with { ConsecutiveFailures = 0, LastError = null };
         }
 
         NotifyChange();

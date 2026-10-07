@@ -45,9 +45,9 @@
                 <label>Repository</label>
                 <select @bind="SelectedRepo" @bind:after="() => SelectedRepoChanged.InvokeAsync(SelectedRepo)">
                     <option value="">-- Select Repository --</option>
-                    @foreach (var r in AvailableRepos)
+                    @foreach (var fullName in AvailableRepos.Select(r => r.FullName))
                     {
-                        <option value="@r.FullName">@r.FullName</option>
+                        <option value="@fullName">@fullName</option>
                     }
                 </select>
             </div>

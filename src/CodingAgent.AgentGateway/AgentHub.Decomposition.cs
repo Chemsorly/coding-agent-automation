@@ -133,16 +133,11 @@ public sealed partial class AgentHub
         // changes its rules the logged warnings will silently drift from the set of actually-dropped labels.
         // A simpler and more maintainable approach is to log labels.Except(filtered) which is guaranteed to
         // stay in sync: foreach (var dropped in labels.Except(filtered)) _logger.Warning(...).
-        foreach (var label in labels)
+        foreach (var label in labels.Where(l => !string.IsNullOrEmpty(l) && AgentLabels.All.Contains(l) && !AgentLabels.AllowedOnCreation.Contains(l)))
         {
-            if (!string.IsNullOrEmpty(label)
-                && AgentLabels.All.Contains(label)
-                && !AgentLabels.AllowedOnCreation.Contains(label))
-            {
-                _logger.Warning(
-                    "RequestCreateIssue: dropping disallowed agent label '{Label}' from issue creation (job {JobId})",
-                    label, jobId);
-            }
+            _logger.Warning(
+                "RequestCreateIssue: dropping disallowed agent label '{Label}' from issue creation (job {JobId})",
+                label, jobId);
         }
 
         return filtered;
