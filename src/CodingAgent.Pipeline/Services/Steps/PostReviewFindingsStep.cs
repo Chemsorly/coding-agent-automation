@@ -125,7 +125,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         var totalParsed = allFindings.Count;
         var withLocation = allFindings.Count(f => f.FilePath is not null && f.LineNumber > 0);
         var withoutLocation = totalParsed - withLocation;
-        context.Logger.Information(
+        context.Logger.Information( // NOSONAR S6664 — per-stage counts diagnose missing inline comments
             "PR #{PrNumber} inline comment pipeline: parsed {Total} findings total — " +
             "{WithLocation} have file:line, {WithoutLocation} have no location (body-only)",
             prNumber, totalParsed, withLocation, withoutLocation);
@@ -317,7 +317,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         catch (Exception ex) when (ex is not OperationCanceledException
                                     && IsOwnPullRequestError(ex))
         {
-            context.Logger.Warning(
+            context.Logger.Warning( // NOSONAR S6667 — expected own-PR refusal; the message says so
                 "Cannot request changes on own PR #{PrNumber}, downgrading to Comment review type",
                 prNumber);
             await context.RepoProvider.SubmitPullRequestReviewAsync(
@@ -415,7 +415,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         catch (InvalidOperationException)
         {
             // Cannot build context (Issue/ParsedIssue is null) — skip retry
-            context.Logger.Warning("Cannot retry agent '{AgentName}' for structured output: AgentPhaseContext unavailable", agentName);
+            context.Logger.Warning("Cannot retry agent '{AgentName}' for structured output: AgentPhaseContext unavailable", agentName); // NOSONAR S6667 — expected missing context; the message says so
             context.Run.InlineCommentsDegraded = true;
             context.Run.InlineCommentsDegradedReason = "Retry skipped: pipeline context unavailable for follow-up prompts.";
             return FindingsParser.Parse(originalOutput, agentName);

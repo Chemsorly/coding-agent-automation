@@ -62,7 +62,7 @@ public static class SubIssueFileParser
             }
             catch (IOException ex)
             {
-                logger.Warning("Failed to read sub-issue file {FileName}: {Error}", fileName, ex.Message);
+                logger.Warning(ex, "Failed to read sub-issue file {FileName}: {Error}", fileName, ex.Message);
             }
         }
 
@@ -78,7 +78,7 @@ public static class SubIssueFileParser
         }
         catch (JsonException ex)
         {
-            logger.Warning("Invalid JSON in sub-issue file {FileName}: {Error}", fileName, ex.Message);
+            logger.Warning(ex, "Invalid JSON in sub-issue file {FileName}: {Error}", fileName, ex.Message);
             return null;
         }
 

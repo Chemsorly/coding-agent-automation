@@ -90,14 +90,14 @@ public partial class GitHubRepositoryProvider
         catch (NotFoundException)
         {
             // 404 — branch already gone (no-op)
-            Log.Debug("Housekeeping: branch {BranchName} not found in {Owner}/{Repo} — already deleted",
+            Log.Debug("Housekeeping: branch {BranchName} not found in {Owner}/{Repo} — already deleted", // NOSONAR S6667 — expected 404; the message says so
                 branchName, Owner, Repo);
         }
         catch (ApiValidationException ex) when (ex.Message.Contains("Reference does not exist",
             StringComparison.OrdinalIgnoreCase))
         {
             // 422 — GitHub returns this when the ref doesn't exist (no-op)
-            Log.Debug("Housekeeping: branch {BranchName} does not exist in {Owner}/{Repo} — skipping",
+            Log.Debug("Housekeeping: branch {BranchName} does not exist in {Owner}/{Repo} — skipping", // NOSONAR S6667 — expected "Reference does not exist"; the message says so
                 branchName, Owner, Repo);
         }
     }

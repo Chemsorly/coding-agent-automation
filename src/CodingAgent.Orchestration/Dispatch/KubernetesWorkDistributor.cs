@@ -83,14 +83,14 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             // while the existing WorkItem is still active.
             // AlreadyExists=true signals callers (DispatchScheduler, ConsolidationService) to
             // treat this as a skip rather than a counted dispatch.
-            _logger.LogInformation(
+            _logger.LogInformation( // NOSONAR S6667 — expected 409; the message says so
                 "CreateAsync returned 409 for issue {IssueIdentifier} — live WorkItem already exists; treating as already-queued",
                 request.IssueIdentifier);
             return new DistributionResult(true, null, null, Queued: true, AlreadyExists: true);
         }
         catch (HttpRequestException ex)
         {
-            _logger.LogInformation(
+            _logger.LogInformation(ex,
                 "CreateAsync returned {StatusCode} for issue {IssueIdentifier} — enqueue failed",
                 ex.StatusCode, request.IssueIdentifier);
             return new DistributionResult(false, null, ex.Message);

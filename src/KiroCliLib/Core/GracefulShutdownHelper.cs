@@ -39,7 +39,7 @@ public static class GracefulShutdownHelper
         }
         catch (TimeoutException)
         {
-            logger.Warning("{Operation} did not complete within {Timeout}", operationName, timeout);
+            logger.Warning("{Operation} did not complete within {Timeout}", operationName, timeout); // NOSONAR S6667 — expected timeout; the message says so
         }
         catch (OperationCanceledException)
         {

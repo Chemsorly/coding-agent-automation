@@ -272,7 +272,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         ConsolidationJobResult? failure;
 
         // Phase 0: Context Extraction
-        Logger.Information("Phase 0: Extracting project conventions for run {RunId}", job.JobId);
+        Logger.Information("Phase 0: Extracting project conventions for run {RunId}", job.JobId); // NOSONAR S6664 — one progress log per scan phase
 
         (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase0.ContextExtraction", job.JobId, async _ =>
         {

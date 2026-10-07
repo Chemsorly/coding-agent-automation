@@ -255,7 +255,7 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         }
         catch (NotFoundException)
         {
-            Log.Warning("Issue #{IssueNumber} not found when checking dependency state", issueNumber);
+            Log.Warning("Issue #{IssueNumber} not found when checking dependency state", issueNumber); // NOSONAR S6667 — expected 404; the message says so
             return false;
         }
     }

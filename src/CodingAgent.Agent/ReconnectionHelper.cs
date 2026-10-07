@@ -42,7 +42,7 @@ internal static class ReconnectionHelper
         }
         catch (OperationCanceledException)
         {
-            logger.Warning(
+            logger.Warning( // NOSONAR S6667 — expected cancellation; the message says so
                 "Agent {AgentId}: registration gate wait cancelled — proceeding anyway",
                 agentId);
         }

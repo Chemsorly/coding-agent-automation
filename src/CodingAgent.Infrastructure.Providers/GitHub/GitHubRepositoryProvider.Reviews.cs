@@ -75,11 +75,11 @@ public partial class GitHubRepositoryProvider
                 },
                 "SubmitPullRequestReviewWithComments", ct);
         }
-        catch (ApiValidationException)
+        catch (ApiValidationException ex)
         {
             // On HTTP 422, retry once without any comments (body-only fallback).
             // GitHub's 422 response doesn't reliably identify which comment failed.
-            Log.Warning(
+            Log.Warning(ex,
                 "GitHub returned 422 when submitting review with {CommentCount} inline comments on PR #{PrNumber}. " +
                 "Retrying with body-only fallback.",
                 submission.Comments.Count, prNumber);

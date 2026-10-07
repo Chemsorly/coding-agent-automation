@@ -316,15 +316,16 @@ public sealed class AgentHubIssueOpsTests
         await hub.RequestLabelChange(jobId, AgentLabels.Error);
 
         // Assert — the fallback logged a warning (log-and-continue contract).
-        // The catch body calls: _logger.Warning("RequestLabelChange fallback failed for job {JobId}
+        // The catch body calls: _logger.Warning(ex, "RequestLabelChange fallback failed for job {JobId}
         // (label={Label}): {Message} — label swap skipped", jobId, newLabel, ex.Message)
-        // That resolves to Warning<string,string,string>(string template, string p0, string p1, string p2).
+        // That resolves to Warning<string,string,string>(Exception ex, string template, string p0, string p1, string p2).
         // TODO (WARNING — TestQualityReviewer): The assertion below does not pin p0 (jobId) or p1
         // (newLabel), so it could vacuously pass if an earlier _logger.Warning call using a "fallback"
         // template were reached due to a mis-configured stub. Strengthen by replacing It.IsAny<string>()
         // for p0 and p1 with It.Is<string>(s => s == jobId) and It.Is<string>(s => s == AgentLabels.Error).
         _mockLogger.Verify(
             l => l.Warning(
+                It.IsAny<Exception>(),
                 It.Is<string>(s => s.Contains("fallback failed")),
                 It.IsAny<string>(),
                 It.IsAny<string>(),

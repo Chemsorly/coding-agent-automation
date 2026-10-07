@@ -144,7 +144,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             }
             catch (DbUpdateConcurrencyException) when (attempt < maxRetries)
             {
-                _logger.LogInformation(
+                _logger.LogInformation( // NOSONAR S6667 — expected concurrency conflict, retried; the message says so
                     "Concurrency conflict on WorkItem {WorkItemId} transition to {Target}, retry {Attempt}/{MaxRetries}",
                     workItemId, target, attempt + 1, maxRetries);
                 // Row modified by another writer — retry with fresh state
@@ -354,7 +354,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService, IWorkItem
             catch (DbUpdateConcurrencyException) when (attempt < MaxRetries)
             {
                 var retryAttempt = attempt + 1;
-                _logger.LogInformation(
+                _logger.LogInformation( // NOSONAR S6667 — expected concurrency conflict, retried; the message says so
                     "Concurrency conflict on WorkItem {WorkItemId} recovery to {DesiredStatus}, retry {Attempt}/{MaxRetries}",
                     workItemId, desiredStatus, retryAttempt, MaxRetries);
                 // Row modified by another writer — retry with fresh state

@@ -276,7 +276,7 @@ public partial class QualityGateExecutor
             }
             else if (allowEmptyCommit)
             {
-                _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId);
+                _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId); // NOSONAR S6667 — expected "No changes to commit"; the message says so
                 await context.RepoProvider.CommitAllAsync(
                     run.WorkspacePath!,
                     $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",

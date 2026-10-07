@@ -104,7 +104,7 @@ public partial class AgentPhaseExecutor
         }
         catch (OperationCanceledException)
         {
-            _logger.Warning("Pipeline {RunId} agent timed out after {Duration}", run.RunId, config.AgentTimeout);
+            _logger.Warning("Pipeline {RunId} agent timed out after {Duration}", run.RunId, config.AgentTimeout); // NOSONAR S6667 — expected timeout; the message says so
             run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,

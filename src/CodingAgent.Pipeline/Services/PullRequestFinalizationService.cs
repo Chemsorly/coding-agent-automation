@@ -292,7 +292,7 @@ public sealed class PullRequestFinalizationService
             {
                 // The agent's stdout mixes in tool output and reasoning, so it never becomes the PR body
                 // (decisions.md: the PR narrative never comes from the agent's stdout).
-                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, keeping the generated PR body",
+                _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, keeping the generated PR body", // NOSONAR S6667 — expected missing file; the message says so
                     run.RunId, filePath);
                 return;
             }

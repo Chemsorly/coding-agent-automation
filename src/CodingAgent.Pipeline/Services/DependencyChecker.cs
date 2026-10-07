@@ -267,7 +267,7 @@ public sealed class DependencyChecker : IDependencyChecker
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "Failed to check dependency #{DependencyNumber} for issue #{Identifier}: {ErrorMessage}. Treating as unresolved.",
                 issueNumber, issueIdentifier, ex.Message);
             return false;

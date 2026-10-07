@@ -97,7 +97,7 @@ internal static class ProjectRepositoryCloner
             }
             catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
             {
-                context.Logger.Warning("Clone of repo '{TemplateName}' timed out after {Timeout}s — marking unavailable",
+                context.Logger.Warning("Clone of repo '{TemplateName}' timed out after {Timeout}s — marking unavailable", // NOSONAR S6667 — expected timeout; the message says so
                     templateName, CloneTimeout.TotalSeconds);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

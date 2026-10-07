@@ -341,7 +341,10 @@ public partial class AgentPhaseExecutor
             catch (Exception ex) when (ex is not OperationCanceledException and not TimeoutException)
             {
                 // If merge-base fails (e.g., unrelated histories), fall back to direct diff
-                logger.Debug("Pipeline {RunId} merge-base computation failed, falling back to direct diff against {DiffBase}: {Error}", run.RunId, diffBase, ex.Message);
+                // TODO (WARNING — Correctness): ex is now attached to the log event AND ex.Message is passed as {Error},
+                // so the exception message appears twice in structured log output. Out of scope per issue #3398
+                // ("Do not remove ex.Message placeholders"), but worth removing {Error}/{ex.Message} in a future cleanup.
+                logger.Debug(ex, "Pipeline {RunId} merge-base computation failed, falling back to direct diff against {DiffBase}: {Error}", run.RunId, diffBase, ex.Message);
                 effectiveDiffBase = diffBase;
             }
 

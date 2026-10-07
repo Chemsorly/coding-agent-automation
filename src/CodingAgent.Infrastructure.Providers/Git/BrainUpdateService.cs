@@ -210,7 +210,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             }
             catch (EmptyCommitException)
             {
-                _logger.Warning(
+                _logger.Warning( // NOSONAR S6667 — expected empty commit; the message says so
                     "Brain repo has no changes to commit for run {RunId}, skipping push", runId.Value);
                 return new BrainSyncResult
                 {
@@ -325,7 +325,7 @@ public partial class BrainUpdateService : IBrainUpdateService
                 ex.Message.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) &&
                 attempt < maxRetries)
             {
-                _logger.Warning(
+                _logger.Warning( // NOSONAR S6667 — expected non-fast-forward push, rebased; the message says so
                     "Brain push attempt {Attempt}/{MaxRetries} failed (non-fast-forward), rebasing...",
                     attempt, maxRetries);
 
@@ -511,7 +511,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         catch (EmptyCommitException)
         {
             // Remote already has identical changes — nothing to recommit after rebase
-            _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
+            _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping"); // NOSONAR S6667 — expected empty commit; the message says so
         }
     }
 

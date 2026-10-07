@@ -855,7 +855,7 @@ public sealed class ReconciliationLoop
 
             if (isNonTerminal)
             {
-                _log.Warning(
+                _log.Warning( // NOSONAR S6667 — expected 400, retried next cycle; the message says so
                     "HandleJobCompletedAsync: completion POST for WorkItem {WorkItemId} rejected (400) — " +
                     "WorkItem is in pre-Running state {CurrentStatus}, not caching. Will retry next cycle.",
                     workItemId, currentStatus);
