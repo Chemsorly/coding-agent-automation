@@ -1187,6 +1187,24 @@ public class RefactoringExecutorTests : IDisposable
         sorted.Select(p => p.Title).Should().Equal("A", "B");
     }
 
+    [Fact]
+    public void TopologicalSortProposals_DependencyTitleWithOtherCaseAndSpaces_MovesAfterItsDependency()
+    {
+        var sorted = RefactoringExecutor.TopologicalSortProposals(
+            [Proposal("B", ["  a  "]), Proposal("A")]);
+
+        sorted.Select(p => p.Title).Should().Equal("A", "B");
+    }
+
+    [Fact]
+    public void TopologicalSortProposals_SelfReference_IsIgnored()
+    {
+        var sorted = RefactoringExecutor.TopologicalSortProposals(
+            [Proposal("Y", ["X"]), Proposal("X", [" x "])]);
+
+        sorted.Select(p => p.Title).Should().Equal("X", "Y");
+    }
+
     // ─── Autolink escaping in prerequisites (issue #1450) ───────────────────────
 
     [Fact]

@@ -936,6 +936,30 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         if (proposals.Count <= 1)
             return proposals;
 
+        var (inDegree, dependents) = BuildDependencyGraph(proposals);
+
+        var ready = new Queue<int>(Enumerable.Range(0, proposals.Count).Where(i => inDegree[i] == 0));
+        var sorted = new List<RefactoringProposal>(proposals.Count);
+        while (ready.Count > 0)
+        {
+            var index = ready.Dequeue();
+            sorted.Add(proposals[index]);
+            foreach (var dependent in dependents[index])
+            {
+                if (--inDegree[dependent] == 0)
+                    ready.Enqueue(dependent);
+            }
+        }
+
+        return sorted.Count == proposals.Count ? sorted : proposals;
+    }
+
+    /// <summary>
+    /// Counts, for each proposal, how many proposals in the batch it depends on, and lists the proposals
+    /// that depend on it. Blank titles, titles outside the batch and self-references are ignored.
+    /// </summary>
+    private static (int[] InDegree, List<int>[] Dependents) BuildDependencyGraph(IReadOnlyList<RefactoringProposal> proposals)
+    {
         // Title lookup is trimmed and case-insensitive, like DependencyResolver.
         var titleToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (var i = 0; i < proposals.Count; i++)
@@ -960,20 +984,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             }
         }
 
-        var ready = new Queue<int>(Enumerable.Range(0, proposals.Count).Where(i => inDegree[i] == 0));
-        var sorted = new List<RefactoringProposal>(proposals.Count);
-        while (ready.Count > 0)
-        {
-            var index = ready.Dequeue();
-            sorted.Add(proposals[index]);
-            foreach (var dependent in dependents[index])
-            {
-                if (--inDegree[dependent] == 0)
-                    ready.Enqueue(dependent);
-            }
-        }
-
-        return sorted.Count == proposals.Count ? sorted : proposals;
+        return (inDegree, dependents);
     }
 
     /// <summary>
