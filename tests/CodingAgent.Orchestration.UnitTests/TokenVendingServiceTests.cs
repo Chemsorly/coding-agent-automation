@@ -991,8 +991,9 @@ public class TokenVendingServiceTests
 
         await ((IHostedService)housekeepingService).StartAsync(cts.Token);
 
-        // Wait for the tick to fire and evict the expired entry
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        // Wait for the tick to fire and evict the expired entry. The bound is a hang detector only,
+        // so a stalled test host cannot fail the test.
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
         while (service.CacheCount > 0 && DateTimeOffset.UtcNow < deadline)
         {
             clock.Advance(TimeSpan.FromMilliseconds(50));
