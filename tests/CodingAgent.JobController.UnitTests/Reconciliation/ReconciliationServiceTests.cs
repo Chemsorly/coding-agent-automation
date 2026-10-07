@@ -344,14 +344,11 @@ public sealed class ReconciliationServiceTests
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
         // Wait until the second poll cycle (recovery after the throw)
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        // TODO [WARNING]: throwCount is a plain int field; Interlocked.Increment writes it but this
-        // spin-loop read is non-volatile. On Release builds with aggressive register allocation, the
-        // JIT may cache the stale value and never observe throwCount >= 2, causing the test to spin
-        // until the deadline. Fix: use Volatile.Read(ref throwCount) in the loop condition.
-        // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (throwCount < 2 && DateTime.UtcNow < deadline)
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (Volatile.Read(ref throwCount) < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
+
+        Volatile.Read(ref throwCount).Should().BeGreaterThanOrEqualTo(2, "the poll loop must run a second cycle after the throw");
 
         stopCts.Cancel();
         await executeTask;
@@ -397,12 +394,11 @@ public sealed class ReconciliationServiceTests
         using var stopCts = new CancellationTokenSource();
         var executeTask = RunExecuteForDuration(svc, stopCts.Token);
 
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        // TODO [WARNING]: throwCount spin-loop read is non-volatile (same issue as above test method).
-        // Fix: use Volatile.Read(ref throwCount) in the loop condition.
-        // See Issue #2576 review findings (TestQualityReviewer [WARNING]).
-        while (throwCount < 2 && DateTime.UtcNow < deadline)
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (Volatile.Read(ref throwCount) < 2 && DateTime.UtcNow < deadline)
             await Task.Delay(50);
+
+        Volatile.Read(ref throwCount).Should().BeGreaterThanOrEqualTo(2, "the poll loop must run a second cycle after the throw");
 
         stopCts.Cancel();
         await executeTask;

@@ -3,6 +3,7 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
+using CodingAgent.Pipeline.UnitTests.Helpers;
 
 namespace CodingAgent.Pipeline.UnitTests;
 
@@ -248,7 +249,10 @@ public class AgentStallMonitorParallelKillTests
         var tcs = new TaskCompletionSource<AgentResult>();
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .Returns(tcs.Task);
-        _mockAgent.Setup(a => a.KillAsync()).Returns(Task.CompletedTask);
+        var killCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockAgent.Setup(a => a.KillAsync())
+            .Callback(() => killCalled.TrySetResult())
+            .Returns(Task.CompletedTask);
 
         var task = AgentStallMonitor.ExecuteWithMonitoringAsync(
             new AgentMonitorContext(_mockAgent.Object, run, config, "Code review agent 'AcceptanceCriteria'", null, _mockLogger.Object),
@@ -257,9 +261,8 @@ public class AgentStallMonitorParallelKillTests
 
         // The kill should fire almost immediately because:
         // silence = now - run.StartedAt = 90 minutes > killTimeout (60 minutes)
-        var deadline = DateTime.UtcNow.AddSeconds(2);
-        while (run.ChatHistory.IsEmpty && DateTime.UtcNow < deadline)
-            await Task.Delay(30);
+        await BackgroundWait.SignalledAsync(killCalled.Task,
+            "the monitor must kill the agent because the silence since run start exceeds the kill timeout");
 
         tcs.SetResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
         await task;
