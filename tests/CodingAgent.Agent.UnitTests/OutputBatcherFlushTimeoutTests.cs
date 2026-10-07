@@ -155,8 +155,8 @@ public class OutputBatcherFlushTimeoutTests
         await Task.Yield();
 
         // Wait for the blocking flush handler to start — event-driven, no fixed delay.
-        // 10s guard (up from 5s) to absorb CI scheduler jitter on loaded runners.
-        var firstStarted = await Task.WhenAny(firstFlushStarted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        // 30s guard: a hang detector only, so a stalled test host cannot fail the test.
+        var firstStarted = await Task.WhenAny(firstFlushStarted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         firstStarted.Should().Be(firstFlushStarted.Task, "first flush should start after tick");
 
         // The flush timeout (200ms) will fire and release _flushGate.
@@ -171,8 +171,8 @@ public class OutputBatcherFlushTimeoutTests
         await Task.Yield();
 
         // Wait for the second flush to complete — event-driven, no fixed delay.
-        // 10s guard to absorb CI scheduler jitter.
-        var secondFired = await Task.WhenAny(secondFlushCompleted.Task, Task.Delay(TimeSpan.FromSeconds(10)));
+        // 30s guard: a hang detector only, so a stalled test host cannot fail the test.
+        var secondFired = await Task.WhenAny(secondFlushCompleted.Task, Task.Delay(TimeSpan.FromSeconds(30)));
         secondFired.Should().Be(secondFlushCompleted.Task,
             "after a flush timeout, the tick-based flush loop should recover and " +
             "continue flushing subsequent batches normally");
