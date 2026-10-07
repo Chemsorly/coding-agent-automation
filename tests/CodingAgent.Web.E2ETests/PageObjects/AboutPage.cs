@@ -31,7 +31,7 @@ public sealed class AboutPage
     {
         await _page.GotoAsync($"{_baseUrl}/about");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
-        await _page.WaitForBlazorAsync(DefaultTimeout);
+        await _page.WaitForCockpitPageReadyAsync(DefaultTimeout);
     }
 
     /// <summary>

@@ -42,6 +42,25 @@ public static class BlazorPageExtensions
             new() { Timeout = timeoutMs });
 
     /// <summary>
+    /// Waits until a cockpit page is interactive and has finished its first data load.
+    /// Cockpit pages are prerendered with their data; when the circuit connects, the interactive
+    /// component re-runs <c>OnInitializedAsync</c> and shows a "Loading…" placeholder until its API
+    /// calls return, and prerendered buttons have no handlers. This waits until the layout's theme
+    /// toggle has its Blazor handler (the circuit has rendered the page) and no
+    /// <c>.cockpit-empty</c> placeholder starting with "Loading" is left.
+    /// </summary>
+    /// <param name="page">The page to wait on.</param>
+    /// <param name="timeoutMs">Maximum time to wait in milliseconds, per step.</param>
+    public static async Task WaitForCockpitPageReadyAsync(this IPage page, int timeoutMs = 15_000)
+    {
+        await page.WaitForInteractiveAsync(".cockpit-theme-toggle", timeoutMs);
+        await page.WaitForFunctionAsync(
+            "() => ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.trim().startsWith('Loading'))",
+            null,
+            new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
     /// Waits for Blazor enhanced navigation to complete by listening for the 'enhancedload' event.
     /// Call before the action that triggers navigation, then await the returned task.
     /// </summary>

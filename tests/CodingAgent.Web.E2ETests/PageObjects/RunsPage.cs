@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -42,7 +43,7 @@ public sealed class RunsPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultNavigationTimeout });
-        await _page.WaitForTimeoutAsync(DefaultWaitMs);
+        await _page.WaitForCockpitPageReadyAsync(DefaultNavigationTimeout);
     }
 
     // ── Outcome tabs ──────────────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -22,7 +23,7 @@ public sealed class WorkPage
     {
         await _page.GotoAsync($"{_baseUrl}/work");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(2000);
+        await _page.WaitForCockpitPageReadyAsync();
     }
 
     private ILocator InFlightCard => _page.Locator(".cockpit-card:has(h2:has-text('In flight'))");

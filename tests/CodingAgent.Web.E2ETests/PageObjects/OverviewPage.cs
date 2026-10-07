@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -21,7 +22,7 @@ public sealed class OverviewPage
     {
         await _page.GotoAsync($"{_baseUrl}/overview");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(2000);
+        await _page.WaitForCockpitPageReadyAsync();
     }
 
     private ILocator StatStrip => _page.Locator(".cockpit-stat-strip");
