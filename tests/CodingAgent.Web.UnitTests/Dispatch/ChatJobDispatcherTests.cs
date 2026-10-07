@@ -1388,6 +1388,27 @@ public class ChatJobDispatcherTests
     }
 
     /// <summary>
+    /// Calls <paramref name="sendHeartbeat"/> at once and then every 200 ms from a dedicated thread,
+    /// until the returned action is invoked. A dedicated thread keeps sending while thread-pool work
+    /// (the watcher) is delayed, so a stalled test host cannot cause a false idle-kill.
+    /// </summary>
+    private static Action StartHeartbeats(Action sendHeartbeat)
+    {
+        var stop = new ManualResetEventSlim(false);
+        var thread = new Thread(() =>
+        {
+            do { sendHeartbeat(); } while (!stop.Wait(TimeSpan.FromMilliseconds(200)));
+        }) { IsBackground = true, Name = "test-heartbeats" };
+        thread.Start();
+        return () =>
+        {
+            stop.Set();
+            thread.Join();
+            stop.Dispose();
+        };
+    }
+
+    /// <summary>
     /// When the client sends regular keepalive heartbeats, the pod must stay alive
     /// beyond ChatIdleTimeoutSeconds.
     /// </summary>
@@ -1411,7 +1432,7 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        // Idle timeout of 2s; we'll heartbeat every ~500ms for 3s then cancel
+        // Idle timeout of 2s; heartbeats every 200ms for 6s, then they stop
         var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
         options.ChatIdleTimeoutSeconds = 2;
 
@@ -1424,23 +1445,25 @@ public class ChatJobDispatcherTests
 
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // Send heartbeats every 500ms for 3 seconds — pod should NOT be killed
-        using var heartbeatCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        _ = Task.Run(async () =>
+        // Without heartbeats the watcher would exit about 3–4s after dispatch: idle > 2s is seen
+        // at the next 1s poll, then termination waits the 1s grace period. A 6s window can only
+        // pass when the heartbeats are honoured.
+        var stopHeartbeats = StartHeartbeats(() => dispatcher.RecordClientHeartbeat(createdJobName!));
+        try
         {
-            while (!heartbeatCts.IsCancellationRequested)
-            {
-                dispatcher.RecordClientHeartbeat(createdJobName!);
-                await Task.Delay(500, heartbeatCts.Token).ContinueWith(_ => { });
-            }
-        }, CancellationToken.None);
+            var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(6));
+            watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving");
+            jobClientMock.Verify(c => c.DeleteJobAsync(
+                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+                Times.Never,
+                "the pod must not be deleted while client heartbeats are arriving");
+        }
+        finally
+        {
+            stopHeartbeats();
+        }
 
-        // Wait the full 3s — watcher should NOT have finished (pod still alive)
-        var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
-        watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving");
-
-        // Now stop heartbeats and wait for idle kill to fire
-        heartbeatCts.Cancel();
+        // Heartbeats have stopped: the idle kill must fire now
         var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         idleKillDone.Should().BeTrue("watcher must exit after heartbeats stop and idle timeout fires");
 
@@ -1508,26 +1531,27 @@ public class ChatJobDispatcherTests
 
         await dispatcherA.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
 
-        // Send heartbeats via dispatcher B every 500ms for 3s.
-        // B has no WatcherEntry → local ticks on A are never updated by B.
-        // B writes only to sharedRedis → A's watcher must read Redis to see the heartbeat.
-        using var heartbeatCts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        _ = Task.Run(async () =>
+        // Send heartbeats via dispatcher B. B has no WatcherEntry, so local ticks on A are never
+        // updated by B: B writes only to sharedRedis, and A's watcher must read Redis to see them.
+        // Without heartbeats A's watcher would exit about 3–4s after dispatch, so a 6s window can only
+        // pass when the cross-replica heartbeats are honoured.
+        var stopHeartbeats = StartHeartbeats(() => dispatcherB.RecordClientHeartbeat(createdJobName!));
+        try
         {
-            while (!heartbeatCts.IsCancellationRequested)
-            {
-                dispatcherB.RecordClientHeartbeat(createdJobName!);
-                await Task.Delay(500, heartbeatCts.Token).ContinueWith(_ => { });
-            }
-        }, CancellationToken.None);
+            var killedEarly = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(6));
+            killedEarly.Should().BeFalse(
+                "watcher must NOT idle-kill the pod while a remote replica is sending heartbeats via Redis");
+            jobClientMock.Verify(c => c.DeleteJobAsync(
+                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+                Times.Never,
+                "the pod must not be deleted while a remote replica is sending heartbeats");
+        }
+        finally
+        {
+            stopHeartbeats();
+        }
 
-        // Watcher on A must NOT idle-kill while B's heartbeats are arriving via Redis
-        var killedEarly = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(3));
-        killedEarly.Should().BeFalse(
-            "watcher must NOT idle-kill the pod while a remote replica is sending heartbeats via Redis");
-
-        // Stop B's heartbeats; A's watcher should now detect idle and terminate
-        heartbeatCts.Cancel();
+        // B's heartbeats have stopped; A's watcher should now detect idle and terminate
         var idleKillDone = await dispatcherA.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
         idleKillDone.Should().BeTrue("watcher must idle-kill the pod after cross-replica heartbeats stop");
 
