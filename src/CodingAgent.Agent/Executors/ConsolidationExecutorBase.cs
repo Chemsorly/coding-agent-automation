@@ -102,7 +102,7 @@ public abstract class ConsolidationExecutorBase
     /// Wraps an async action with activity tracing. Creates an activity with the given name,
     /// sets the pipeline.run_id tag, and records error status on non-cancellation exceptions.
     /// </summary>
-    protected async Task<T> RunWithTracingAsync<T>(string activityName, string jobId, Func<Activity?, Task<T>> action)
+    protected static async Task<T> RunWithTracingAsync<T>(string activityName, string jobId, Func<Activity?, Task<T>> action)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity(activityName);
         activity?.SetTag("pipeline.run_id", jobId);
@@ -124,7 +124,7 @@ public abstract class ConsolidationExecutorBase
     /// <summary>
     /// Wraps an async action with activity tracing (void-returning variant).
     /// </summary>
-    protected async Task RunWithTracingAsync(string activityName, string jobId, Func<Activity?, Task> action)
+    protected static async Task RunWithTracingAsync(string activityName, string jobId, Func<Activity?, Task> action)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity(activityName);
         activity?.SetTag("pipeline.run_id", jobId);

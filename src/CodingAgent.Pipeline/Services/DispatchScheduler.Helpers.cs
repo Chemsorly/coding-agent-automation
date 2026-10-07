@@ -106,7 +106,7 @@ internal sealed partial class DispatchScheduler
     /// duplicate per cycle. Consider adding the identifier on AlreadyQueued to short-circuit the
     /// redundant call.
     /// </summary>
-    private DispatchAttemptResult FinalizeDispatchOutcome(
+    private static DispatchAttemptResult FinalizeDispatchOutcome(
         DispatchAttemptOutcome outcome,
         string identifier,
         ProviderConfigId providerId,

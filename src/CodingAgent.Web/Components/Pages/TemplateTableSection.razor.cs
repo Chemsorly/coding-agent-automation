@@ -212,7 +212,7 @@ public partial class TemplateTableSection
         };
     }
 
-    private class ProjectTemplateGroup
+    private sealed class ProjectTemplateGroup
     {
         public required PipelineProject Project { get; init; }
         public List<PipelineJobTemplate> Templates { get; set; } = new();

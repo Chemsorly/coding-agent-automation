@@ -234,7 +234,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             dispatchStart, activity, cancellationToken);
     }
 
-    private (string normalized, string selectorLabelValue) NormalizeSelector(string agentSelector)
+    private static (string normalized, string selectorLabelValue) NormalizeSelector(string agentSelector)
     {
         var normalized = JobTemplateStore.NormalizeLabels(agentSelector);
         var selectorLabelValue = normalized.Replace(',', '_');

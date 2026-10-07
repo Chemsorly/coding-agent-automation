@@ -67,7 +67,7 @@ public sealed class RedisStore : IRedisStore
     public async Task<string[]> SetMembersAsync(string key)
     {
         var members = await _db.SetMembersAsync(key);
-        return members.Select(m => (string)m!).Where(m => m is not null).ToArray();
+        return members.Where(m => !m.IsNull).Select(m => (string)m!).ToArray();
     }
 
     public async Task<string[]> SetMembersAsync(string key, CancellationToken ct)
@@ -80,7 +80,7 @@ public sealed class RedisStore : IRedisStore
         // This is the correct pattern for a driver that has no native cancellation support — do not
         // replace WaitAsync with a custom abort mechanism, as none exists for this driver.
         var members = await _db.SetMembersAsync(key).WaitAsync(ct);
-        return members.Select(m => (string)m!).Where(m => m is not null).ToArray();
+        return members.Where(m => !m.IsNull).Select(m => (string)m!).ToArray();
     }
 
     public async Task<long> SetCardinalityAsync(string key)
@@ -95,7 +95,7 @@ public sealed class RedisStore : IRedisStore
     public async Task<string[]> ListRangeAsync(string key, long start, long stop)
     {
         var items = await _db.ListRangeAsync(key, start, stop);
-        return items.Select(i => (string)i!).Where(i => i is not null).ToArray();
+        return items.Where(i => !i.IsNull).Select(i => (string)i!).ToArray();
     }
 
     public async Task<bool> ExistsAsync(string key)
