@@ -112,7 +112,7 @@ internal sealed class GitLabClientProvider : IAsyncDisposable
                     _cachedToken = token;
                 }
 
-                return _cachedToken!;
+                return _cachedToken;
             }
             finally
             {

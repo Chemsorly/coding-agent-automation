@@ -493,7 +493,7 @@
             .ToList();
     }
 
-    private class ProfileForm
+    private sealed class ProfileForm
     {
         public string DisplayName { get; set; } = "";
         public string MatchLabels { get; set; } = "";
@@ -503,7 +503,7 @@
         public List<McpServerFormModel> McpServers { get; set; } = new();
     }
 
-    private class McpServerFormModel
+    private sealed class McpServerFormModel
     {
         public string Name { get; set; } = "";
         public string Type { get; set; } = "stdio";
