@@ -176,7 +176,7 @@ public class ChatJobExecutorTests : IDisposable
 
         var chatTask = GetPrivateField<Task?>(slotManager, "_activeChatTask");
         if (chatTask is not null)
-            await Task.WhenAny(chatTask, Task.Delay(5000));
+            await chatTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // TODO: Silent false-green — if directory creation fails (caught above) OR the background task does not
         // reach the orchestrator mock in time, callOrder will be empty and the test exits without running any
@@ -219,11 +219,11 @@ public class ChatJobExecutorTests : IDisposable
 
         var chatTask = GetPrivateField<Task?>(slotManager, "_activeChatTask");
         if (chatTask is not null)
-            await Task.WhenAny(chatTask, Task.Delay(5000));
+            await chatTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // TODO: [WARNING] Same silent false-green pattern as WhenNotResume test above. If directory creation
         // fails (catch { return; } above) or the background task does not reach the orchestrator mock within
-        // 5 seconds, callOrder is empty and the test exits green without running any assertions. A regression
+        // 30 seconds, callOrder is empty and the test exits green without running any assertions. A regression
         // that broke resume-path logic entirely would produce a false pass.
         if (callOrder.Count == 0) return;
 
@@ -269,10 +269,10 @@ public class ChatJobExecutorTests : IDisposable
 
         var chatTask = GetPrivateField<Task?>(slotManager, "_activeChatTask");
         if (chatTask is not null)
-            await Task.WhenAny(chatTask, Task.Delay(5000));
+            await chatTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // TODO: [WARNING] Silent false-green — if directory creation fails (catch { return; } above) or the
-        // background task does not reach the orchestrator mock within 5 seconds, capturedWorkspace is empty
+        // background task does not reach the orchestrator mock within 30 seconds, capturedWorkspace is empty
         // and the test exits green without running any assertions. The critical assertion that per-window
         // workspace path is used is never verified on the failure path.
         if (capturedWorkspace.Count == 0) return;
@@ -424,7 +424,7 @@ public class ChatJobExecutorTests : IDisposable
         cancelTask.IsCompleted.Should().BeFalse("handler must wait for chat task before completing");
 
         taskCompletion.SetResult();
-        await Task.WhenAny(cancelTask, Task.Delay(10_000));
+        await Task.WhenAny(cancelTask, Task.Delay(TimeSpan.FromSeconds(30)));
         cancelTask.IsCompletedSuccessfully.Should().BeTrue("cancel handler must complete after task finishes");
         chatCts.IsCancellationRequested.Should().BeTrue("CTS must be cancelled");
     }
