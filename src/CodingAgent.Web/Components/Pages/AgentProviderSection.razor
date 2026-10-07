@@ -499,7 +499,7 @@
         _form.ExecutablePath = _form.ProviderType == ProviderTypes.ClaudeCode ? AgentDefaults.ClaudeCliPath : AgentDefaults.KiroCliPath;
     }
 
-    private class AgentProviderForm
+    private sealed class AgentProviderForm
     {
         public string ProviderType { get; set; } = "KiroCli";
         public string DisplayName { get; set; } = "";

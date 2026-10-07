@@ -106,7 +106,7 @@ public partial class QualityGateExecutor
     /// delegate; <see cref="IPipelineCallbacks.AddRunToHistoryAsync"/> does not accept a token.
     /// </para>
     /// </summary>
-    private async Task FinalizeRunAsync(
+    private static async Task FinalizeRunAsync(
         QualityGateContext context,
         PipelineRun run,
         Func<CancellationToken, Task> swapLabel,

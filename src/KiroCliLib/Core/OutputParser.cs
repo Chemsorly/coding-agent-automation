@@ -41,7 +41,7 @@ public class OutputParser : IOutputParser
         }
     }
 
-    private KiroState? DetectState(string line)
+    private static KiroState? DetectState(string line)
     {
         if (Regex.IsMatch(line, @"^[✓✔]|^\s*Done\b|^\s*Completed\b|^\s*Success\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.Completed;

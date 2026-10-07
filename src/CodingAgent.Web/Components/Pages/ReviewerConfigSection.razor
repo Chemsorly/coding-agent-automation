@@ -336,7 +336,7 @@
             .ToList();
     }
 
-    private class ReviewerConfigForm
+    private sealed class ReviewerConfigForm
     {
         public string DisplayName { get; set; } = "";
         public string MatchLabels { get; set; } = "";
@@ -345,7 +345,7 @@
         public List<AgentFormEntry> Agents { get; set; } = new();
     }
 
-    private class AgentFormEntry
+    private sealed class AgentFormEntry
     {
         public string Name { get; set; } = "";
         public string Prompt { get; set; } = "";

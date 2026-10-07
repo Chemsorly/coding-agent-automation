@@ -866,7 +866,7 @@
         _blacklistedPathsText = string.Join(",", _globalConfig.BlacklistedPaths);
     }
 
-    private class SecretEntry
+    private sealed class SecretEntry
     {
         public string Key { get; set; } = "";
         public string Value { get; set; } = "";

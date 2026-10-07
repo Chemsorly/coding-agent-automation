@@ -238,7 +238,7 @@ public class AgentWorkerServiceTests : IDisposable
         await chatJobHandler.HandleChatPromptAsync(message);
 
         // Wait for the background Task.Run to invoke the orchestrator (with timeout)
-        var completed = await Task.WhenAny(invoked.Task, Task.Delay(5000));
+        var completed = await Task.WhenAny(invoked.Task, Task.Delay(TimeSpan.FromSeconds(30)));
 
         // Assert — verify the orchestrator was called with the prompt
         if (completed != invoked.Task)
@@ -360,7 +360,7 @@ public class AgentWorkerServiceTests : IDisposable
         chatTaskCompletion.SetResult();
 
         // Now the cancel handler should complete (within generous timeout)
-        var completed = await Task.WhenAny(cancelTask, Task.Delay(10_000));
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(TimeSpan.FromSeconds(30)));
         completed.Should().Be(cancelTask, "cancel handler should complete after chat task finishes");
 
         // CTS should have been cancelled
@@ -454,7 +454,7 @@ public class AgentWorkerServiceTests : IDisposable
         // Wait for background task
         var chatTask = GetPrivateField<Task?>(GetSlotManager(service), "_activeChatTask");
         if (chatTask is not null)
-            await Task.WhenAny(chatTask, Task.Delay(5000));
+            await chatTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert — warm-up first, then real prompt
         if (callOrder.Count == 0 && !Directory.Exists(chatWorkspace))
@@ -508,7 +508,7 @@ public class AgentWorkerServiceTests : IDisposable
         // Wait for background task
         var chatTask = GetPrivateField<Task?>(GetSlotManager(service), "_activeChatTask");
         if (chatTask is not null)
-            await Task.WhenAny(chatTask, Task.Delay(5000));
+            await chatTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert — only one call (the real prompt), no warm-up
         if (callOrder.Count == 0 && !Directory.Exists(chatWorkspace))
@@ -567,14 +567,10 @@ public class AgentWorkerServiceTests : IDisposable
             UseResume = true
         };
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var runTask = (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
             .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
-        // TODO: Task.WhenAny does not re-throw if runTask faults; assertions below execute
-        // even on a timeout or unhandled exception, potentially checking state that was never
-        // established. Consider awaiting runTask directly (or checking runTask.IsCompletedSuccessfully)
-        // to distinguish genuine completion from a 5-second timeout masked as a pass.
-        await Task.WhenAny(runTask, Task.Delay(5000));
+        await runTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         GetPrivateField<string?>(slotManager, "_activeChatSessionId")
             .Should().BeNull("chat slot should be released after RunChatTaskAsync");
@@ -852,16 +848,10 @@ public class AgentWorkerServiceTests : IDisposable
             ProjectSecrets = new Dictionary<string, string> { [secretKey] = "injected-value" }
         };
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var runTask = (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
             .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
-        // TODO [WARNING]: Task.WhenAny does not re-throw if runTask faults or times out.
-        // If runTask does not complete within 5 seconds (CI slowdown, deadlock, early workspace-creation
-        // return), capturedEnvVars remains null and capturedGlobalEnvVar remains empty, making timeout
-        // failures indistinguishable from genuine behavioral failures. Consider awaiting runTask directly
-        // (or asserting runTask.IsCompletedSuccessfully) to cleanly separate infrastructure timeouts
-        // from secret-injection regressions.
-        await Task.WhenAny(runTask, Task.Delay(5000));
+        await runTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Secrets are passed to the orchestrator as environmentVariables
         capturedEnvVars.Should().NotBeNull("orchestrator must have been invoked with environmentVariables");
@@ -915,13 +905,10 @@ public class AgentWorkerServiceTests : IDisposable
             ProjectSecrets = new Dictionary<string, string> { [secretKey] = "should-never-appear-globally" }
         };
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
         var runTask = (Task)GetMethod(GetChatJobHandler(service), "RunChatTaskAsync")
             .Invoke(GetChatJobHandler(service), [message, cts.Token])!;
-        // TODO [WARNING]: Task.WhenAny does not re-throw if runTask faults or times out.
-        // A CI slowdown or the silent workspace-creation early-return makes this indistinguishable
-        // from a genuine pass. Consider awaiting runTask directly to separate timeout from regression.
-        await Task.WhenAny(runTask, Task.Delay(5000));
+        await runTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Even though orchestrator threw, no global env var was ever set
         Environment.GetEnvironmentVariable(secretKey).Should().BeNull(

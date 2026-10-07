@@ -684,7 +684,7 @@
         }
     };
 
-    private RenderFragment RenderReviewingAnalysisDetails() => __builder =>
+    private static RenderFragment RenderReviewingAnalysisDetails() => __builder =>
     {
         <div class="step-detail">Adversarial review</div>
     };
@@ -916,7 +916,7 @@
         </div>
     };
 
-    private RenderFragment RenderReflectingOnRunDetails(StepState state) => __builder =>
+    private static RenderFragment RenderReflectingOnRunDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)
@@ -966,7 +966,7 @@
         </div>
     };
 
-    private RenderFragment RenderExploringCodebaseDetails(StepState state) => __builder =>
+    private static RenderFragment RenderExploringCodebaseDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)
@@ -980,7 +980,7 @@
         </div>
     };
 
-    private RenderFragment RenderGeneratingPlanDetails(StepState state) => __builder =>
+    private static RenderFragment RenderGeneratingPlanDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)
@@ -994,7 +994,7 @@
         </div>
     };
 
-    private RenderFragment RenderReviewingPlanDetails(StepState state) => __builder =>
+    private static RenderFragment RenderReviewingPlanDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)
@@ -1008,7 +1008,7 @@
         </div>
     };
 
-    private RenderFragment RenderPostingPlanDetails(StepState state) => __builder =>
+    private static RenderFragment RenderPostingPlanDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)
@@ -1022,7 +1022,7 @@
         </div>
     };
 
-    private RenderFragment RenderGeneratingSubIssuesDetails(StepState state) => __builder =>
+    private static RenderFragment RenderGeneratingSubIssuesDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)
@@ -1054,7 +1054,7 @@
         </div>
     };
 
-    private RenderFragment RenderPostingSummaryDetails(StepState state) => __builder =>
+    private static RenderFragment RenderPostingSummaryDetails(StepState state) => __builder =>
     {
         <div class="step-detail">
             @if (state == StepState.Active)

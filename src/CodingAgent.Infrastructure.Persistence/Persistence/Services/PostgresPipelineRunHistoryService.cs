@@ -217,7 +217,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
             var batch = entities
                 .Select(DeserializeSummary)
-                .Where(s => s is not null && !IsConsolidationGhost(s!))
+                .Where(s => s is not null && !IsConsolidationGhost(s))
                 .Where(s => include is null || include(s!))
                 .Select(s => s!)
                 .ToList();
@@ -303,7 +303,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // incorrectly excluded real consolidation runs as well as ghosts.
         return entities
             .Select(DeserializeSummary)
-            .Where(s => s is not null && !IsConsolidationGhost(s!))
+            .Where(s => s is not null && !IsConsolidationGhost(s))
             .Select(s => s!)
             .ToList();
     }
