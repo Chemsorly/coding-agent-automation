@@ -31,9 +31,7 @@ public sealed class AgentCodingPage
         // Wait for the page to render (prerendered HTML appears immediately)
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
-        // Allow time for the Blazor Server circuit to connect via SignalR
-        // and for event handlers to be attached to DOM elements.
-        await _page.WaitForTimeoutAsync(3000);
+        await _page.WaitForCockpitPageReadyAsync();
     }
 
     /// <summary>Selects a template from the Manual Dispatch dropdown by its display text.</summary>

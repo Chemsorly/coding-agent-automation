@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -24,8 +25,7 @@ public sealed class FleetPage
     {
         await _page.GotoAsync($"{_baseUrl}/fleet");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // Allow the Blazor Server circuit to connect and the first agent load to complete.
-        await _page.WaitForTimeoutAsync(2000);
+        await _page.WaitForCockpitPageReadyAsync();
     }
 
     /// <summary>Status text for an agent (e.g. "Idle", "Busy", "Disconnected"), or null if absent.</summary>

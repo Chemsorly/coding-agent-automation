@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -39,9 +40,7 @@ public sealed class TemplateTableSectionHelper
     {
         await _page.GotoAsync($"{_baseUrl}/agent-coding");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        // TODO [WARNING]: Fixed 3s delay is a timing crutch. Replace with WaitForSelectorAsync on the
-        // templates table (or use WaitForLabelPreviewButtonAsync at call sites) for deterministic readiness.
-        await _page.WaitForTimeoutAsync(3_000);
+        await _page.WaitForCockpitPageReadyAsync();
     }
 
     // ── Label preview helpers ─────────────────────────────────────────────

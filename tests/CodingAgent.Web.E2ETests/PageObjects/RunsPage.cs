@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -42,7 +43,11 @@ public sealed class RunsPage
     {
         await _page.GotoAsync($"{_baseUrl}/runs");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultNavigationTimeout });
-        await _page.WaitForTimeoutAsync(DefaultWaitMs);
+        // TODO [WARNING]: WaitForCockpitPageReadyAsync applies timeoutMs *per step* (WaitForInteractiveAsync
+        // then WaitForFunctionAsync), so a stuck circuit can block for up to 2×DefaultNavigationTimeout
+        // before failing. This is intentional deterministic behavior per the issue spec, but confirm
+        // that the E2E CI shard overall timeouts tolerate the larger worst-case per-navigation wait.
+        await _page.WaitForCockpitPageReadyAsync(DefaultNavigationTimeout);
     }
 
     // ── Outcome tabs ──────────────────────────────────────────────────────────
