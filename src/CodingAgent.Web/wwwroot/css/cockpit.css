@@ -386,7 +386,7 @@
 
 .cockpit-detail-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px 24px; }
 .cockpit-detail-grid .k { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
-.cockpit-detail-grid .v { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 2px; min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+.cockpit-detail-grid .v { font-size: 14px; font-weight: 600; color: var(--text); margin-top: 2px; min-width: 0; overflow-wrap: anywhere; }
 .cockpit-detail-item { min-width: 0; }
 
 .cockpit-empty { padding: 40px 20px; text-align: center; color: var(--text-muted); font-size: 13.5px; }
@@ -419,7 +419,7 @@
     font-family: var(--font-mono);
     font-size: 12px; line-height: 1.55; color: var(--text);
     background: var(--subtle-bg); border: 1px solid var(--border); border-radius: 10px;
-    padding: 12px 14px; white-space: pre-wrap; word-break: break-word;
+    padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
 /* ---- Fleet: expandable agent detail row ------------------------------------ */

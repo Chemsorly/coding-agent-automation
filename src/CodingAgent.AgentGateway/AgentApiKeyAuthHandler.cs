@@ -37,7 +37,7 @@ public sealed class AgentApiKeyAuthOptions : AuthenticationSchemeOptions
 /// </summary>
 public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAuthOptions>
 {
-    private readonly ILogger _serilogLogger;
+    private readonly ILogger _logger;
 
     public AgentApiKeyAuthHandler(
         IOptionsMonitor<AgentApiKeyAuthOptions> options,
@@ -46,7 +46,7 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
         ILogger serilogLogger)
         : base(options, loggerFactory, encoder)
     {
-        _serilogLogger = serilogLogger;
+        _logger = serilogLogger;
     }
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -95,7 +95,7 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
         // names, so no legitimate agent is affected.
         if (agentIdValues.Count > 1 || (agentId is not null && agentId.Any(char.IsControl)))
         {
-            _serilogLogger.Warning("Agent API key authentication failed — malformed agentId query parameter from {RemoteIp}", Request.HttpContext.Connection.RemoteIpAddress);
+            _logger.Warning("Agent API key authentication failed — malformed agentId query parameter from {RemoteIp}", Request.HttpContext.Connection.RemoteIpAddress);
             return Task.FromResult(AuthenticateResult.Fail("Invalid agentId"));
         }
 
@@ -112,7 +112,7 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
 
         if (!CryptographicOperations.FixedTimeEquals(tokenHash, expectedHash))
         {
-            _serilogLogger.Warning("Agent API key authentication failed — invalid key from {RemoteIp}", Request.HttpContext.Connection.RemoteIpAddress);
+            _logger.Warning("Agent API key authentication failed — invalid key from {RemoteIp}", Request.HttpContext.Connection.RemoteIpAddress);
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
         }
 

@@ -79,7 +79,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     /// </summary>
     protected Uri DeriveGraphQlUri()
     {
-        var apiUrl = ApiUrl ?? "https://api.github.com";
+        var apiUrl = ApiUrl ?? CodingAgent.Pipeline.ProviderSettingKeys.DefaultApiUrl;
 
         if (apiUrl.EndsWith("/api/v3", StringComparison.OrdinalIgnoreCase))
         {
@@ -229,18 +229,6 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     }
 
     /// <summary>
-    /// Captures rate-limit remaining value from the client's last API response and stores it in
-    /// <see cref="GitHubTelemetry"/> for the observable gauge.
-    /// Must be called inside the Polly lambda, before the transient client is discarded.
-    /// </summary>
-    private static void CaptureRateLimitInfo(IGitHubClient client, bool isGraphQL)
-    {
-        var remaining = client.GetLastApiInfo()?.RateLimit?.Remaining;
-        if (remaining.HasValue)
-            GitHubTelemetry.UpdateRateLimit(isGraphQL ? "graphql" : "core", remaining.Value);
-    }
-
-    /// <summary>
     /// Executes a void-returning Octokit API call with resilience and rate limit handling.
     /// </summary>
     protected async Task ExecuteWithResilienceAsync(
@@ -252,6 +240,18 @@ public abstract class GitHubProviderBase : IAsyncDisposable
             await operation(client);
             return true;
         }, operationName, ct, isGraphQL);
+    }
+
+    /// <summary>
+    /// Captures rate-limit remaining value from the client's last API response and stores it in
+    /// <see cref="GitHubTelemetry"/> for the observable gauge.
+    /// Must be called inside the Polly lambda, before the transient client is discarded.
+    /// </summary>
+    private static void CaptureRateLimitInfo(IGitHubClient client, bool isGraphQL)
+    {
+        var remaining = client.GetLastApiInfo()?.RateLimit?.Remaining;
+        if (remaining.HasValue)
+            GitHubTelemetry.UpdateRateLimit(isGraphQL ? "graphql" : "core", remaining.Value);
     }
 
     /// <summary>

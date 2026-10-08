@@ -399,8 +399,6 @@ public sealed partial class PipelineLoopService
                     map = prEligibleByProvider;
                     itemKind = "PR";
                     break;
-                case WorkItemTaskType.Consolidation:
-                case WorkItemTaskType.Decomposition:
                 default:
                     // Consolidation: dispatched synchronously via KubernetesWorkDistributor — no eligibility map.
                     // Decomposition: eligibility source (decompositionQueues) not yet folded into

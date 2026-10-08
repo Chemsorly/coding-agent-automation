@@ -306,7 +306,7 @@ public partial class BrainUpdateService : IBrainUpdateService
         int maxRetries, Func<Task> rebaseOntoRemote, CancellationToken ct)
     {
         var remoteBranch = brainProvider.BaseBranch;
-        ArgumentException.ThrowIfNullOrEmpty(remoteBranch, nameof(remoteBranch));
+        ArgumentException.ThrowIfNullOrEmpty(remoteBranch);
 
         for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
