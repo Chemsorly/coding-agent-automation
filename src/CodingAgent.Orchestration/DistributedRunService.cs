@@ -230,7 +230,7 @@ return hash
             var hash = await _store.HashGetAllAsync(RunKey(runId));
             if (hash.Length == 0)
             {
-                _logger.Warning("GetActiveRuns: run {RunId} in active set but hash is empty (TTL expired) — active set may be stale", (string)runId);
+                _logger.Warning("GetActiveRuns: run {RunId} in active set but hash is empty (TTL expired) — active set may be stale", runId);
                 continue;
             }
             var run = PipelineRunHashExtensions.FromHash(hash);

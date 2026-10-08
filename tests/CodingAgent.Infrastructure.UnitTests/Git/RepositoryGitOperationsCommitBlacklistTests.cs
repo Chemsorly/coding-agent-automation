@@ -104,6 +104,14 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         agentEntries[0].Should().Be(".agent/data.json");
     }
 
+    // TODO: Add a test for deduplication in UnstageBlacklistedPaths when a path uses backslash ('\\')
+    // separators and the file matches both the hardcoded and configurable blacklists. The guard
+    // `unstaged.Contains(normalized)` uses the normalized form (forward slashes), but if path separator
+    // handling were inconsistent between the two passes, a Windows-style path could evade deduplication
+    // and Commands.Unstage would be called twice. No test currently covers this scenario.
+    // Example: a file at ".agent\\data.json" matching both passes should appear exactly once in the
+    // returned unstaged set and have Commands.Unstage called exactly once.
+
     [Fact]
     public void CommitAll_NullBlacklist_StillUnstagesKiroDirectory()
     {

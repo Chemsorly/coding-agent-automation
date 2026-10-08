@@ -140,7 +140,7 @@ public sealed partial class TokenVendingService : ITokenVendingService
             throw new InvalidOperationException("Repository config is missing or invalid 'installationId' setting");
         }
 
-        var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : "https://api.github.com";
+        var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : ProviderSettingKeys.DefaultApiUrl;
         settings.TryGetValue(ProviderSettingKeys.Repo, out var repoName);
 
         var cacheKey = new TokenCacheKey(installationId, repoName, includeIssuePermission, readOnly, apiUrl);

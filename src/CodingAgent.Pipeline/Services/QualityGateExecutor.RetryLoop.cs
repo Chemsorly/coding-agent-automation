@@ -18,7 +18,6 @@ public partial class QualityGateExecutor
         ArgumentNullException.ThrowIfNull(context);
 
         var run = context.Run;
-        var config = context.Config;
         var callbacks = context.Callbacks;
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
 

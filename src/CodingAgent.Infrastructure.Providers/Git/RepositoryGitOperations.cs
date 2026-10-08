@@ -187,28 +187,23 @@ internal static class RepositoryGitOperations
     {
         var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        var hardcodedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+        foreach (var change in hardcodedChanges.Where(c => PathBlacklist.IsPathBlacklisted(c.Path, hardcodedBlacklist)))
         {
-            var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-            foreach (var change in indexChanges)
-            {
-                if (PathBlacklist.IsPathBlacklisted(change.Path, hardcodedBlacklist))
-                {
-                    Commands.Unstage(repo, change.Path);
-                    unstaged.Add(change.Path.Replace('\\', '/'));
-                }
-            }
+            Commands.Unstage(repo, change.Path);
+            unstaged.Add(change.Path.Replace('\\', '/'));
         }
 
         // Apply configurable blacklist (may overlap with hardcoded — skip already-unstaged paths)
         if (configurableBlacklist is { Count: > 0 })
         {
             var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-            foreach (var change in indexChanges)
+            foreach (var path in indexChanges.Select(c => c.Path))
             {
-                var normalized = change.Path.Replace('\\', '/');
-                if (!unstaged.Contains(normalized) && PathBlacklist.IsPathBlacklisted(change.Path, configurableBlacklist))
+                var normalized = path.Replace('\\', '/');
+                if (!unstaged.Contains(normalized) && PathBlacklist.IsPathBlacklisted(path, configurableBlacklist))
                 {
-                    Commands.Unstage(repo, change.Path);
+                    Commands.Unstage(repo, path);
                     unstaged.Add(normalized);
                 }
             }

@@ -159,7 +159,7 @@
             _initializeIconName = labelsOk ? "check-circle" : "alert-triangle";
             _initializeIsError = !labelsOk;
         }
-        catch (OperationCanceledException) { return; }
+        catch (OperationCanceledException) { /* Component disposed while loading; nothing to update. */ }
         catch (Exception ex)
         {
             _initializeStatus = $"Initialization failed: {ex.Message}";
