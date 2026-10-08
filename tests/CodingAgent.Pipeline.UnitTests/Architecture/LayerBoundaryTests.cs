@@ -211,6 +211,37 @@ public partial class LayerBoundaryTests
             $"JobController closure references Pipeline (should be Pipeline-free): {string.Join(", ", offenders)}");
     }
 
+    // ProjectReference graph of every src project: project name -> names of the projects it references directly.
+    // Reads the csproj files only; a ProjectReference injected by Directory.Build.props/targets is not seen
+    // (none exists today).
+    private static Dictionary<string, List<string>> SrcProjectReferenceGraph() =>
+        Directory.EnumerateFiles(Path.Combine(RepoRoot, "src"), "*.csproj", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}"))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+            .ToDictionary(f => Path.GetFileNameWithoutExtension(f), ProjectReferencesOf, StringComparer.Ordinal);
+
+    private static List<string> ProjectReferencesOf(string csprojPath) =>
+        System.Xml.Linq.XDocument.Load(csprojPath).Descendants()
+            .Where(e => e.Name.LocalName == "ProjectReference")
+            .Select(e => (string?)e.Attribute("Include"))
+            .Where(include => !string.IsNullOrWhiteSpace(include))
+            // Include paths use '\'; normalise so GetFileNameWithoutExtension also works on Linux CI.
+            .Select(include => Path.GetFileNameWithoutExtension(include!.Replace('\\', '/')))
+            .ToList();
+
+    private static HashSet<string> ProjectReferenceClosure(Dictionary<string, List<string>> graph, string project)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>(graph.GetValueOrDefault(project) ?? []);
+        while (queue.Count > 0)
+        {
+            var next = queue.Dequeue();
+            if (seen.Add(next) && graph.TryGetValue(next, out var refs))
+                foreach (var r in refs) queue.Enqueue(r);
+        }
+        return seen;
+    }
+
     [Fact]
     public void Pipeline_ShouldNot_DependOnInfrastructure()
     {
@@ -827,20 +858,10 @@ public partial class LayerBoundaryTests
         };
 
         // ── Step 3: find all concrete BackgroundService subclasses in src files ──
-        var unregistered = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
-        {
-            var content = File.ReadAllText(file);
-            if (!content.Contains(": BackgroundService") && !content.Contains(": LeaderElectedPollingService")) continue;
-
-            var classMatch = ClassNameRegex().Match(content);
-            if (!classMatch.Success) continue;
-
-            var typeName = classMatch.Groups[1].Value;
-            if (!registeredTypes.Contains(typeName) && !retired.Contains(typeName))
-                unregistered.Add($"{typeName} ({Path.GetFileName(file)})");
-        }
+        var unregistered = ScanBackgroundServiceClasses(srcDir)
+            .Where(c => !registeredTypes.Contains(c.TypeName) && !retired.Contains(c.TypeName))
+            .Select(c => $"{c.TypeName} ({c.FileName})")
+            .ToList();
 
         Assert.True(unregistered.Count == 0,
             $"BackgroundService subclasses not registered in any DI container or retired allowlist: " +
@@ -876,6 +897,41 @@ public partial class LayerBoundaryTests
         }
 
         Assert.Contains("PipelineLoopService", registeredTypes);
+    }
+
+    // ── Positive control for T4 step 3: the class scanner sees non-sealed loops ──
+    // ARCH-T1-002: ClassNameRegex used to read `sealed?`, which makes only the final "d" optional, so a
+    // `public class` without `sealed` never matched and ReconciliationService — the JobController's only
+    // loop — was silently skipped by T4 (removing its registration failed no test). The fixed pattern is
+    // line-anchored: an unanchored `(?:sealed\s+)?` variant would capture "to" from the comment above the
+    // declaration ("changed from sealed to public class to allow"), and this control would fail on that too.
+    [Fact]
+    public void T4_PositiveControl_ReconciliationService_IsDetectedByClassScanner()
+    {
+        var classes = ScanBackgroundServiceClasses(Path.Combine(RepoRoot, "src"));
+        Assert.Contains(("ReconciliationService", "ReconciliationService.cs"), classes);
+    }
+
+    // Every concrete BackgroundService / LeaderElectedPollingService subclass declared in src/, as
+    // (type name, file name): the first public/internal class declared at the start of a line in each file
+    // that derives from one of the two bases. Abstract bases (`public abstract class`) are not matched.
+    private static List<(string TypeName, string FileName)> ScanBackgroundServiceClasses(string srcDir)
+    {
+        var found = new List<(string TypeName, string FileName)>();
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        {
+            var content = File.ReadAllText(file);
+            if (!content.Contains(": BackgroundService") && !content.Contains(": LeaderElectedPollingService")) continue;
+
+            // TODO: Match() returns only the first class declaration per file. A file that co-locates two
+            // concrete BackgroundService/LeaderElectedPollingService subclasses would silently omit all
+            // but the first from T4's unregistered list. Replace with Matches() to be exhaustive.
+            var classMatch = ClassNameRegex().Match(content);
+            if (classMatch.Success)
+                found.Add((classMatch.Groups[1].Value, Path.GetFileName(file)));
+        }
+        return found;
     }
 
     // ── T5: Monolith owns no database ──────────────────────────────────────
@@ -1009,7 +1065,10 @@ public partial class LayerBoundaryTests
 // Source-generated regexes (SYSLIB1045) — must be in a partial class
 public partial class LayerBoundaryTests
 {
-    [System.Text.RegularExpressions.GeneratedRegex(@"(?:public|internal)\s+sealed?\s+(?:partial\s+)?class\s+([A-Za-z0-9_]+)")]
+    // Line-anchored and `sealed` optional as a whole word (ARCH-T1-002): `sealed?` made only the "d" optional,
+    // and an unanchored pattern matches "public class to" inside a comment.
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[ \t]*(?:public|internal)\s+(?:sealed\s+)?(?:partial\s+)?class\s+([A-Za-z0-9_]+)",
+        System.Text.RegularExpressions.RegexOptions.Multiline)]
     private static partial System.Text.RegularExpressions.Regex ClassNameRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"AddHostedService<([A-Za-z0-9_.]+)>")]
