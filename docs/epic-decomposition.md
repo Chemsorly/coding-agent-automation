@@ -17,7 +17,7 @@ Label epic with agent:epic → Phase 1: Clone → Brain sync → Download open i
   → Agent explores codebase → Adversarial review → Post plan comment
   → Label: agent:epic-review (awaiting human approval)
 
-Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync
+Approve: swap to agent:epic-approved → Phase 2: Clone → Brain sync → Download open issues
   → Agent generates sub-issue JSON → Parse & validate → Create issues sequentially
   → Post summary comment → Label: agent:done
 ```
