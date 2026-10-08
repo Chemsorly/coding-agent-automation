@@ -203,4 +203,73 @@ public class FeedbackPromptBuilderContentTests
             null!, TimeSpan.FromMinutes(1), [], []);
         act.Should().Throw<ArgumentNullException>();
     }
+
+    // ── Not-re-applied section: BuildStandaloneFeedbackPrompt ────────────────
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_WithNotReappliedIdentifiers_IncludesSection()
+    {
+        var run = CreateTestRun(retryCount: 0);
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["tests/SomeTests.cs"] = ["DroppedTestClass", "DroppedMethod"]
+        };
+        var elapsed = TimeSpan.FromMinutes(3);
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run, elapsed, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().Contain("Force-resolved rebase");
+        result.Should().Contain("DroppedTestClass");
+        result.Should().Contain("DroppedMethod");
+        result.Should().Contain("tests/SomeTests.cs");
+    }
+
+    [Fact]
+    public void BuildStandaloneFeedbackPrompt_WithEmptyNotReappliedIdentifiers_ExcludesSection()
+    {
+        var run = CreateTestRun(retryCount: 0);
+        // NotReappliedIdentifiersByFile is empty by default
+        var elapsed = TimeSpan.FromMinutes(3);
+
+        var result = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
+            run, elapsed, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().NotContain("Force-resolved rebase");
+    }
+
+    // ── Not-re-applied section: BuildFailureFeedbackPrompt ───────────────────
+
+    [Fact]
+    public void BuildFailureFeedbackPrompt_WithNotReappliedIdentifiers_IncludesSection()
+    {
+        var run = CreateTestRun(retryCount: 3, "Build failed");
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["src/ServiceA.cs"] = ["ServiceA"]
+        };
+        var issue = CreateTestIssue();
+        var report = CreateTestReport();
+
+        var result = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
+            run, issue, report, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().Contain("Force-resolved rebase");
+        result.Should().Contain("ServiceA");
+        result.Should().Contain("src/ServiceA.cs");
+    }
+
+    [Fact]
+    public void BuildFailureFeedbackPrompt_WithEmptyNotReappliedIdentifiers_ExcludesSection()
+    {
+        var run = CreateTestRun(retryCount: 2, "Tests failed");
+        // NotReappliedIdentifiersByFile is empty by default
+        var issue = CreateTestIssue();
+        var report = CreateTestReport();
+
+        var result = FeedbackPromptBuilder.BuildFailureFeedbackPrompt(
+            run, issue, report, previousHarnessCategories: [], previousIssueCategories: []);
+
+        result.Should().NotContain("Force-resolved rebase");
+    }
 }

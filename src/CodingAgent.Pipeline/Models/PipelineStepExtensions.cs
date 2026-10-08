@@ -60,6 +60,7 @@ public static class PipelineStepExtensions
         PipelineStep.ConflictRestart => "Conflict Restart",
         PipelineStep.PrMerged => "PR Merged",
         PipelineStep.PrClosed => "PR Closed",
+        PipelineStep.CheckingDroppedIdentifiers => "Checking Dropped Identifiers",
         _ => step.ToString()
     };
 }

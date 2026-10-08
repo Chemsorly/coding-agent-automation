@@ -1941,4 +1941,83 @@ public class PullRequestFinalizationServiceTests
         repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), (bool?)null, It.IsAny<CancellationToken>()), Times.Once);
         repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ── AppendDroppedIdentifiersSection: non-draft path via GeneratePrDescriptionAsync ─
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenNotReappliedIdentifiersExist_PrBodyContainsDroppedSection()
+    {
+        using var tmpDir = new TempDirectory();
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "17";
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["tests/DroppedTests.cs"] = ["DroppedTestClass"]
+        };
+
+        // Write the description file so GeneratePrDescriptionAsync produces a description
+        var agentDir = Path.Combine(tmpDir.Path, ".agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Combine(agentDir, "pr-description.md"), "## Summary\n\nAgent description here.");
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        string? capturedBody = null;
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(17, It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().Contain("⚠️ Dropped changes not re-applied");
+        capturedBody.Should().Contain("DroppedTestClass");
+        capturedBody.Should().Contain("tests/DroppedTests.cs");
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenNotReappliedIdentifiersEmpty_NoPrBodyDroppedSection()
+    {
+        using var tmpDir = new TempDirectory();
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "18";
+        // NotReappliedIdentifiersByFile is empty by default
+
+        var agentDir = Path.Combine(tmpDir.Path, ".agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Combine(agentDir, "pr-description.md"), "## Summary\n\nClean run.");
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        string? capturedBody = null;
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(18, It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().NotContain("⚠️ Dropped changes not re-applied");
+    }
+
+    // ── Helper: TempDirectory ────────────────────────────────────────────────
+
+    private sealed class TempDirectory : IDisposable
+    {
+        public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pr-fin-test-{Guid.NewGuid():N}");
+        public TempDirectory() => Directory.CreateDirectory(Path);
+        public void Dispose() { try { Directory.Delete(Path, recursive: true); } catch { /* best-effort */ } }
+    }
 }

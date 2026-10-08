@@ -254,6 +254,61 @@ public class CreateBranchStepTests
         File.Exists(Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReworkContextFilePath)).Should().BeFalse();
     }
 
+    // ── DroppedIdentifiersByFile population (issue #3435) ────────────────────
+
+    [Fact]
+    public async Task WhenRebaseForceResolves_DroppedIdentifiersByFileIsPopulated()
+    {
+        const int prNum = 50;
+        var (context, run) = BuildContextWithLinkedPr(prNum, PipelineRunType.Implementation);
+        Directory.CreateDirectory(run.WorkspacePath!);
+        try
+        {
+            var mergeResult = new MergeResult
+            {
+                Success = true,
+                HasConflicts = true,
+                ForceResolved = true,
+                ConflictFiles = ["src/DroppedFile.cs"],
+                ForceResolvedContext =
+                [
+                    new ForceResolvedFileContext
+                    {
+                        Path = "src/DroppedFile.cs",
+                        BranchChange = "+public class DroppedClass\n+{\n+}\n",
+                        BaseChange = "+public class MainClass\n+{\n+}\n",
+                        BaseCommits = []
+                    }
+                ]
+            };
+            SetupOpenPrCheckout(prNum, mergeResult);
+
+            await new CreateBranchStep().ExecuteAsync(context, CancellationToken.None);
+
+            run.DroppedIdentifiersByFile.Should().ContainKey("src/DroppedFile.cs",
+                "force-resolved file with a class declaration must have identifiers extracted");
+            run.DroppedIdentifiersByFile["src/DroppedFile.cs"].Should().Contain("DroppedClass");
+        }
+        finally
+        {
+            if (Directory.Exists(run.WorkspacePath!))
+                Directory.Delete(run.WorkspacePath!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task WhenRebaseHasNoConflicts_DroppedIdentifiersByFileRemainsEmpty()
+    {
+        const int prNum = 51;
+        var (context, run) = BuildContextWithLinkedPr(prNum, PipelineRunType.Implementation);
+        SetupOpenPrCheckout(prNum, new MergeResult { Success = true, HasConflicts = false, ConflictFiles = [] });
+
+        await new CreateBranchStep().ExecuteAsync(context, CancellationToken.None);
+
+        run.DroppedIdentifiersByFile.Should().BeEmpty(
+            "no force-resolved rebase means no dropped identifiers to track");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private void SetupOpenPrCheckout(int prNumber, MergeResult mergeResult)

@@ -94,6 +94,34 @@ public sealed class PullRequestFinalizationService
                 // Preserve a more specific failure reason if already set (e.g., "CI never started after N retries").
                 // Fall back to the generic draft message for all other exhaustion paths.
                 run.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
+
+                // For draft PRs GeneratePrDescriptionAsync is skipped, so inject the not-re-applied
+                // section directly here if there are any identifiers to report (issue #3435).
+                if (run.NotReappliedIdentifiersByFile.Count > 0 && !string.IsNullOrEmpty(run.PullRequestNumber))
+                {
+                    try
+                    {
+                        var updatedBody = AppendDroppedIdentifiersSection(run.PullRequestBody ?? "", run);
+                        // TODO: If PullRequestNumber is non-empty but not a valid integer, int.TryParse
+                        // silently fails here and UpdatePullRequestAsync is never called — the
+                        // dropped-identifier section is silently lost for draft PRs with non-numeric PR
+                        // numbers and no diagnostic trace is emitted. Add a warning log branch for the
+                        // TryParse failure path (consistent with the warning in GeneratePrDescriptionAsync).
+                        if (int.TryParse(run.PullRequestNumber, out var draftPrNumber))
+                        {
+                            await repoProvider.UpdatePullRequestAsync(draftPrNumber, updatedBody, null, ct);
+                            run.PullRequestBody = updatedBody;
+                            _logger.Information(
+                                "Pipeline {RunId} appended not-re-applied section to draft PR body", run.RunId);
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex,
+                            "Pipeline {RunId} failed to append not-re-applied section to draft PR body, continuing",
+                            run.RunId);
+                    }
+                }
             }
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
         }
@@ -314,6 +342,7 @@ public sealed class PullRequestFinalizationService
             var newBody = string.IsNullOrWhiteSpace(currentBody)
                 ? description
                 : $"{description}\n\n---\n\n{currentBody}";
+            newBody = AppendDroppedIdentifiersSection(newBody, run);
             await repoProvider.UpdatePullRequestAsync(prNumber, newBody, null, ct);
             run.PullRequestBody = newBody;
 
@@ -454,5 +483,34 @@ public sealed class PullRequestFinalizationService
             return line;
         });
         return string.Join("\n", stripped).Trim();
+    }
+
+    /// <summary>
+    /// Appends the "Dropped changes not re-applied" section to <paramref name="body"/> when
+    /// <see cref="PipelineRun.NotReappliedIdentifiersByFile"/> is non-empty.
+    /// Returns <paramref name="body"/> unchanged when there are no not-re-applied identifiers.
+    /// The section is appended after the agent description and before any <c>---</c> divider.
+    /// </summary>
+    private static string AppendDroppedIdentifiersSection(string body, PipelineRun run)
+    {
+        if (run.NotReappliedIdentifiersByFile.Count == 0)
+            return body;
+
+        var section = new System.Text.StringBuilder();
+        section.AppendLine();
+        section.AppendLine("## ⚠️ Dropped changes not re-applied");
+        section.AppendLine();
+        section.AppendLine("The force-resolved rebase dropped the following identifiers that this branch had added. " +
+            "They were not re-applied during code generation:");
+        section.AppendLine();
+        foreach (var (path, ids) in run.NotReappliedIdentifiersByFile)
+        {
+            var idList = string.Join(", ", ids.Select(id => $"`{id}`"));
+            section.AppendLine($"- `{path}`: {idList}");
+        }
+        section.AppendLine();
+        section.Append("These may have been intentionally dropped (if outside the issue scope) or accidentally omitted.");
+
+        return body + section.ToString();
     }
 }
