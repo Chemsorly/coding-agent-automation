@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using System.Runtime.InteropServices;
 using CodingAgent.Pipeline;
+using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Telemetry;
@@ -700,6 +701,38 @@ public class QualityGateValidatorTests
     // (on timeout). The production code sets these correctly but there is no regression guard — a refactor could
     // silently drop the tags without any test failing. Use ActivitySource.AddActivityListener with a filter on
     // PipelineTelemetry.ActivitySource.Name and assert Activity.Tags after ValidateAsync returns.
+
+    // --- Acceptance criterion: baseBranch removal ---
+
+    // TODO [WARNING]: This reflection test detects re-addition of 'baseBranch' by name, but would not catch
+    // a parameter re-introduced under a different name (e.g. 'baseRef') that is again silently ignored.
+    // A behavioural complement — confirming ValidateAsync is callable with the expected parameter set
+    // (workspacePath, qualityGateConfigs, ct, reportEvent) and returns a valid QualityGateReport — would
+    // provide a more meaningful regression guard. (TestQualityReviewer WARNING — issue #3437)
+
+    // TODO [WARNING]: This test inspects only the interface type; it does not exercise QualityGateValidator's
+    // implementation at all. The issue prerequisites called for characterisation tests covering a configured
+    // QGC run on the concrete ValidateAsync implementation (e.g. verifying CleanWorkspacePrologue and
+    // RunAllQgcsAsync are called). Without such tests a future refactor that alters observable behaviour of
+    // the implementation (e.g. stops calling CleanWorkspacePrologue) would not be caught here.
+    // (TestQualityReviewer WARNING — issue #3437)
+
+    /// <summary>
+    /// Regression guard for issue #3437: <c>baseBranch</c> was removed from
+    /// <see cref="IQualityGateValidator.ValidateAsync"/> because it was accepted but never read.
+    /// This test uses reflection to assert the parameter is absent from the interface, so that
+    /// re-adding it (even as an optional parameter) causes an immediate, named failure rather
+    /// than a silent contract drift.
+    /// </summary>
+    [Fact]
+    public void ValidateAsync_InterfaceSignature_DoesNotContainBaseBranchParameter()
+    {
+        var method = typeof(IQualityGateValidator)
+            .GetMethod(nameof(IQualityGateValidator.ValidateAsync))!;
+        var paramNames = method.GetParameters().Select(p => p.Name).ToArray();
+        paramNames.Should().NotContain("baseBranch",
+            "baseBranch was removed from the interface per issue #3437 — it was accepted but never read");
+    }
 
     private sealed class TimeoutSimulatingValidator : QualityGateValidator
     {

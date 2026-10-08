@@ -84,8 +84,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         var context = BuildContext();
@@ -105,8 +104,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         var context = BuildContext();
@@ -136,8 +134,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         var context = BuildContext();
@@ -163,8 +160,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(exceptionMessage));
 
         var context = BuildContext();
@@ -184,8 +180,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         _mockCallbacks.Setup(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()))
@@ -208,8 +203,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException(exceptionMessage));
 
         var emittedLines = new List<string>();
@@ -233,8 +227,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         DateTime? completedAtAtTransitionTime = null;
@@ -266,8 +259,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         var context = BuildContext();
@@ -321,8 +313,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         var context = BuildContext();
@@ -368,8 +359,7 @@ public class QualityGateExecutorExceptionPathTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("unexpected error"));
 
         var context = BuildContext();
