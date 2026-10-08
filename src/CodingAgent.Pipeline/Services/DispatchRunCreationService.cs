@@ -53,16 +53,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     /// <inheritdoc />
     public async Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
-        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
-
-        var issueProviderId = request.IssueProviderId;
-        var issueIdentifier = request.IssueIdentifier;
-
-        var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
+        var (issueProviderId, issueIdentifier, compositeKey) = ValidateAndBuildKey(request);
 
         // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
         if (!_dispatchingIssues.TryAdd(compositeKey, 0))
@@ -103,16 +94,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     /// <inheritdoc />
     public async Task<RunReservation?> ReserveRunIdAsync(DispatchRunRequest request, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(request);
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
-        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
-
-        var issueProviderId = request.IssueProviderId;
-        var issueIdentifier = request.IssueIdentifier;
-
-        var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
+        var (issueProviderId, issueIdentifier, compositeKey) = ValidateAndBuildKey(request);
 
         // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
         if (!_dispatchingIssues.TryAdd(compositeKey, 0))
@@ -160,6 +142,25 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         ArgumentNullException.ThrowIfNull(run);
         _lifecycle.ReplaceDispatchedRun(run);
+    }
+
+    /// <summary>
+    /// Validates common <see cref="DispatchRunRequest"/> arguments and builds the composite
+    /// dedup key shared by <see cref="CreateDispatchedRunAsync"/> and <see cref="ReserveRunIdAsync"/>.
+    /// </summary>
+    private static (ProviderConfigId IssueProviderId, IssueIdentifier IssueIdentifier, string CompositeKey)
+        ValidateAndBuildKey(DispatchRunRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueIdentifier.Value, nameof(request.IssueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
+
+        var issueProviderId = request.IssueProviderId;
+        var issueIdentifier = request.IssueIdentifier;
+        var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
+        return (issueProviderId, issueIdentifier, compositeKey);
     }
 
     /// <summary>
