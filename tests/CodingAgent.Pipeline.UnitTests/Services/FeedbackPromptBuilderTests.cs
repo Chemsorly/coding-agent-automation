@@ -46,23 +46,23 @@ public class FeedbackPromptBuilderContentTests
         bool testsPassed = false,
         string? compilationDetails = null,
         string? testDetails = null) => new()
-    {
-        Compilation = new GateResult
         {
-            GateName = "Compilation",
-            Passed = compilationPassed,
-            Details = compilationDetails ?? "error CS1002: ; expected in LoginService.cs"
-        },
-        Tests = new GateResult
-        {
-            GateName = "Tests",
-            Passed = testsPassed,
-            Details = testDetails ?? "3 tests failed",
-            TestsPassed = 47,
-            TestsFailed = 3,
-            TestsSkipped = 1
-        }
-    };
+            Compilation = new GateResult
+            {
+                GateName = "Compilation",
+                Passed = compilationPassed,
+                Details = compilationDetails ?? "error CS1002: ; expected in LoginService.cs"
+            },
+            Tests = new GateResult
+            {
+                GateName = "Tests",
+                Passed = testsPassed,
+                Details = testDetails ?? "3 tests failed",
+                TestsPassed = 47,
+                TestsFailed = 3,
+                TestsSkipped = 1
+            }
+        };
 
     /// <summary>
     /// Failure prompt includes the issue description text.
