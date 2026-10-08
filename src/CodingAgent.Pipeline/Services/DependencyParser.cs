@@ -7,7 +7,7 @@ namespace CodingAgent.Pipeline.Services;
 /// Either a bare issue number in the same tracker (<see cref="NumberRef"/>)
 /// or a full issue URL targeting a specific tracker (<see cref="UrlRef"/>).
 /// </summary>
-public abstract record DependencyRef;
+public abstract record DependencyRef; // NOSONAR S2094 — base of a closed record hierarchy; derived records carry the data
 
 /// <summary>A numeric dependency reference (e.g., <c>#42</c>).</summary>
 public sealed record NumberRef(int Number) : DependencyRef;
