@@ -27,25 +27,19 @@ public sealed record UrlRef(string Url) : DependencyRef;
 /// </summary>
 public static class DependencyParser
 {
-    // Group 1: #digits pattern
-    // Group 2: alphanumeric identifier (e.g., PROJ-123)
-    // Group 3: GitHub issue URL (https://github.com/{owner}/{repo}/issues/{number})
-    // Group 4: GitLab issue URL (https://gitlab.com/{namespace}/{project}/-/issues/{number})
+    // Group 1: GitHub issue URL (https://github.com/{owner}/{repo}/issues/{number})
+    // Group 2: GitLab issue URL (https://gitlab.com/{namespace}/{subgroup...}/{project}/-/issues/{number})
+    // Group 3: #digits pattern
+    // Group 4: alphanumeric identifier (e.g., PROJ-123)
     // The URL alternatives are matched before the short-form alternatives so a URL like
-    // "https://github.com/acme/repo/issues/40" is captured by group 3 rather than being
-    // partially matched by group 1 (which would only see the trailing "#40" if present).
+    // "https://github.com/acme/repo/issues/40" is captured by group 1 rather than being
+    // partially matched by group 3 (which would only see the trailing "#40" if present).
     private static readonly Regex DependencyPattern = new(
         @"\b(?:blocked\s+by|depends\s+on|requires|after)\s+" +
         @"(?:" +
             @"(https://github\.com/[^/\s]+/[^/\s]+/issues/\d+)" +   // Group 1: GitHub issue URL
             @"|" +
-            // TODO: Group 2 only matches a single-level namespace/project (two [^/\s]+ segments).
-            // GitLab supports arbitrarily deep subgroups, e.g.
-            // https://gitlab.com/group/subgroup/project/-/issues/7.
-            // Such URLs are not matched and will be silently ignored (no UrlRef produced).
-            // Fix: replace the two fixed segments with a pattern that allows multiple path
-            // segments before /-/issues/, e.g. `[^/\s]+(?:/[^/\s]+)+` or `[^\s]+?` (non-greedy).
-            @"(https://gitlab\.com/[^/\s]+/[^/\s]+/-/issues/\d+)" + // Group 2: GitLab issue URL
+            @"(https://gitlab\.com/[^/\s]+(?:/[^/\s]+)+/-/issues/\d+)" + // Group 2: GitLab issue URL
             @"|" +
             @"#(\d+)" +                                               // Group 3: #digits
             @"|" +
