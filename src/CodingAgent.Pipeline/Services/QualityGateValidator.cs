@@ -517,9 +517,9 @@ public class QualityGateValidator : IQualityGateValidator
     {
         // When the overall run was Cancelled (e.g. by concurrency:cancel-in-progress), dependent
         // jobs cascade to Failure conclusion even though no code failed. Use per-job LogContent as
-        // a heuristic: a job that actually executed will have LogContent (populated by
-        // PipelinePollingHelper.EnrichFailedJobsWithLogsAsync for all EndedUnsuccessfully() jobs);
-        // a cascade artefact that never started has no logs and is excluded.
+        // a heuristic: a job that actually executed will have LogContent. LogContent is populated
+        // by PipelinePollingHelper.EnrichFailedJobsWithLogsAsync for all jobs that ended
+        // unsuccessfully. A cascade artefact that never started has no logs and is excluded.
         // Known gaps: (1) log-availability races (BlobNotFound) leave LogContent null for a real
         // failure — treated as cascade artefact, consistent with CiFailureClassifier's Infrastructure
         // classification for no-log jobs; (2) jobs with JobId = 0 are skipped by enrichment and
