@@ -42,6 +42,50 @@ public static class BlazorPageExtensions
             new() { Timeout = timeoutMs });
 
     /// <summary>
+    /// Waits until a cockpit page is interactive and has finished its first data load.
+    /// Cockpit pages are prerendered with their data; when the circuit connects, the interactive
+    /// component re-runs <c>OnInitializedAsync</c> and shows a "Loading…" placeholder until its API
+    /// calls return, and prerendered buttons have no handlers. This waits until the layout's theme
+    /// toggle has its Blazor handler (the circuit has rendered the page) and no
+    /// <c>.cockpit-empty</c> placeholder starting with "Loading" is left.
+    /// </summary>
+    /// <param name="page">The page to wait on.</param>
+    /// <param name="timeoutMs">Maximum time to wait in milliseconds, per step.</param>
+    public static async Task WaitForCockpitPageReadyAsync(this IPage page, int timeoutMs = 15_000)
+    {
+        await page.WaitForInteractiveAsync(".cockpit-theme-toggle", timeoutMs);
+        await page.WaitForFunctionAsync(
+            "() => ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.trim().startsWith('Loading'))",
+            null,
+            new() { Timeout = timeoutMs });
+    }
+
+    /// <summary>
+    /// Waits until the CockpitLayout's project switcher DOM value matches the value stored in
+    /// <c>localStorage['cockpit.selectedProjectId']</c>. This confirms that the layout's
+    /// <c>OnAfterRenderAsync</c> has completed its localStorage restore and any project-scoped
+    /// page has received the <c>OnProjectChanged</c> event and re-queried its data.
+    /// <para>
+    /// Call this after <see cref="WaitForCockpitPageReadyAsync"/> on pages whose content is
+    /// filtered by the selected project (e.g. /work), to avoid reading stale all-projects data
+    /// that was loaded before the localStorage restore fired.
+    /// </para>
+    /// </summary>
+    /// <param name="page">The page to wait on.</param>
+    /// <param name="timeoutMs">Maximum time to wait in milliseconds.</param>
+    public static Task WaitForProjectSwitcherRestoredAsync(this IPage page, int timeoutMs = 15_000)
+        => page.WaitForFunctionAsync(
+            """
+            () => {
+                const stored = localStorage.getItem('cockpit.selectedProjectId') ?? '';
+                const sel = document.querySelector('select[aria-label="Project scope"]');
+                return sel != null && sel.value === stored;
+            }
+            """,
+            null,
+            new() { Timeout = timeoutMs });
+
+    /// <summary>
     /// Waits for Blazor enhanced navigation to complete by listening for the 'enhancedload' event.
     /// Call before the action that triggers navigation, then await the returned task.
     /// </summary>

@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -22,7 +23,38 @@ public sealed class WorkPage
     {
         await _page.GotoAsync($"{_baseUrl}/work");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForTimeoutAsync(2000);
+
+        // Step 1: wait for the initial circuit render + data load to complete.
+        // "Loading work…" (.cockpit-empty) appears while OnInitializedAsync runs; wait for it to clear.
+        await _page.WaitForCockpitPageReadyAsync();
+
+        // Step 2: wait for the CockpitLayout's OnAfterRenderAsync to restore the selected project
+        // from localStorage and update the project-switcher DOM element.
+        // CockpitState.SelectedProjectId starts as "" (all projects) on each new circuit; the
+        // layout restores it from localStorage['cockpit.selectedProjectId'] in OnAfterRenderAsync.
+        await _page.WaitForProjectSwitcherRestoredAsync();
+
+        // Step 3: wait for HandleProjectChanged's subsequent LoadBacklogAsync to finish.
+        // After OnAfterRenderAsync sets the project, it fires OnProjectChanged which causes the
+        // Work page to call RefreshQuietAsync (no indicator) then LoadBacklogAsync, which sets
+        // _backlogLoading=true and shows "Checking the provider backlog…". Only once that
+        // disappears has the Work page fully re-rendered with the correct project-scoped data.
+        // The selector times out if _backlogLoading never becomes true (e.g. "All projects" is
+        // already selected), so we try-catch and treat absence as "already done".
+        try
+        {
+            await _page.WaitForSelectorAsync(
+                ".cockpit-empty:has-text('Checking the provider backlog')",
+                new() { Timeout = 5_000, State = WaitForSelectorState.Visible });
+        }
+        catch (TimeoutException) { /* "Checking…" never appeared — project was already correct. */ }
+        catch (Microsoft.Playwright.PlaywrightException) { /* same as above */ }
+
+        // Wait for "Checking the provider backlog…" to disappear, confirming the re-query is done.
+        await _page.WaitForFunctionAsync(
+            "() => ![...document.querySelectorAll('.cockpit-empty')].some(e => e.textContent.trim().startsWith('Checking'))",
+            null,
+            new() { Timeout = 15_000 });
     }
 
     private ILocator InFlightCard => _page.Locator(".cockpit-card:has(h2:has-text('In flight'))");
