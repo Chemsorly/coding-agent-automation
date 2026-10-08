@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Text.Json;
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Models;
@@ -82,12 +83,6 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
     private static string AgentKey(string agentId) => $"agent:{agentId}";
     private const string AgentsAllKey = "agents:all";
     private const string AgentsIdleKey = "agents:idle";
-    private const string BusySinceField = "busySince";
-    private const string DisconnectedAtField = "disconnectedAt";
-    private const string ActiveJobIdField = "activeJobId";
-    private const string ActiveChatSessionIdField = "activeChatSessionId";
-    private const string DisabledField = "disabled";
-    private const string OrphanRestoredAtField = "orphanRestoredAt";
 
     // ── Register ──────────────────────────────────────────────────────
 
@@ -411,7 +406,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             return;
         }
 
-        await _store.HashSetFieldAsync(key, "lastHeartbeatAt", timestamp.ToString("O"));
+        await _store.HashSetFieldAsync(key, AgentFieldNames.LastHeartbeatAt, timestamp.ToString("O"));
         await _store.ExpireAsync(key, AgentTtl);
 
         // Self-healing: restore set membership in case the cleanup sweep removed this member
@@ -464,14 +459,14 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var fields = new List<HashEntry> { new("status", newStatus.ToString()) };
 
         if (newStatus == AgentStatus.Busy)
-            fields.Add(new HashEntry(BusySinceField, now.ToString("O")));
+            fields.Add(new HashEntry(AgentFieldNames.BusySince, now.ToString("O")));
         else
-            fields.Add(new HashEntry(BusySinceField, ""));
+            fields.Add(new HashEntry(AgentFieldNames.BusySince, ""));
 
         if (newStatus == AgentStatus.Disconnected)
-            fields.Add(new HashEntry(DisconnectedAtField, now.ToString("O")));
+            fields.Add(new HashEntry(AgentFieldNames.DisconnectedAt, now.ToString("O")));
         else if (newStatus == AgentStatus.Idle)
-            fields.Add(new HashEntry(DisconnectedAtField, ""));
+            fields.Add(new HashEntry(AgentFieldNames.DisconnectedAt, ""));
 
         await _store.HashSetAsync(key, fields.ToArray());
         // Refresh the TTL whenever status is written — ensures any write path that calls
@@ -799,10 +794,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
     private static AgentEntry WithAgentField(AgentEntry current, string field, string? value) => field switch
     {
-        ActiveJobIdField => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-        ActiveChatSessionIdField => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-        DisabledField => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
-        OrphanRestoredAtField => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+        AgentFieldNames.ActiveJobId => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+        AgentFieldNames.ActiveChatSessionId => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+        AgentFieldNames.Disabled => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+        AgentFieldNames.OrphanRestoredAt => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
         _ => current
     };
 
@@ -856,10 +851,10 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             addValueFactory: CreateDeregistrationRaceSentinel,
             updateValueFactory: (_, current) => field switch
             {
-                ActiveJobIdField => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                OrphanRestoredAtField => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
-                ActiveChatSessionIdField => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                DisabledField => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
+                AgentFieldNames.ActiveJobId => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
+                AgentFieldNames.OrphanRestoredAt => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
+                AgentFieldNames.ActiveChatSessionId => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
+                AgentFieldNames.Disabled => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
                 _ => current
             });
         RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId.Value, committedField,
@@ -979,8 +974,8 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var r = new RedisHashReader(hash);
 
         var agentId = r.RequiredString("agentId"); if (agentId is null) return null;
-        var connectionId = r.RequiredString("connectionId"); if (connectionId is null) return null;
-        var registeredAtStr = r.RequiredString("registeredAt"); if (registeredAtStr is null) return null;
+        var connectionId = r.RequiredString(AgentFieldNames.ConnectionId); if (connectionId is null) return null;
+        var registeredAtStr = r.RequiredString(AgentFieldNames.RegisteredAt); if (registeredAtStr is null) return null;
 
         // hostname falls back to "" (not null) — use ?? "" at the call site
         var hostname = r.OptionalString("hostname") ?? "";
@@ -1002,8 +997,8 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
 
         _ = System.DateTimeOffset.TryParse(registeredAtStr, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var registeredAt);
 
-        // Bool(DisabledField) returns false on absent/unparseable — equivalent to ?? "false" before TryParse.
-        var disabled = r.Bool(DisabledField);
+        // Bool(AgentFieldNames.Disabled) returns false on absent/unparseable — equivalent to ?? "false" before TryParse.
+        var disabled = r.Bool(AgentFieldNames.Disabled);
 
         return new AgentEntry
         {
@@ -1013,13 +1008,13 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
             Labels = labels,
             Status = status,
             RegisteredAt = registeredAt,
-            LastHeartbeatAt = r.DateTimeOffset("lastHeartbeatAt"),
-            LastJobCompletedAt = r.DateTimeOffsetOrNull("lastJobCompletedAt"),
-            DisconnectedAt = r.DateTimeOffsetOrNull(DisconnectedAtField),
-            BusySince = r.DateTimeOffsetOrNull(BusySinceField),
-            OrphanRestoredAt = r.DateTimeOffsetOrNull(OrphanRestoredAtField),
-            ActiveJobId = r.OptionalString(ActiveJobIdField),
-            ActiveChatSessionId = r.OptionalString(ActiveChatSessionIdField),
+            LastHeartbeatAt = r.DateTimeOffset(AgentFieldNames.LastHeartbeatAt),
+            LastJobCompletedAt = r.DateTimeOffsetOrNull(AgentFieldNames.LastJobCompletedAt),
+            DisconnectedAt = r.DateTimeOffsetOrNull(AgentFieldNames.DisconnectedAt),
+            BusySince = r.DateTimeOffsetOrNull(AgentFieldNames.BusySince),
+            OrphanRestoredAt = r.DateTimeOffsetOrNull(AgentFieldNames.OrphanRestoredAt),
+            ActiveJobId = r.OptionalString(AgentFieldNames.ActiveJobId),
+            ActiveChatSessionId = r.OptionalString(AgentFieldNames.ActiveChatSessionId),
             Disabled = disabled
         };
     }
@@ -1029,19 +1024,19 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         return
         [
             new HashEntry("agentId", entry.AgentId.Value),
-            new HashEntry("connectionId", entry.ConnectionId),
+            new HashEntry(AgentFieldNames.ConnectionId, entry.ConnectionId),
             new HashEntry("hostname", entry.Hostname),
             new HashEntry("labels", JsonSerializer.Serialize(entry.Labels)),
             new HashEntry("status", entry.Status.ToString()),
-            new HashEntry("registeredAt", entry.RegisteredAt.ToString("O")),
-            new HashEntry("lastHeartbeatAt", entry.LastHeartbeatAt.ToString("O")),
-            new HashEntry("lastJobCompletedAt", entry.LastJobCompletedAt?.ToString("O") ?? ""),
-            new HashEntry(DisconnectedAtField, entry.DisconnectedAt?.ToString("O") ?? ""),
-            new HashEntry(BusySinceField, entry.BusySince?.ToString("O") ?? ""),
-            new HashEntry(ActiveJobIdField, entry.ActiveJobId ?? ""),
-            new HashEntry(ActiveChatSessionIdField, entry.ActiveChatSessionId ?? ""),
-            new HashEntry(DisabledField, entry.Disabled.ToString()),
-            new HashEntry(OrphanRestoredAtField, entry.OrphanRestoredAt?.ToString("O") ?? "")
+            new HashEntry(AgentFieldNames.RegisteredAt, entry.RegisteredAt.ToString("O")),
+            new HashEntry(AgentFieldNames.LastHeartbeatAt, entry.LastHeartbeatAt.ToString("O")),
+            new HashEntry(AgentFieldNames.LastJobCompletedAt, entry.LastJobCompletedAt?.ToString("O") ?? ""),
+            new HashEntry(AgentFieldNames.DisconnectedAt, entry.DisconnectedAt?.ToString("O") ?? ""),
+            new HashEntry(AgentFieldNames.BusySince, entry.BusySince?.ToString("O") ?? ""),
+            new HashEntry(AgentFieldNames.ActiveJobId, entry.ActiveJobId ?? ""),
+            new HashEntry(AgentFieldNames.ActiveChatSessionId, entry.ActiveChatSessionId ?? ""),
+            new HashEntry(AgentFieldNames.Disabled, entry.Disabled.ToString()),
+            new HashEntry(AgentFieldNames.OrphanRestoredAt, entry.OrphanRestoredAt?.ToString("O") ?? "")
         ];
     }
 }
