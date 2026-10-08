@@ -1,7 +1,7 @@
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 
-namespace CodingAgent.Web.E2ETests.Fakes;
+namespace CodingAgent.Web.TestUtilities;
 
 /// <summary>
 /// In-memory pipeline run history service. No file I/O.
