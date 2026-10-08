@@ -69,13 +69,15 @@ public sealed class CheckDroppedIdentifiersStep : IPipelineStep
                 continue;
             }
 
-            var missing = identifiers
-                // TODO: Regex.IsMatch with a freshly-constructed pattern is called once per identifier
-                // per file. The static regex cache has a fixed size; under a large force-resolved rebase
-                // with many identifiers the cache evicts entries and causes repeated recompilation.
-                // Consider pre-compiling each pattern before the Where lambda
-                // (e.g. new Regex($@"\b{Regex.Escape(id)}\b", RegexOptions.Compiled)) to avoid this.
-                .Where(id => !Regex.IsMatch(content, $@"\b{Regex.Escape(id)}\b"))
+            // Pre-compile each pattern with a timeout to avoid repeated cache evictions and
+            // to satisfy S6444 (pass a timeout to limit execution time).
+            var compiledPatterns = identifiers
+                .Select(id => (Id: id, Pattern: new Regex($@"\b{Regex.Escape(id)}\b", RegexOptions.None, TimeSpan.FromSeconds(5))))
+                .ToList();
+
+            var missing = compiledPatterns
+                .Where(p => !p.Pattern.IsMatch(content))
+                .Select(p => p.Id)
                 .ToList();
 
             if (missing.Count > 0)

@@ -16,11 +16,14 @@ namespace CodingAgent.Pipeline.Services;
 /// </remarks>
 public static class DroppedIdentifierExtractor
 {
+    // Timeout for regex operations — prevents catastrophic backtracking on adversarial input.
+    private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(5);
+
     // Matches C# type declarations on added diff lines:
     //   + [access-modifier] [modifiers] class|record|struct|interface|enum TypeName
     private static readonly Regex TypeDeclaration = new(
         @"^\+\s*(?:public|internal|private|protected)?\s*(?:partial\s+|sealed\s+|abstract\s+|static\s+|readonly\s+)*(?:class|record|struct|interface|enum)\s+(\w+)",
-        RegexOptions.Compiled | RegexOptions.Multiline);
+        RegexOptions.Compiled | RegexOptions.Multiline, RegexTimeout);
 
     // Matches C# method declarations on added diff lines:
     //   + [access-modifier] [modifiers] ReturnType MethodName(
@@ -34,18 +37,18 @@ public static class DroppedIdentifierExtractor
     // pattern into a modifier group and a return-type group to reliably skip to the method name.
     private static readonly Regex MethodDeclaration = new(
         @"^\+\s*(?:public|internal|protected|private)(?:[\s\w<>\[\],?.]+?)\s+(\w+)\s*[(<]",
-        RegexOptions.Compiled | RegexOptions.Multiline);
+        RegexOptions.Compiled | RegexOptions.Multiline, RegexTimeout);
 
     // Matches xUnit / NUnit test attribute lines on added diff lines:
     //   + [Fact], + [Theory], + [Test], + [TestCase]
     private static readonly Regex TestAttribute = new(
         @"^\+\s*\[(?:Fact|Theory|Test|TestCase|TestMethod)(?:\(|])",
-        RegexOptions.Compiled | RegexOptions.Multiline);
+        RegexOptions.Compiled | RegexOptions.Multiline, RegexTimeout);
 
     // Matches the method name on an added diff line following a test attribute.
     private static readonly Regex TestMethodName = new(
         @"^\+\s*(?:public|internal|protected|private)?(?:[\s\w]+?)\s+(\w+)\s*\(",
-        RegexOptions.Compiled | RegexOptions.Multiline);
+        RegexOptions.Compiled | RegexOptions.Multiline, RegexTimeout);
 
     /// <summary>
     /// Extracts identifiers (type and method names) added in a unified diff string.
@@ -129,18 +132,26 @@ public static class DroppedIdentifierExtractor
     }
 
     /// <summary>
+    /// C# keywords and common tokens that can spuriously match method/type patterns.
+    /// Using a HashSet avoids excessive branch conditions from a long 'is' pattern chain.
+    /// </summary>
+    private static readonly HashSet<string> Keywords = new(StringComparer.Ordinal)
+    {
+        "get", "set", "init", "value", "void", "return", "new",
+        "if", "else", "for", "foreach", "while", "do", "switch",
+        "case", "break", "continue", "throw", "try", "catch", "finally",
+        "using", "namespace", "class", "struct", "interface", "enum",
+        "record", "sealed", "abstract", "static", "partial", "override",
+        "virtual", "async", "await", "var", "const", "readonly",
+        "public", "private", "protected", "internal", "string", "bool",
+        "int", "long", "double", "float", "decimal", "object", "byte",
+        "short", "uint", "ulong", "ushort", "sbyte", "char", "null",
+        "true", "false", "base", "this", "params", "ref", "out", "in",
+        "where", "select", "from", "orderby", "group", "join"
+    };
+
+    /// <summary>
     /// Returns true for C# keywords and common tokens that can spuriously match method/type patterns.
     /// </summary>
-    private static bool IsKeyword(string name) => name is
-        "get" or "set" or "init" or "value" or "void" or "return" or "new" or
-        "if" or "else" or "for" or "foreach" or "while" or "do" or "switch" or
-        "case" or "break" or "continue" or "throw" or "try" or "catch" or "finally" or
-        "using" or "namespace" or "class" or "struct" or "interface" or "enum" or
-        "record" or "sealed" or "abstract" or "static" or "partial" or "override" or
-        "virtual" or "async" or "await" or "var" or "const" or "readonly" or
-        "public" or "private" or "protected" or "internal" or "string" or "bool" or
-        "int" or "long" or "double" or "float" or "decimal" or "object" or "byte" or
-        "short" or "uint" or "ulong" or "ushort" or "sbyte" or "char" or "null" or
-        "true" or "false" or "base" or "this" or "params" or "ref" or "out" or "in" or
-        "where" or "select" or "from" or "orderby" or "group" or "join";
+    private static bool IsKeyword(string name) => Keywords.Contains(name);
 }

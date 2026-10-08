@@ -260,4 +260,44 @@ public class DroppedIdentifierExtractorTests
 
         act.Should().Throw<ArgumentNullException>();
     }
+
+    // ── ExtractTestMethodIdentifiers branch coverage ─────────────────────────
+
+    [Fact]
+    public void ExtractAddedIdentifiers_TestAttribute_FollowedByKeywordMethodName_KeywordNotAdded()
+    {
+        // The matched method name "get" is a keyword — should be filtered out.
+        var diff = "+    [Fact]\n+    public void get()\n+    {\n+    }\n";
+
+        var result = DroppedIdentifierExtractor.ExtractAddedIdentifiers(diff);
+
+        result.Should().NotContain("get",
+            "keyword method names must be filtered by IsKeyword");
+    }
+
+    [Fact]
+    public void ExtractAddedIdentifiers_TestAttribute_FollowedByNonAddedLine_MethodNotExtracted()
+    {
+        // After the test attribute the only following line is a context line (no '+' prefix).
+        // The window loop should skip it and find no method name to add.
+        var diff = "+    [Fact]\n     public void SomeMethod()\n    {\n    }\n";
+
+        var result = DroppedIdentifierExtractor.ExtractAddedIdentifiers(diff);
+
+        result.Should().NotContain("SomeMethod",
+            "context lines (no leading '+') must not contribute method names");
+    }
+
+    [Fact]
+    public void ExtractAddedIdentifiers_TestAttribute_FollowedByLineNotMatchingTestMethodPattern_NothingExtracted()
+    {
+        // After the test attribute the added line starts with '+' but does not match the
+        // TestMethodName pattern (e.g. it is a comment line with a '+' prefix).
+        var diff = "+    [Fact]\n+    // just a comment\n";
+
+        var result = DroppedIdentifierExtractor.ExtractAddedIdentifiers(diff);
+
+        // No identifier should come from the comment line.
+        result.Should().NotContain("just");
+    }
 }

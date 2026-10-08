@@ -280,4 +280,27 @@ public class CheckDroppedIdentifiersStepTests : IDisposable
 
         return (context, run);
     }
+
+    [Fact]
+    public async Task WhenReadingFileThrowsUnexpectedException_StepContinues()
+    {
+        // Create a directory at the expected file path — File.ReadAllTextAsync will throw
+        // UnauthorizedAccessException / IOException (not FileNotFoundException), exercising
+        // the generic catch (Exception) handler.
+        const string pathKey = "src/BadPath.cs";
+        var absPath = Path.Combine(_tempDir, pathKey);
+        Directory.CreateDirectory(absPath); // directory, not file
+
+        var (context, run) = BuildContext(workspacePath: _tempDir, mergeForceResolved: true,
+            droppedIdentifiers: new Dictionary<string, IReadOnlyList<string>>
+            {
+                [pathKey] = ["SomeClass"]
+            });
+
+        var result = await new CheckDroppedIdentifiersStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue, "unexpected read failures must not fail the pipeline");
+        run.NotReappliedIdentifiersByFile.Should().NotContainKey(pathKey,
+            "a skipped file due to read error must not appear in not-reapplied");
+    }
 }
