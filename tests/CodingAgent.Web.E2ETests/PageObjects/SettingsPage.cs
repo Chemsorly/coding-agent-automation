@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -26,8 +27,7 @@ public sealed class SettingsPage
         // Wait for the page header to render
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
-        // Allow time for Blazor Server circuit to connect and event handlers to attach
-        await _page.WaitForTimeoutAsync(3000);
+        await _page.WaitForCockpitPageReadyAsync();
     }
 
     /// <summary>Clicks a tree node by its visible text content (e.g., "Agent", "Issue", "General").</summary>
