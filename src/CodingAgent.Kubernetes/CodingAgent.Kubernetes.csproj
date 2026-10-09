@@ -20,4 +20,8 @@
     <ProjectReference Include="..\CodingAgent.Infrastructure.Common\CodingAgent.Infrastructure.Common.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="CodingAgent.JobController.UnitTests" />
+  </ItemGroup>
+
 </Project>
