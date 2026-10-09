@@ -29,20 +29,20 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         AnalysisGateResult? analysisRecommendation = null,
         IReadOnlyList<GateOutcome>? qualityGateOutcomes = null,
         string? failureReason = null) => new PipelineRunSummary
-    {
-        RunId = runId,
-        IssueIdentifier = new IssueIdentifier(issueId),
-        IssueTitle = $"Issue {issueId}",
-        FinalStep = finalStep,
-        RunType = runType,
-        StartedAtOffset = startedAt,
+        {
+            RunId = runId,
+            IssueIdentifier = new IssueIdentifier(issueId),
+            IssueTitle = $"Issue {issueId}",
+            FinalStep = finalStep,
+            RunType = runType,
+            StartedAtOffset = startedAt,
 #pragma warning disable CS0618
-        StartedAt = startedAt.DateTime,
+            StartedAt = startedAt.DateTime,
 #pragma warning restore CS0618
-        AnalysisRecommendation = analysisRecommendation,
-        QualityGateOutcomes = qualityGateOutcomes,
-        FailureReason = failureReason,
-    };
+            AnalysisRecommendation = analysisRecommendation,
+            QualityGateOutcomes = qualityGateOutcomes,
+            FailureReason = failureReason,
+        };
 
     private static string NewRunId() => Guid.NewGuid().ToString();
 
