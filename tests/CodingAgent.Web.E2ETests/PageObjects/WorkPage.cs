@@ -21,12 +21,8 @@ public sealed class WorkPage
 
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/work");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/work");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-
-        // Step 1: wait for the initial circuit render + data load to complete.
-        // "Loading work…" (.cockpit-empty) appears while OnInitializedAsync runs; wait for it to clear.
-        await _page.WaitForCockpitPageReadyAsync();
 
         // Step 2: wait for the CockpitLayout's OnAfterRenderAsync to restore the selected project
         // from localStorage and update the project-switcher DOM element.

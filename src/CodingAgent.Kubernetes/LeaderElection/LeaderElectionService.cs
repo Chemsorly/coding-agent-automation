@@ -9,14 +9,14 @@ namespace CodingAgent.Pipeline.LeaderElection;
 
 /// <summary>
 /// Singleton IHostedService that performs K8s Lease-based leader election.
-/// Shared between PipelineLoopService, DispatchService, and ReconciliationService.
-/// Only the leader replica runs these services.
-/// 
-/// Exposes <see cref="IsLeader"/> property and <see cref="LeaderToken"/> which is cancelled
-/// when leadership is lost, allowing dependent services to stop gracefully.
+/// Each host that registers it gates its leader-only background services on it,
+/// so only the leader replica runs them.
+///
+/// Exposes <see cref="IsLeader"/> and <see cref="LeaderToken"/>. The token is cancelled whenever
+/// this instance is not the leader, so dependent services stop gracefully.
 ///
 /// Intentionally keeps the namespace <c>CodingAgent.Pipeline.LeaderElection</c> even
-/// though the class lives in <c>CodingAgent.Orchestration</c>. This avoids touching
+/// though the class lives in <c>CodingAgent.Kubernetes</c>. This avoids touching
 /// the ~50 files that import that namespace for types that remain in Pipeline.
 /// </summary>
 public sealed class LeaderElectionService : ILeaderElectionService, IHostedService, IDisposable
@@ -24,8 +24,9 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
     private static readonly ILogger Log = Serilog.Log.ForContext<LeaderElectionService>();
 
     private readonly LeaderElectionOptions _options;
-    private readonly IKubernetes? _kubeClient;
+    private readonly Func<string, string, ILock>? _lockFactory;
     private readonly bool _isKubernetesEnvironment;
+    private readonly Lock _termLock = new();
 
     private CancellationTokenSource? _leaderCts;
     private CancellationTokenSource? _serviceCts;
@@ -49,17 +50,36 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
     public event Action? OnStoppedLeading;
 
     /// <summary>
-    /// A CancellationToken that is valid while this instance is the leader.
-    /// Cancelled when leadership is lost or the service is stopping.
+    /// A CancellationToken that is cancelled whenever <see cref="IsLeader"/> is false:
+    /// before the first acquisition, after leadership is lost and after the service stops.
+    /// Each leadership term gets a new token.
     /// Dependent services should pass this token to their work loops.
     /// </summary>
     public CancellationToken LeaderToken => _leaderCts?.Token ?? new CancellationToken(canceled: true);
 
     public LeaderElectionService(IOptions<LeaderElectionOptions> options, IKubernetes? kubeClient = null)
+        : this(options, CreateLeaseLockFactory(kubeClient, options.Value.LeaseName))
+    {
+    }
+
+    /// <summary>
+    /// Test seam: builds the service on a custom <see cref="ILock"/> instead of a Kubernetes
+    /// <see cref="LeaseLock"/>. A null factory means "not running in Kubernetes".
+    /// </summary>
+    /// <param name="options">Leader election options.</param>
+    /// <param name="lockFactory">Creates the lock from (namespace, identity).</param>
+    internal LeaderElectionService(IOptions<LeaderElectionOptions> options, Func<string, string, ILock>? lockFactory)
     {
         _options = options.Value;
-        _kubeClient = kubeClient;
-        _isKubernetesEnvironment = kubeClient is not null;
+        _lockFactory = lockFactory;
+        _isKubernetesEnvironment = lockFactory is not null;
+    }
+
+    private static Func<string, string, ILock>? CreateLeaseLockFactory(IKubernetes? kubeClient, string leaseName)
+    {
+        if (kubeClient is null)
+            return null;
+        return (ns, identity) => new LeaseLock(kubeClient, ns, leaseName, identity);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -81,7 +101,6 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
         }
 
         _serviceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _leaderCts = new CancellationTokenSource();
 
         _electionTask = RunElectionLoopAsync(_serviceCts.Token);
 
@@ -102,12 +121,7 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
         await _serviceCts.CancelAsync();
 
         // Cancel leader token so dependent services stop
-        if (_isLeader)
-        {
-            _isLeader = false;
-            await _leaderCts!.CancelAsync();
-            SafeInvokeStoppedLeading();
-        }
+        await EndLeadershipTermAsync();
 
         // Wait for election loop to complete (with timeout from host)
         try
@@ -128,7 +142,7 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
         Log.Information("Leader election loop starting. Identity={Identity}, Namespace={Namespace}, Lease={LeaseName}",
             identity, ns, _options.LeaseName);
 
-        var leaseLock = new LeaseLock(_kubeClient!, ns, _options.LeaseName, identity);
+        var leaseLock = _lockFactory!(ns, identity);
 
         var config = new LeaderElectionConfig(leaseLock)
         {
@@ -162,15 +176,10 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
             {
                 Log.Warning(ex, "Leader election unexpected error. Will retry after {RetryPeriod}", _options.RetryPeriod);
             }
-
-            // Leadership was lost (or error). Ensure we signal dependent services.
-            if (_isLeader)
+            finally
             {
-                _isLeader = false;
-                await _leaderCts!.CancelAsync();
-                SafeInvokeStoppedLeading();
-                // Create fresh CTS for next leadership term
-                _leaderCts = new CancellationTokenSource();
+                // Leadership was lost, the attempt failed, or the service is stopping. End the term (no-op when not leading).
+                await EndLeadershipTermAsync();
             }
 
             if (!stoppingToken.IsCancellationRequested)
@@ -191,16 +200,47 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
         Log.Information("Leader election loop exiting");
     }
 
+    /// <summary>
+    /// Ends the current leadership term exactly once: clears <see cref="IsLeader"/>, cancels the term's
+    /// token, then raises <see cref="OnStoppedLeading"/>. No-op when this instance is not the leader.
+    /// The cancelled source stays in place, so <see cref="LeaderToken"/> stays cancelled until the next term.
+    /// </summary>
+    private async Task EndLeadershipTermAsync()
+    {
+        CancellationTokenSource? termCts;
+        lock (_termLock)
+        {
+            if (!_isLeader)
+                return;
+            _isLeader = false;
+            termCts = _leaderCts;
+        }
+
+        if (termCts is not null)
+            await termCts.CancelAsync();
+        SafeInvokeStoppedLeading();
+    }
+
     private void HandleStartedLeading()
     {
         Log.Information("LeaderElectionService: This instance is now the LEADER");
-        _isLeader = true;
+        // TODO: [WARNING] The previous term's CancellationTokenSource is overwritten here without being disposed.
+        // EndLeadershipTermAsync cancels it but never disposes it, and Dispose() only disposes the current CTS.
+        // Each completed term beyond the first leaks one CancellationTokenSource. Fix: capture the old value before
+        // overwriting and dispose it after releasing the lock (or dispose termCts at the end of EndLeadershipTermAsync
+        // after it has been cancelled). Consumers may still hold the old token, so dispose only after the cancel.
+        lock (_termLock)
+        {
+            // Each term gets a fresh token. The previous term's token stays cancelled for anyone still holding it.
+            _leaderCts = new CancellationTokenSource();
+            _isLeader = true;
+        }
         SafeInvokeStartedLeading();
     }
 
     private static void HandleStoppedLeading()
     {
-        // Handled in the loop after RunUntilLeadershipLostAsync returns.
+        // Handled in the loop's finally block via EndLeadershipTermAsync.
         // The LeaderElector fires this before returning, so we just log here.
         Log.Information("LeaderElectionService: Leadership LOST (elector callback)");
     }

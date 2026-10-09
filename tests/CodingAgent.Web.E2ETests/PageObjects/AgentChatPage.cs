@@ -22,7 +22,7 @@ public sealed class AgentChatPage
     /// <summary>Navigates to the /agent-chat page and waits for the template selector to render.</summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/agent-chat");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/agent-chat");
         // #template-select is prerendered: a selection made before the circuit attaches @bind's
         // change handler is dropped, and the interactive render resets the select to "", which
         // leaves the Launch button disabled for good.

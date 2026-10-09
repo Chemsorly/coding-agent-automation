@@ -358,9 +358,8 @@ public sealed class ProjectSwitcherTests : E2ETestBase
         Assert.Equal(P2Id, await switcherOnRuns.GetSelectedValueAsync());
 
         // Full page reload — restores from localStorage.
-        await Page.ReloadAsync();
+        await Page.ReloadCockpitPageAsync();
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForBlazorAsync(15_000);
         // After a reload, CockpitLayout.OnAfterRenderAsync restores the saved project.
         // Poll until the switcher reflects P2Id instead of sleeping a fixed duration.
         var switcherAfterReload = new ProjectSwitcher(Page);
@@ -407,16 +406,15 @@ public sealed class ProjectSwitcherTests : E2ETestBase
         // Write a non-existent project ID to localStorage BEFORE navigating.
         // We do this by navigating first to get a page context, then setting localStorage,
         // then reloading so the layout's OnAfterRenderAsync sees the stale value.
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         var switcher = new ProjectSwitcher(Page);
         await switcher.WriteLocalStorageAsync("ffffffff-ffff-ffff-ffff-ffffffffffff");
 
         // Reload — CockpitLayout should detect the missing project, clear the key, and stay on "All".
-        await Page.ReloadAsync();
+        await Page.ReloadCockpitPageAsync();
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForBlazorAsync(15_000);
         // TODO: [WARNING] Fixed 2000 ms sleep is fragile on slow/fast CI. Replace with a
         // deterministic wait (e.g. poll GetSelectedValueAsync() until "" or timeout fires).
         await Page.WaitForTimeoutAsync(2000);
@@ -486,9 +484,8 @@ public sealed class ProjectSwitcherTests : E2ETestBase
 
         // Switch back to "All projects" and verify both items return.
         // Navigate back to overview first to reload the switcher in context.
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForBlazorAsync(15_000);
         await Page.WaitForTimeoutAsync(1000);
 
         var switcherBack = new ProjectSwitcher(Page);

@@ -298,7 +298,7 @@ public sealed class RunStateConsistencyTests : E2ETestBase
         //                             Failed→Failed(1), ConflictRestart→Restarted(1). Total=6.
         // ════════════════════════════════════════════════════════════════════════
 
-        await Page.GotoAsync($"{BaseUrl}/insights");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/insights");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await Page.WaitForTimeoutAsync(2000);
 
