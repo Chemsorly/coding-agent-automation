@@ -45,7 +45,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// </summary>
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
     }
@@ -70,6 +70,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Adds a pipeline run to the active runs collection.
     /// Also creates a per-run <see cref="OutputRingBuffer"/>.
+    /// If a run with the same RunId already exists, it is replaced (upsert) and the backlog preserved.
     /// </summary>
     public void AddRun(PipelineRun run)
     {
@@ -84,7 +85,12 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
         }
         else
         {
-            _logger.Warning("Run {RunId} already exists in active runs", run.RunId);
+            // Upsert: replace the stored run; preserve the existing backlog (TryAdd is a no-op if buffer exists).
+            _activeRuns[run.RunId] = run;
+            _outputBuffers.TryAdd(run.RunId, new OutputRingBuffer(_defaultBufferCapacity));
+            _logger.Information(
+                "Active run re-added: {RunId} for issue {IssueIdentifier} (agent={AgentId})",
+                run.RunId, run.IssueIdentifier, run.AgentId ?? "local");
         }
     }
 
@@ -104,22 +110,30 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     }
 
     /// <summary>
-    /// Replaces an existing run with a new instance for the same RunId.
-    /// Used by review dispatch to update a run with review-specific metadata without
-    /// creating a gap where IsIssueBeingProcessed returns false.
-    /// The output buffer is preserved (not recreated).
+    /// Replaces an existing run with a new instance for the same RunId using a CAS loop.
+    /// If the RunId is not currently active, logs a warning and does nothing.
     /// </summary>
     public void ReplaceRun(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
 
-        _activeRuns[run.RunId] = run;
+        while (_activeRuns.TryGetValue(run.RunId, out var current))
+        {
+            if (_activeRuns.TryUpdate(run.RunId, run, current))
+            {
+                _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+                return;
+            }
+        }
 
-        _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+        _logger.Warning("ReplaceRun: run {RunId} is not active — ignoring (run may have been removed)", run.RunId);
     }
 
     /// <summary>
     /// Gets or creates the per-run <see cref="OutputRingBuffer"/> for the specified run.
+    /// This method is intentionally NOT on the interface — callers should use
+    /// <see cref="AppendOutputLines"/> to write and <see cref="GetOutputBacklogAsync"/> to read.
+    /// Unit tests and E2E tests may use this directly via the concrete type.
     /// </summary>
     public OutputRingBuffer GetOutputBuffer(RunId runId)
     {
@@ -135,7 +149,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <inheritdoc />
     public void MarkRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         _recentlyCompleted[key] = _timeProvider.GetUtcNow();
     }
@@ -143,7 +157,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <inheritdoc />
     public bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         if (_recentlyCompleted.TryGetValue(key, out var completedAt))
         {
@@ -169,7 +183,28 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <inheritdoc />
     public void AppendOutputLines(RunId runId, IReadOnlyList<string> lines)
     {
-        // No-op: the hub writes directly to the buffer via GetOutputBuffer(jobId).AddRange(lines).
-        // DistributedRunService overrides this to write to Redis (distributed persistence).
+        ArgumentNullException.ThrowIfNull(lines);
+        if (lines.Count == 0) return;
+        GetOutputBuffer(runId).AddRange(lines);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<string>> GetOutputBacklogAsync(RunId runId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        if (!_outputBuffers.TryGetValue(runId.Value, out var buffer))
+            return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+        return Task.FromResult<IReadOnlyList<string>>(buffer.GetAll());
+    }
+
+    /// <inheritdoc />
+    public Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
+    {
+        var branches = GetActiveRuns()
+            .Where(r => r.BranchName != null)
+            .Select(r => r.BranchName!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return Task.FromResult(branches);
     }
 }

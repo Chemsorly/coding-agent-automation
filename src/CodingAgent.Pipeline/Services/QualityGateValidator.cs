@@ -38,18 +38,11 @@ public class QualityGateValidator : IQualityGateValidator
         WorkspacePath workspacePath,
         IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
         CancellationToken ct,
-        string? baseBranch = null,
         Action<PipelineRunEventReport>? reportEvent = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
-        // TODO [WARNING]: baseBranch is accepted on both the interface and this implementation but is
-        // never read inside the method body or forwarded to CleanWorkspacePrologue / RunAllQgcsAsync.
-        // It has been unused since before this refactor. Any caller relying on baseBranch to influence
-        // QGC behaviour (e.g. a coverage-diff gate that needs the base ref) will have the value silently
-        // discarded. Either thread the value through to the helpers that need it, or document explicitly
-        // why it is intentionally ignored. (DotNetSpecialist review finding)
         CleanWorkspacePrologue(workspacePath);
         return await RunAllQgcsAsync(workspacePath, qualityGateConfigs, reportEvent, ct);
     }
@@ -516,10 +509,16 @@ public class QualityGateValidator : IQualityGateValidator
         PipelineRunStatus status, IReadOnlyDictionary<long, string>? logPathMapping = null)
     {
         // When the overall run was Cancelled (e.g. by concurrency:cancel-in-progress), dependent
-        // jobs cascade to Failure conclusion even though no code failed. Do not report those as
-        // "failed jobs" — they are artefacts of the cancellation, not real code failures.
+        // jobs cascade to Failure conclusion even though no code failed. Use per-job LogContent as
+        // a heuristic: a job that actually executed will have LogContent. LogContent is populated
+        // by PipelinePollingHelper.EnrichFailedJobsWithLogsAsync for all jobs that ended
+        // unsuccessfully. A cascade artefact that never started has no logs and is excluded.
+        // Known gaps: (1) log-availability races (BlobNotFound) leave LogContent null for a real
+        // failure — treated as cascade artefact, consistent with CiFailureClassifier's Infrastructure
+        // classification for no-log jobs; (2) jobs with JobId = 0 are skipped by enrichment and
+        // will also have null LogContent — should not occur in production GitHub Actions flows.
         var failedJobs = status.State == PipelineRunState.Cancelled
-            ? new List<PipelineJobResult>()
+            ? status.Jobs.Where(j => j.State == PipelineRunState.Failed && !string.IsNullOrEmpty(j.LogContent)).ToList()
             : status.Jobs.Where(j => j.State == PipelineRunState.Failed).ToList();
         var cancelledJobs = status.Jobs.Where(j => j.State == PipelineRunState.Cancelled).ToList();
 

@@ -18,7 +18,7 @@ namespace CodingAgent.JobController.Reconciliation;
 /// Result of <see cref="ReconciliationLoop.ResolveExecutionAge"/>.
 /// Each case maps to a distinct outcome for the timeout-enforcement loop.
 /// </summary>
-internal abstract record ExecutionAgeResult;
+internal abstract record ExecutionAgeResult; // NOSONAR S2094 — base of a closed record hierarchy; derived records carry the data
 
 /// <summary>
 /// The work item's DispatchedAt is null and CreatedAt is still within the

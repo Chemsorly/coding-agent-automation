@@ -40,7 +40,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private const int MinimumSweepIntervalMinutes = 5;
     private static readonly DispatchEligibilityEvaluator _eligibilityEvaluator = new();
 
-    private readonly IOrchestratorRunService _runService;
+    private readonly IRunActivityQuery _runService;
     private readonly IPipelineApiConfigClient _configClient;
     private readonly IPipelineApiWorkItemClient _workItemClient;
     private readonly IProviderFactory _providerFactory;
@@ -50,7 +50,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private readonly TimeSpan _gracePeriod;
 
     public OrphanedLabelRecoveryService(
-        IOrchestratorRunService runService,
+        IRunActivityQuery runService,
         IPipelineApiConfigClient configClient,
         IPipelineApiWorkItemClient workItemClient,
         IProviderFactory providerFactory,
@@ -65,7 +65,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     /// Internal constructor for testing — allows overriding the grace period to avoid 60s real-time waits.
     /// </summary>
     internal OrphanedLabelRecoveryService(
-        IOrchestratorRunService runService,
+        IRunActivityQuery runService,
         IPipelineApiConfigClient configClient,
         IPipelineApiWorkItemClient workItemClient,
         IProviderFactory providerFactory,
