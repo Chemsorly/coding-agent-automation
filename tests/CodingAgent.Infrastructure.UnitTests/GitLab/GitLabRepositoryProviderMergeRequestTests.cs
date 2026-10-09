@@ -3,10 +3,12 @@ using CodingAgent.Infrastructure.GitLab;
 using CodingAgent.Pipeline.CodeReview.Models;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+using Moq;
 using NGitLab;
 using NGitLab.Mock;
 using NGitLab.Mock.Config;
 using NGitLab.Models;
+using System.Net;
 
 namespace CodingAgent.Infrastructure.UnitTests.GitLab;
 
@@ -383,45 +385,87 @@ public class GitLabRepositoryProviderMergeRequestTests
     [Fact]
     public async Task DismissPreviousReviewAsync_IndividualResolveFailure_LogsAndContinues()
     {
-        // TODO [WARNING]: This test is named to imply it verifies the continue-on-error behavior
-        // of RunDismissLoopAsync (i.e. that a failure on one thread does not stop processing of
-        // the remaining threads), but it actually only exercises the happy path — NGitLab.Mock
-        // does not provide a way to force a failure on only the first thread. The catch branch in
-        // RunDismissLoopAsync is never reached by this test. To properly verify continue-on-error,
-        // add a direct unit test in SharedPrOperationsTests that injects a failing lambda for the
-        // first item and confirms the second item is still processed. See SharedPrOperations.cs
-        // for the parallel TODO.
+        var resolvedIds = new List<string>();
+        var provider = CreateProviderWithMockedDiscussions(
+            [MarkedDiscussion("thread-1"), MarkedDiscussion("thread-2")],
+            resolve =>
+            {
+                resolvedIds.Add(resolve.Id);
+                if (resolve.Id == "thread-1")
+                    throw new GitLabException("403 Forbidden") { StatusCode = HttpStatusCode.Forbidden };
+            });
 
-        // Create a server with TWO matching discussions. We can't easily force a failure
-        // on only the first one via NGitLab.Mock, so we verify that when both succeed,
-        // both are resolved — i.e. the loop always processes every matching thread.
-        var (client, projectId) = CreateServerWithMergeRequest(
-            "Test MR", "description", "branch", "main");
-        var provider = new GitLabRepositoryProvider(client, projectId, "main");
+        await provider.DismissPreviousReviewAsync(42, ReviewMarker, "Superseded", CancellationToken.None);
 
-        var mrClient = client.GetMergeRequest(projectId);
-        var mr = mrClient.Get(new MergeRequestQuery { State = MergeRequestState.opened }).First();
-
-        var discussionClient = mrClient.Discussions((int)mr.Iid);
-        discussionClient.Add(new MergeRequestDiscussionCreate
-        {
-            Body = "<!-- agent:review --> First review"
-        });
-        discussionClient.Add(new MergeRequestDiscussionCreate
-        {
-            Body = "<!-- agent:review --> Second review"
-        });
-
-        // Act — must not throw even when processing multiple threads
-        await provider.DismissPreviousReviewAsync(
-            (int)mr.Iid, "<!-- agent:review -->", "Superseded", CancellationToken.None);
-
-        // Both threads must be resolved — the loop must process all matching threads
-        var allMatchingResolved = mrClient.Discussions((int)mr.Iid).All
-            .Where(d => d.Notes?.Any(n => n.Body?.Contains("<!-- agent:review -->") == true) == true)
-            .All(d => d.Notes?.Any(n => n.Resolved == true) == true);
-        allMatchingResolved.Should().BeTrue("all matching threads must be resolved — the loop must not stop after the first");
+        resolvedIds.Should().Equal(new[] { "thread-1", "thread-2" },
+            "a thread that fails to resolve is logged and skipped, and the next thread is still resolved");
     }
+
+    [Fact]
+    public async Task DismissPreviousReviewAsync_ResolveCancelled_PropagatesAndSkipsRemainingThreads()
+    {
+        using var cts = new CancellationTokenSource();
+        var resolvedIds = new List<string>();
+        var provider = CreateProviderWithMockedDiscussions(
+            [MarkedDiscussion("thread-1"), MarkedDiscussion("thread-2")],
+            resolve =>
+            {
+                resolvedIds.Add(resolve.Id);
+                cts.Cancel();
+                cts.Token.ThrowIfCancellationRequested();
+            });
+
+        var act = () => provider.DismissPreviousReviewAsync(42, ReviewMarker, "Superseded", cts.Token);
+
+        // TODO [WARNING]: This assertion verifies that *some* OperationCanceledException escapes
+        // DismissPreviousReviewAsync, but does not verify that it propagates unmodified through
+        // the write resilience pipeline (_writePipeline). The OperationCanceledException is thrown
+        // inside the Moq Resolve callback (via cts.Token.ThrowIfCancellationRequested()) and travels
+        // through Task.Run → ExecuteWriteWithResilienceAsync → RunDismissLoopAsync's catch filter.
+        // If a future change to the resilience pipeline wraps the cancellation differently (e.g.
+        // as a Polly-decorated TaskCanceledException), this test would still pass while the
+        // propagation path has changed. Consider adding a direct RunDismissLoopAsync test or
+        // verifying the exception's source if the resilience pipeline is ever restructured.
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "a cancelled dismissal must propagate, not be logged and skipped like a failed one");
+        resolvedIds.Should().Equal(new[] { "thread-1" }, "no thread is resolved after the cancellation");
+    }
+
+    private const string ReviewMarker = "<!-- agent:review -->";
+
+    /// <summary>
+    /// Builds a provider over a Moq IGitLabClient whose MR discussion client returns
+    /// <paramref name="discussions"/> and runs <paramref name="onResolve"/> for every Resolve call.
+    /// NGitLab.Mock cannot fail or cancel a single Resolve, so the dismiss-loop error tests use Moq.
+    /// </summary>
+    private static GitLabRepositoryProvider CreateProviderWithMockedDiscussions(
+        IReadOnlyList<NGitLab.Models.MergeRequestDiscussion> discussions,
+        Action<NGitLab.Models.MergeRequestDiscussionResolve> onResolve)
+    {
+        var discussionClient = new Mock<IMergeRequestDiscussionClient>();
+        discussionClient.Setup(d => d.All).Returns(discussions);
+        discussionClient
+            .Setup(d => d.Resolve(It.IsAny<NGitLab.Models.MergeRequestDiscussionResolve>()))
+            .Returns((NGitLab.Models.MergeRequestDiscussionResolve resolve) =>
+            {
+                onResolve(resolve);
+                return new NGitLab.Models.MergeRequestDiscussion { Id = resolve.Id, Notes = [] };
+            });
+
+        var mergeRequestClient = new Mock<IMergeRequestClient>();
+        mergeRequestClient.Setup(m => m.Discussions(It.IsAny<long>())).Returns(discussionClient.Object);
+
+        var client = new Mock<IGitLabClient>();
+        client.Setup(c => c.GetMergeRequest(It.IsAny<NGitLab.Models.ProjectId>())).Returns(mergeRequestClient.Object);
+
+        return new GitLabRepositoryProvider(client.Object, 1, "main");
+    }
+
+    private static NGitLab.Models.MergeRequestDiscussion MarkedDiscussion(string id) => new()
+    {
+        Id = id,
+        Notes = [new NGitLab.Models.MergeRequestComment { Body = $"{ReviewMarker} {id}" }]
+    };
 
     #endregion
 
