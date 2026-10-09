@@ -106,4 +106,80 @@ public class ReworkContextWriterTests
         BaseHeadSha = BaseHead,
         ForceResolvedContext = contexts
     };
+
+    // ── AC #3: Truncation header ─────────────────────────────────────────────
+
+    /// <summary>
+    /// AC #3: The rework context file states at its top which file diffs are truncated.
+    /// The truncation header must appear BEFORE the first file section (## `path`).
+    /// </summary>
+    [Fact]
+    public void Format_TruncatedDiffs_ListedAtTopAboveFileSections()
+    {
+        // 500 lines > MaxDiffLines (200)
+        var longDiff = string.Concat(Enumerable.Range(0, 500).Select(i => $"+line {i}\n"));
+        var context = ClassifierContext with { BranchChange = longDiff };
+
+        var content = ReworkContextWriter.Format(ForceResolvedResult([context]));
+
+        // The truncation header section heading
+        content.Should().Contain("⚠️ Truncated diffs");
+
+        // The path must appear in the truncation header, which must come before the first ## `path` file heading
+        var headerPos = content.IndexOf("⚠️ Truncated diffs", StringComparison.Ordinal);
+        var firstFileHeadingPos = content.IndexOf("## `src/CiFailureClassifier.cs`", StringComparison.Ordinal);
+
+        headerPos.Should().BeLessThan(firstFileHeadingPos,
+            "truncation header must appear above the first ## file section");
+    }
+
+    [Fact]
+    public void Format_TruncatedDiffs_IncludesPathAndLineCounts()
+    {
+        var longDiff = string.Concat(Enumerable.Range(0, 300).Select(i => $"+line {i}\n"));
+        var context = ClassifierContext with { BranchChange = longDiff };
+
+        var content = ReworkContextWriter.Format(ForceResolvedResult([context]));
+
+        content.Should().Contain("src/CiFailureClassifier.cs");
+        content.Should().Contain("300");  // total line count
+        content.Should().Contain("200");  // MaxDiffLines shown
+    }
+
+    [Fact]
+    public void Format_NoDiffsTruncated_NoTruncationHeaderEmitted()
+    {
+        // Diff is well within MaxDiffLines
+        var shortDiff = "@@ -1 +1 @@\n-old\n+branch fix\n";
+        var context = ClassifierContext with { BranchChange = shortDiff };
+
+        var content = ReworkContextWriter.Format(ForceResolvedResult([context]));
+
+        content.Should().NotContain("⚠️ Truncated diffs",
+            "no truncation header should appear when no diffs are truncated");
+    }
+
+    [Fact]
+    public void Format_MultipleTruncatedFiles_AllListedInHeader()
+    {
+        var longDiff = string.Concat(Enumerable.Range(0, 250).Select(i => $"+line {i}\n"));
+        var ctx1 = ClassifierContext with { BranchChange = longDiff };
+        var ctx2 = new ForceResolvedFileContext
+        {
+            Path = "src/OtherService.cs",
+            BranchChange = longDiff,
+            BaseChange = "",
+            BaseCommits = []
+        };
+
+        var content = ReworkContextWriter.Format(ForceResolvedResult([ctx1, ctx2]));
+
+        content.Should().Contain("src/CiFailureClassifier.cs");
+        content.Should().Contain("src/OtherService.cs");
+
+        // Both paths must appear before the first ## file section
+        var headerPos = content.IndexOf("⚠️ Truncated diffs", StringComparison.Ordinal);
+        var firstFileHeadingPos = content.IndexOf("## `src/CiFailureClassifier.cs`", StringComparison.Ordinal);
+        headerPos.Should().BeLessThan(firstFileHeadingPos);
+    }
 }

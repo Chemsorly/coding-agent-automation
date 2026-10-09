@@ -71,6 +71,34 @@ public static class ReworkContextWriter
             "are now.");
         sb.AppendLine();
 
+        // Truncation header (AC #3): list files whose BranchChange diffs are truncated at the top
+        // so the agent knows which files need the full diff read via git before re-applying.
+        // TODO: ForceResolvedContext is not deduplicated here (unlike the contexts dict below which
+        // uses DistinctBy). If the same path appears twice in ForceResolvedContext it will be listed
+        // twice in the truncation header while appearing only once in the file sections below —
+        // apply DistinctBy(c => c.Path) before the Where clause to match the dedup behaviour below.
+        var truncatedFiles = mergeResult.ForceResolvedContext
+            .Where(c => c.BranchChange.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n').Length > MaxDiffLines)
+            .ToList();
+        if (truncatedFiles.Count > 0)
+        {
+            sb.AppendLine("## ⚠️ Truncated diffs");
+            sb.AppendLine();
+            sb.AppendLine("The following files have branch diffs that exceeded the display limit and were truncated. " +
+                "Run the git command shown above each truncated section to read the full diff before re-applying:");
+            sb.AppendLine();
+            foreach (var tc in truncatedFiles)
+            {
+                // TODO: totalLines is computed by re-normalising and splitting the same string that was
+                // already computed in the Where clause above. Collapse into a single pass by capturing
+                // the line count during the Where evaluation (e.g. via .Select) to avoid redundant
+                // string allocations when multiple large diffs are present.
+                var totalLines = tc.BranchChange.ReplaceLineEndings("\n").TrimEnd('\n').Split('\n').Length;
+                sb.AppendLine($"- `{tc.Path}` — {totalLines} lines total, first {MaxDiffLines} shown");
+            }
+            sb.AppendLine();
+        }
+
         var contexts = mergeResult.ForceResolvedContext
             .DistinctBy(c => c.Path, StringComparer.Ordinal)
             .ToDictionary(c => c.Path, StringComparer.Ordinal);

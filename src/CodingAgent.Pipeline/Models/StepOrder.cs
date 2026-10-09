@@ -25,13 +25,14 @@ public static class StepOrder
         [PipelineStep.ReviewingAnalysis] = 7,
         [PipelineStep.PostingAnalysis] = 8,
         [PipelineStep.GeneratingCode] = 9,
-        [PipelineStep.ReviewingCode] = 10,
-        [PipelineStep.RunningQualityGates] = 11,
-        [PipelineStep.PreparingForPullRequest] = 12,
-        [PipelineStep.FinalizingPullRequest] = 13,
+        [PipelineStep.CheckingDroppedIdentifiers] = 10,
+        [PipelineStep.ReviewingCode] = 11,
+        [PipelineStep.RunningQualityGates] = 12,
+        [PipelineStep.PreparingForPullRequest] = 13,
+        [PipelineStep.FinalizingPullRequest] = 14,
         // GeneratingPrDescription entry removed — step merged into FinalizingPullRequest
-        [PipelineStep.ReflectingOnRun] = 15,
-        [PipelineStep.SyncingBrainRepoPostRun] = 16,
+        [PipelineStep.ReflectingOnRun] = 16,
+        [PipelineStep.SyncingBrainRepoPostRun] = 17,
 
         // Decomposition pipeline
         [PipelineStep.ExtractingLinkedIssues] = 1,
