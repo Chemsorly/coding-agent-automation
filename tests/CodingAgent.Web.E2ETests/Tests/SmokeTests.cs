@@ -17,7 +17,7 @@ public sealed class SmokeTests : E2ETestBase
     public async Task App_Starts_And_PageLoads()
     {
         // Navigate to the root — should redirect to /agent-coding or show the app
-        var response = await Page.GotoAsync(BaseUrl);
+        var response = await Page.GotoCockpitPageAsync(BaseUrl);
 
         // Verify we got a successful response
         Assert.NotNull(response);
@@ -28,7 +28,7 @@ public sealed class SmokeTests : E2ETestBase
     public async Task AgentCoding_Page_Loads()
     {
         // /agent-coding is the Pipelines page (the route is kept as an alias); its heading is "Pipelines".
-        await Page.GotoAsync($"{BaseUrl}/agent-coding");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/agent-coding");
 
         // Wait for the page to render (Blazor Server needs a moment to establish circuit)
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
@@ -40,7 +40,7 @@ public sealed class SmokeTests : E2ETestBase
     [Fact]
     public async Task Settings_Page_Loads()
     {
-        await Page.GotoAsync($"{BaseUrl}/settings");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/settings");
 
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
@@ -51,7 +51,7 @@ public sealed class SmokeTests : E2ETestBase
     [Fact]
     public async Task Fleet_Page_Loads()
     {
-        await Page.GotoAsync($"{BaseUrl}/fleet");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/fleet");
 
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
@@ -69,7 +69,7 @@ public sealed class SmokeTests : E2ETestBase
             responses.Add((response.Url, response.Status));
         };
 
-        await Page.GotoAsync($"{BaseUrl}/agent-coding");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/agent-coding");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
         // Wait for Blazor framework scripts to load
@@ -143,7 +143,7 @@ public sealed class SmokeTests : E2ETestBase
             // If stricter per-route error isolation is needed, create a new Page context per route.
             consoleErrors.Clear();
 
-            await Page.GotoAsync($"{BaseUrl}{route}");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}{route}");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
             // Verify the correct page rendered.
@@ -152,22 +152,11 @@ public sealed class SmokeTests : E2ETestBase
                 heading != null && heading.Contains(expectedHeading),
                 $"Route {route}: expected <h1> to contain \"{expectedHeading}\" but got \"{heading}\"");
 
-            // Wait for the Blazor circuit to connect before asserting nav active state.
-            // The <h1> is pre-rendered in static HTML and may appear before the circuit connects;
-            // NavLink applies the "active" class only after the circuit establishes.
-            // TODO [WARNING]: WaitForBlazorAsync() only confirms `typeof Blazor !== 'undefined'`
-            // (the JS object is loaded), not that the SignalR circuit is fully established. NavLink
-            // applies the "active" class via the circuit's LocationChanged callback, which fires
-            // only after the circuit connects and completes its first interactive render. On a slow
-            // CI runner the circuit handshake may still be in progress, causing the active-class
-            // assertion below to see pre-render static HTML and fail intermittently. A more robust
-            // guard would poll for the nav element to have the "active" class directly, e.g.:
-            //   await navLink.WaitForAsync(new() { State = WaitForSelectorState.Attached });
-            // or use WaitForFunctionAsync to check for the active class before asserting.
-            await Page.WaitForBlazorAsync();
-
             // Verify the nav item for this route is marked active.
             // CockpitLayout uses href without a leading slash (e.g. href="overview").
+            // GotoCockpitPageAsync provides a stronger interactivity guarantee: it waits until
+            // the circuit has rendered CockpitLayout, so NavLink's active class is reliable
+            // without an additional explicit wait.
             var navHref = route.TrimStart('/');
             // TODO [WARNING]: navLink.GetAttributeAsync("class") will throw a Playwright
             // TimeoutException if no element matching .cockpit-nav-link[href='{navHref}'] exists
@@ -234,12 +223,49 @@ public sealed class SmokeTests : E2ETestBase
 #pragma warning restore CS0618
         });
 
-        await Page.GotoAsync($"{BaseUrl}/runs/{runId}");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/runs/{runId}");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
 
         var heading = await Page.TextContentAsync("h1");
         Assert.True(
             heading != null && heading.Contains(issueTitle),
             $"/runs/{runId}: expected <h1> to contain \"{issueTitle}\" but got \"{heading}\"");
+    }
+
+    [Fact]
+    public async Task GotoCockpitPageAsync_ReturnsOnlyWhenLayoutIsInteractiveAndAccessChecked()
+    {
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
+
+        var ready = await Page.EvaluateAsync<bool>("""
+            () => {
+                const toggle = document.querySelector('.cockpit-theme-toggle');
+                return !!toggle
+                    && Object.getOwnPropertyNames(toggle).some(k => k.startsWith('_blazorEvents_'))
+                    && !document.querySelector('.auth-authorizing');
+            }
+            """);
+        Assert.True(ready, "GotoCockpitPageAsync returned before CockpitLayout was interactive and its access check had finished");
+    }
+
+    [Fact]
+    public async Task GotoCockpitPageAsync_PageWithoutCockpitLayout_ThrowsTimeoutNamingTheSignal()
+    {
+        // TODO [WARNING]: This test navigates Page to about:blank, leaving it in an unusable state for
+        // any test sharing the same Page instance. xUnit instantiates a new SmokeTests per test, so
+        // Page is per-test-instance and the risk is currently zero. If E2ETestBase ever switches to a
+        // class-scoped or collection-scoped Page, move this test to its own fixture or reset navigation
+        // at the start of the next test. (DotNetSpecialist finding, SmokeTests.cs:252)
+        var ex = await Assert.ThrowsAsync<TimeoutException>(
+            () => Page.GotoCockpitPageAsync("about:blank", timeoutMs: 1_000));
+
+        Assert.Contains(".cockpit-theme-toggle", ex.Message);
+        Assert.Contains("about:blank", ex.Message);
+        // TODO [WARNING]: Add Assert.Contains("1000", ex.Message) to lock in the contract that the
+        // TimeoutException message includes the timeout in ms (required by the acceptance criterion).
+        // Also add Assert.NotNull(ex.InnerException) to verify the original Playwright exception is
+        // preserved as InnerException per the acceptance criterion. Both assertions are currently
+        // absent — a regression that drops {timeoutMs} from the message or omits the inner exception
+        // would not be caught. (Correctness/TestQuality findings, SmokeTests.cs:257/263)
     }
 }
