@@ -86,7 +86,7 @@ public partial class IssueDescriptionParser
     /// <summary>
     /// Formats a parsed issue into a structured prompt section suitable for agent consumption.
     /// </summary>
-    public string Format(ParsedIssue parsed)
+    public string Format(ParsedIssue parsed) // NOSONAR S2325 — instance API: callers and tests use an instance
     {
         ArgumentNullException.ThrowIfNull(parsed);
 

@@ -273,6 +273,40 @@ public class DependencyParserTests
             .Which.Url.Should().Be("https://gitlab.com/mygroup/myproject/-/issues/99");
     }
 
+    [Fact]
+    public void Parse_GitLabSubgroupIssueUrl_ReturnsUrlRef()
+    {
+        // GitLab subgroup URL — three path segments before /-/issues/
+        // This test fails before the regex fix and passes after it (AC1).
+        var body = "Blocked by https://gitlab.com/group/subgroup/project/-/issues/7";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://gitlab.com/group/subgroup/project/-/issues/7");
+    }
+
+    [Fact]
+    public void Parse_GitLabFlatTwoSegmentIssueUrl_StillReturnsUrlRef()
+    {
+        // Regression guard: the flat two-segment case must continue to match after the regex change (AC2).
+        var body = "Blocked by https://gitlab.com/group/project/-/issues/7";
+
+        var result = DependencyParser.Parse(body);
+
+        result.Should().ContainSingle()
+            .Which.Should().BeOfType<UrlRef>()
+            .Which.Url.Should().Be("https://gitlab.com/group/project/-/issues/7");
+    }
+
+    // TODO: Add a test asserting that a single-segment GitLab URL
+    // (https://gitlab.com/group/-/issues/7) returns an empty result.
+    // The regex [^/\s]+(?:/[^/\s]+)+ requires at least two path segments, so a
+    // single-segment URL should be rejected. Without a test for this boundary, a
+    // future regex simplification could accidentally match single-segment URLs
+    // (which are not valid GitLab issue URLs). [WARNING: TestQualityReviewer]
+
     // ─── 14. Mixed number and URL references ────────────────────────────────────
 
     [Fact]

@@ -38,7 +38,7 @@ public static class AgentDefaults
     public const string ClaudeTemplateProviderType = "claude";
 
     /// <summary>Default base URL for the OpenCode agent HTTP API.</summary>
-    public const string OpenCodeBaseUrl = "http://127.0.0.1:4096";
+    public const string OpenCodeBaseUrl = "http://127.0.0.1:4096"; // NOSONAR S1075 — the single definition of this default endpoint
 
     // ── Named HttpClient ─────────────────────────────────────────────────
 
