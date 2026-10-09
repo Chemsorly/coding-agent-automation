@@ -173,14 +173,15 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
     [Fact]
     public async Task Kill_WhileProcessIsRunning_StopsProcess()
     {
-        // Create a shell script that ignores all arguments and sleeps indefinitely.
-        // ProcessWrapper passes kiro-style args (e.g. "chat --no-interactive ...") so
-        // we can't use /bin/sleep directly — it would exit immediately on bad args.
-        // A dedicated wrapper script accepts any $@ and just runs 'sleep 999'.
+        // The child must ignore the kiro-style arguments ProcessWrapper passes (e.g. "chat --no-interactive ...")
+        // and must keep running after StartAsync closes its stdin. Bare cmd.exe reads end-of-file and exits at
+        // once, and `timeout` rejects redirected stdin, so Windows uses a .cmd that pings loopback for ~999 s.
+        // Linux uses a script that sleeps 999 s (/bin/sleep itself would exit on the bad arguments).
         string longRunningPath;
         if (OperatingSystem.IsWindows())
         {
-            longRunningPath = "cmd.exe";
+            longRunningPath = Path.Combine(_workspaceDir, "long-running.cmd");
+            File.WriteAllText(longRunningPath, "@ping -n 999 127.0.0.1 >nul\r\n");
         }
         else
         {
@@ -199,24 +200,27 @@ public class ProcessWrapperPropertiesAndKillTests : IDisposable
         };
 
         using var wrapper = new ProcessWrapper(longRunningConfig, _logger);
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // Safety net only: Kill() below must end the run long before this fires
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(60));
 
         // Start the long-running process in the background
         var task = wrapper.StartAsync("hello", _workspaceDir, useResume: false, cts.Token);
 
-        // Poll until IsRunning becomes true (or timeout). A fixed delay is flaky under load.
-        var deadline = DateTime.UtcNow.AddSeconds(5);
-        while (!wrapper.IsRunning && DateTime.UtcNow < deadline)
+        // Wait until the child is running. 30 s is a hang detector only; the loop also stops if StartAsync
+        // finishes early (the child exited on its own, which the assertion below reports).
+        var deadline = DateTime.UtcNow.AddSeconds(30);
+        while (!wrapper.IsRunning && !task.IsCompleted && DateTime.UtcNow < deadline)
             await Task.Delay(50, CancellationToken.None);
-        wrapper.IsRunning.Should().BeTrue("process should be running before Kill()");
+        wrapper.IsRunning.Should().BeTrue("the long-running child must still be alive before Kill()");
 
-        // Kill it — this covers Kill() body for a running, non-WSL process
-        // (lines: if _useWsl check, _process.Kill(entireProcessTree), _process.WaitForExit)
         wrapper.Kill();
 
-        // The task should complete after Kill
-        try { await task; } catch (OperationCanceledException) { /* expected */ } catch { /* process killed */ }
+        // Kill() ends WaitForExitAsync normally, so StartAsync returns the killed child's exit code
+        // (137 after SIGKILL on Linux, -1 on Windows). If Kill() did not stop the child, the 60 s safety
+        // token fires instead and this await throws OperationCanceledException.
+        var exitCode = await task;
 
+        exitCode.Should().NotBe(0, "the child was killed, it did not finish on its own");
         wrapper.IsRunning.Should().BeFalse();
     }
 
