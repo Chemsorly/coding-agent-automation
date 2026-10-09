@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 using ILogger = Serilog.ILogger;

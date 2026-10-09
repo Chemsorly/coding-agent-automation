@@ -395,7 +395,7 @@ public class QualityGateExecutorCiGateBuilderTests
         // Validator always passes local gates
         mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },

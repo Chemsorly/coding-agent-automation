@@ -222,11 +222,12 @@ public sealed class AgentOutputTests : E2ETestBase
         await agent.ReportOutputAsync(assignment.JobId, "batch-a-1", "batch-a-2", "batch-a-3");
         await agent.ReportOutputAsync(assignment.JobId, "batch-b-1", "batch-b-2");
 
-        // Wait for the ring buffer to contain all 5 lines before completing the run, so they
+        // Wait for the backlog to contain all 5 lines before completing the run, so they
         // are captured in OutputTail by PipelineRun.ToSummary() inside RunTerminalCleanupAsync.
         var runService = Fixture.RunService;
         await WaitUntilAsync(
-            () => runService.GetOutputBuffer(new CodingAgent.Pipeline.Models.RunId(runId)).Count >= 5,
+            (Func<Task<bool>>)(async () =>
+                (await runService.GetOutputBacklogAsync(new CodingAgent.Pipeline.Models.RunId(runId))).Count >= 5),
             TimeSpan.FromSeconds(10));
 
         await agent.ReportStepAsync(assignment.JobId, PipelineStep.Completed);

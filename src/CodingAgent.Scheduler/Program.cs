@@ -3,11 +3,8 @@ using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Scheduler;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using Serilog;
-using Serilog.Enrichers.Span;
+using Serilog.Events;
 
 // Bootstrap logger: captures log output before UseSerilog takes over
 Log.Logger = HostBootstrap.CreateBootstrapLogger();
@@ -16,7 +13,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ──────────────────────────────────────────────────
 var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
-var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
+var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
 HostBootstrap.LogStartupIdentity("Scheduler", serviceName, version);
 
 // ── Fast-fail: Pipeline API URL required ─────────────────────────────────
@@ -62,62 +59,25 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSchedulerServices(pipelineApiBaseUrl, agentApiKey, builder.Configuration);
 
 // ── Serilog ───────────────────────────────────────────────────────────────
-var schedulerLogLevel = CodingAgent.Infrastructure.Telemetry.LogLevelParser.Parse(
+var schedulerLogLevel = LogLevelParser.Parse(
     Environment.GetEnvironmentVariable("LOG_LEVEL"),
-    Serilog.Events.LogEventLevel.Information);
+    LogEventLevel.Information);
 
-builder.Host.UseSerilog((ctx, lc) =>
-{
-    lc
-        .MinimumLevel.Is(schedulerLogLevel)
-        .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-        // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
-        .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
-        // Suppress per-request HttpClient trace logs (OTLP/trace exports fire at Debug on every call)
-        .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
-        // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
-        .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
-        // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
-        .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
-        .Enrich.FromLogContext()
-        .Enrich.WithSpan()
-        .WriteTo.Console(
-            outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-            theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-        .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName);
-});
+builder.Host.UseSerilog((ctx, lc) => lc
+    .ApplyHostDefaults(schedulerLogLevel)
+    .WriteToHostConsole()
+    .WriteToOtlpIfConfigured("coding-agent-scheduler", ctx.HostingEnvironment.EnvironmentName));
 
 // ── Port 8080 ─────────────────────────────────────────────────────────────
 builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────
-var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-scheduler";
-
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(r => r.AddService(
-        serviceName: otelServiceName,
-        serviceVersion: version))
-    .WithTracing(t => t
-        .AddSource(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
-        .AddAspNetCoreInstrumentation(opts =>
-            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
-        .AddHttpClientInstrumentation(opts =>
-            opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
-        .AddProcessor(new OtelNoiseSpanProcessor())
-        .AddOtlpExporter())
-    .WithMetrics(m => m
-        .AddAspNetCoreInstrumentation()
-        .AddHttpClientInstrumentation()
-        .AddMeter(CodingAgent.Pipeline.Telemetry.WorkDistributionTelemetry.MeterName)
-        .AddMeter(CodingAgent.Pipeline.Telemetry.PipelineTelemetry.SourceName)
-        .AddMeter("System.Runtime")
+builder.Services.AddHostOpenTelemetry(
+    "coding-agent-scheduler",
+    configureMetrics: m => m
         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
         // Not registered in the agent — agent pods must not emit these series.
-        .AddMeter(GitHubTelemetry.MeterName)
-        // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
-        // histograms and counters, which Grafana Cloud silently drops.
-        .AddOtlpExporter((_, readerOptions) =>
-            readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
+        .AddMeter(GitHubTelemetry.MeterName));
 
 var app = builder.Build();
 

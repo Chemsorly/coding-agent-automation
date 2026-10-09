@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Globalization;
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
@@ -337,11 +338,11 @@ public sealed class AgentRegistryService : IAgentRegistryService
         {
             switch (field)
             {
-                case "activeJobId": entry.ActiveJobId = value; break;
-                case "orphanRestoredAt": entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture); break;
-                case "activeChatSessionId": entry.ActiveChatSessionId = value; break;
-                case "lastJobCompletedAt": entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture); break;
-                case "disabled": entry.Disabled = value is not null && bool.Parse(value); break;
+                case AgentFieldNames.ActiveJobId: entry.ActiveJobId = value; break;
+                case AgentFieldNames.OrphanRestoredAt: entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture); break;
+                case AgentFieldNames.ActiveChatSessionId: entry.ActiveChatSessionId = value; break;
+                case AgentFieldNames.LastJobCompletedAt: entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture); break;
+                case AgentFieldNames.Disabled: entry.Disabled = value is not null && bool.Parse(value); break;
                 default:
                     _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
                     break;
