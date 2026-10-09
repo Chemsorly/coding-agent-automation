@@ -38,7 +38,7 @@ public sealed class FirstRunBannerTests : E2ETestBase
         Fixture.Factory.ApiConfigClient.Reset();
 
         // Act: navigate to a page rendered by CockpitLayout
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         // Assert: banner is present and shows the expected message
@@ -59,7 +59,7 @@ public sealed class FirstRunBannerTests : E2ETestBase
         Fixture.Factory.ApiConfigClient.Reset();
 
         // Act: navigate to overview and wait for banner
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var bannerLink = Page.Locator(".first-run-banner a");
         await bannerLink.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
@@ -98,7 +98,7 @@ public sealed class FirstRunBannerTests : E2ETestBase
         Fixture.Factory.ApiConfigClient.Reset();
 
         // Act: navigate to overview and wait for banner
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var banner = Page.Locator(".first-run-banner");
         await banner.WaitForAsync(new() { State = Microsoft.Playwright.WaitForSelectorState.Visible, Timeout = 10_000 });
@@ -142,7 +142,7 @@ public sealed class FirstRunBannerTests : E2ETestBase
         Fixture.Factory.ApiConfigClient.Reset();
 
         // Act: navigate to overview
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         // Wait a moment for Blazor circuit to establish and component to initialise

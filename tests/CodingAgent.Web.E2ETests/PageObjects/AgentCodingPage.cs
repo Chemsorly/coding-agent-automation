@@ -9,7 +9,7 @@ namespace CodingAgent.Web.E2ETests.PageObjects;
 /// Page object for the /agent-coding page.
 /// Encapsulates the manual dispatch flow: select template → browse issues → select issue → start pipeline.
 /// Uses the official ASP.NET Core Blazor E2E testing patterns:
-/// - WaitForBlazorAsync: confirms the Blazor JS framework is loaded (SignalR circuit established)
+/// - GotoCockpitPageAsync: navigates and waits until the circuit has rendered CockpitLayout and no loading placeholder is left
 /// - WaitForInteractiveAsync: confirms event handlers are attached to DOM elements
 /// See: https://github.com/dotnet/aspnetcore/blob/main/src/Components/Testing/src/Infrastructure/PlaywrightExtensions.cs
 /// </summary>
@@ -26,19 +26,16 @@ public sealed class AgentCodingPage
 
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/agent-coding");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/agent-coding");
 
         // Wait for the page to render (prerendered HTML appears immediately)
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
-        await _page.WaitForCockpitPageReadyAsync();
-
         // The template table's Remove/Edit buttons are gated on CanEdit (= Access.IsAdmin), and
         // Access.IsAdmin starts as false (Grant = AccessGrant.None) until CockpitLayout's
-        // OnInitializedAsync completes its async RBAC evaluation. WaitForCockpitPageReadyAsync
-        // only confirms the circuit is connected (theme toggle handler attached) — which can fire
-        // while the RBAC task is still in flight, leaving Access.IsAdmin = false and the Actions
-        // column rendering empty <td></td> instead of the Remove button.
+        // OnInitializedAsync completes its async RBAC evaluation. GotoCockpitPageAsync already
+        // waits for the circuit to render CockpitLayout and for no loading placeholder — but
+        // RBAC resolution may still be in flight immediately after that.
         //
         // Wait for "button.btn-add" (the "+ Add Template" button rendered by TemplateTableSection
         // when CanEdit=true AND IsLoopActive=false) to be interactive (have _blazorEvents_*).

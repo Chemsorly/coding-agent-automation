@@ -22,12 +22,10 @@ public sealed class SettingsPage
     /// <summary>Navigates to /settings and waits for the page to be interactive.</summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/settings");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/settings");
 
         // Wait for the page header to render
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-
-        await _page.WaitForCockpitPageReadyAsync();
     }
 
     /// <summary>Clicks a tree node by its visible text content (e.g., "Agent", "Issue", "General").</summary>

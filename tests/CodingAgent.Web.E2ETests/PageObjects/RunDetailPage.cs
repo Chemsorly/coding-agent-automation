@@ -1,3 +1,4 @@
+using CodingAgent.Web.E2ETests.Infrastructure;
 using Microsoft.Playwright;
 
 namespace CodingAgent.Web.E2ETests.PageObjects;
@@ -22,7 +23,7 @@ public sealed class RunDetailPage
     /// <summary>Navigates directly to a run's detail page and waits for the header to render.</summary>
     public async Task NavigateAsync(string runId)
     {
-        await _page.GotoAsync($"{_baseUrl}/runs/{runId}");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/runs/{runId}");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         // For live runs the hub-subscribed card is the definitive circuit-ready signal: it is set
         // via InvokeAsync(StateHasChanged) in SubscribeLiveAsync which only fires after the

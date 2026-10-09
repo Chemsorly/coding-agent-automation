@@ -23,9 +23,8 @@ public sealed class FleetPage
     /// <summary>Navigates to /fleet and waits for the agents table (or empty state) to render.</summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/fleet");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/fleet");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForCockpitPageReadyAsync();
     }
 
     /// <summary>Status text for an agent (e.g. "Idle", "Busy", "Disconnected"), or null if absent.</summary>
