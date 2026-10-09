@@ -3501,17 +3501,20 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Setup(f => f.GetRun(new JobId("run-link-order"))).Returns(existingRun);
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(entry);
+        // TODO [WARNING]: GetActiveRunsByAgent returns empty to prevent orphan activation from also
+        // firing for the same run. If the routing logic were to allow both TrackLinkedActiveJob and
+        // ActivateOrphanedRun to activate for the same run, the HaveCount(2) assertion would fail
+        // with count > 2 (a second TransitionStatus or UpdateAgentFieldAsync call), making it
+        // indistinguishable from a call-order bug. There is no explicit assertion isolating that only
+        // the TrackLinkedActiveJob path fired. Consider adding a comment or assertion that the orphan
+        // path is excluded by the empty active-runs list.
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns([]);
 
         var callOrder = new List<string>();
-        // TODO [WARNING]: This callback is registered on UpdateAgentFieldAsync, but the production code
-        // for the guarded path (Site 3 — TrackLinkedActiveJob) calls UpdateAgentFieldFireAndForget, which
-        // is a distinct IAgentHubFacade member. If UpdateAgentFieldFireAndForget does not call through to
-        // UpdateAgentFieldAsync synchronously on the same call stack, the callback never fires, callOrder
-        // only contains ["TransitionStatus"], and both ContainInOrder and HaveCount assertions fail. The
-        // test is also asserting an internal implementation detail of the fire-and-forget wrapper rather
-        // than the observable contract. Update to intercept UpdateAgentFieldFireAndForget directly, or
-        // assert the observable side-effect (entry.ActiveJobId set) instead.
+        // UpdateAgentFieldFireAndForget (the extension method used in production) calls
+        // facade.UpdateAgentFieldAsync synchronously on the same call stack before scheduling
+        // the fault-log ContinueWith. The Moq callback on UpdateAgentFieldAsync therefore fires
+        // synchronously, so this interception reliably captures call order.
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
             .Callback(() => callOrder.Add("UpdateAgentFieldAsync"))
             .Returns(Task.CompletedTask);
@@ -3520,8 +3523,8 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         await _service.RecoverOrphanedStateAsync(message, agentId);
 
-        // For Site 3 (TrackLinkedActiveJob): UpdateAgentFieldAsync fires first (inside the lock),
-        // then TransitionStatus fires after the lock is released.
+        // For Site 3 (TrackLinkedActiveJob): UpdateAgentFieldAsync fires first (inside the lock,
+        // via UpdateAgentFieldFireAndForget), then TransitionStatus fires after the lock is released.
         callOrder.Should().ContainInOrder("UpdateAgentFieldAsync", "TransitionStatus");
         callOrder.Should().HaveCount(2,
             "exactly one UpdateAgentFieldAsync and one TransitionStatus must fire on this path");
@@ -3533,6 +3536,13 @@ public sealed class AgentOrphanRecoveryServiceTests
     {
         // Verify via RestoreConsolidationTracking that for the unconditional path (guardAgainstConcurrentAssignment: false)
         // TransitionStatus fires BEFORE UpdateAgentFieldAsync (both outside the lock).
+        // TODO [WARNING]: This test covers Site 1 (RestoreConsolidationTracking) only. Site 2 (RestorePipelineRun)
+        // uses the same guardAgainstConcurrentAssignment: false branch. A regression reversing the call order
+        // inside the unconditional branch would go undetected for Site 2. Consider adding a parallel test that
+        // routes through RestorePipelineRun to pin the same invariant for that call site.
+        // TODO [WARNING]: This test does not assert entry.ActiveJobId to confirm the unconditional assignment
+        // occurred. If the whole block is skipped (e.g. helper returns false, or consolEntry is null), no
+        // assertion catches the omission — only the Times.Once Verify on TransitionStatus partially compensates.
         var agentId = MakeAgentId();
         var activeJob = MakeActiveJob("run-uncond-order",
             providerConfigId: ConsolidationConstants.ProviderConfigId);
@@ -3547,14 +3557,10 @@ public sealed class AgentOrphanRecoveryServiceTests
         var callOrder = new List<string>();
         _mockFacade.Setup(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()))
             .Callback(() => callOrder.Add("TransitionStatus"));
-        // TODO [WARNING]: This callback is registered on UpdateAgentFieldAsync, but the production code
-        // for the unconditional path (Sites 1 & 2 — RestoreConsolidationTracking, RestorePipelineRun)
-        // calls UpdateAgentFieldFireAndForget, which is a distinct IAgentHubFacade member. If
-        // UpdateAgentFieldFireAndForget does not call through to UpdateAgentFieldAsync synchronously on
-        // the same call stack, the callback never fires, callOrder only contains ["TransitionStatus"],
-        // and the ContainInOrder("TransitionStatus", "UpdateAgentFieldAsync") assertion fails. The
-        // ordering invariant this test is meant to pin is therefore not reliably verified. Update to
-        // intercept UpdateAgentFieldFireAndForget directly, or assert the observable side-effect instead.
+        // UpdateAgentFieldFireAndForget (the extension method used in production) calls
+        // facade.UpdateAgentFieldAsync synchronously on the same call stack before scheduling
+        // the fault-log ContinueWith. The Moq callback on UpdateAgentFieldAsync therefore fires
+        // synchronously, so this interception reliably captures call order.
         _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
             .Callback(() => callOrder.Add("UpdateAgentFieldAsync"))
             .Returns(Task.CompletedTask);
@@ -3598,6 +3604,10 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId.Should().Be("run-guard-null", "ActiveJobId must be set when guard passes (was null)");
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
             "TransitionStatus must be called when ActiveJobId was null");
+        // TODO [WARNING]: This test does not assert that UpdateAgentFieldFireAndForget (via UpdateAgentFieldAsync)
+        // was called for the ActiveJobId field on the guarded null branch. The helper is required to call
+        // UpdateAgentFieldFireAndForget inside the lock on this path. A regression silently dropping that
+        // Redis write would not be caught by the current assertions.
     }
 
     // Test 4: Guarded path — when ActiveJobId is set to a DIFFERENT run, TransitionStatus is NOT called.
@@ -3634,6 +3644,9 @@ public sealed class AgentOrphanRecoveryServiceTests
         entry.ActiveJobId.Should().Be("some-other-run", "ActiveJobId must not be overwritten by a different run");
         _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never,
             "TransitionStatus must NOT be called when entry.ActiveJobId is already set to a different run");
+        // TODO [WARNING]: This test does not assert that UpdateAgentFieldFireAndForget (via UpdateAgentFieldAsync)
+        // was also NOT called on the "already-set, different run" branch. The full contract for this branch is
+        // that neither TransitionStatus nor UpdateAgentFieldAsync fires. Only half of that contract is verified here.
     }
 
     // Test 5: Guarded path — when ActiveJobId MATCHES the run being linked, TransitionStatus IS called.
@@ -3669,20 +3682,31 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once,
             "TransitionStatus must be called when entry.ActiveJobId already matches the run being linked");
+        // TODO [WARNING]: This test does not assert that UpdateAgentFieldFireAndForget (via UpdateAgentFieldAsync)
+        // was NOT called a second time on the already-set-matching branch. In the original code, UpdateAgentFieldFireAndForget
+        // was only issued on the null branch; the else branch (already equals runId) did not re-issue it. A regression
+        // that incorrectly re-issued the field write on this path would not be caught by the current assertions.
     }
 
     // Test 6: additionalLockedAction — executed inside the lock ONLY on successful assignment (ActiveJobId was null).
     [Fact]
-    public async Task ActivateAgentJob_AdditionalLockedAction_ExecutedInsideLockAndOnlyOnSuccessfulAssignment()
+    public async Task ActivateAgentJob_AdditionalLockedAction_ExecutedOnlyWhenActiveJobIdWasNull()
     {
         // Verify via ActivateOrphanedRun (Site 4) that the additionalLockedAction:
         //   (a) is invoked when entry.ActiveJobId is null (successful assignment)
-        //   (b) is NOT invoked when entry.ActiveJobId is already set (guard fires)
+        //   (b) is NOT invoked when entry.ActiveJobId is already set to a different run ID (guard fires)
         //
         // We test (a) by observing that SetLocalAgentSnapshotField is called (it is invoked by
         // ActivateOrphanedRun's additionalLockedAction inside the extracted helper).
-        // We test (b) by simulating the drain-race (entry.ActiveJobId set before lock) and
-        // verifying SetLocalAgentSnapshotField is NOT called.
+        // We test (b) by pre-setting entry2.ActiveJobId to a different run ID before the helper
+        // acquires the lock (simulated via a synchronous Callback on GetActiveRunsByAgent).
+        // NOTE: This is a structural precondition test, not a true race simulation. The Callback
+        // fires synchronously on the calling thread before ActivateAgentJob is invoked, so
+        // entry2.ActiveJobId is already "drain-assigned" when the helper runs its null-check.
+        // The real concurrency race (a concurrent write between GetActiveRunsByAgent returning
+        // and lock(entry.SyncRoot) being acquired) cannot be reproduced in a single-threaded
+        // mock — but the structural precondition (ActiveJobId pre-set to a different run) is
+        // sufficient to exercise the guard branch and verify the additionalLockedAction contract.
 
         // Part (a): successful assignment — additionalLockedAction fires
         {
@@ -3721,6 +3745,13 @@ public sealed class AgentOrphanRecoveryServiceTests
         }
 
         // Part (b): guard fires (ActiveJobId already set) — additionalLockedAction must NOT fire
+        // TODO [WARNING]: Part (b) creates a separate service2 and mockFacade2, but still uses the
+        // shared _mockChangeNotifier and _mockLogger from the test class. Part (a) also uses the
+        // class-level _mockFacade without resetting it between parts. Accumulated invocation counts on
+        // _mockFacade from Part (a) carry over into Part (b)'s execution; if any production code path
+        // in Part (b) happened to call _mockFacade (currently it does not, because service2 uses mockFacade2),
+        // shared state could produce misleading Verify results. Consider splitting into two [Fact] methods
+        // or calling _mockFacade.Reset() between parts to make the boundary explicit.
         {
             const string agentId = "agent-action-b";
             var entry2 = CreateEntry(agentId);
@@ -3737,7 +3768,20 @@ public sealed class AgentOrphanRecoveryServiceTests
             };
 
             var mockFacade2 = new Mock<IAgentHubFacade>();
-            // Simulate drain race: set ActiveJobId before lock acquisition via callback on GetActiveRunsByAgent
+            // Pre-set ActiveJobId to a different run ID (structural precondition, not a real race).
+            // The Callback fires synchronously when GetActiveRunsByAgent is called, before
+            // ActivateAgentJob is invoked. This puts entry2 in the "already-assigned to a different
+            // run" state that the guard is designed to detect. The genuine race (a concurrent write
+            // between GetActiveRunsByAgent returning and lock acquisition) cannot be reproduced in a
+            // single-threaded mock — this is the closest structural approximation.
+            // TODO [WARNING]: This simulation sets entry2.ActiveJobId to "drain-assigned" (a DIFFERENT run id).
+            // The helper's else-branch also returns shouldTransition = true when entry.ActiveJobId == runId
+            // (same run id). No test covers the ActivateOrphanedRun path where a concurrent writer assigns
+            // entry.ActiveJobId = mostRecent.RunId (the identical run) before the lock. That path produces
+            // a different outcome: TransitionStatus and AddRun are called (no early return), but
+            // OrphanRestoredAt and _localSnapshot are not updated (additionalLockedAction only fires on the
+            // null branch). Add a test that sets entry2.ActiveJobId to orphanedRun2.RunId in the callback
+            // and asserts whether TransitionStatus/AddRun/OrphanRestoredAt fire to lock in intended behavior.
             mockFacade2.Setup(f => f.GetByAgentId(agentId)).Returns(entry2);
             mockFacade2.Setup(f => f.GetActiveRunsByAgent(agentId))
                 .Returns([orphanedRun2])
