@@ -293,7 +293,7 @@ internal sealed class DispatchWorkItemService
     /// <returns>
     /// A non-null <see cref="IResult"/> if a gate fires; <c>null</c> when all gates pass.
     /// </returns>
-    internal IResult? ApplyGates(
+    internal IResult? ApplyGates( // NOSONAR S2325 — instance API: callers and tests use an instance
         string normalizedSelector,
         string sanitizedSelector,
         Dictionary<string, int> concurrencyBySelector,
@@ -545,7 +545,7 @@ internal sealed class DispatchWorkItemService
     /// <param name="callerName">Short caller name for log messages (e.g. <c>"DispatchWorkItem"</c>).</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The success <see cref="IResult"/> on success; 503 on failure.</returns>
-    internal async Task<IResult> RunDispatchLifecycleAsync(
+    internal async Task<IResult> RunDispatchLifecycleAsync( // NOSONAR S2325 — instance API: callers and tests use an instance
         DispatchLifecycleContext ctx,
         DispatchLifecycleService lifecycle,
         Func<Guid, string, Task>? onDispatchFailure,

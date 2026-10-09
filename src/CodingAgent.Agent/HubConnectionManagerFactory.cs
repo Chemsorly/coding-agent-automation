@@ -17,7 +17,7 @@ public sealed class HubConnectionManagerFactory : IHubConnectionManagerFactory
     public HubConnectionManagerFactory(string orchestratorUrl, AgentId agentId, string apiKey, Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
-        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(apiKey);
         ArgumentNullException.ThrowIfNull(logger);
 
