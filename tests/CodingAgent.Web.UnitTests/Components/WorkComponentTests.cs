@@ -907,6 +907,122 @@ public class WorkComponentTests : BunitContext
             "both issues should still be counted as open");
     }
 
+    // ── Backlog readiness rendering — work-item-based (Issue #3457) ──────────
+
+    /// <summary>
+    /// Scopes to the "Provider backlog" cockpit-card and returns its single .cockpit-chip.
+    /// Avoids false positives from the Queue and In-flight tables that can also emit chips.
+    /// </summary>
+    private AngleSharp.Dom.IElement FindBacklogChip(IRenderedComponent<Work> cut)
+    {
+        var backlogCard = cut.FindAll(".cockpit-card")
+            .Single(c => c.QuerySelector("h2")?.TextContent == "Provider backlog");
+        // TODO: [WARNING] QuerySelector returns only the *first* .cockpit-chip inside the backlog card.
+        // For single-issue test fixtures this is always the correct chip, but if a future fixture has
+        // multiple issues where an earlier row renders a "Ready" chip before the row under test, this
+        // helper will return the wrong element. Consider scoping by the specific issue row (e.g. via
+        // a data-testid on the row or by querying the nth <tr>) when multi-issue fixtures are needed.
+        return backlogCard.QuerySelector(".cockpit-chip")!;
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithPendingWorkItem_ShowsQueuedChip()
+    {
+        // An issue whose only WorkItem is Pending must show "Queued", never "Running".
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Pending issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+        _mockWorkItems
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakePendingItem(Guid.NewGuid()) });
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        FindBacklogChip(cut).TextContent.Should().Be("Queued",
+            "a Pending WorkItem must show the 'Queued' chip, not 'Running'");
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithDispatchedWorkItem_ShowsRunningChip()
+    {
+        // An issue whose WorkItem is Dispatched (active, not yet running) must show "Running".
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Dispatched issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), "42") with { Status = WorkItemStatus.Dispatched } });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        FindBacklogChip(cut).TextContent.Should().Be("Running",
+            "a Dispatched WorkItem must show the 'Running' chip");
+    }
+
+    // Static label array for the error-label test — avoids CA1861.
+    private static readonly string[] s_errorLabels = [AgentLabels.Error];
+
+    [Fact]
+    public async Task BacklogCard_IssueWithActiveWorkItemAndErrorLabel_ShowsAccentRunningChip()
+    {
+        // An agent:error-labelled issue that also has an active WorkItem must show "Running"
+        // styled with var(--accent), NOT var(--error). The WorkItem chip overrides the label chip.
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Error+active issue", Labels = s_errorLabels, Description = "", Url = null },
+        });
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), "42") });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var chip = FindBacklogChip(cut);
+        chip.TextContent.Should().Be("Running",
+            "active WorkItem overrides agent:error label and must show 'Running'");
+        chip.GetAttribute("style").Should().Contain("var(--accent)",
+            "the chip style must use the accent colour, not the error colour");
+        chip.GetAttribute("style").Should().NotContain("var(--error)",
+            "the chip must not retain the error-label colour when a WorkItem is active");
+    }
+
+    [Fact]
+    public async Task BacklogCard_HeaderReadyCount_ExcludesPendingWorkItemIssues()
+    {
+        // Issue #42: IsReady=true but has a Pending WorkItem → must NOT count toward "ready"
+        // Issue #43: IsReady=true, no work item → must count
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Pending-queue issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+            new IssueSummary { Identifier = "43", Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+        _mockWorkItems
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakePendingItem(Guid.NewGuid()) }); // IssueIdentifier = "42" (hardcoded in helper)
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        // TODO: [WARNING] [^1] targets the last .cockpit-card-header span on the page, which is the
+        // backlog card only as long as no new cockpit-card is added after Provider backlog. If a new
+        // card is appended later, this selector will target the wrong span. The safer approach is to
+        // scope to the cockpit-card whose h2 reads "Provider backlog" first (as FindBacklogChip does),
+        // then locate the span within that card. The same fragility is noted on BacklogCard_ShowsExactCount_WhenNotTruncated.
+        var headerSpan = cut.FindAll(".cockpit-card-header span")[^1];
+        headerSpan.TextContent.Should().StartWith("1 ready",
+            "header count must exclude the issue that has a Pending WorkItem");
+        headerSpan.TextContent.Should().Contain("2 open",
+            "both issues should still be counted as open");
+    }
+
     // ── Spec 049: actions follow the role on the item's own project ───────────
 
     private const string AccessProjectP = "6f1c2a9e-0000-0000-0000-00000000000a";
