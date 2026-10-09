@@ -34,14 +34,9 @@ public sealed class AttentionPage
     /// <summary>Navigates to /attention and waits for the page to finish its initial load.</summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/attention");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/attention");
         // Wait for the h1 to appear (prerendered HTML)
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
-        // The prerendered HTML already holds the loaded sections and the blocked-count badge; the
-        // circuit then re-runs OnInitializedAsync and swaps them for "Loading…" until its API calls
-        // return. Wait for the circuit first so the badge wait below matches the interactive render
-        // (same race as KnowledgePage #3374 and InsightsPage #3378).
-        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", DefaultTimeout);
         // Wait for the loading card to disappear (Blazor Server data load)
         await WaitForLoadCompleteAsync();
     }

@@ -24,14 +24,16 @@ public sealed class ConsolidationPage
     /// </summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/consolidation");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/consolidation");
 
         // Wait for the Consolidation header, then for the content sections to attach.
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         // The prerendered HTML already holds the cards and the run table; the circuit then re-runs
         // OnInitializedAsync and shows "Loading..." until LoadDataAsync returns. Reads (and clicks,
-        // which a prerendered button drops) must wait for the circuit, then for no placeholder.
-        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", 15_000);
+        // which a prerendered button drops) must wait for no placeholder.
+        // Note: Consolidation uses .monitoring-empty (not .cockpit-empty) for its content placeholder
+        // — this page-specific wait is separate from the layout-level .auth-authorizing check that
+        // GotoCockpitPageAsync already performs.
         await _page.WaitForFunctionAsync(
             "() => !!document.querySelector('.consolidation-cards, .monitoring-empty') && " +
             "![...document.querySelectorAll('.monitoring-empty')].some(e => e.textContent.trim() === 'Loading...')",

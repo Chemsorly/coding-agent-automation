@@ -167,7 +167,7 @@ public sealed class AgentMonitoringUiTests : E2ETestBase
             TimeSpan.FromSeconds(15));
 
         // Navigate to the Runs history page and confirm the completed run is listed.
-        await Page.GotoAsync($"{BaseUrl}/runs");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/runs");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await Page.WaitForTimeoutAsync(2000);
 

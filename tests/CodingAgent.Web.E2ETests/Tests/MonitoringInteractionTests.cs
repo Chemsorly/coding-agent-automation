@@ -142,7 +142,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase
         var runId = await SeedDispatchAndActivateAsync(fakeAgent, "Modal Template", "71");
 
         // Act: the Overview "Active runs" card lists runs and navigates to /runs/{id} on click.
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         var runRow = Page.Locator(".cockpit-run-row").Filter(new() { HasTextString = "#71" });
         await runRow.First.WaitForAsync(new() { Timeout = 15_000 });
@@ -406,7 +406,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase
             timeout: TimeSpan.FromSeconds(15));
 
         // Navigate away and back — verify C's weight persisted.
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await work.NavigateAsync();
         await work.WaitForQueuedAsync("95", timeoutMs: 15_000);
 

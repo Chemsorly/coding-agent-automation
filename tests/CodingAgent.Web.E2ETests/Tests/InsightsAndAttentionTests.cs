@@ -222,7 +222,7 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         Assert.Equal(expectedTotal, badgeCount);
 
         // Navigate to Overview and verify the "Needs attention" KPI tiles
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         // Wait for the attention tiles to appear (they're only rendered when count > 0)

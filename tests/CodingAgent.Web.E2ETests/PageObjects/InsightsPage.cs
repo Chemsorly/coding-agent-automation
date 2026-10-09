@@ -41,13 +41,8 @@ public sealed class InsightsPage
     /// </summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/insights");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/insights");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
-        // The prerendered HTML already contains the figures, but when the circuit connects the
-        // interactive component re-runs OnInitializedAsync and replaces them with "Loading…" until
-        // the run-history API call returns. Wait for the circuit to attach the layout's event
-        // handlers so the settled-state check below cannot be satisfied by prerendered markup.
-        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", DefaultTimeout);
         await WaitForLoadCompleteAsync();
     }
 
