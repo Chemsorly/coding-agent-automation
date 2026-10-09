@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 
@@ -8,7 +9,6 @@ namespace CodingAgent.Api.Client;
 /// <see cref="IPipelineApiChatClient"/> backed by <see cref="HttpClient"/> registered
 /// via <see cref="IHttpClientFactory"/>.
 /// </summary>
-[System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage(Justification = "Thin HttpClient wrapper — runtime-only, no unit-testable logic.")]
 internal sealed class PipelineApiChatClient : IPipelineApiChatClient
 {
     private readonly HttpClient _http;
@@ -29,7 +29,28 @@ internal sealed class PipelineApiChatClient : IPipelineApiChatClient
             PipelineJsonOptions.Default,
             ct);
 
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var body = await response.Content.ReadAsStringAsync(ct);
+            DispatchProblemBody? problem = null;
+            if (!string.IsNullOrEmpty(body))
+            {
+                try
+                {
+                    problem = JsonSerializer.Deserialize<DispatchProblemBody>(body, PipelineJsonOptions.Lenient);
+                }
+                catch (JsonException)
+                {
+                    // Non-JSON body — fall through to fallback message.
+                }
+            }
+
+            var message = string.IsNullOrWhiteSpace(problem?.Detail)
+                ? $"POST /api/chat/dispatch failed with HTTP {(int)response.StatusCode} ({response.StatusCode})."
+                : problem.Detail;
+
+            throw new ChatDispatchFailedException(message, response.StatusCode, problem?.TimeoutSeconds);
+        }
 
         var result = await response.Content.ReadFromJsonAsync<DispatchChatPodResponse>(
             PipelineJsonOptions.Default, ct)
@@ -60,4 +81,7 @@ internal sealed class PipelineApiChatClient : IPipelineApiChatClient
 
     // Local mirror of the API's response record — avoids a project reference to CodingAgent.Api.
     private sealed record DispatchChatPodResponse(string AgentId);
+
+    // Deserialization target for the ProblemDetails body returned by DispatchChatPod on error.
+    private sealed record DispatchProblemBody(string? Detail, int? TimeoutSeconds);
 }

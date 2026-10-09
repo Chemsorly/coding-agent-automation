@@ -8,9 +8,7 @@ Two `PipelineRunType` values route to dedicated step pipelines:
 - `DecompositionAnalysis` → Phase 1 steps
 - `Decomposition` → Phase 2 steps
 
-Dispatch chain: `PipelineLoopService` → `DispatchOrchestrationService` → `KubernetesWorkDistributor` → K8s Job → agent pod → `LocalPipelineExecutor`
-
-> **Note:** `IJobDispatcher` and `AgentJobDispatcher` were removed in Spec 044. Decomposition jobs now go through the Kubernetes work-item dispatch path in the same way as implementation and review jobs.
+Dispatch chain: `PipelineLoopService` → `DispatchScheduler` → `DispatchOrchestrationService` → `KubernetesWorkDistributor` (`POST /api/work-items`, Pending WorkItem) → Scheduler `WorkItemDispatchLoop` (`POST /api/work-items/{id}/dispatch`) → Pipeline API `DispatchLifecycleService` (K8s Job) → agent pod → `LocalPipelineExecutor`
 
 ## Eligibility Filters
 
@@ -18,7 +16,7 @@ When polling for decomposition candidates:
 
 - **Phase 1 (`agent:epic`)**: Skip issues that also carry `agent:epic-review`, `agent:in-progress`, `agent:error`, or `agent:done`
 - **Phase 2 (`agent:epic-approved`)**: Skip issues that also carry `agent:in-progress`, `agent:error`, or `agent:done`
-- Issues already being processed or queued are skipped (`IsIssueBeingProcessedOrQueued` check)
+- Issues that already have an active WorkItem, or were dispatched earlier in the same cycle, are skipped (`DispatchScheduler.IsIssueAlreadyActive`)
 
 ## Loop Integration
 
@@ -31,7 +29,7 @@ Priority 3:           Issue queue (Implementation)
 
 - Total dispatches per cycle ≤ `ClosedLoopMaxRunsPerCycle`
 - `MinIssueSlots` floor reservation: if Issues were not dispatched in the priority loop, up to `MinIssueSlots` issue slots are reserved in a floor pass, ensuring implementation work is never fully starved
-- `MaxConcurrentDecompositions` enforced by querying active `PipelineRun` instances filtered by `RunType == DecompositionAnalysis || Decomposition`
+- `MaxConcurrentDecompositions` is enforced from the count of decomposition WorkItems that are Pending, Dispatched or Running (`GET /api/work-items/active-decomposition-count`, loaded at cycle start and increased by each decomposition dispatched in the cycle)
 - Repo epics and project epics share the same decomposition queue (the project's executor template holds its project epics alongside its own repo epics); there is no separate sub-priority between them
 
 ## Phase 1 Step Details
@@ -51,7 +49,7 @@ Cap: `MaxOpenIssuesForContext` (default 50). Individual fetch failures logged an
 5. Executes adversarial review via `AdversarialReviewHelper.ExecuteReviewAsync`
 6. On success → `StepResult.Continue`; on failure → `StepResult.Stop`
 
-Adversarial review validates: no overlap with open issues, each sub-issue is right-sized (≤5 files, one verification criterion, one agent run), dependencies are acyclic, all epic acceptance criteria are covered, and no duplicate titles.
+Adversarial review validates: no overlap with open issues, each sub-issue is right-sized (creates or modifies at most `MaxDecompositionSubIssueFiles` files, default 12; one verification criterion; one agent run), dependencies are acyclic, all epic acceptance criteria are covered, no duplicate titles, and the plan has at most `MaxDecompositionSubIssues` sub-issues.
 
 ### PostDecompositionPlanStep
 
@@ -65,17 +63,17 @@ Adversarial review validates: no overlap with open issues, each sub-issue is rig
 
 ### DecompositionStep
 
-1. Writes epic body + all comments (including plan comment) to `.agent/issue-context.md`
-2. Queries existing `agent:generated` sub-issues for deduplication context
-3. Builds decomposition prompt with `MaxDecompositionSubIssues` cap
-4. Executes agent — expects `.agent/sub-issues/*.json` output
-5. Validates plan comment exists (marker detection)
+1. Validates plan comment exists (marker detection); fails the run if the epic has no plan comment
+2. Writes epic body + all comments (including plan comment) to `.agent/issue-context.md`
+3. Queries existing `agent:generated` sub-issues for deduplication context
+4. Builds decomposition prompt with `MaxDecompositionSubIssues` cap
+5. Executes agent — expects `.agent/sub-issues/*.json` output
 
 ### CreateSubIssuesStep
 
 1. Parses sub-issue files via `SubIssueFileParser` (alphabetical order)
 2. Enforces `MaxDecompositionSubIssues` cap (takes first N alphabetically)
-3. Creates issues sequentially via `IAgentIssueOperations.CreateIssueAsync`
+3. Creates issues sequentially via `IAgentIssueOperations.CreateIssueAsync`, or `CreateIssueForProviderAsync` when a project epic's sub-issue is routed to another template's tracker
 4. For each issue: sanitizes title (`TextSanitizer.SanitizeTitle`), sanitizes body (`TextSanitizer.SanitizeMarkdown`), resolves dependencies via `DependencyResolver`
 5. Applies labels: `agent:next` + `agent:generated` + custom labels from JSON
 6. Retries transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
@@ -122,19 +120,20 @@ Agent writes sub-issue files to `.agent/sub-issues/` as JSON.
 | `body` | `string` | Yes | Non-empty, markdown. Must contain: Summary, Affected Components, Requirements, Acceptance Criteria |
 | `dependencies` | `string[]` | Yes | Title references to other sub-issues (resolved to `#N` during creation) |
 | `labels` | `string[]` | Yes | Additional labels beyond auto-applied `agent:next` and `agent:generated` |
+| `targetRepository` | `string` | No | Template name whose tracker receives the sub-issue (project epics only); an unknown or empty value sends it to the executor template's tracker |
 
 ### Validation Rules
 
 - Valid UTF-8 JSON without BOM
-- All four fields required with correct types
+- The four fields above `targetRepository` are required with correct types
 - Invalid files logged and skipped
 
 ### Dependency Resolution
 
 1. Creates issues in alphabetical file-name order
 2. Maintains title→issue-number mapping
-3. Resolves titles to `#N` format (case-insensitive, whitespace-trimmed)
-4. Inserts "Depends on #N" at top of body before creation
+3. Resolves titles case-insensitively (whitespace-trimmed): a dependency created in the same tracker becomes `#N`, one created in another tracker becomes its full issue URL
+4. Inserts the `Depends on #N` or `Depends on <url>` lines at the top of the body before creation
 5. Unresolved titles (including forward references) logged as warnings and omitted
 
 ## Workspace Conventions

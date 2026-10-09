@@ -25,9 +25,8 @@ namespace CodingAgent.Orchestration.Dispatch;
 ///
 /// <para>
 /// Leader election was removed in Spec 049. All replicas can dispatch independently;
-/// the K8s <see cref="CheckForExistingJob"/> guard (live <c>ListJobsAsync</c> query)
-/// prevents duplicate pods for the same selector. PVC availability is read from K8s
-/// job labels at dispatch time — no in-memory PVC pool required.
+/// the job-list query at dispatch time is used only to determine PVC availability.
+/// No in-memory PVC pool required.
 /// </para>
 ///
 /// <para>
@@ -192,7 +191,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         var (normalized, selectorLabelValue) = NormalizeSelector(agentSelector);
         activity?.SetTag(TagAgentSelector, normalized);
 
-        // Query all active chat jobs — used for both double-dispatch guard and PVC availability.
+        // Query all active chat jobs — used for PVC availability.
         var allChatJobs = await _jobClient.ListJobsAsync(
             _options.Namespace, LabelChatSessionId, cancellationToken);
 
