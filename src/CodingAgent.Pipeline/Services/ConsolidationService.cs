@@ -50,9 +50,80 @@ public sealed class ConsolidationService : IConsolidationService
         CancellationToken ct,
         bool autoDispatch = false)
     {
+        var scope = await ResolveConsolidationScopeAsync(type, templateId, ct);
+        if (scope is null)
+            return null;
+
+        // Guard: WorkDistributor required.
+        if (_workDistributor is null)
+        {
+            // Should never happen in production (AddConsolidationServices always injects it).
+            // In tests that don't provide a distributor, this surfaces a clear diagnostic.
+            _logger.Error(
+                "ConsolidationService: IWorkDistributor is not configured — cannot dispatch run for {Type}/{TemplateId}",
+                type, scope.TemplateIdValue ?? GlobalScopeName);
+            throw new InvalidOperationException(
+                "ConsolidationService requires IWorkDistributor to be injected via ConsolidationServiceDependencies. " +
+                "Ensure AddConsolidationServices passes WorkDistributor.");
+        }
+
+        var selectorLabels = await ResolveSelectorLabelsAsync(scope.RepoConfig, scope.Config, type, scope.TemplateIdValue, ct);
+        if (selectorLabels is null)
+            return null;
+
+        var runId = Guid.NewGuid().ToString();
+        // Taken before DistributeAsync: the API call behind it can take seconds under load (issue #3209).
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
+
+        var request = BuildConsolidationDistributionRequest(runId, startedAtUtc, traceContext, type, selectorLabels, scope, autoDispatch);
+
+        var result = await TryDistributeAsync(_workDistributor, request, type, scope.TemplateIdValue, ct);
+        if (result is null)
+            return null;
+
+        // Detect duplicate rejection from the API layer.
+        // KubernetesWorkDistributor maps a 409 Conflict from POST /api/work-items to
+        // DistributionResult(Success: true, WorkItemId: null, Queued: true, AlreadyExists: true).
+        // This happens when the partial unique index on (IssueIdentifier, IssueProviderConfigId)
+        // rejects a duplicate insert because a live WorkItem already exists for this consolidation type.
+        if (result.AlreadyExists)
+        {
+            _logger.Warning(
+                "ConsolidationService: duplicate rejected for {Type}/{TemplateId} — " +
+                "a live WorkItem already exists (API returned 409).",
+                type, scope.TemplateIdValue ?? GlobalScopeName);
+            return null;
+        }
+
+        var triggerResult = new ConsolidationTriggerResult(
+            RunId: runId,
+            Type: type,
+            TemplateId: scope.TemplateIdValue,
+            TemplateName: scope.TemplateName,
+            ProjectId: scope.ProjectId,
+            ProjectName: scope.ProjectName,
+            StartedAtUtc: startedAtUtc,
+            WorkItemId: result.WorkItemId);
+
+        _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem {WorkItemId} created as Pending)",
+            runId, type, scope.TemplateName, result.WorkItemId);
+        OnChange?.Invoke();
+        return triggerResult;
+    }
+
+    /// <summary>
+    /// Resolves all template, project, configuration, and provider-ID context needed to trigger a
+    /// consolidation run. Returns null (after logging) when the run is rejected — either because
+    /// the template was not found or because the brain is read-only for brain consolidation.
+    /// </summary>
+    private async Task<ConsolidationScope?> ResolveConsolidationScopeAsync(
+        ConsolidationRunType type,
+        TemplateId? templateId,
+        CancellationToken ct)
+    {
         var templateIdValue = templateId?.Value;
 
-        // ── 1. Resolve template + project ────────────────────────────────────
         PipelineJobTemplate? template = null;
         PipelineProject? project = null;
         ProviderConfig? repoConfig = null;
@@ -99,31 +170,31 @@ public sealed class ConsolidationService : IConsolidationService
             return null;
         }
 
-        // ── 2. Guard: WorkDistributor required ───────────────────────────────
-        if (_workDistributor is null)
-        {
-            // Should never happen in production (AddConsolidationServices always injects it).
-            // In tests that don't provide a distributor, this surfaces a clear diagnostic.
-            _logger.Error(
-                "ConsolidationService: IWorkDistributor is not configured — cannot dispatch run for {Type}/{TemplateId}",
-                type, templateIdValue ?? GlobalScopeName);
-            throw new InvalidOperationException(
-                "ConsolidationService requires IWorkDistributor to be injected via ConsolidationServiceDependencies. " +
-                "Ensure AddConsolidationServices passes WorkDistributor.");
-        }
+        return new ConsolidationScope(
+            TemplateIdValue: templateIdValue,
+            TemplateName: templateName,
+            ProjectId: projectId,
+            ProjectName: projectName,
+            RepoProviderId: repoProviderId,
+            BrainProviderId: brainProviderId,
+            RepoConfig: repoConfig,
+            GlobalConfig: globalConfig,
+            Config: config);
+    }
 
-        // ── 3. Resolve agent selector labels ─────────────────────────────────
-        var selectorLabels = await ResolveSelectorLabelsAsync(repoConfig, config, type, templateIdValue, ct);
-        if (selectorLabels is null)
-            return null;
-
-        // ── 4. Build a unique RunId for this trigger ──────────────────────────
-        var runId = Guid.NewGuid().ToString();
-        // Taken before DistributeAsync: the API call behind it can take seconds under load (issue #3209).
-        var startedAtUtc = DateTimeOffset.UtcNow;
-        var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
-
-        // ── 5. Build and submit the JobDistributionRequest ───────────────────
+    /// <summary>
+    /// Builds a <see cref="JobDistributionRequest"/> from the resolved consolidation scope and
+    /// the timing/tracing values captured in <see cref="TriggerAsync"/> before dispatch.
+    /// </summary>
+    private static JobDistributionRequest BuildConsolidationDistributionRequest(
+        string runId,
+        DateTimeOffset startedAtUtc,
+        Dictionary<string, string>? traceContext,
+        ConsolidationRunType type,
+        IReadOnlyList<string> selectorLabels,
+        ConsolidationScope scope,
+        bool autoDispatch)
+    {
         // IssueIdentifier format: "{type}:{scope}" (issue #3027). The scope is what the run works on:
         // the brain for brain consolidation, the template (and so its repository) for a refactoring scan,
         // "global" for harness suggestions. Many templates can share one brain, and two consolidations of
@@ -131,64 +202,30 @@ public sealed class ConsolidationService : IConsolidationService
         // This deterministic format feeds the partial unique index on
         // (IssueIdentifier, IssueProviderConfigId) for non-terminal statuses in
         // PipelineDbContext.OnModelCreating, providing cross-replica dedup.
-        var scope = ResolveRunScope(type, brainProviderId, templateIdValue);
-        var issueIdentifier = $"{type}:{scope}";
+        var runScope = ResolveRunScope(type, scope.BrainProviderId, scope.TemplateIdValue);
+        var issueIdentifier = $"{type}:{runScope}";
 
-        var request = new JobDistributionRequest
+        return new JobDistributionRequest
         {
             IssueIdentifier = issueIdentifier,
             IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
-            RepoProviderConfigId = repoProviderId,
-            BrainProviderConfigId = brainProviderId,
+            RepoProviderConfigId = scope.RepoProviderId,
+            BrainProviderConfigId = scope.BrainProviderId,
             InitiatedBy = ConsolidationConstants.InitiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
             AgentSelector = AgentSelectorKey.From(selectorLabels),
-            TimeoutSeconds = (int)config.AgentTimeout.TotalSeconds,
+            TimeoutSeconds = (int)scope.Config.AgentTimeout.TotalSeconds,
             ConsolidationRunType = type,
-            ConsolidationTemplateId = templateIdValue,
+            ConsolidationTemplateId = scope.TemplateIdValue,
             AutoDispatch = autoDispatch,
-            ProjectId = !string.IsNullOrEmpty(projectId) && Guid.TryParse(projectId, out var pid)
+            ProjectId = !string.IsNullOrEmpty(scope.ProjectId) && Guid.TryParse(scope.ProjectId, out var pid)
                 ? pid
                 : (Guid?)null,
-            ProjectName = projectName,
+            ProjectName = scope.ProjectName,
             // TraceContext captured before dispatch so the resulting WorkItem inherits
             // the originating trace even when dispatched through the API asynchronously.
             TraceContext = traceContext
         };
-
-        var result = await TryDistributeAsync(_workDistributor, request, type, templateIdValue, ct);
-        if (result is null)
-            return null;
-
-        // ── 6. Detect duplicate rejection from the API layer ─────────────────
-        // KubernetesWorkDistributor maps a 409 Conflict from POST /api/work-items to
-        // DistributionResult(Success: true, WorkItemId: null, Queued: true, AlreadyExists: true).
-        // This happens when the partial unique index on (IssueIdentifier, IssueProviderConfigId)
-        // rejects a duplicate insert because a live WorkItem already exists for this consolidation type.
-        if (result.AlreadyExists)
-        {
-            _logger.Warning(
-                "ConsolidationService: duplicate rejected for {Type}/{TemplateId} — " +
-                "a live WorkItem already exists (API returned 409).",
-                type, templateIdValue ?? GlobalScopeName);
-            return null;
-        }
-
-        // ── 7. Build and return the result ────────────────────────────────────
-        var triggerResult = new ConsolidationTriggerResult(
-            RunId: runId,
-            Type: type,
-            TemplateId: templateIdValue,
-            TemplateName: templateName,
-            ProjectId: projectId,
-            ProjectName: projectName,
-            StartedAtUtc: startedAtUtc,
-            WorkItemId: result.WorkItemId);
-
-        _logger.Information("Consolidation run {RunId} created: {Type} for {TemplateName} (WorkItem {WorkItemId} created as Pending)",
-            runId, type, templateName, result.WorkItemId);
-        OnChange?.Invoke();
-        return triggerResult;
     }
 
     /// <summary>
@@ -302,4 +339,20 @@ public sealed class ConsolidationService : IConsolidationService
             _logger.Error(ex, "Failed to save harness suggestions");
         }
     }
+
+    /// <summary>
+    /// Carries the resolved template, project, configuration, and provider-ID context
+    /// from <see cref="ResolveConsolidationScopeAsync"/> to the rest of
+    /// <see cref="TriggerAsync"/>.
+    /// </summary>
+    private sealed record ConsolidationScope(
+        string? TemplateIdValue,
+        string TemplateName,
+        string? ProjectId,
+        string? ProjectName,
+        string RepoProviderId,
+        string? BrainProviderId,
+        ProviderConfig? RepoConfig,
+        PipelineConfiguration GlobalConfig,
+        PipelineConfiguration Config);
 }
