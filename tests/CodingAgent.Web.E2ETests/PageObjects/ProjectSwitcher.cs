@@ -95,7 +95,7 @@ public sealed class ProjectSwitcher
     public async Task SelectByValueAsync(string projectId)
     {
         await Select.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = DefaultTimeout });
-        await _page.WaitForBlazorAsync(DefaultTimeout);
+        await _page.WaitForInteractiveAsync("select[aria-label='Project scope']", DefaultTimeout);
         await Select.SelectOptionAsync(new SelectOptionValue { Value = projectId });
         // Brief wait for Blazor to process the @onchange event and trigger OnProjectChanged.
         await _page.WaitForTimeoutAsync(500);
@@ -107,7 +107,7 @@ public sealed class ProjectSwitcher
     public async Task SelectByNameAsync(string projectName)
     {
         await Select.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = DefaultTimeout });
-        await _page.WaitForBlazorAsync(DefaultTimeout);
+        await _page.WaitForInteractiveAsync("select[aria-label='Project scope']", DefaultTimeout);
         await Select.SelectOptionAsync(new SelectOptionValue { Label = projectName });
         await _page.WaitForTimeoutAsync(500);
     }

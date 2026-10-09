@@ -35,14 +35,8 @@ public sealed class KnowledgePage
     /// </summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/knowledge");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/knowledge");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
-        await _page.WaitForBlazorAsync(DefaultTimeout);
-        // The prerendered HTML already contains the stat strip, but when the circuit connects the
-        // interactive component re-runs OnInitializedAsync and replaces it with "Loading…" until
-        // the run-history API call returns. Wait for the circuit to attach the layout's event
-        // handlers so the settled-state check below cannot be satisfied by prerendered markup.
-        await _page.WaitForInteractiveAsync(".cockpit-theme-toggle", DefaultTimeout);
         await WaitForLoadCompleteAsync();
     }
 

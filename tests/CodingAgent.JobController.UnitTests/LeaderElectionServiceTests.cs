@@ -5,13 +5,9 @@ using Xunit;
 namespace CodingAgent.JobController.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="LeaderElectionService"/>.
-///
-/// Strategy: all branches testable without a live k8s cluster use
-/// <c>kubeClient = null</c> (non-Kubernetes path) or manipulate options.
-/// The election loop itself (requires real k8s or deep mocking of LeaderElector)
-/// is covered by integration tests; here we cover StartAsync/StopAsync/Dispose
-/// and the non-k8s degradation paths.
+/// Unit tests for <see cref="LeaderElectionService"/> outside Kubernetes (<c>kubeClient = null</c>):
+/// construction, the non-Kubernetes StartAsync/StopAsync/Dispose paths and option handling.
+/// The Kubernetes election loop is covered by <see cref="LeaderElectionServiceElectionLoopTests"/>.
 /// </summary>
 public sealed class LeaderElectionServiceTests
 {
