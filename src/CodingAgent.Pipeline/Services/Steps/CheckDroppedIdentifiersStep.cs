@@ -37,6 +37,12 @@ public sealed class CheckDroppedIdentifiersStep : IPipelineStep
 
         var notReapplied = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
 
+        // TODO: ct.ThrowIfCancellationRequested() at the top of each loop iteration means a
+        // cancellation signalled mid-loop (between files) rethrows OperationCanceledException,
+        // which bypasses StepResult.Continue and propagates upward. This is intentional (cancelled
+        // runs should not silently continue), but it means the step is not fully non-blocking with
+        // respect to cancellation — callers should be aware that cancellation still terminates the
+        // loop early even though the step is otherwise declared non-blocking.
         foreach (var (relativePath, identifiers) in run.DroppedIdentifiersByFile)
         {
             ct.ThrowIfCancellationRequested();
@@ -49,7 +55,7 @@ public sealed class CheckDroppedIdentifiersStep : IPipelineStep
             }
             catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
             {
-                context.Logger.Warning(
+                context.Logger.Warning( // NOSONAR S6667 — expected file-not-found; the message says so
                     "Pipeline {RunId} CheckDroppedIdentifiers: file {Path} not found (may have been intentionally removed)",
                     run.RunId, relativePath);
                 context.Callbacks.EmitOutputLine(
@@ -71,6 +77,11 @@ public sealed class CheckDroppedIdentifiersStep : IPipelineStep
 
             // Pre-compile each pattern with a timeout to avoid repeated cache evictions and
             // to satisfy S6444 (pass a timeout to limit execution time).
+            // TODO: Each Regex is constructed with RegexOptions.None (no Compiled flag), so the runtime
+            // re-interprets the pattern on every instantiation. For runs with many tracked identifiers
+            // this is a hidden allocation spike. Consider passing RegexOptions.Compiled here, or caching
+            // patterns across the loop if the same identifier list is stable, to avoid repeated pattern
+            // interpretation at the cost of higher memory per pattern.
             var compiledPatterns = identifiers
                 .Select(id => (Id: id, Pattern: new Regex($@"\b{Regex.Escape(id)}\b", RegexOptions.None, TimeSpan.FromSeconds(5))))
                 .ToList();

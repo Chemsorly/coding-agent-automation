@@ -35,6 +35,10 @@ public static class DroppedIdentifierExtractor
     // This is a false-positive risk: if the captured token (e.g. a custom generic) doesn't appear
     // elsewhere in the file, it is incorrectly reported as not re-applied. Consider splitting the
     // pattern into a modifier group and a return-type group to reliably skip to the method name.
+    // TODO: The pattern anchors with ^\+ which does NOT exclude +++ unified-diff file headers (e.g.
+    // "+++ b/src/Foo.cs"). If a path segment after the last '/' is not filtered by IsKeyword, it can
+    // be captured as a spurious method identifier and reported as missing. Add a negative lookahead
+    // ^\+(?!\+\+) or an explicit "+++ " prefix check to exclude file header lines.
     private static readonly Regex MethodDeclaration = new(
         @"^\+\s*(?:public|internal|protected|private)(?:[\s\w<>\[\],?.]+?)\s+(\w+)\s*[(<]",
         RegexOptions.Compiled | RegexOptions.Multiline, RegexTimeout);
@@ -111,22 +115,31 @@ public static class DroppedIdentifierExtractor
             if (!TestAttribute.IsMatch(lines[i]))
                 continue;
 
-            // Look at the next 3 lines for the method declaration
-            for (var j = i + 1; j < Math.Min(i + 4, lines.Length); j++)
-            {
-                var candidate = lines[j];
-                // Must be an added line, not a context or removed line
-                if (!candidate.StartsWith('+') || candidate.StartsWith("+++"))
-                    continue;
+            // Look at the next 3 lines for the method declaration.
+            ExtractTestMethodFromWindow(lines, i, identifiers);
+        }
+    }
 
-                var m = TestMethodName.Match(candidate);
-                if (m.Success)
-                {
-                    var name = m.Groups[1].Value;
-                    if (!IsKeyword(name))
-                        identifiers.Add(name);
-                    break;
-                }
+    /// <summary>
+    /// Inspects up to 3 lines after a test attribute line and adds the method name to
+    /// <paramref name="identifiers"/> when a valid method declaration is found.
+    /// </summary>
+    private static void ExtractTestMethodFromWindow(string[] lines, int attributeLineIndex, HashSet<string> identifiers)
+    {
+        for (var j = attributeLineIndex + 1; j < Math.Min(attributeLineIndex + 4, lines.Length); j++)
+        {
+            var candidate = lines[j];
+            // Must be an added line, not a context or removed line
+            if (!candidate.StartsWith('+') || candidate.StartsWith("+++"))
+                continue;
+
+            var m = TestMethodName.Match(candidate);
+            if (m.Success)
+            {
+                var name = m.Groups[1].Value;
+                if (!IsKeyword(name))
+                    identifiers.Add(name);
+                break;
             }
         }
     }

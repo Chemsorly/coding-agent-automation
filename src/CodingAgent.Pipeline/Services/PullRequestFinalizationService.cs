@@ -322,6 +322,11 @@ public sealed class PullRequestFinalizationService
                 // (decisions.md: the PR narrative never comes from the agent's stdout).
                 _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, keeping the generated PR body", // NOSONAR S6667 — expected missing file; the message says so
                     run.RunId, filePath);
+                // TODO: On this early-return path the dropped-identifier section (AppendDroppedIdentifiersSection)
+                // is never appended to the PR body, so if the agent produced no pr-description.md the
+                // "⚠️ Dropped changes not re-applied" warning is silently omitted from the non-draft PR,
+                // violating AC #1. Call AppendDroppedIdentifiersSection + UpdatePullRequestAsync here
+                // (mirroring the draft path in RunFullPrCreationAsync) before returning.
                 return;
             }
 
@@ -329,6 +334,9 @@ public sealed class PullRequestFinalizationService
             if (string.IsNullOrWhiteSpace(description))
             {
                 _logger.Warning("Pipeline {RunId} PR description generation returned empty output", run.RunId);
+                // TODO: Same gap as the file-not-found path above — dropped-identifier section is not
+                // appended when the description is empty/whitespace, leaving it absent from the PR body
+                // on the non-draft path. Fix together with the file-not-found path.
                 return;
             }
 
@@ -336,6 +344,8 @@ public sealed class PullRequestFinalizationService
             if (!int.TryParse(run.PullRequestNumber, out var prNumber))
             {
                 _logger.Warning("Pipeline {RunId} PR description skipped — PullRequestNumber '{PrNumber}' is not a valid integer", run.RunId, run.PullRequestNumber);
+                // TODO: Same gap — dropped-identifier section is not appended when PullRequestNumber is
+                // non-numeric. Fix together with the file-not-found and empty-description paths above.
                 return;
             }
             var currentBody = run.PullRequestBody;

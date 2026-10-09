@@ -36,6 +36,7 @@ public class CheckDroppedIdentifiersStepTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_tempDir, recursive: true); } catch { /* best-effort cleanup */ }
+        GC.SuppressFinalize(this);
     }
 
     // ── Short-circuit guards ────────────────────────────────────────────────
@@ -176,6 +177,11 @@ public class CheckDroppedIdentifiersStepTests : IDisposable
         _outputLines.Should().Contain(line => line.Contains(missingFile) && line.Contains("not found"),
             "must emit a warning about the missing file");
         // File is skipped — not added to NotReappliedIdentifiersByFile
+        // TODO: This assertion validates a known limitation documented in CheckDroppedIdentifiersStep.cs:
+        // when the entire file is absent (agent never recreated it) its identifiers are invisible in
+        // agent feedback and the PR description, violating AC #1 for the whole-file-absent case.
+        // When that TODO is fixed, this assertion must be INVERTED to verify that the file's identifiers
+        // ARE present in NotReappliedIdentifiersByFile with a "(file not re-created)" annotation.
         run.NotReappliedIdentifiersByFile.Should().NotContainKey(missingFile);
     }
 

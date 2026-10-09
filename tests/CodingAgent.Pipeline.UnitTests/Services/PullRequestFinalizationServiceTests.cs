@@ -2014,6 +2014,16 @@ public class PullRequestFinalizationServiceTests
 
     // ── Helper: TempDirectory ────────────────────────────────────────────────
 
+    // TODO: The draft PR path added in PullRequestFinalizationService.RunFullPrCreationAsync
+    // (inside the exhaustedRetries+isDraft block) calls AppendDroppedIdentifiersSection and then
+    // UpdatePullRequestAsync when NotReappliedIdentifiersByFile is non-empty. This path has no tests:
+    // - Happy path: "draft PR body includes dropped-identifier section when NotReappliedIdentifiersByFile
+    //   is non-empty" is not covered.
+    // - Silent-failure path: when PullRequestNumber is non-empty but not a valid integer, int.TryParse
+    //   silently skips UpdatePullRequestAsync and the section is lost with no diagnostic trace
+    //   (documented in a TODO in the production code). This failure mode is also not tested.
+    // Add tests for both paths to complete AC #1 coverage for draft PRs.
+
     private sealed class TempDirectory : IDisposable
     {
         public string Path { get; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"pr-fin-test-{Guid.NewGuid():N}");

@@ -172,6 +172,12 @@ public class DroppedIdentifierExtractorTests
         result.Should().Contain("WorkItemDispatchEndpointHelperCoverageTests");
         result.Should().Contain("WhenNoHelper_ReturnsNull");
         result.Should().Contain("WhenHelperExists_ReturnsValue");
+        // TODO: The MethodDeclaration regex has a known false-positive bug (documented in
+        // DroppedIdentifierExtractor.cs) where a method with a generic return type such as
+        // "public static IReadOnlyList<string> DoWork(" causes the regex to capture the return-type
+        // token ("IReadOnlyList") instead of the method name ("DoWork"). No test exercises this path,
+        // so a regression when the TODO is fixed would go undetected. Add a test case with a method
+        // using a generic return type to lock in the correct behavior once the TODO is resolved.
     }
 
     // ── ExtractFromMergeResult ───────────────────────────────────────────────
