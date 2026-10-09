@@ -117,8 +117,11 @@ public class TemplatePolllerInstanceTests
     {
         var project = new PipelineProject
         {
-            Id = "p1", Name = "P1", Enabled = false,
-            EpicIssueProviderId = "ep-1", TemplateIds = []
+            Id = "p1",
+            Name = "P1",
+            Enabled = false,
+            EpicIssueProviderId = "ep-1",
+            TemplateIds = []
         };
         var poller = CreatePoller();
         var queues = EmptyQueues();
@@ -134,8 +137,11 @@ public class TemplatePolllerInstanceTests
     {
         var project = new PipelineProject
         {
-            Id = "p1", Name = "P1", Enabled = true,
-            EpicIssueProviderId = null, TemplateIds = []
+            Id = "p1",
+            Name = "P1",
+            Enabled = true,
+            EpicIssueProviderId = null,
+            TemplateIds = []
         };
         var poller = CreatePoller();
         var queues = EmptyQueues();
