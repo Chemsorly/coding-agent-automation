@@ -1,15 +1,7 @@
-using System.Net.Http.Headers;
-using System.Text;
 using CodingAgent.Agent;
-using CodingAgent.Agent.OpenCode;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
-using CodingAgent.Pipeline.Interfaces;
-using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
-using KiroCliLib.Configuration;
-using KiroCliLib.Core;
 using Serilog;
 
 // ── Resolve startup configuration ──
@@ -27,7 +19,6 @@ try
 
     // Use Serilog
     builder.Host.UseSerilog();
-    builder.Services.AddSingleton(Log.Logger);
 
     // Configure OpenTelemetry (tracing only — agent pods record no metrics after #2967/#2974/#2978/#2979
     // migrated all metric recording to the API; see issue #2980)
@@ -36,94 +27,9 @@ try
         includeAspNetCoreInstrumentation: false,
         includeMetrics: false);
 
-    // ── KiroCliLib ──
-    var kiroConfig = new Configuration
-    {
-        KiroCliPath = AgentDefaults.KiroCliPath,
-        UseWsl = false, // Agent runs natively in Linux container
-        WorkspaceDirectory = "/app/workspaces"
-    };
-    builder.Services.AddSingleton(kiroConfig);
-    builder.Services.AddSingleton<IKiroCliOrchestrator>(sp =>
-    {
-        var cfg = sp.GetRequiredService<Configuration>();
-        return new KiroCliOrchestrator(cfg, Log.Logger);
-    });
-
-    // ── Pipeline configuration (will be overridden per-job, but needed for factory construction) ──
-    var defaultPipelineConfig = new PipelineConfiguration();
-    builder.Services.AddSingleton(defaultPipelineConfig);
-
-    // ── Null-safe history service (agent doesn't maintain run history) ──
-    builder.Services.AddSingleton<IPipelineRunHistoryService, NullPipelineRunHistoryService>();
-
-    // ── Shared pipeline services (IQualityGateValidator, IBrainUpdateService, IAgentPhaseExecutor, IQualityGateExecutor) ──
-    builder.Services.AddPipelineServices(Log.Logger);
-    // BrainUpdateService is an Infrastructure impl (Infrastructure.Git) — registered by the host
-    // composition root so the Pipeline-side AddPipelineServices helper stays Pipeline-only.
-    builder.Services.AddSingleton<CodingAgent.Pipeline.Interfaces.IBrainUpdateService>(
-        sp => new CodingAgent.Infrastructure.Git.BrainUpdateService(Log.Logger));
-
-    // ── Agent runtime options (replaces scattered Environment.GetEnvironmentVariable calls) ──
-    builder.Services.AddOptions<AgentRuntimeOptions>();
-    builder.Services.AddSingleton<Microsoft.Extensions.Options.IConfigureOptions<AgentRuntimeOptions>, AgentRuntimeOptionsSetup>();
-    builder.Services.AddSingleton<AgentRuntimeOptions>(sp =>
-        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<AgentRuntimeOptions>>().Value);
-
-    // ── OpenCode named HttpClient (always registered — safe when OPENCODE_SERVER_PASSWORD is absent) ──
+    // ── Shared agent host services (logger, KiroCliLib, pipeline, runtime options, hub, executors) ──
     var agentProviderType = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "";
-    builder.Services.AddHttpClient(AgentDefaults.OpenCodeHttpClientName, (sp, client) =>
-    {
-        var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
-        var baseUrl = runtimeOpts.OpenCodeBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
-        client.BaseAddress = new Uri(baseUrl);
-        // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
-        client.Timeout = TimeSpan.FromMinutes(60);
-
-        var password = runtimeOpts.OpenCodeServerPassword;
-        if (!string.IsNullOrEmpty(password))
-        {
-            client.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Basic",
-                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"opencode:{password}")));
-        }
-    });
-
-    // ── OpenCode health monitor (only when provider type is OpenCode) ──
-    if (agentProviderType.Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
-    {
-        builder.Services.AddHostedService<OpenCodeHealthMonitor>(sp =>
-            new OpenCodeHealthMonitor(sp.GetRequiredService<IHttpClientFactory>(), Log.Logger));
-    }
-
-    // ── Agent identity (single source of truth for AGENT_ID) ──
-    builder.Services.Add(ServiceDescriptor.Singleton(typeof(AgentId), startupConfig.AgentId));
-
-    // ── Hub connection manager ──
-    builder.Services.AddSingleton<IHubConnectionManagerFactory>(sp =>
-        new HubConnectionManagerFactory(startupConfig.OrchestratorUrl, startupConfig.AgentId, startupConfig.AgentApiKey, Log.Logger));
-    builder.Services.AddSingleton<IHubConnectionManager>(sp =>
-        sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
-
-    // ── Pipeline executor ──
-    builder.Services.AddSingleton<IPipelineReporterFactory>(sp => new PipelineReporterFactory(Log.Logger));
-    builder.Services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
-        new LocalPipelineExecutorDependencies(
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<PipelineConfiguration>(),
-            sp.GetRequiredService<IQualityGateValidator>(),
-            Log.Logger,
-            sp.GetRequiredService<IBrainUpdateService>(),
-            AgentIdentity: sp.GetRequiredService<AgentId>(),
-            ReporterFactory: sp.GetRequiredService<IPipelineReporterFactory>())));
-
-    // ── Consolidation executor ──
-    builder.Services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
-        sp.GetRequiredService<IKiroCliOrchestrator>(),
-        sp.GetRequiredService<IHttpClientFactory>(),
-        Log.Logger,
-        sp.GetRequiredService<IBrainUpdateService>()));
+    builder.Services.AddAgentHostServices(startupConfig, agentProviderType, Log.Logger);
 
     // ── Agent worker service (mode-conditional) ──
     if (startupConfig.IsWorkItemMode)
