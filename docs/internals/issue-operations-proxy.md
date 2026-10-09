@@ -14,11 +14,15 @@ Agents do NOT receive `IIssueProvider` credentials directly. All issue operation
 | Create issue (cross-provider) | `CreateIssueForProviderAsync` | `RequestCreateIssueForProvider` |
 | List open issues | `ListOpenIssuesAsync` | `RequestListOpenIssues` |
 | List closed issues | `ListClosedIssuesAsync` | `RequestListClosedIssues` |
+| List open issues (cross-provider) | `ListOpenIssuesForProviderAsync` | `RequestListOpenIssuesForProvider` |
+| List closed issues (cross-provider) | `ListClosedIssuesForProviderAsync` | `RequestListClosedIssuesForProvider` |
 | Get issue details | `GetIssueAsync` | `RequestGetIssue` |
 | List comments | `ListCommentsAsync` | `RequestListComments` |
 | Update comment | `UpdateCommentAsync` | `RequestUpdateComment` |
 | Post comment | `PostCommentAsync` | `RequestPostComment` |
-| Change labels | `ChangeLabelAsync` | `RequestLabelChange` |
-| Refresh token | `RefreshTokenAsync` | `RequestTokenRefresh` |
+| Change labels | `SwapLabelAsync` | `RequestLabelChange` |
+| Refresh token | `RequestTokenRefreshAsync` | `RequestTokenRefresh` |
+
+The cross-provider methods, like `RequestCreateIssueForProvider`, resolve the provider from the config ID the agent passes. The hub accepts a tracker other than the run's own only for a project epic's decomposition run.
 
 This keeps the agent's credential surface minimal — private keys and tokens never leave the orchestrator container.

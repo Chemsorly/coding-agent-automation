@@ -73,7 +73,7 @@ auth:
 - A user's role is the highest of `defaultRole` and every matching binding; on a project it is the highest of the global role and the project's bindings.
 - A binding to a project name that does not exist, or that two projects share, grants nothing. The web host logs a warning and the user's profile page shows the binding.
 - Binding changes take effect when the web pods restart. The chart annotates the pods with a checksum of the auth configuration, so `helm upgrade` restarts them.
-- Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, `admin` bound to a project, or an unknown role.
+- Invalid configurations stop `helm template` and the web host at startup: no login method, OIDC without issuer, client ID or client secret, or `admin` bound to a project. The web host also stops on an unknown role.
 
 ### Local admin password
 

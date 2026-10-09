@@ -70,13 +70,12 @@ public sealed class ReconciliationLoop
 {
     private readonly Serilog.ILogger _log;
 
-    // Kubernetes Job phases, distinct from WorkItem statuses despite two of them sharing their
-    // text. These are read from the Job's own conditions and counters; a WorkItem status is what
-    // we post back to the API afterwards. Collapsing the two into one set of constants would tie
-    // an external API's vocabulary to ours.
+    // Kubernetes Job condition type strings (Complete, Failed) and condition status (True) are
+    // defined in KubernetesJobConditions in CodingAgent.Kubernetes — the natural owner of K8s API
+    // vocabulary. The internal phase strings below are distinct: JobPhaseSucceeded is what this
+    // loop uses internally to represent a successfully completed job (mapped from the "Complete"
+    // condition type), and JobReasonDeadlineExceeded is a failure reason, not a condition type.
     private const string JobPhaseSucceeded = "Succeeded";
-    private const string JobPhaseFailed = "Failed";
-    private const string JobPhaseComplete = "Complete"; // the condition type Kubernetes sets on success
     private const string JobReasonDeadlineExceeded = "DeadlineExceeded"; // Failed condition reason when activeDeadlineSeconds fires
     private const string WorkItemIdTag = "work_item_id";
     private const string AgentSelectorTag = "agent_selector";
@@ -683,16 +682,16 @@ public sealed class ReconciliationLoop
                 if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseSucceeded, null, null, ct))
                     _reconciledTerminalIds.Add(workItemId.Value);
                 break;
-            case JobPhaseFailed:
+            case KubernetesJobConditions.JobPhaseFailed:
                 {
                     var (failureReason, errorMsg) = await ClassifyJobFailureAsync(workItemId.Value, job, ct);
                     // Emit Reconcile.JobFailed ONLY for the failed path (not for Succeeded).
-                    // Placed here in case JobPhaseFailed: rather than inside HandleJobCompletedAsync
+                    // Placed here in case KubernetesJobConditions.JobPhaseFailed: rather than inside HandleJobCompletedAsync
                     // because HandleJobCompletedAsync is called for both Succeeded and Failed phases.
                     using var jobFailedActivity = PipelineTelemetry.ActivitySource.StartActivity("Reconcile.JobFailed");
                     jobFailedActivity?.SetTag(WorkItemIdTag, workItemId.Value);
                     jobFailedActivity?.SetTag("failure_reason", failureReason);
-                    if (await HandleJobCompletedAsync(workItemId.Value, job, JobPhaseFailed, failureReason, errorMsg, ct))
+                    if (await HandleJobCompletedAsync(workItemId.Value, job, KubernetesJobConditions.JobPhaseFailed, failureReason, errorMsg, ct))
                         _reconciledTerminalIds.Add(workItemId.Value);
                     break;
                 }
@@ -714,7 +713,7 @@ public sealed class ReconciliationLoop
     private async Task<(string FailureReason, string? ErrorMessage)> ClassifyJobFailureAsync(
         Guid workItemId, V1Job job, CancellationToken ct)
     {
-        var condition = job.Status?.Conditions?.FirstOrDefault(c => c.Type == JobPhaseFailed && c.Status == "True");
+        var condition = job.Status?.Conditions?.FirstOrDefault(c => c.Type == KubernetesJobConditions.JobPhaseFailed && c.Status == KubernetesJobConditions.ConditionTrue);
 
         try
         {
@@ -908,10 +907,10 @@ public sealed class ReconciliationLoop
     private static string GetJobPhase(V1Job job)
     {
         var conditions = job.Status?.Conditions ?? [];
-        if (conditions.Any(c => c.Type == JobPhaseComplete && c.Status == "True"))
+        if (conditions.Any(c => c.Type == KubernetesJobConditions.JobPhaseComplete && c.Status == KubernetesJobConditions.ConditionTrue))
             return JobPhaseSucceeded;
-        if (conditions.Any(c => c.Type == JobPhaseFailed && c.Status == "True"))
-            return JobPhaseFailed;
+        if (conditions.Any(c => c.Type == KubernetesJobConditions.JobPhaseFailed && c.Status == KubernetesJobConditions.ConditionTrue))
+            return KubernetesJobConditions.JobPhaseFailed;
         return "Active";
     }
 }
