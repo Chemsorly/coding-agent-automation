@@ -12,7 +12,6 @@ namespace CodingAgent.Pipeline.Services.Prompts;
 public static partial class ConsolidationPromptBuilder
 {
     private const string JsonCodeFence = "```json";
-    private const string OutputFormatHeading = "## Output Format";
 
     // ─────────────────────────────────────────────────────────────────────
     //  Shared preamble injected at the TOP of every sub-agent prompt.
@@ -405,7 +404,7 @@ $"""
     /// </summary>
     private static void AppendFindingsOutputFormat(StringBuilder sb, FindingsOutputSpec spec)
     {
-        sb.AppendLine(OutputFormatHeading);
+        PromptBuilder.AppendOutputFormatHeading(sb);
         sb.AppendLine();
         sb.AppendLine($"Write findings to `{spec.OutputPath}` as a JSON object:");
         sb.AppendLine();
@@ -532,7 +531,7 @@ $"""
             sb.AppendLine();
         }
 
-        sb.AppendLine(OutputFormatHeading);
+        PromptBuilder.AppendOutputFormatHeading(sb);
         sb.AppendLine();
         sb.AppendLine($"Produce the final proposals at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` as a JSON array:");
         sb.AppendLine();

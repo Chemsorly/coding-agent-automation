@@ -153,7 +153,7 @@ public static class DecompositionPromptBuilder
         sb.AppendLine();
 
         // Output format — JSON schema
-        sb.AppendLine("## Output Format");
+        PromptBuilder.AppendOutputFormatHeading(sb);
         sb.AppendLine();
         sb.AppendLine($"Produce full issue descriptions as JSON files at `{AgentWorkspacePaths.SubIssuesDirectory}/{{NN}}-{{title-slug}}.json`");
         sb.AppendLine("where `{NN}` is a zero-padded two-digit sequence number (01, 02, ...) and `{title-slug}` is a");
