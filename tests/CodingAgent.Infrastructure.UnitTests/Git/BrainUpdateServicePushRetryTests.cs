@@ -125,6 +125,11 @@ public class BrainUpdateServicePushRetryTests : IDisposable
             _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
 
         result.Success.Should().BeTrue();
+        _mockGit.Verify(
+            g => g.WriteAllText(
+                Path.Combine(_repoPath, "sessions/test.md"),
+                BrainUpdateService.ResolveConflictAcceptBoth("remote content\n", "local content\n")),
+            Times.Once);
     }
 
     [Fact]
@@ -230,5 +235,114 @@ public class BrainUpdateServicePushRetryTests : IDisposable
             .Returns("base content\n");
         _mockGit.Setup(g => g.FileExists(It.IsAny<string>())).Returns(false);
         _mockGit.Setup(g => g.WriteAllText(It.IsAny<string>(), It.IsAny<string>()));
+    }
+
+    /// <summary>
+    /// The first push is rejected as non-fast-forward (another run pushed first); the second is accepted.
+    /// </summary>
+    private void SetupPushRejectedOnceThenAccepted()
+    {
+        var callCount = 0;
+        _mockProvider.Setup(p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    throw new InvalidOperationException("Push failed for ref 'refs/heads/main': non-fast-forward");
+                return Task.CompletedTask;
+            });
+    }
+
+    /// <summary>
+    /// Records, in call order, every git call that changes the working tree or history:
+    /// "commit", "reset {branch}", "write {file name}: {content}" and "delete {file name}".
+    /// </summary>
+    private List<string> RecordGitWrites()
+    {
+        var calls = new List<string>();
+        // TODO: The StageAllAndCommit callback fires for both the initial commit (from ResolveConflictsAndCommitAsync)
+        // and the post-rebase recommit, so the expected arrays deliberately include two "commit" entries.
+        // If ResolveConflictsAndCommitAsync ever gains additional StageAllAndCommit calls the recorded sequence
+        // will silently drift — revisit the expected arrays if that method changes.
+        _mockGit.Setup(g => g.StageAllAndCommit(_repoPath, It.IsAny<string>()))
+            .Callback(() => calls.Add("commit"));
+        _mockGit.Setup(g => g.ResetHardToRemote(_repoPath, It.IsAny<string>()))
+            .Callback((string _, string branch) => calls.Add($"reset {branch}"));
+        _mockGit.Setup(g => g.WriteAllText(It.IsAny<string>(), It.IsAny<string>()))
+            .Callback((string path, string content) => calls.Add($"write {Path.GetFileName(path)}: {content}"));
+        _mockGit.Setup(g => g.DeleteFile(It.IsAny<string>()))
+            .Callback((string path) => calls.Add($"delete {Path.GetFileName(path)}"));
+        return calls;
+    }
+
+    [Fact]
+    public async Task CommitAndPushAsync_RebaseWhereOnlyThisRunChangedTheFile_WritesThisRunsVersion()
+    {
+        SetupPushRejectedOnceThenAccepted();
+        var logPath = Path.Combine(_repoPath, "log.md");
+        _mockGit.Setup(g => g.GetHeadCommitChanges(_repoPath))
+            .Returns(new[] { new FileChange("log.md", FileChangeStatus.Modified) });
+        _mockGit.Setup(g => g.GetFileContentFromHead(_repoPath, "log.md")).Returns("base\nours\n");
+        _mockGit.Setup(g => g.GetFileContentFromHeadParent(_repoPath, "log.md")).Returns("base\n");
+        // TODO: FileExists is stubbed only for the specific logPath. Any unexpected FileExists call for a
+        // different path would silently return false (Moq default) rather than failing loudly. Consider
+        // using It.IsAny<string>() with a strict return or a MockBehavior.Strict if the test fixture is
+        // ever expanded to cover multiple files.
+        _mockGit.Setup(g => g.FileExists(logPath)).Returns(true);
+        _mockGit.Setup(g => g.ReadAllText(logPath)).Returns("base\n");
+        var calls = RecordGitWrites();
+
+        var result = await _sut.CommitAndPushAsync(
+            _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        calls.Should().Equal(
+            new[] { "commit", "reset main", "write log.md: base\nours\n", "commit" },
+            "after the reset, this run's version of a file only it changed must be written back and recommitted");
+        _mockProvider.Verify(
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task CommitAndPushAsync_RebaseWhereThisRunDeletedTheFile_DeletesItAgainAfterTheReset()
+    {
+        SetupPushRejectedOnceThenAccepted();
+        var oldPath = Path.Combine(_repoPath, "old.md");
+        _mockGit.Setup(g => g.GetHeadCommitChanges(_repoPath))
+            .Returns(new[] { new FileChange("old.md", FileChangeStatus.Deleted) });
+        _mockGit.Setup(g => g.GetFileContentFromHeadParent(_repoPath, "old.md")).Returns("- stale\n");
+        // TODO: FileExists and ReadAllText are dead setup here — the Deleted branch in ReapplyEachChange
+        // calls DeleteFile and continues before reaching those paths. They are kept for parity with how
+        // the remote state is described but do not affect test correctness. Remove if they cause confusion.
+        _mockGit.Setup(g => g.FileExists(oldPath)).Returns(true);
+        _mockGit.Setup(g => g.ReadAllText(oldPath)).Returns("- stale\n");
+        var calls = RecordGitWrites();
+
+        var result = await _sut.CommitAndPushAsync(
+            _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        calls.Should().Equal(
+            new[] { "commit", "reset main", "delete old.md", "commit" },
+            "the reset brings the deleted file back, so it must be deleted again and never rewritten");
+        _mockGit.Verify(g => g.GetFileContentFromHead(_repoPath, "old.md"), Times.Never);
+    }
+
+    [Fact]
+    public async Task CommitAndPushAsync_RebaseFindsNoChangesInHeadCommit_ReturnsFailureWithoutResetting()
+    {
+        SetupPushRejectedOnceThenAccepted();
+        _mockGit.Setup(g => g.GetHeadCommitChanges(_repoPath)).Returns(Array.Empty<FileChange>());
+
+        var result = await _sut.CommitAndPushAsync(
+            _repoPath, "run-1", "issue-1", _mockProvider.Object, CancellationToken.None);
+
+        result.Success.Should().BeFalse();
+        result.ErrorMessage.Should().Be("Cannot rebase brain changes: no changes detected in HEAD commit.");
+        _mockGit.Verify(g => g.ResetHardToRemote(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _mockProvider.Verify(
+            p => p.PushBranchAsync(_repoPath, (BranchName)"main", It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 }
