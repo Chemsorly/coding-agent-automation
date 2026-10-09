@@ -51,14 +51,25 @@ internal sealed class FakeHubConnectionManager : IHubConnectionManager
 
     public HubConnection Connection => _connection;
 
-    /// <summary>Always false — fake connection is never started against a real server.</summary>
-    public bool IsConnected => false;
+    /// <summary>
+    /// Whether the fake reports a live connection. Defaults to <c>false</c>. The fake never connects to a
+    /// server; tests set it to <c>true</c> only to drive connected-only branches such as the
+    /// <c>DeregisterAgent</c> call in <c>AgentConnectionLifecycle.ShutdownAsync</c>.
+    /// </summary>
+    public bool IsConnected { get; set; }
 
     public FakeHubConnectionManager()
-    {
-        _connection = new HubConnectionBuilder()
+        : this(new HubConnectionBuilder()
             .WithUrl("http://localhost:9999/hubs/agent")
-            .Build();
+            .Build())
+    {
+    }
+
+    /// <summary>Creates a fake whose <see cref="Connection"/> is <paramref name="connection"/>,
+    /// for example a <see cref="RecordingHubConnection"/>.</summary>
+    public FakeHubConnectionManager(HubConnection connection)
+    {
+        _connection = connection;
     }
 
     public Task StartAsync(CancellationToken ct)
