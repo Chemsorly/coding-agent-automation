@@ -170,6 +170,7 @@ public abstract class HeadlessE2ETestBase : IAsyncLifetime
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = prIdentifier,
+            PrNumber = int.Parse(prIdentifier, System.Globalization.CultureInfo.InvariantCulture),
             PrTitle = prTitle,
             PrDescription = prDescription,
             PrBranchName = prBranchName,
