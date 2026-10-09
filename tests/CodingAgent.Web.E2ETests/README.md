@@ -1,13 +1,16 @@
 # CodingAgent.Web.E2ETests
 
-End-to-end tests for the Coding Agent pipeline using Playwright and Blazor TestServer.
+End-to-end tests for the Coding Agent pipeline using Playwright against the Blazor app, Pipeline API and
+Scheduler hosted in-process on real Kestrel ports.
 
 ## Architecture
 
-The harness was rebuilt in Spec 045 against the four-service Kubernetes architecture. Four legacy factory
-base classes (`E2EWebApplicationFactory`, `DbModeE2EWebApplicationFactory`, `K8sModeE2EWebApplicationFactory`,
-`K8sChatE2EWebApplicationFactory`) were collapsed into a single `E2EWebApplicationFactory` with an
-in-memory Kubernetes stub. `CrossModeParityTests.cs` was deleted.
+The harness runs the deployed topology inside the test process. `E2EFixture` starts the Pipeline API
+(`ApiE2EWebApplicationFactory`), the Scheduler (`SchedulerE2EWebApplicationFactory`) and the Blazor app
+(`E2EWebApplicationFactory`, the only monolith factory) on real Kestrel ports. `FakeJobController` stands
+in for dispatch, and `JobControllerE2EWebApplicationFactory` hosts the real Job Controller for
+reconciliation tests. External dependencies, including the Kubernetes Job API, are in-memory fakes. All
+test classes share the fixture through `E2ECollection`, and every test resets it first.
 
 ## Running tests
 
@@ -85,9 +88,16 @@ and names the hung test.
 
 | File | Purpose |
 |------|---------|
-| `E2EWebApplicationFactory.cs` | Single factory targeting the four-service architecture |
-| `E2ETestBase.cs` | Base class for all E2E tests |
-| `E2EFixture.cs` | xUnit collection fixture (shared browser instance) |
-| `SchedulerE2EWebApplicationFactory.cs` | Extended factory for Scheduler-level tests |
+| `E2EWebApplicationFactory.cs` | Blazor app host on a real Kestrel port, with in-memory fakes; the only monolith factory |
+| `ApiE2EWebApplicationFactory.cs` | Pipeline API host (agent hub, `/api/work-items/*`) on a real Kestrel port |
+| `JobControllerE2EWebApplicationFactory.cs` | Real Job Controller (ReconciliationLoop) against the E2E API host |
+| `E2ETestBase.cs` | Base class for browser (Playwright) tests |
+| `HeadlessE2ETestBase.cs` | Base class for state-only tests; needs no browser |
+| `MultiReplicaTestBase.cs` | Base class for multi-replica tests |
+| `E2EFixture.cs` | xUnit collection fixture: starts the API, Scheduler, Blazor and Job Controller hosts once per run; starts the shared browser on first use |
+| `E2ECollection.cs` | Shares one E2EFixture across all test classes |
+| `MultiReplicaE2EFixture.cs` | Two API hosts sharing a fake Redis store |
+| `SchedulerE2EWebApplicationFactory.cs` | Scheduler host on a real Kestrel port, started for every test run; leader election removed so `PipelineLoopService` runs |
+| `RealAgentWorkerHarness.cs` | Real agent worker built in-process against the E2E API host |
 | `FakeAgentClient.cs` | In-process fake agent for tests that don't need a real agent pod |
 | `FakeJobController.cs` | Stubs K8s Job dispatch for in-process tests |

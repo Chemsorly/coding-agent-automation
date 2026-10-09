@@ -5,20 +5,22 @@ Internal reference for the dependency tracking mechanism in the dispatch loop.
 ## Regex Pattern
 
 ```
-\b(?:blocked\s+by|depends\s+on|requires|after)\s+(?:#(\d+)|([A-Za-z][\w-]*))
+\b(?:blocked\s+by|depends\s+on|requires|after)\s+(?:(https://github\.com/[^/\s]+/[^/\s]+/issues/\d+)|(https://gitlab\.com/[^/\s]+/[^/\s]+/-/issues/\d+)|#(\d+)|([A-Za-z][\w-]*))
 ```
 
-Case-insensitive, word-boundary matched before the keyword. Supports two reference formats:
-- `#N` — numeric issue reference (captured in group 1)
-- Alphanumeric identifier starting with a letter (e.g., `PROJ-123`) (captured in group 2)
+Case-insensitive, word-boundary matched before the keyword. Supports four reference formats:
+- Group 1 — GitHub issue URL (`https://github.com/owner/repo/issues/N`)
+- Group 2 — GitLab issue URL (`https://gitlab.com/group/project/-/issues/N`, one namespace level)
+- Group 3 — `#N`
+- Group 4 — alphanumeric identifier starting with a letter (e.g., `PROJ-123`)
 
-Only numeric references (from either group) are used for dispatch blocking. Non-numeric identifiers are ignored.
+`#N` references and issue URLs on `https://github.com` and `https://gitlab.com` are used for dispatch blocking; alphanumeric identifiers (group 4) are ignored. A URL is checked in the configured tracker whose URL prefix it matches; a URL that matches no configured tracker counts as unresolved. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) match no URL group and do not block dispatch.
 
 Self-references are excluded via the optional `selfIdentifier` parameter.
 
 ## Stateless Body-Parsed Check
 
-The dependency check runs fresh on each poll cycle (~30s default interval):
+The dependency check runs fresh on each poll cycle (`ClosedLoopPollInterval`, default 60 s):
 
 1. When a candidate issue is dequeued for dispatch, `DependencyParser` extracts issue numbers from the body text
 2. For each referenced issue number, `DependencyChecker` calls `IsIssueClosedAsync` on the issue provider
@@ -51,4 +53,4 @@ No internal state persisted between cycles. No new labels introduced.
 | Code block matching | Patterns inside markdown code blocks still match |
 | Strikethrough matching | `~~Blocked by #123~~` still matches |
 | No circular dependency detection | A depends on B and B depends on A = both skipped indefinitely |
-| Same-repository only | Only `#N` references supported, not `owner/repo#N` |
+| Cross-tracker by URL only | `#N` is resolved in the dependent issue's own tracker. Another tracker's issue needs its full `https://github.com` or `https://gitlab.com` issue URL; `owner/repo#N`, URLs on other hosts and GitLab URLs with nested subgroups are not recognized and do not block dispatch |

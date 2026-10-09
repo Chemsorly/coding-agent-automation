@@ -1,0 +1,15 @@
+@if (HasMore || Page > 1)
+{
+    <div style="display: flex; justify-content: center; gap: 8px; padding: 8px 0;">
+        <button class="btn-page" @onclick="OnPrevPage" disabled="@(Page <= 1)">← Prev</button>
+        <span class="monitoring-muted" style="align-self: center; font-size: 0.8rem;">Page @Page</span>
+        <button class="btn-page" @onclick="OnNextPage" disabled="@(!HasMore)">Next →</button>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public int Page { get; set; }
+    [Parameter, EditorRequired] public bool HasMore { get; set; }
+    [Parameter] public EventCallback OnPrevPage { get; set; }
+    [Parameter] public EventCallback OnNextPage { get; set; }
+}

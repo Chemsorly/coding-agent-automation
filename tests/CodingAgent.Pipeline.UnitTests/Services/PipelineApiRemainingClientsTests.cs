@@ -365,6 +365,71 @@ public sealed class PipelineApiRemainingClientsTests
     }
 
     [Fact]
+    public async Task ChatClient_Dispatch_504WithTimeout_ThrowsWithTimeout()
+    {
+        var (client, handler) = Create(h => new PipelineApiChatClient(h));
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.GatewayTimeout)
+        {
+            Content = new StringContent(
+                """{"detail":"Chat pod did not connect within 120s.","timeoutSeconds":120}""",
+                Encoding.UTF8, "application/json")
+        };
+
+        var act = () => client.DispatchChatPodAsync("kiro", null, null);
+        var ex = await act.Should().ThrowAsync<ChatDispatchFailedException>(
+            "504 with a structured body must throw ChatDispatchFailedException");
+        ex.Which.StatusCode.Should().Be(HttpStatusCode.GatewayTimeout);
+        ex.Which.TimeoutSeconds.Should().Be(120,
+            "the timeoutSeconds field from the JSON body must be forwarded");
+    }
+
+    [Fact]
+    public async Task ChatClient_Dispatch_500WithDetail_UsesDetailAsMessage()
+    {
+        var (client, handler) = Create(h => new PipelineApiChatClient(h));
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent(
+                """{"detail":"No template for selector 'kiro'"}""",
+                Encoding.UTF8, "application/json")
+        };
+
+        var act = () => client.DispatchChatPodAsync("kiro", null, null);
+        var ex = await act.Should().ThrowAsync<ChatDispatchFailedException>(
+            "500 with a structured body must use the detail field as the message");
+        ex.Which.Message.Should().Be("No template for selector 'kiro'");
+    }
+
+    [Fact]
+    public async Task ChatClient_Dispatch_NonJsonBody_UsesFallbackMessage()
+    {
+        var (client, handler) = Create(h => new PipelineApiChatClient(h));
+        handler.Respond = _ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
+        {
+            Content = new StringContent("Internal Server Error", Encoding.UTF8, "text/plain")
+        };
+
+        var act = () => client.DispatchChatPodAsync("kiro", null, null);
+        var ex = await act.Should().ThrowAsync<ChatDispatchFailedException>(
+            "non-JSON error bodies must fall back to a synthesized message");
+        ex.Which.Message.Should().Be(
+            "POST /api/chat/dispatch failed with HTTP 500 (InternalServerError).",
+            "the fallback message must include the status code and reason phrase");
+    }
+
+    [Fact]
+    public async Task ChatClient_SendKeepalive_SendsPost()
+    {
+        var (client, handler) = Create(h => new PipelineApiChatClient(h));
+        handler.Respond = _ => Empty();
+
+        await client.SendKeepaliveAsync("agent-1");
+
+        handler.LastRequest!.Method.Should().Be(HttpMethod.Post);
+        handler.LastRequest.RequestUri!.PathAndQuery.Should().Be("/api/chat/agent-1/keepalive");
+    }
+
+    [Fact]
     public async Task ChatClient_TerminateChatSessionAsync_SendsPost()
     {
         var (client, handler) = Create(h => new PipelineApiChatClient(h));
