@@ -172,14 +172,6 @@ internal static class SharedPrOperations
             {
                 await dismissItem(item, ct);
             }
-            // TODO [WARNING]: The continue-on-error branch (catch block) and the OperationCanceledException
-            // propagation guarantee are not covered by any direct unit test. The GitLab integration test
-            // DismissPreviousReviewAsync_IndividualResolveFailure_LogsAndContinues only exercises the happy
-            // path (no failure injected). Add a unit test in SharedPrOperationsTests that:
-            //   (a) passes a dismissItem lambda that throws a non-OperationCanceledException on the first
-            //       item and verifies the second item is still processed (continue-on-error), and
-            //   (b) passes a dismissItem lambda that throws OperationCanceledException and verifies it
-            //       propagates out of RunDismissLoopAsync without being swallowed.
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 Log.Warning(
