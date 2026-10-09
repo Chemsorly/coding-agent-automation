@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using AwesomeAssertions;
 using KiroCliLib.Core;
 using Serilog;
@@ -123,43 +124,43 @@ public class ProcessWrapperEnvironmentVariablesTests : IDisposable
     [Fact]
     public async Task StartAsync_StripsOtelKeysInheritedFromParentProcess()
     {
-        // Arrange — inject an OTEL key into the parent process so it lands in the PSI copy
-        const string otelKey = "OTEL_SERVICE_NAME";
-        var previous = Environment.GetEnvironmentVariable(otelKey);
-        Environment.SetEnvironmentVariable(otelKey, "coding-agent-worker-test");
+        // Arrange: one parent variable of each kind StripTelemetry removes, plus a control variable that
+        // must reach the child (it proves the child really printed its inherited environment).
+        var controlKey = $"KIRO_PW_CONTROL_{Guid.NewGuid():N}";
+        string[] strippedKeys = ["OTEL_SERVICE_NAME", "OTEL_EXPORTER_OTLP_HEADERS", "TRACEPARENT", "AGENT_CLAUDE_API_KEY"];
+        var parentValues = new Dictionary<string, string>
+        {
+            ["OTEL_SERVICE_NAME"] = "coding-agent-worker-test",
+            ["OTEL_EXPORTER_OTLP_HEADERS"] = "pw-test-headers",
+            ["TRACEPARENT"] = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+            ["AGENT_CLAUDE_API_KEY"] = "pw-test-api-key",
+            [controlKey] = "keep-me"
+        };
+        var previous = parentValues.Keys.ToDictionary(k => k, k => Environment.GetEnvironmentVariable(k));
+        foreach (var (key, value) in parentValues)
+            Environment.SetEnvironmentVariable(key, value);
         try
         {
-            // The _config points KiroCliPath at /bin/echo (set up in the constructor).
-            // ProcessWrapper.StartAsync builds the PSI internally and calls StripTelemetry before Start.
-            // We verify:
-            //   (a) The process completes normally — StripTelemetry did not break the launch.
-            //   (b) The parent environment is unchanged — StripTelemetry only touched the PSI copy.
-            // TODO: [WARNING] These assertions are weak: both would hold even if StripTelemetry were
-            // deleted (/bin/echo still exits 0 and the parent env is never touched by the production
-            // code). This test does not verify that the OTEL key was absent from the child process's
-            // actual environment. A stronger alternative is to replace /bin/echo with /usr/bin/env
-            // and parse the child's stdout to confirm OTEL_SERVICE_NAME is not present, or to
-            // introduce a PSI-capture seam analogous to the one in ChatJobExecutorDependencies.
-            using var wrapper = new ProcessWrapper(_config, _logger);
+            var (exitCode, childEnvironment) = await RunEnvironmentDumpAsync(environmentVariables: null);
 
-            var exitCode = await wrapper.StartAsync(
-                "hello",
-                _workspaceDir,
-                useResume: false,
-                CancellationToken.None,
-                resumeSessionId: null,
-                environmentVariables: null);
-
-            // /bin/echo exits 0 — process launched successfully after stripping
             exitCode.Should().Be(0);
+            childEnvironment.Should().Contain($"{controlKey}=keep-me",
+                "the child must print the environment it inherited, otherwise the absence checks prove nothing");
+            foreach (var strippedKey in strippedKeys)
+            {
+                childEnvironment.Should().NotContain(
+                    line => line.StartsWith(strippedKey + "=", StringComparison.OrdinalIgnoreCase),
+                    $"ProcessWrapper.StartAsync must strip {strippedKey} from the kiro-cli child environment");
+            }
 
-            // Parent environment is intact — StripTelemetry never touches it
-            Environment.GetEnvironmentVariable(otelKey).Should().Be("coding-agent-worker-test",
+            // Parent environment is intact: StripTelemetry only touches the ProcessStartInfo copy
+            Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME").Should().Be("coding-agent-worker-test",
                 "StripTelemetry must not mutate the parent process environment");
         }
         finally
         {
-            Environment.SetEnvironmentVariable(otelKey, previous);
+            foreach (var (key, value) in previous)
+                Environment.SetEnvironmentVariable(key, value);
         }
     }
 
@@ -172,26 +173,22 @@ public class ProcessWrapperEnvironmentVariablesTests : IDisposable
         Environment.SetEnvironmentVariable(otelKey, "coding-agent-worker-test");
         try
         {
-            // Injected non-OTEL key — must survive the strip
+            // Injected non-OTEL key — must survive the strip and reach the child
             var injectedKey = $"MY_SECRET_{Guid.NewGuid():N}";
             const string injectedValue = "keep-me";
 
             var envVars = new Dictionary<string, string> { [injectedKey] = injectedValue };
 
-            using var wrapper = new ProcessWrapper(_config, _logger);
+            var (exitCode, childEnvironment) = await RunEnvironmentDumpAsync(envVars);
 
-            var exitCode = await wrapper.StartAsync(
-                "hello",
-                _workspaceDir,
-                useResume: false,
-                CancellationToken.None,
-                resumeSessionId: null,
-                environmentVariables: envVars);
-
-            // Process launched successfully after strip + injection
             exitCode.Should().Be(0);
+            childEnvironment.Should().Contain($"{injectedKey}={injectedValue}",
+                "per-invocation variables are injected after the strip and must reach the child");
+            childEnvironment.Should().NotContain(
+                line => line.StartsWith(otelKey + "=", StringComparison.OrdinalIgnoreCase),
+                "the inherited OTEL key must still be stripped when per-invocation variables are passed");
 
-            // The injected secret must not have leaked into the parent process
+            // Injected vars must be child-scoped only — must not leak into parent process
             Environment.GetEnvironmentVariable(injectedKey).Should().BeNull(
                 "injected vars must be child-scoped only");
 
@@ -202,6 +199,61 @@ public class ProcessWrapperEnvironmentVariablesTests : IDisposable
         {
             Environment.SetEnvironmentVariable(otelKey, previous);
         }
+    }
+
+    /// <summary>
+    /// Returns a configuration whose KiroCliPath is a script that ignores its arguments and prints the
+    /// child's environment as NAME=value lines, so a test can see what the child process inherited.
+    /// </summary>
+    private global::KiroCliLib.Configuration.Configuration CreateEnvironmentDumpConfig()
+    {
+        string scriptPath;
+        if (OperatingSystem.IsWindows())
+        {
+            // A .cmd started with UseShellExecute=false runs under cmd.exe /c; `set` prints NAME=value lines.
+            scriptPath = Path.Combine(_workspaceDir, "print-env.cmd");
+            File.WriteAllText(scriptPath, "@set\r\n");
+        }
+        else
+        {
+            scriptPath = Path.Combine(_workspaceDir, "print-env.sh");
+            File.WriteAllText(scriptPath, "#!/bin/sh\nenv\n");
+            File.SetUnixFileMode(scriptPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        }
+
+        return new global::KiroCliLib.Configuration.Configuration
+        {
+            KiroCliPath = scriptPath,
+            UseWsl = false
+        };
+    }
+
+    /// <summary>
+    /// Runs the environment-dump script via <see cref="ProcessWrapper"/> and returns the exit code
+    /// and the child's stdout lines. <see cref="ProcessWrapper.StartAsync"/> awaits
+    /// <see cref="System.Diagnostics.Process.WaitForExitAsync"/> and then delays 100 ms after
+    /// cancelling output reads, so all lines are guaranteed to have been raised through
+    /// <see cref="ProcessWrapper.OutputReceived"/> by the time this method returns.
+    /// </summary>
+    private async Task<(int ExitCode, IReadOnlyList<string> ChildEnvironment)> RunEnvironmentDumpAsync(
+        IReadOnlyDictionary<string, string>? environmentVariables)
+    {
+        var lines = new ConcurrentQueue<string>();
+        using var wrapper = new ProcessWrapper(CreateEnvironmentDumpConfig(), _logger);
+        wrapper.OutputReceived += (_, line) => lines.Enqueue(line);
+
+        var exitCode = await wrapper.StartAsync(
+            "hello",
+            _workspaceDir,
+            useResume: false,
+            CancellationToken.None,
+            resumeSessionId: null,
+            environmentVariables: environmentVariables);
+
+        return (exitCode, lines.ToList());
     }
 
     public void Dispose()
