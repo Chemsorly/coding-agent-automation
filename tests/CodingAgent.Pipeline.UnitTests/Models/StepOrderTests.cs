@@ -15,12 +15,13 @@ public class StepOrderTests
     [InlineData(PipelineStep.ReviewingAnalysis, 7)]
     [InlineData(PipelineStep.PostingAnalysis, 8)]
     [InlineData(PipelineStep.GeneratingCode, 9)]
-    [InlineData(PipelineStep.ReviewingCode, 10)]
-    [InlineData(PipelineStep.RunningQualityGates, 11)]
-    [InlineData(PipelineStep.PreparingForPullRequest, 12)]
-    [InlineData(PipelineStep.FinalizingPullRequest, 13)]
-    [InlineData(PipelineStep.ReflectingOnRun, 15)]
-    [InlineData(PipelineStep.SyncingBrainRepoPostRun, 16)]
+    [InlineData(PipelineStep.CheckingDroppedIdentifiers, 10)]
+    [InlineData(PipelineStep.ReviewingCode, 11)]
+    [InlineData(PipelineStep.RunningQualityGates, 12)]
+    [InlineData(PipelineStep.PreparingForPullRequest, 13)]
+    [InlineData(PipelineStep.FinalizingPullRequest, 14)]
+    [InlineData(PipelineStep.ReflectingOnRun, 16)]
+    [InlineData(PipelineStep.SyncingBrainRepoPostRun, 17)]
     [InlineData(PipelineStep.Completed, 100)]
     public void GetOrder_ImplementationPipelineSteps_ReturnsCorrectOrder(PipelineStep step, int expectedOrder)
     {
@@ -66,6 +67,7 @@ public class StepOrderTests
             PipelineStep.ReviewingAnalysis,
             PipelineStep.PostingAnalysis,
             PipelineStep.GeneratingCode,
+            PipelineStep.CheckingDroppedIdentifiers,
             PipelineStep.ReviewingCode,
             PipelineStep.RunningQualityGates,
             PipelineStep.PreparingForPullRequest,

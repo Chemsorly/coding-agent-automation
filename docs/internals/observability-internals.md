@@ -23,22 +23,15 @@ These spans represent internal plumbing and are unlikely to be queried by operat
 
 ## Resilience Retry Events
 
-All resilience pipelines (`ResiliencePipelineFactory` and `TokenVendingService` internal pipeline) emit `ActivityEvent("retry")` on each retry attempt, attached to whatever parent span is active.
+All resilience pipelines built by `ResiliencePipelineFactory` emit `ActivityEvent("retry")` on each retry attempt, attached to whatever parent span is active.
 
 Event tags:
 
 | Tag | Description |
 |-----|-------------|
 | `attempt` | Retry attempt number (1-based) |
-| `exception_type` | Exception type name that triggered the retry |
-
-## Background Service Spans
-
-`Hub.ReportJobCompleted` is emitted within the Pipeline API process whenever hub completion logic runs. There are no root-span background service spans remaining after `JobQueueDrainService` was removed in Spec 041.
-
-## Tag Value Casing
-
-Metric `run_type` values are lowercased (`implementation`), while span `pipeline.run_type` values are PascalCase (`Implementation`). Use the appropriate casing when querying.
+| `exception.type` | Exception type name that triggered the retry |
+| `exception.message` | Truncated exception message |
 
 ## Quality Gate Processes and Agent Stalls
 
@@ -58,23 +51,10 @@ Data collected includes: page load timing, Blazor circuit errors, unhandled JS e
 
 ## Work Distribution Metrics
 
-The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgent.Infrastructure.Common`, namespace `CodingAgent.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. Ownership by process (issue #2980):
+The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.cs` in `CodingAgent.Infrastructure.Common`, namespace `CodingAgent.Pipeline.Telemetry`) emits metrics for Kubernetes dispatch. The process that records each metric is listed in the "Recorded by" column of [Observability — Dispatch and work distribution](../observability.md#dispatch-and-work-distribution).
 
-- **API** (`service.name=coding-agent-api`): `workdistribution.dispatch_latency_seconds`, `workdistribution.credential_pool_available`, `workdistribution.credential_pool_claimed`, `workdistribution.dispatch.attempts`, `workdistribution.pod_start_seconds`, `workdistribution.pvc_pool_exhaustions` — recorded when the API dispatches work items and agents fetch their assignment.
-- **Scheduler** (`service.name=coding-agent-scheduler`): `workdistribution.dispatcher_last_poll_epoch_seconds`, `workdistribution.dispatcher_polls` (via `WorkItemDispatchLoop`), and `workdistribution.workitems_by_status` (via `WorkItemCountsService`). The `workitems_by_status` gauge is only emitted by the leader Scheduler replica.
-- **Job Controller** (`service.name=coding-agent-jobcontroller`): `workdistribution.timeout_execution_age_seconds`, `workdistribution.timeout_canary_violations`, `workdistribution.agent_timeouts` — recorded by `ReconciliationLoop` when enforcing session timeouts.
+The `workdistribution.workitems_by_status` gauge is only emitted by the leader Scheduler replica.
 
 Terminal transitions are counted by `pipeline.run.outcomes` (API) only.
 
 The credential pool and dispatcher gauges use owner-only empty-measurement guards: non-owning processes emit no measurement, preventing spurious 0 series that would corrupt the `CredentialPoolExhausted` and `DispatcherStalled` Prometheus alerts.
-
-See [Observability — Dispatch and work distribution](../observability.md#dispatch-and-work-distribution) for the full metric table.
-
-## CriticalMessageBuffer (Chat Pod Agent-Side)
-
-`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. It is used by **chat pods** (ephemeral K8s Jobs spawned without `--work-item-id`) which run `AgentWorkerService` and communicate with the orchestrator hub over SignalR. Failed deliveries are buffered silently and there is no metric for them (agent pods export no metrics); the agent logs each failed send and each reconnect.
-
-Drain behavior:
-- On reconnection, buffered messages are replayed (max 3 drain attempts per message)
-- Successful replay releases the agent's job slot and signals readiness
-- Messages exceeding max drain attempts are discarded with a warning log

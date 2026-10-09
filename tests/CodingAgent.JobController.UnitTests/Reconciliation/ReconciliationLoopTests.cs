@@ -1111,8 +1111,12 @@ public sealed class ReconciliationLoopTests : IDisposable
 
         V1JobStatus status;
         if (succeeded)
+            // TODO: Replace raw "Complete"/"True" literals with KubernetesJobConditions.JobPhaseComplete / KubernetesJobConditions.ConditionTrue
+            // so a wrong constant value would be caught by tests using this helper.
             status = new V1JobStatus { Succeeded = 1, Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }], CompletionTime = completionTime, StartTime = startTime };
         else if (failed)
+            // TODO: Replace raw "Failed"/"True" literals with KubernetesJobConditions.JobPhaseFailed / KubernetesJobConditions.ConditionTrue
+            // so a wrong constant value would be caught by tests using this helper.
             status = new V1JobStatus { Failed = 1, Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }], CompletionTime = completionTime, StartTime = startTime };
         else
             status = new V1JobStatus { Active = active ? 1 : 0, StartTime = startTime, CompletionTime = completionTime };
@@ -2441,6 +2445,8 @@ public sealed class ReconciliationLoopErrorTests
                 [
                     new V1JobCondition
                     {
+                        // TODO: Replace raw "Failed"/"True" literals with KubernetesJobConditions.JobPhaseFailed / KubernetesJobConditions.ConditionTrue
+                        // so a wrong constant value would be caught by this test.
                         Type = "Failed",
                         Status = "True",
                         Message = "BackoffLimitExceeded"

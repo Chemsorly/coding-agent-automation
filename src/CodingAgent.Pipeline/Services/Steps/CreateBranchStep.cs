@@ -111,6 +111,7 @@ public sealed class CreateBranchStep : IPipelineStep
                 context.Logger.Information("Pipeline {RunId} rebase force-resolved {ConflictCount} conflict(s) keeping main's version",
                     context.Run.RunId, mergeResult.ConflictFiles.Count);
                 await ReworkContextWriter.WriteAsync(context, mergeResult, ct);
+                context.Run.DroppedIdentifiersByFile = DroppedIdentifierExtractor.ExtractFromMergeResult(mergeResult);
             }
             else if (mergeResult.HasConflicts)
             {

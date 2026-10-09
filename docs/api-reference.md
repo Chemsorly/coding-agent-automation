@@ -61,8 +61,10 @@ Retrieve the job assignment details for a work item. Agents call this after bein
 | Status | Description |
 |--------|-------------|
 | 200 | Success — returns `JobAssignmentMessage` JSON |
+| 403 | An agent-derived key was used for a work item that is not assigned to that agent (its `AssignedAgentId` or `K8sJobName` does not match the `agentId`), or the key carries no agent identity |
 | 404 | Work item not found or has no payload |
 | 410 | Work item is in a terminal state (`Succeeded`, `Failed`, or `Cancelled`) |
+| 503 | The assignment could not be enriched with fresh configuration (no matching agent profile, deleted provider, transient database failure). The agent retries; the work item stays `Dispatched` |
 
 **Example request:**
 
@@ -112,7 +114,8 @@ Report a status transition for a work item. Agents call this to indicate progres
   "agentId": "agent-dotnet-1",
   "result": null,
   "errorMessage": null,
-  "failureReason": null
+  "failureReason": null,
+  "branchName": null
 }
 ```
 
@@ -123,6 +126,7 @@ Report a status transition for a work item. Agents call this to indicate progres
 | `result` | string | ❌ | Result payload (e.g., serialized output on success) |
 | `errorMessage` | string | ❌ | Human-readable error description (set on failure) |
 | `failureReason` | string | ❌ | Machine-readable failure classification (see valid values below) |
+| `branchName` | string | ❌ | Feature branch the run works on. Stored on the work item so the Scheduler's housekeeping guard can see which branches have an active run |
 
 **Valid `status` values:**
 
@@ -145,15 +149,18 @@ Report a status transition for a work item. Agents call this to indicate progres
 | `TokenRefreshFailure` | Token refresh failed, lost API access |
 | `ExitCodeFailure` | Agent process exited with non-zero code |
 | `QualityGateExhausted` | All quality gate retries exhausted — run finalized as a draft PR |
+| `GateRejected` | The analysis gate rejected the issue (needs refinement or won't do). Not an agent error |
 
-If `status` is `Failed` and no `failureReason` is provided, defaults to `AgentError`.
+Values are matched case-insensitively. If `status` is `Failed` and no `failureReason` is provided, or the value is unknown, it defaults to `AgentError`.
 
 **Response codes:**
 
 | Status | Description |
 |--------|-------------|
 | 200 | Transition accepted |
+| 204 | The work item is already at the requested status, or is already terminal. The first terminal report wins and later ones are no-ops |
 | 400 | Invalid status transition (e.g., `Succeeded` → `Running`) |
+| 403 | An agent-derived key was used for a work item that is not assigned to that agent |
 | 404 | Work item not found |
 
 **Example request:**
@@ -180,14 +187,14 @@ Set the dispatch priority weight for a pending work item. Operators call this to
 { "priorityWeight": 100 }
 ```
 
-`priorityWeight` must be in the range `[0, 1000]`. Default is `0`. Higher values dispatch first within the same `RunType` tier.
+`priorityWeight` is required and must be in the range `[0, 1000]`. A work item starts at `100` when it was dispatched manually and at `0` otherwise. Higher values dispatch first within the same `RunType` tier.
 
 **Responses:**
 
 | Status | Description |
 |--------|-------------|
 | 200 | Priority updated |
-| 400 | `priorityWeight` outside `[0, 1000]` |
+| 400 | `priorityWeight` missing or outside `[0, 1000]` |
 | 404 | Work item not found |
 | 409 | Work item is not in `Pending` status, or a concurrent update conflict occurred (retry) |
 
@@ -195,27 +202,38 @@ Set the dispatch priority weight for a pending work item. Operators call this to
 
 ### GET /api/work-items/active
 
-List all currently non-terminal work items (status: `Pending`, `Dispatched`, or `Running`). Used by the Job Controller's `ReconciliationService` and the Scheduler's `WorkItemCountsService`.
+List work items that are `Dispatched` or `Running` and were dispatched more than `olderThanSeconds` seconds ago. Items whose `DispatchedAt` is null are matched on `CreatedAt` instead. `Pending` and terminal items are never returned. Used by the Job Controller's reconciliation loop (timeout enforcement, the Dispatched sweep and orphan cleanup) and by the web Work page, which also passes `projectId`.
 
 **Authentication:** OperatorApiKey
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `olderThanSeconds` | integer | ✅ | Only items dispatched more than this many seconds ago are returned; `0` returns all active items |
+| `projectId` | GUID | ❌ | Restrict the result to one project |
 
 **Response:** `200` — JSON array of `ActiveWorkItemDto`
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | GUID | Work item identifier (= `PipelineRun.RunId`) |
-| `status` | string | `Pending`, `Dispatched`, or `Running` |
-| `dispatchedAt` | datetime? | When the item was dispatched (null if still pending) |
+| `status` | string | `Dispatched` or `Running` |
+| `dispatchedAt` | datetime? | When the item was dispatched (null when the dispatch time was never written; such items are matched on their creation time) |
 | `agentSelector` | string | Label selector used to match an agent |
 | `issueIdentifier` | string | Issue or PR identifier (e.g., `owner/repo#42`) |
 | `issueTitle` | string? | Issue title extracted from payload; null for older items |
 | `k8sJobName` | string? | K8s Job name assigned at dispatch; null if not yet dispatched |
-| `timeoutSeconds` | int | Per-item agent timeout in seconds (0 = pre-dates field; fall back to global `AgentTimeout`) |
+| `timeoutSeconds` | int | Per-item agent timeout in seconds, set when the item was queued. Items with 0 or less (rows from before the field existed) are skipped by timeout enforcement; there is no fallback to the global `AgentTimeout` |
 | `currentStep` | string? | Current `PipelineStep` value from the in-memory run state. `null` when no live run is tracked (e.g., after API restart without Redis). |
+| `createdAt` | datetime? | When the item was queued |
+| `issueUrl` | string? | Web URL of the issue; null when the payload has none |
+| `initiatedBy` | string? | Dispatch source from the payload (for example `loop:issue`, `manual`) |
+| `projectId` | GUID? | Owning project; null for work without a project |
 
 ---
 
-
+## Config Import/Export Endpoints
 
 > ⚠️ **Warning:** The import endpoint is destructive — it clears ALL existing configuration before inserting the uploaded bundle. This operation is transactional (atomic commit or full rollback).
 
@@ -345,6 +363,7 @@ curl -X POST \
 | No file uploaded | `"No file uploaded"` |
 | Invalid JSON | `"Invalid JSON: {details}"` |
 | Null/empty bundle | `"Empty or invalid bundle"` |
+| Settings out of range or unreadable | `"Invalid settings: {details}"` (the whole bundle is rejected; nothing is imported) |
 
 ---
 
@@ -365,8 +384,8 @@ Download pipeline run history as a JSON file.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `feedbackOnly` | boolean | `false` | When `true`, only returns runs that have structured feedback attached |
-| `page` | integer | — | Page number (1-based). When provided, returns a page slice instead of the full list |
-| `pageSize` | integer | `50` | Page size. Only used when `page` is provided |
+| `page` | integer | — | Page number (1-based, default 1 when `pageSize` is given). Providing `page` or `pageSize` returns a page slice instead of the full list |
+| `pageSize` | integer | `50` | Page size, default 50. Providing it also turns paging on |
 
 > **Note:** `feedbackOnly` is applied to the page slice when pagination is active — it does not filter across all pages before slicing. For full cross-run filtering, omit pagination and use `feedbackOnly` alone.
 
@@ -374,10 +393,12 @@ Download pipeline run history as a JSON file.
 
 ```bash
 # Download all runs
-curl -o runs.json http://localhost:8080/api/export/runs.json
+curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
+  -o runs.json http://localhost:8080/api/export/runs.json
 
 # Download only runs with feedback
-curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackOnly=true"
+curl -H "Authorization: Bearer $OPERATOR_API_KEY" \
+  -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackOnly=true"
 ```
 
 **Example response (200):**
@@ -388,7 +409,7 @@ curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackO
     "runId": "run-abc123",
     "issueIdentifier": "my-org/my-repo#42",
     "issueTitle": "Fix login timeout",
-    "finalStep": "PrCreated",
+    "finalStep": "Completed",
     "startedAtOffset": "2026-07-15T10:30:00+00:00",
     "completedAtOffset": "2026-07-15T10:45:22+00:00",
     "retryCount": 0,
@@ -397,7 +418,7 @@ curl -o feedback-runs.json "http://localhost:8080/api/export/runs.json?feedbackO
     "modelName": "claude-sonnet-4-20250514",
     "agentId": "agent-dotnet-1",
     "initiatedBy": "loop:issue",
-    "harnessVersion": "1.2.3+abc1234",
+    "harnessVersion": "6f1c9a0e3b7d42a85c10e9f4d2b8a7136e5c0f94",
     "totalTokens": 125000,
     "totalCost": 0.45,
     "feedback": null
@@ -421,7 +442,7 @@ The response is a JSON array of run summary objects. Each object includes run me
 
 **`harnessVersion` field:**
 
-Present on runs recorded after the version identity feature was introduced. Contains the semantic version and git SHA of the agent container that executed the run (e.g., `"1.2.3+abc1234"`). `null` for older runs predating this field. Set from the `SERVICE_VERSION` environment variable on the agent pod.
+Present on runs recorded after the version identity feature was introduced. Contains the git commit SHA of the agent image that executed the run (the `SERVICE_VERSION` value, for example `6f1c9a0e...`; `local` for locally built images). `null` for older runs predating this field. Set from the `SERVICE_VERSION` environment variable on the agent pod.
 
 ---
 
@@ -480,6 +501,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | GET | `/api/work-items/{id}/assignment` | AgentApiKey | Fetch job assignment |
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
 | POST | `/api/work-items/{id}/priority` | OperatorApiKey | Set dispatch priority weight (Pending items only) |
+| GET | `/api/work-items/active` | OperatorApiKey | List Dispatched and Running work items older than a threshold |
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |

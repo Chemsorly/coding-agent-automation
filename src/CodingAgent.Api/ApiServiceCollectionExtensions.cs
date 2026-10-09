@@ -724,7 +724,7 @@ public static class ApiServiceCollectionExtensions
         // disconnected from any real agents. The API host owns the hub and the AgentRegistryService,
         // making it the correct process for chat dispatch and the registry poll loop.
         // Spec 049: ILeaderElectionService removed — all replicas can dispatch. The K8s
-        // double-dispatch guard (CheckForExistingJob) is already replica-safe.
+        // job-list query is used only for PVC availability.
         //
         // ChatHeartbeatTracker and ChatSessionWatcher are internal to CodingAgent.AgentGateway.
         // The public ChatJobDispatcher constructor accepts IRedisStore? and constructs the

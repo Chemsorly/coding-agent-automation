@@ -7,23 +7,23 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 3. **Epic decomposition pipeline** — Processes epics through a two-phase workflow producing implementation-ready sub-issues (see [Epic Decomposition Pipeline](#epic-decomposition-pipeline) below)
 4. **Consolidation pipeline** — Brain consolidation, refactoring detection, and harness suggestion runs. Dispatched on-demand via the Consolidation page, not by the label-based loop. See [Feedback & Consolidation](feedback-and-consolidation.md) for details.
 
-The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are created as `WorkItem` rows by `ConsolidationService.TriggerAsync` and dispatched by the Job Controller in the lowest-priority tier (after Review, Decomposition, and Implementation). `ConsolidationDispatchService` was removed in #2323; dispatch now flows through `DispatchLifecycleService`. Consolidation jobs do not go through the label loop.
+The first three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure. Consolidation jobs are created as `WorkItem` rows by `ConsolidationService.TriggerAsync` and dispatched by the Scheduler's `WorkItemDispatchLoop` in the lowest-priority tier (after Review, Decomposition, and Implementation). Consolidation jobs do not go through the label loop.
 
 ## Dispatch Mode
 
-The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a `WorkItem` row. The Job Controller polls for pending WorkItems, claims each one, and creates a K8s Job — the resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler.
+The pipeline dispatches work via Kubernetes Jobs. `DispatchOrchestrationService` prepares each request (resolves providers, vends tokens), then `KubernetesWorkDistributor` creates a Pending `WorkItem` row through `POST /api/work-items`. The Scheduler's leader-elected `WorkItemDispatchLoop` polls `GET /api/work-items/pending` and calls `POST /api/work-items/{id}/dispatch` for each item; the Pipeline API's `DispatchLifecycleService` checks capacity and creates the K8s Job. The resulting ephemeral agent pod picks up the full assignment via `GET /api/work-items/{id}/assignment` and reports terminal status via `POST /api/work-items/{id}/status`. The PipelineRun is created by the Pipeline API's `POST /api/work-items` handler. The Job Controller only reconciles Jobs after dispatch (timeouts, Job status sync, orphan cleanup).
 
 **Payload snapshot:** When `POST /api/work-items` creates the row, only identity fields (issue identifier, provider config IDs, run ID, task type) are stored in `WorkItems.Payload`. Mutable configuration — provider settings, quality gate configs, steering content, MCP servers, issue context — is **not** stored at enqueue time. Instead, `GET /api/work-items/{id}/assignment` fetches all mutable config fresh via `AssignmentEnricher` at the moment the agent pod claims the job. This means configuration changes take effect immediately for queued but not-yet-claimed work items, with no risk of serving stale credentials or settings to long-queued jobs.
 
-**K8s Job naming** uses three formats depending on the dispatch path:
+**K8s Job naming** uses three formats:
 
-- **Job Controller** (implementation, review, decomposition runs): `caa-agent-{11 hex chars}` — the first 21 characters of `"caa-agent-" + workItemId.ToString("N")` (e.g. `caa-agent-7f3a9b2e1c4`). The Job name also serves as the agent's `AGENT_ID`.
-- **Job Controller** (consolidation runs): `caa-cons-{12 hex chars}` — the first 21 characters of `"caa-cons-" + workItemId.ToString("N")` (e.g. `caa-cons-7f3a9b2e1c4d`). This naming format is preserved for compatibility with in-flight Jobs; `ConsolidationDispatchService` was removed in #2323 and dispatch now flows through `DispatchLifecycleService`.
-- **Pipeline API** (model-fetch runs dispatched by `ModelFetchJobService`): `caa-models-{8 hex chars}` — e.g. `caa-models-7f3a9b2e`. Uses a freshly generated GUID (not a WorkItem ID). Uses the `caa-models-` prefix to distinguish model-fetch Jobs from agent work-item Jobs.
+- **Work items** (implementation, review, decomposition and consolidation runs), created by the Pipeline API's `DispatchLifecycleService`: `caa-{8 hex chars}` — the first 12 characters of `"caa-" + workItemId.ToString("N")` (e.g. `caa-7f3a9b2e`). The Job name also serves as the agent's `AGENT_ID`.
+- **Model-fetch runs** dispatched by the Pipeline API's `ModelFetchJobService`: `caa-models-{8 hex chars}` (e.g. `caa-models-7f3a9b2e`), from a freshly generated GUID.
+- **Chat sessions** dispatched by `ChatJobDispatcher`: `caa-chat-{8 hex chars}`, from a freshly generated GUID.
 
 ### Dispatch Priority
 
-When multiple WorkItems are pending and an agent becomes available, the Job Controller selects the highest-priority item first. The `DispatchScheduler` uses named queue flags — not integer ordinals — to implement this fixed priority order:
+When multiple WorkItems are pending and an agent becomes available, the Scheduler's `WorkItemDispatchLoop` selects the highest-priority item first. The Pipeline API applies this fixed priority order (`WorkItemDispatchOrderExtensions.ApplyDispatchOrder`) when the Scheduler fetches pending items:
 
 | Dispatch Order | Run Type | Notes |
 |----------------|----------|-------|
@@ -32,9 +32,9 @@ When multiple WorkItems are pending and an agent becomes available, the Job Cont
 | 3rd | Implementation | Standard issue implementation |
 | 4th (lowest) | Consolidation | Brain / refactoring / harness runs |
 
-This ordering matches the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3`) but dispatch selection is driven by named queue checks in `DispatchScheduler`, not raw enum ordinals. Within the same priority tier, FIFO order is preserved (oldest enqueue time dispatched first).
+The tier order is an explicit mapping (Review 0, Decomposition 1, Implementation 2, Consolidation 3); it does not follow the `WorkItemTaskType` enum values (`Implementation=0, Review=1, Decomposition=2, Consolidation=3`). Within a tier, items with a higher `PriorityWeight` go first (manual dispatches get 100, closed-loop dispatches 0, and operators can change it on the Work page), then the oldest enqueue time.
 
-> **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Consolidation`. They are queryable from the UI via `IConsolidationService.GetRunHistoryAsync` / `IPipelineApiConsolidationRunClient.LoadAllRunsAsync`.
+> **Note:** Consolidation `WorkItem` rows carry `PipelineRunType.Consolidation`. The Consolidation page lists them through `IPipelineApiRunHistoryClient.GetRunHistoryAsync` with `RunType = PipelineRunType.Consolidation`.
 
 A single ID flows end-to-end:
 
@@ -72,17 +72,20 @@ stateDiagram-v2
     RunningQualityGates --> QualityGateDecision
     QualityGateDecision --> PreparingForPullRequest : all passed
     QualityGateDecision --> GeneratingCode : failed, retries remaining
-    QualityGateDecision --> CreatingPullRequest : failed, retries exhausted (draft PR)
+    QualityGateDecision --> FinalizingPullRequest : failed, retries exhausted (draft PR)
     QualityGateDecision --> ConflictRestart : dirty PR, no retry consumed
+    QualityGateDecision --> PrMerged : PR merged during CI wait
+    QualityGateDecision --> PrClosed : PR closed during CI wait
 
     state FinalQualityCheck <<choice>>
     PreparingForPullRequest --> FinalQualityCheck : quality gates re-run after cleanup
-    FinalQualityCheck --> CreatingPullRequest : all passed
+    FinalQualityCheck --> FinalizingPullRequest : all passed
     FinalQualityCheck --> GeneratingCode : failed, retries remaining
-    FinalQualityCheck --> CreatingPullRequest : failed, retries exhausted (draft PR)
+    FinalQualityCheck --> FinalizingPullRequest : failed, retries exhausted (draft PR)
 
-    CreatingPullRequest --> GeneratingPrDescription
-    GeneratingPrDescription --> ReflectingOnRun
+    FinalizingPullRequest --> ReflectingOnRun : brain repo configured and writable
+    FinalizingPullRequest --> Completed : no writable brain repo
+    FinalizingPullRequest --> Failed : draft PR (retries exhausted)
     ReflectingOnRun --> SyncingBrainRepoPostRun
     SyncingBrainRepoPostRun --> Completed
 
@@ -90,6 +93,8 @@ stateDiagram-v2
     Failed --> [*]
     Cancelled --> [*]
     ConflictRestart --> [*]
+    PrMerged --> [*]
+    PrClosed --> [*]
 
     note right of Created
         Label swapped to agent in-progress on job acceptance
@@ -100,14 +105,14 @@ stateDiagram-v2
     note right of QualityGateDecision
         Agent gets error feedback and fixes before re-check
     end note
-    note left of CreatingPullRequest
+    note left of FinalizingPullRequest
         Normal PR swaps to agent:done.
         agent:error is applied both when retries are exhausted (draft PR path)
         and when an unexpected exception escapes the pipeline boundary.
     end note
     note left of ReflectingOnRun
         Only if brain repo configured and not read-only.
-        Feedback collected here (success path).
+        Feedback is collected afterwards in its own agent call.
     end note
 ```
 
@@ -118,7 +123,7 @@ Created → CloningRepository → RunningEnvironmentSetup → SyncingBrainRepoPr
   → VerifyingBaseline → AnalyzingCode → ReviewingAnalysis → PostingAnalysis → [Confidence Gate]
   → GeneratingCode → ReviewingCode → RunningQualityGates → [Quality Gate Decision]
   → PreparingForPullRequest → [Final Quality Gate]
-  → CreatingPullRequest → GeneratingPrDescription → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
+  → FinalizingPullRequest → ReflectingOnRun → SyncingBrainRepoPostRun → Completed
 ```
 
 Each step is represented by the `PipelineStep` enum. The pipeline tracks both the current step and a `HighWaterMark` (highest step ever reached), which the UI uses to show revisited steps during retries.
@@ -129,7 +134,7 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 |------|-------------|
 | **Created** | Run initialized, providers resolved and validated. Label swapped to `agent:in-progress` when the agent accepts the job (before any pipeline steps execute) |
 | **CloningRepository** | Repository cloned to a fresh workspace directory |
-| **RunningEnvironmentSetup** | Executes provider-defined setup steps (e.g., package restore, auth configuration) with injected secrets. Non-fatal steps abort the run on non-zero exit |
+| **RunningEnvironmentSetup** | Runs the repository provider's setup steps (e.g., package restore, auth configuration) with injected secrets. A step that exits non-zero fails the run, and later steps do not run. Skipped when the repository has no secrets and no setup steps |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
 | **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId[..8]}` — the run ID is truncated to its first 8 characters) |
 | **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
@@ -140,13 +145,14 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
 | **RunningQualityGates** | Build, tests, and external CI checks run |
 | **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
-| **CreatingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here |
-| **GeneratingPrDescription** | Agent generates a structured PR description summarizing the changes (non-fatal on failure) |
-| **ReflectingOnRun** | Agent reviews the entire run and enriches `.brain/` knowledge (if brain repo configured). Feedback collected here — questions appended to the reflection prompt |
+| **FinalizingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here. For a normal PR the agent then writes a structured PR description (non-fatal on failure) and the PR is marked ready for review last |
+| **ReflectingOnRun** | Agent reviews the entire run and enriches `.brain/` knowledge (if brain repo configured). After reflection and the brain sync, every non-draft run collects feedback in a separate agent call (standalone feedback prompt, `FeedbackTimeoutSeconds`, default 60 s), with or without a brain repo |
 | **SyncingBrainRepoPostRun** | Brain updates committed and pushed to brain repository |
 | **Completed** | Terminal state — run succeeded (or `wont_do` assessment) |
 | **Failed** | Terminal state — unrecoverable error or retries exhausted |
 | **Cancelled** | Terminal state — user cancelled the run |
+| **PrMerged** | Terminal state — the run's PR was merged while the run was active (found at run start by `CreateBranchStep` or during CI polling). The run ends Succeeded without further commits, and the label becomes `agent:done` |
+| **PrClosed** | Terminal state — the run's PR was closed without merging while the run was active. The run ends Cancelled, and the label becomes `agent:cancelled` |
 | **ConflictRestart** | Terminal-like state — PR branch became conflicted with main during CI polling (GitHub holds all CI checks in "Expected" state for dirty PRs). The pipeline terminates immediately without consuming a retry slot. `FinalLabel = agent:next` causes `PostCompletionBookkeepingAsync` to swap the issue label to `agent:next` automatically, re-queuing the run. The re-dispatched run enters `RunMode.Rework`, rebases (main wins), and re-enters the full pipeline. No human action required. |
 
 ## Confidence Gate
@@ -180,8 +186,8 @@ flowchart TD
     RL -->|no| FF[CollectFailureFeedback\n60s agent call]
     FF --> DPR[Draft PR\nagent error label]
     GC --> RQG2[RunningQualityGates\nre-validate]
-    PREP --> FQG[RunningFinalQualityGates]
-    FQG -->|pass| PR[CreatingPullRequest]
+    PREP --> FQG[RunningQualityGates\nfinal pass after cleanup]
+    FQG -->|pass| PR[FinalizingPullRequest]
     FQG -->|fail| RL2{retries remaining?}
     RL2 -->|yes| GC
     RL2 -->|no| DPR
@@ -196,6 +202,8 @@ Quality gates checked (in order):
 > **Coverage enforcement:** The built-in coverage threshold gate was retired. To enforce coverage minimums, pass the appropriate flag via the `TestArguments` field on the QGC (e.g., `--minimum-coverage 80` for a test runner that supports it, or `--coverage-fail-below 80` for pytest-cov). The test command will fail with a non-zero exit code if the threshold is not met, which the Tests gate will catch.
 
 External CI is only evaluated after local gates (compilation, tests) pass. If any gate (including external CI) fails, the pipeline enters the retry loop — the agent gets error feedback and attempts to fix the code. After all retries are exhausted, the run falls back to a draft PR. Infrastructure-level CI failures (runner crashes, network errors) are counted separately via `MaxInfrastructureRetries` and do not consume the agent's code-fix retry budget.
+
+**Post-PR CI:** When external CI is configured, the pipeline waits after `FinalizingPullRequest` for the CI runs that start once the PR is ready for review (`WaitForPostPrCiAsync`). If they fail, the retry loop runs again: a passing retry ends the run Completed; when the retries run out, the PR is finalized as a draft and the run ends Failed with `FailureCategory = QualityGateExhausted`.
 
 **Conflict-restart short-circuit:** Before each empty-commit re-trigger push (and before the final exhaustion failure), `PollCiWithNotStartedRetryAsync` checks the PR's mergeability via `IsPullRequestBehindBaseAsync`. If the PR branch is `Conflicted` (dirty) with main, GitHub holds all required CI checks in "Expected — Waiting for status to be reported" state and will not schedule them regardless of how many commits are pushed. When a conflict is detected, the pipeline returns `ConflictRestart` status immediately without pushing any empty commit, without entering the retry loop, and without creating a draft PR. `run.FinalLabel = agent:next` is set, causing the issue to be automatically re-labelled `agent:next` and re-dispatched. The re-dispatched run enters `RunMode.Rework`, rebases (main wins), and re-enters the full pipeline. This avoids exhausting the 15-attempt retry budget (150+ minutes) on a branch that GitHub will never build.
 
@@ -225,6 +233,8 @@ stateDiagram-v2
     ip --> err : error / timeout
     ip --> cancel : user cancels
     ip --> next : conflict restart (automatic)
+    ip --> done : PR merged during run
+    ip --> cancel : PR closed without merge
     done --> next : user requests rework
     err --> next : user re-queues
     nr --> next : user refines issue
@@ -242,7 +252,7 @@ The `ip → next` conflict-restart transition is automatic and does not require 
 
 ### What it does each poll cycle
 
-1. **Conflict rework** — `IssueReworkService.TriggerConflictReworkAsync` handles every `agent:done` PR that is merge-conflicted: extracts linked issues, swaps any terminal `agent:*` label back to `agent:next` so the pipeline dispatches a rework run. Skips issues already carrying an active label (`agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-approved`) or an abandonment label (`agent:wont-do`, `agent:cancelled`).
+1. **Conflict rework** — `IssueReworkService.TriggerConflictReworkAsync` handles every `agent:done` PR that is merge-conflicted: extracts linked issues, swaps the issue's label back to `agent:next` so the pipeline dispatches a rework run. Skips issues already carrying an active label (`agent:next`, `agent:in-progress`, `agent:epic`, `agent:epic-review`, `agent:epic-approved`) or an abandonment label (`agent:wont-do`, `agent:cancelled`).
 
 2. **Automated branch updates** — For every `agent:done` PR that is behind its base branch: triggers a server-side branch update (fire-and-forget). Respects the `effectiveConcurrencyLimit` (template-level `HousekeepingConcurrencyLimit` or global fallback) — at most N updates are in-flight per repository at any time. Draft PRs and branches with active runs are skipped.
 
@@ -280,11 +290,12 @@ The `OrphanedLabelRecoveryService` (in `CodingAgent.Scheduler`) is a background 
 ### Sweep Logic
 
 Each sweep:
-1. Loads all pipeline job templates to identify issue provider configurations
-2. Deduplicates issue provider IDs across templates
-3. For each issue provider, queries for open issues with the `agent:in-progress` label
-4. Checks each issue against `OrchestratorRunService.IsIssueBeingProcessed()`
-5. If the issue is NOT tracked by any active run → swaps label to `agent:error`
+1. Collects the trackers of all pipeline job templates and the epic tracker of every enabled project, without duplicates. Only the leader Scheduler replica sweeps.
+2. For each issue provider, queries for open issues with the `agent:in-progress` label
+3. Skips an issue that still has an active WorkItem (`IPipelineApiWorkItemClient.IsIssueDistributedAsync`), then re-reads its labels.
+4. If it now carries two or more status labels, keeps one by `AgentLabels.DualLabelResolutionPrecedence`; if it already carries a terminal label, leaves it.
+5. Otherwise swaps the label to `agent:error`.
+6. Then scans open `agent:done`, `agent:error` and `agent:needs-refinement` issues and resolves any that carry a second status label (left behind by a label swap whose remove step failed) to one label, by `AgentLabels.DualLabelResolutionPrecedence`.
 
 ### Error Handling
 
@@ -315,7 +326,7 @@ flowchart TD
     B -->|No| D[Skip PR polling]
     C --> E{PRs found?}
     E -->|Yes| F[Filter: skip in-progress]
-    F --> G[TryDispatchReviewAsync]
+    F --> G[DispatchScheduler.DispatchPrRoundAsync]
     G --> H[Agent picks up job]
     H --> S1
 
@@ -328,10 +339,11 @@ flowchart TD
         S3[6. SyncBrainPreRun]
         S3b[7. DownloadIssueImages]
         S4[8. ExtractLinkedIssues]
-        S5[9. ReviewCode]
-        S6[10. PostReviewFindings]
+        S4b[9. CloneProjectReviewRepositories]
+        S5[10. ReviewCode]
+        S6[11. PostReviewFindings]
 
-        S1 --> S1b --> S1c --> S1d --> S2 --> S3 --> S3b --> S4 --> S5 --> S6
+        S1 --> S1b --> S1c --> S1d --> S2 --> S3 --> S3b --> S4 --> S4b --> S5 --> S6
     end
 ```
 
@@ -347,8 +359,9 @@ flowchart TD
 | 6 | `SyncBrainPreRunStep` | Sync brain repository if configured (non-fatal on failure) |
 | 7 | `DownloadIssueImagesStep` | Download images from the PR body and linked issues for review agents |
 | 8 | `ExtractLinkedIssuesStep` | Extract linked issues, write context files, write PR conversation context |
-| 9 | `ReviewCodeStep` | Resolve reviewer configs and execute multi-agent code review |
-| 10 | `PostReviewFindingsStep` | Format findings and post as PR review comment |
+| 9 | `CloneProjectReviewRepositoriesStep` | Clone the project's other repositories read-only when the project has its own reviewers |
+| 10 | `ReviewCodeStep` | Resolve reviewer configs and execute multi-agent code review |
+| 11 | `PostReviewFindingsStep` | Format findings and post as PR review comment |
 
 ### Review Run State Machine
 
@@ -402,7 +415,7 @@ Re-review is always explicitly triggered by the user (remove `agent:done`, re-ad
 
 ### Loop Mode Configuration
 
-Each `PipelineJobTemplate` has three independent toggles controlling which work types it processes:
+Each `PipelineJobTemplate` has four independent toggles controlling which work types it processes:
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
@@ -449,7 +462,7 @@ Settings are read at the start of each poll cycle, allowing runtime changes via 
 
 ### Poll-Cycle Scheduler Priority
 
-When multiple work types are queued in the same poll cycle, the loop uses a fixed priority order — not round-robin — to decide which queue to serve first. This is distinct from the [WorkItem queue priority](#dispatch-priority) used by the Job Controller:
+When multiple work types are queued in the same poll cycle, the loop uses a fixed priority order — not round-robin — to decide which queue to serve first. This is distinct from the [WorkItem queue priority](#dispatch-priority) used by the Scheduler's `WorkItemDispatchLoop`:
 
 | Priority | Work Type | Notes |
 |----------|-----------|-------|
@@ -457,14 +470,14 @@ When multiple work types are queued in the same poll cycle, the loop uses a fixe
 | 2 | Decomposition | Phase 1 and Phase 2 epics |
 | 3 | Issues (Implementation) | Dispatched last |
 
-The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (4th, after Review, Decomposition, and Implementation) by the Job Controller. They do not participate in the closed-loop scheduler.
+The scheduler iterates this order on each turn, selecting the first queue with eligible work. If the highest-priority queue has nothing to dispatch, it falls through to the next. Consolidation jobs are queued as `WorkItem` rows and dispatched in the lowest-priority tier (4th, after Review, Decomposition, and Implementation) by the Scheduler's `WorkItemDispatchLoop`. They do not participate in the closed-loop scheduler.
 
 ### Dispatch Budget Sharing
 
 All active queues share the `ClosedLoopMaxRunsPerCycle` budget.
 
 - Total dispatches per cycle never exceed `ClosedLoopMaxRunsPerCycle`
-- All active queues get at least one dispatch when budget allows
+- Queues are served in strict priority order. Only issues have a floor: when issues are waiting and the budget is at least 2, `MinIssueSlots` (default 1) slots of the cycle's budget are kept for them. Decomposition has no reserved slot.
 - PRs are processed in FIFO order (oldest `CreatedAt` first)
 - Draft PRs are included in review dispatch (a warning is shown in the UI)
 - PRs with `agent:error`, `agent:in-progress`, `agent:done`, or `agent:cancelled` labels are skipped
@@ -478,23 +491,15 @@ Issues referencing `Blocked by #N`, `Depends on #N`, `Requires #N`, or `After #N
 
 The review pipeline extracts linked issues from the PR to provide requirements context to the review agent. This enables the reviewer to evaluate the PR against the original acceptance criteria.
 
-#### Extraction Priority Order
-
-Each repository provider implements its own extraction logic:
-
-1. **Platform API** — Query the platform's linked/closing references API (e.g., GitHub timeline events)
-2. **PR title parsing** — Scan the PR title for issue references
-3. **PR body parsing** — Scan the PR body/description for issue references
+Linked issues are found at dispatch time by `FetchLinkedIssueContextsAsync` in `DispatchOrchestrationService`, which parses the PR title and description. `ExtractLinkedIssuesStep` (agent-side) parses nothing: it writes the pre-fetched issues to the workspace, or falls back to the PR title and description when there are none.
 
 #### Recognized Patterns (GitHub)
 
-The patterns below apply at dispatch time, parsed by `FetchLinkedIssueContextsAsync` in `DispatchOrchestrationService`. Not all patterns are used in all contexts — see notes on each entry.
+The patterns below apply at dispatch time, parsed by `FetchLinkedIssueContextsAsync` in `DispatchOrchestrationService`.
 
-- Closing keywords: `closes #N`, `fixes #N`, `resolves #N` (and all verb forms: `close`, `fixed`, `closed`, `resolve`, `resolved`) — recognized by `ParseAllClosingKeywords`
+- Closing keywords: `closes #N`, `fixes #N`, `resolves #N` (and all verb forms: `close`, `fixed`, `closed`, `resolve`, `resolved`) — recognized by `ParseAllClosingKeywords`, which also accepts `GH-N` after a closing keyword
 - `https://github.com/owner/repo/issues/N` — full GitHub issue URL (HTTP or HTTPS, optional `www.` prefix) — recognized by `ParseIssueUrls`; recognized at dispatch time by `FetchLinkedIssueContextsAsync`
-- `#N` — simple issue number reference — recognized by `ExtractLinkedIssuesStep` (agent-side) but **not** used at dispatch time to avoid false positives on markdown prose
-- `owner/repo#N` — cross-repository reference — recognized by `ExtractLinkedIssuesStep` only
-- `GH-N` — GitHub shorthand — recognized by `ExtractLinkedIssuesStep` only
+- Standalone `#N`, `owner/repo#N` and bare `GH-N` references are not recognized, to avoid false positives on markdown prose.
 
 #### How Context is Provided
 
@@ -550,7 +555,7 @@ Review findings are posted as a PR review comment with the following structure:
 </details>
 ```
 
-The `<!-- agent:pr-review -->` marker enables the pipeline to detect and update existing reviews on subsequent runs, avoiding duplicate comments.
+The `<!-- agent:pr-review -->` marker identifies the pipeline's earlier reviews. On a re-review the pipeline dismisses the previous review (providers with inline review comments) or collapses it into a "Superseded by newer review" details block, then posts the new review.
 
 When no issues are found, the review body states: "✅ No issues found."
 
@@ -608,7 +613,8 @@ flowchart TD
 
     subgraph "Phase 2: Creation"
         M --> P2S1[Clone + Brain sync]
-        P2S1 --> P2S2[Agent generates sub-issues]
+        P2S1 --> P2S1b[Download open issues]
+        P2S1b --> P2S2[Agent generates sub-issues]
         P2S2 --> P2S3[Create issues on tracker]
         P2S3 --> P2S4[Post summary comment]
     end
@@ -646,14 +652,19 @@ stateDiagram-v2
 | 4 | Adversarial review | Validates plan quality, triggers refinement if needed |
 | 5 | Post plan | Post/update plan comment on epic, swap label to `agent:epic-review` |
 
+Pipeline steps: `CloningRepository` → (`RunningEnvironmentSetup`) → (`SyncingBrainRepoPreRun`) → `DownloadingOpenIssues` → `ExploringCodebase` → `GeneratingPlan` → `ReviewingPlan` → `PostingPlan`. Steps in parentheses run only when configured.
+
 ### Phase 2: Creation
 
 | # | Step | Description |
 |---|------|-------------|
 | 1 | Clone + Brain sync | Clone repository, sync brain if configured |
-| 2 | Agent generation | Agent produces sub-issue JSON files |
-| 3 | Create issues | Parse JSON, resolve dependencies, create issues sequentially |
-| 4 | Post summary | Post summary comment listing created/failed issues, swap label |
+| 2 | Download open issues | Fetch existing and recently closed issues for deduplication context |
+| 3 | Agent generation | Agent produces sub-issue JSON files |
+| 4 | Create issues | Parse JSON, resolve dependencies, create issues sequentially |
+| 5 | Post summary | Post summary comment listing created/failed issues, swap label |
+
+Pipeline steps: `CloningRepository` → (`RunningEnvironmentSetup`) → (`SyncingBrainRepoPreRun`) → `DownloadingOpenIssues` → `GeneratingSubIssues` → `CreatingIssues` → `PostingSummary`.
 
 ### Configuration
 
