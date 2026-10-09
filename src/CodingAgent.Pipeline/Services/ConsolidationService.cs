@@ -178,7 +178,6 @@ public sealed class ConsolidationService : IConsolidationService
             RepoProviderId: repoProviderId,
             BrainProviderId: brainProviderId,
             RepoConfig: repoConfig,
-            GlobalConfig: globalConfig,
             Config: config);
     }
 
@@ -353,6 +352,5 @@ public sealed class ConsolidationService : IConsolidationService
         string RepoProviderId,
         string? BrainProviderId,
         ProviderConfig? RepoConfig,
-        PipelineConfiguration GlobalConfig,
         PipelineConfiguration Config);
 }
