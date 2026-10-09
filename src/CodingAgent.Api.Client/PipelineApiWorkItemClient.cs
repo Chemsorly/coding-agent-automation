@@ -169,16 +169,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
         response.EnsureSuccessStatusCode();
     }
 
-    public async Task<string?> GetK8sJobNameAsync(Guid workItemId, CancellationToken ct = default)
-    {
-        var response = await _http.GetAsync($"/api/work-items/{workItemId}/k8s-job-name", ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-            return null;
-        response.EnsureSuccessStatusCode();
-        var result = await response.Content.ReadFromJsonAsync<K8sJobNameResponse>(PipelineJsonOptions.Default, ct);
-        return result?.JobName;
-    }
-
     public async Task<WorkItemStatus?> GetStatusAsync(Guid workItemId, CancellationToken ct = default)
     {
         var response = await _http.GetAsync($"/api/work-items/{workItemId}/status", ct);
@@ -285,8 +275,6 @@ internal sealed class PipelineApiWorkItemClient : IPipelineApiWorkItemClient
     /// deserializer assigns through the constructor — an init-only property looks unassigned to
     /// static analysis, since nothing in this codebase ever writes it.</summary>
     private sealed record RetryCountResponse(int RetryCount);
-
-    private sealed record K8sJobNameResponse(string? JobName);
 
     private sealed record WorkItemStatusResponse(WorkItemStatus Status);
 

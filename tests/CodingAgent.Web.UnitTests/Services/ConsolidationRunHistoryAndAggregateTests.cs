@@ -1,9 +1,7 @@
 using AwesomeAssertions;
-using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Web.Services;
-using Moq;
-using ILogger = Serilog.ILogger;
+using CodingAgent.Web.TestUtilities;
 
 namespace CodingAgent.Web.UnitTests.Services;
 
@@ -11,34 +9,8 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// Acceptance criterion test for issue #3025: a consolidation <see cref="PipelineRunSummary"/> must
 /// be returned by the history read path while being excluded from the success-rate aggregate.
 /// </summary>
-public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
+public sealed class ConsolidationRunHistoryAndAggregateTests
 {
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"consol-agg-{Guid.NewGuid()}");
-
-    public void Dispose()
-    {
-        if (!Directory.Exists(_tempDir))
-            return;
-
-        // Retry loop: the file-backed PipelineRunHistoryService has async writes that may still be
-        // in flight when Dispose() runs on a loaded CI runner, causing an IOException if the
-        // directory isn't fully drained before deletion. If the last attempt fails too, the temp
-        // directory is left behind: cleanup failure is not a correctness issue (issue #3165).
-        for (var i = 0; i < 3; i++)
-        {
-            try
-            {
-                Directory.Delete(_tempDir, recursive: true);
-                return;
-            }
-            catch (IOException)
-            {
-                if (i < 2)
-                    Thread.Sleep(100);
-            }
-        }
-    }
-
     /// <summary>
     /// Issue #3025 acceptance criterion:
     /// for one consolidation PipelineRunSummary, the run-history read path returns it while
@@ -51,8 +23,7 @@ public sealed class ConsolidationRunHistoryAndAggregateTests : IDisposable
     [Fact]
     public async Task ConsolidationRun_ReturnedByReadPath_ExcludedFromSuccessRate()
     {
-        Directory.CreateDirectory(_tempDir);
-        var service = new PipelineRunHistoryService(new Mock<ILogger>().Object, _tempDir);
+        var service = new InMemoryPipelineRunHistoryService();
 
         // ── Arrange ──────────────────────────────────────────────────────
         var consolidationSummary = new PipelineRunSummary

@@ -23,7 +23,7 @@ public sealed class HousekeepingService : IHousekeepingService
 {
     private const string MergeabilityStatusTag = "mergeability_status";
 
-    private readonly IOrchestratorRunService _runService;
+    private readonly IRunActivityQuery _runService;
     private readonly IStaleBranchCleaner _staleBranchCleaner;
     private readonly IIssueReworkService _issueReworkService;
     private readonly ILogger _logger;
@@ -125,7 +125,7 @@ public sealed class HousekeepingService : IHousekeepingService
         };
 
     public HousekeepingService(
-        IOrchestratorRunService runService,
+        IRunActivityQuery runService,
         IStaleBranchCleaner staleBranchCleaner,
         IIssueReworkService issueReworkService,
         ILogger logger)

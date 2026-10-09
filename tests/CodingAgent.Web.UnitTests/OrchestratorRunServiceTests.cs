@@ -55,17 +55,18 @@ public class OrchestratorRunServiceTests
     }
 
     [Fact]
-    public void AddRun_DuplicateRunId_DoesNotOverwrite()
+    public void AddRun_DuplicateRunId_ReplacesStoredRun()
     {
         var service = CreateService();
         var run1 = CreateRun("run-1", "issue-A");
         var run2 = CreateRun("run-1", "issue-B");
 
         service.AddRun(run1);
-        service.AddRun(run2); // duplicate — should be ignored
+        service.AddRun(run2); // duplicate — should replace stored run (upsert)
 
         service.ActiveRunCount.Should().Be(1);
-        service.GetRun("run-1")!.IssueIdentifier.Value.Should().Be("issue-A");
+        service.GetRun("run-1")!.IssueIdentifier.Value.Should().Be("issue-B",
+            "the second AddRun must replace the stored run (upsert semantics)");
     }
 
     [Fact]

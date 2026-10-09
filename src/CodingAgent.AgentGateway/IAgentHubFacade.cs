@@ -80,11 +80,6 @@ public interface IAgentHubFacade
     void AddRun(PipelineRun run);
 
     /// <summary>
-    /// Gets or creates the per-run output ring buffer.
-    /// </summary>
-    OutputRingBuffer GetOutputBuffer(JobId jobId);
-
-    /// <summary>
     /// Appends output lines to the run's persistent storage.
     /// For in-memory mode: writes to the OutputRingBuffer.
     /// For distributed mode: writes to Redis List for cross-replica backlog.

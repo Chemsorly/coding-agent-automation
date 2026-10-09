@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -11,8 +12,7 @@ namespace CodingAgent.Api.IntegrationTests;
 /// <summary>
 /// Unit tests for <see cref="DbWorkItemClientAdapter"/>.
 /// Covers the only real method (<see cref="DbWorkItemClientAdapter.GetK8sJobNameAsync"/>)
-/// and the constructor guard. The NotSupportedException stubs are excluded from coverage
-/// via [ExcludeFromCodeCoverage] on the class — they are by design never invoked.
+/// and the constructor guard.
 /// </summary>
 public sealed class DbWorkItemClientAdapterTests : IDisposable
 {
@@ -52,6 +52,16 @@ public sealed class DbWorkItemClientAdapterTests : IDisposable
     {
         var act = () => new DbWorkItemClientAdapter(_dbFactory);
         act.Should().NotThrow();
+    }
+
+    // ── Interface membership ──────────────────────────────────────────────
+
+    [Fact]
+    public void DbWorkItemClientAdapter_ImplementsOnlyIK8sJobNameLookup()
+    {
+        var interfaces = typeof(DbWorkItemClientAdapter).GetInterfaces();
+        interfaces.Should().ContainSingle()
+            .Which.Should().Be(typeof(IK8sJobNameLookup));
     }
 
     // ── GetK8sJobNameAsync ────────────────────────────────────────────────

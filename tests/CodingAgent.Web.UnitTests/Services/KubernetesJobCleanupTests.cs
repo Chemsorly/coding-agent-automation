@@ -1,4 +1,3 @@
-using CodingAgent.Api.Client;
 using CodingAgent.Orchestration.Dispatch;
 using CodingAgent.Pipeline.Models;
 using k8s.Autorest;
@@ -13,7 +12,7 @@ namespace CodingAgent.Web.UnitTests.Services;
 /// </summary>
 public sealed class KubernetesJobCleanupTests
 {
-    private readonly Mock<IPipelineApiWorkItemClient> _mockApiClient;
+    private readonly Mock<IK8sJobNameLookup> _mockJobNameLookup;
     private readonly Mock<IKubernetesJobClient> _mockJobClient;
     private readonly Mock<ILogger> _mockLogger;
     private readonly KubernetesJobCleanup _sut;
@@ -22,12 +21,12 @@ public sealed class KubernetesJobCleanupTests
 
     public KubernetesJobCleanupTests()
     {
-        _mockApiClient = new Mock<IPipelineApiWorkItemClient>();
+        _mockJobNameLookup = new Mock<IK8sJobNameLookup>();
         _mockJobClient = new Mock<IKubernetesJobClient>();
         _mockLogger = new Mock<ILogger>();
 
         _sut = new KubernetesJobCleanup(
-            _mockApiClient.Object,
+            _mockJobNameLookup.Object,
             _mockJobClient.Object,
             K8sNamespace,
             _mockLogger.Object);
@@ -39,7 +38,7 @@ public sealed class KubernetesJobCleanupTests
         var runId = Guid.NewGuid();
         const string jobName = "caa-test-job";
 
-        _mockApiClient
+        _mockJobNameLookup
             .Setup(c => c.GetK8sJobNameAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(jobName);
         _mockJobClient
@@ -56,7 +55,7 @@ public sealed class KubernetesJobCleanupTests
     {
         var runId = Guid.NewGuid();
 
-        _mockApiClient
+        _mockJobNameLookup
             .Setup(c => c.GetK8sJobNameAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
 
@@ -71,7 +70,7 @@ public sealed class KubernetesJobCleanupTests
     {
         await _sut.TryDeleteJobForRunAsync("not-a-guid", CancellationToken.None);
 
-        _mockApiClient.Verify(c => c.GetK8sJobNameAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockJobNameLookup.Verify(c => c.GetK8sJobNameAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockJobClient.Verify(c => c.DeleteJobAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -81,7 +80,7 @@ public sealed class KubernetesJobCleanupTests
     {
         var runId = Guid.NewGuid();
 
-        _mockApiClient
+        _mockJobNameLookup
             .Setup(c => c.GetK8sJobNameAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
 
@@ -97,7 +96,7 @@ public sealed class KubernetesJobCleanupTests
         var runId = Guid.NewGuid();
         const string jobName = "caa-already-gone";
 
-        _mockApiClient
+        _mockJobNameLookup
             .Setup(c => c.GetK8sJobNameAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(jobName);
 
@@ -121,7 +120,7 @@ public sealed class KubernetesJobCleanupTests
         var runId = Guid.NewGuid();
         const string jobName = "caa-error-job";
 
-        _mockApiClient
+        _mockJobNameLookup
             .Setup(c => c.GetK8sJobNameAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(jobName);
         _mockJobClient

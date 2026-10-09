@@ -54,8 +54,7 @@ public class QualityGateExecutorConflictRestartPreRetryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(PassingQgReport);
 
         // CI never starts (Pending, no jobs) → not-started path is taken, conflict check fires.
