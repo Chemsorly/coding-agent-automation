@@ -252,7 +252,7 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
 
         // Output format
-        sb.AppendLine("## Output Format");
+        PromptBuilder.AppendOutputFormatHeading(sb);
         sb.AppendLine();
         sb.AppendLine("Produce your analysis as a JSON object with the following structure:");
         sb.AppendLine();

@@ -14,6 +14,5 @@ public interface IQualityGateValidator
         WorkspacePath workspacePath,
         IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
         CancellationToken ct,
-        string? baseBranch = null,
         Action<PipelineRunEventReport>? reportEvent = null);
 }

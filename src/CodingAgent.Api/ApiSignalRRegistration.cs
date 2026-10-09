@@ -1,4 +1,5 @@
 using CodingAgent.AgentGateway;
+using CodingAgent.Orchestration.Redis;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Hosting;
@@ -32,15 +33,17 @@ internal static class ApiSignalRRegistration
         var redisConnectionString = configuration.GetValue<string>("SignalR:Redis:ConnectionString");
         if (!string.IsNullOrEmpty(redisConnectionString))
         {
-            var config = ConfigurationOptions.Parse(redisConnectionString);
+            var config = RedisConnectionOptions.Parse(redisConnectionString);
             config.ChannelPrefix = RedisChannel.Literal("caa");
-            config.AbortOnConnectFail = false;
-            config.ConnectRetry = 5;
-            config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
 
             // Create the multiplexer once and share it between SignalR's backplane and
             // the /readyz probe. A single shared instance means the probe checks the exact
             // connection that serves hub messages — no second connection to maintain.
+            // TODO: The multiplexer is registered as a pre-built instance via AddSingleton<IConnectionMultiplexer>(multiplexer).
+            // DI does not call Dispose on pre-built instances when the container is disposed, so the multiplexer
+            // is never explicitly disposed if registration fails or the host is torn down. This is pre-existing
+            // behaviour unchanged by this PR. Consider wrapping in a factory lambda or using IHostApplicationLifetime
+            // to dispose on shutdown. (Review finding: DotNetSpecialist WARNING ApiSignalRRegistration.cs:44)
             var multiplexer = ConnectionMultiplexer.Connect(config);
             multiplexer.ConnectionFailed += (_, e) =>
                 Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",

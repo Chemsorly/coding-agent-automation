@@ -34,7 +34,7 @@ public sealed class FeedbackService
         {
             var allSummaries = await historyService.GetRunHistoryAsync(ct).ConfigureAwait(false);
             var recentSummaries = allSummaries
-                // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
+                // TODO: Add a fallback to the obsolete StartedAt for legacy summaries where StartedAtOffset == default.
                 .OrderByDescending(s => s.StartedAtOffset)
                 .Take(FeedbackConstraints.MaxRecentRunsForCategories)
                 .ToList();

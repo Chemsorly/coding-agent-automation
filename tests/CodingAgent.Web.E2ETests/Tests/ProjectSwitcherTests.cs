@@ -362,13 +362,12 @@ public sealed class ProjectSwitcherTests : E2ETestBase
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
         await Page.WaitForBlazorAsync(15_000);
         // After a reload, CockpitLayout.OnAfterRenderAsync restores the saved project.
-        // Give it a moment to propagate.
-        // TODO: [WARNING] Fixed 2000 ms sleep is fragile: may be too short on a slow CI runner
-        // and wastes time on a fast one. Replace with a deterministic wait, e.g. poll
-        // GetSelectedValueAsync() until it equals P2Id (with a 15 s timeout).
-        await Page.WaitForTimeoutAsync(2000);
-
+        // Poll until the switcher reflects P2Id instead of sleeping a fixed duration.
         var switcherAfterReload = new ProjectSwitcher(Page);
+        await WaitUntilAsync(
+            async () => await switcherAfterReload.GetSelectedValueAsync() == P2Id,
+            timeout: TimeSpan.FromSeconds(15),
+            pollInterval: TimeSpan.FromMilliseconds(100));
 
         // Switcher must display P2 again.
         var valueAfterReload = await switcherAfterReload.GetSelectedValueAsync();

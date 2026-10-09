@@ -1,5 +1,4 @@
 using AwesomeAssertions;
-using CodingAgent.Api.Client;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Infrastructure.Persistence.Services;
@@ -1114,12 +1113,12 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
     }
 
     /// <summary>
-    /// Creates a mock IPipelineApiWorkItemClient whose GetK8sJobNameAsync returns
+    /// Creates a mock IK8sJobNameLookup whose GetK8sJobNameAsync returns
     /// the specified job name for the given work item ID.
     /// </summary>
-    private static IPipelineApiWorkItemClient MockApiClientForJobCleanup(Guid workItemId, string? k8sJobName)
+    private static IK8sJobNameLookup MockApiClientForJobCleanup(Guid workItemId, string? k8sJobName)
     {
-        var mock = new Moq.Mock<IPipelineApiWorkItemClient>();
+        var mock = new Moq.Mock<IK8sJobNameLookup>();
         mock.Setup(c => c.GetK8sJobNameAsync(workItemId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(k8sJobName);
         return mock.Object;
