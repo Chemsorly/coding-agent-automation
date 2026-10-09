@@ -24,10 +24,12 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 
 | System | Label Source | Matching Logic | Purpose |
 |--------|-------------|----------------|---------|
-| **Agent Selection** | Job's RequiredLabels (from repo) | Agent labels ⊇ job labels (superset) | Route job to capable agent |
-| **Profile Resolution** | Agent's labels | Profile MatchLabels ⊆ agent labels (ALL match) | Determine which provider config to send |
-| **QGC Resolution** | Job's RequiredLabels (from repo) | QGC MatchLabels ∩ job labels ≠ ∅ (ANY match) | Determine which quality gates to run |
-| **Reviewer Resolution** | Job's RequiredLabels (from repo) | Reviewer MatchLabels ∩ job labels ≠ ∅ (ANY match) | Determine which review agents to run |
+| **Profile Resolution** | Job's RequiredLabels (from repo) | Profile MatchLabels ⊇ job labels (the profile covers every repo label); the profile with the most labels wins, then Priority, then Id | Pick the agent provider config; the profile's labels become the job's agent selector |
+| **Job Template Selection** | Matched profile's MatchLabels | Template labels = profile labels | Pick the image, `maxConcurrent` and resources |
+| **QGC Resolution** | Matched profile's MatchLabels | QGC MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which quality gates to run |
+| **Reviewer Resolution** | Matched profile's MatchLabels | Reviewer MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which review agents to run |
+
+Consolidation runs and chat sessions resolve the profile from the agent's labels instead (Profile MatchLabels ⊆ agent labels).
 
 ## Agent Images
 
@@ -57,7 +59,7 @@ The Claude image runs the Claude Code CLI. Its job templates use `providerType: 
 
 ## Agent Profiles
 
-Agent Profiles map label sets to agent provider configs (model, effort, CLI path). Configured in Settings → Agent Profiles.
+Agent Profiles map label sets to agent provider configs (model, effort, CLI path). Configured in Settings → Label Routing → Agent Profiles.
 
 | Profile | Match Labels | Effect |
 |---------|-------------|--------|
@@ -65,11 +67,11 @@ Agent Profiles map label sets to agent provider configs (model, effort, CLI path
 | Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model |
 | Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model |
 
-Resolution: most specific match wins (highest label count). A profile with empty MatchLabels acts as a default/catch-all.
+Resolution: the profile must contain every label of the repository; among those, the profile with the most labels wins, then the higher Priority, then the Id. A profile with empty MatchLabels matches only a repository with no required labels; it is a catch-all only for consolidation runs and chat sessions, which match by agent labels.
 
 ## Quality Gate Configurations
 
-QGCs define per-stack quality gates. Configured in Settings → Quality Gate Configs.
+QGCs define per-stack quality gates. Configured in Settings → Label Routing → Quality Gate Configs.
 
 | QGC | Match Labels | Compilation | Tests |
 |-----|-------------|-------------|-------|
@@ -79,7 +81,7 @@ QGCs define per-stack quality gates. Configured in Settings → Quality Gate Con
 
 Resolution: all QGCs whose labels intersect with the job's labels are applied sequentially. A polyglot repo with labels `["dotnet", "python"]` gets both the .NET and Python quality gates.
 
-> **Coverage enforcement:** The built-in coverage threshold gate was retired (`coverageThreshold`, `coverageReportFormat`, and `coverageReportPaths` are tombstoned fields — configuring them has no effect). To enforce coverage minimums, add the appropriate flag to the `TestArguments` field on the QGC. For example, `--coverage-fail-below 80` for pytest-cov (Python) or a test runner argument like `--minimum-coverage 80` for .NET tools that support it. The test command will fail with a non-zero exit code if coverage is below the threshold, which the Tests gate will catch.
+> **Coverage enforcement:** The built-in coverage threshold gate was retired. To enforce coverage minimums, add the appropriate flag to the `TestArguments` field on the QGC. For example, `--coverage-fail-below 80` for pytest-cov (Python) or a test runner argument like `--minimum-coverage 80` for .NET tools that support it. The test command will fail with a non-zero exit code if coverage is below the threshold, which the Tests gate will catch.
 
 ## Reviewer Configurations
 
@@ -92,7 +94,7 @@ Reviewer Configurations define per-stack code review agents. Configured in Setti
 
 The default reviewers do not depend on the stack, so they apply to every repository. A stack's specialist matches the stack label, like the stack's quality gate config: add one per stack you use (for example a Python reviewer with `python`).
 
-Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches (or all are disabled), or the matching configs define no review agents, the review phase is **skipped**. A warning is logged (`Pipeline {RunId} no reviewer configurations matched — review phase skipped`). An implementation run then opens its PR without a review; a PR review run posts a comment on the pull request that says why no review ran. To ensure review always runs, keep the default reviewer configuration (`MatchLabels = []`) enabled in Settings → Reviewers.
+Resolution: all Reviewer Configurations whose labels intersect with the job's labels are applied sequentially (ANY match). Each configuration contains one or more review agents that run in order. A configuration with empty MatchLabels acts as a global fallback (applies to all jobs). When no reviewer config matches (or all are disabled), or the matching configs define no review agents, the review phase is **skipped**. A warning is logged (`Pipeline {RunId} no reviewer configurations matched — review phase skipped`). An implementation run then opens its PR without a review; a PR review run posts a comment on the pull request that says why no review ran. To ensure review always runs, keep the default reviewer configuration (`MatchLabels = []`) enabled in Settings → Label Routing → Reviewer Configs.
 
 The other code review settings (iterations, fix prompt, inline comments, acceptance criteria) are on Settings → Global Defaults → Code Review; see [Configuration — Code Review](configuration.md#code-review).
 
@@ -100,7 +102,7 @@ Labels are set per repository, and the same labels also pick the agent profile, 
 
 ## Agent Lifecycle Labels
 
-The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pipeline state. Only one `agent:*` label should be present on an issue at a time. These labels are managed by the pipeline — setting them manually can interfere with dispatch logic.
+The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pipeline state. Only one status label (every `agent:*` label except `agent:generated`) should be present on an issue at a time; `agent:generated` stays next to it. These labels are managed by the pipeline — setting them manually can interfere with dispatch logic.
 
 | Label | Description | Terminal? |
 |-------|-------------|-----------|
@@ -112,11 +114,11 @@ The pipeline applies `agent:*` labels to GitHub issues and PRs to communicate pi
 | `agent:wont-do` | Issue explicitly marked out of scope for automation | Yes |
 | `agent:cancelled` | Run was cancelled by a user or system event | Yes |
 | `agent:epic` | Issue is an epic awaiting decomposition | No |
-| `agent:epic-review` | Decomposition plan is posted and awaiting human review | No |
+| `agent:epic-review` | Decomposition plan is posted and awaiting human review | Yes |
 | `agent:epic-approved` | Human approved the decomposition plan (required before sub-issues are created) | No |
-| `agent:generated` | Issue was auto-generated by decomposition | No |
+| `agent:generated` | Issue was created by the pipeline (a decomposition sub-issue or a refactoring issue from a consolidation run); not a status label, so label swaps keep it | No |
 
-**Terminal labels** (`agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, `agent:cancelled`) mark states that require human action to re-queue. Remove the terminal label and add `agent:next` to retry. `agent:needs-refinement` specifically indicates the issue body needs more detail — review the analysis confidence output before re-queuing.
+**Terminal labels** (`agent:done`, `agent:error`, `agent:needs-refinement`, `agent:wont-do`, `agent:cancelled`, `agent:epic-review`) mark states that require human action to re-queue. Remove the terminal label and add `agent:next` to retry; for `agent:epic-review`, add `agent:epic-approved` to approve the plan or `agent:epic` to request a new one. `agent:needs-refinement` specifically indicates the issue body needs more detail — review the analysis confidence output before re-queuing.
 
 **`agent:epic-approved`** is a gated label: agents may not set it via `RequestLabelChange`. Only humans can approve decomposition.
 
