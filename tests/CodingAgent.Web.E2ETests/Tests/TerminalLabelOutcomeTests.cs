@@ -570,6 +570,7 @@ public sealed class TerminalLabelOutcomeTests : HeadlessE2ETestBase
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = pr.Identifier,
+            PrNumber = pr.Number,
             PrBranchName = pr.BranchName,
             PrTitle = pr.Title,
             PrDescription = pr.Description,

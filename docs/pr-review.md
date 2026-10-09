@@ -19,8 +19,6 @@ Label PR with agent:next → Pipeline picks up PR → Clone → Checkout PR bran
   → [Brain sync] → Extract linked issues → Code review → Post findings → Done
 ```
 
-Draft PRs are included in review dispatch (a warning is shown in the UI). To re-review after changes, remove `agent:done` and re-add `agent:next`.
-
 ### Rework Path and Draft PR Conversion
 
 When a PR was created as a draft (e.g., after quality gate exhaustion) and a rework run completes successfully, the pipeline calls `UpdatePullRequestAsync` with `markReady: true` to convert the draft PR to ready-for-review automatically. No manual intervention is needed for this promotion.
@@ -35,7 +33,7 @@ The pipeline posts code review findings as native inline comments on specific fi
 
 ### Configuration
 
-Inline comments are enabled by default. Configure via the web UI under Settings → Global Defaults → Review ("Enable Inline Review Comments", "Minimum Severity for Inline Posting", "Maximum Inline Comments per Review"), or in pipeline config JSON:
+Inline comments are enabled by default. Configure via the web UI under Settings → Global Defaults → Code Review ("Enable Inline Review Comments", "Minimum Severity for Inline Posting", "Maximum Inline Comments per Review"), or in pipeline config JSON:
 
 ```json
 {
@@ -76,20 +74,21 @@ Each pipeline job template has independent toggles:
 | `ImplementationEnabled` | `true` | Template processes issues for implementation |
 | `ReviewEnabled` | `true` | Template processes PRs for code review |
 | `DecompositionEnabled` | `false` | Template processes epics for decomposition |
-| `HousekeepingEnabled` | `false` | Template manages agent:done PRs for branch updates, conflict rework, and stale branch cleanup |
+| `HousekeepingEnabled` | `false` | Template manages agent:done PRs for branch updates and conflict rework. Stale branch cleanup also needs `HousekeepingBranchCleanupEnabled` |
+| `HousekeepingBranchCleanupEnabled` | `false` | Requires `HousekeepingEnabled`. Deletes remote agent branches that have no open PR and whose linked issue is not being worked on |
 
 Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](pipeline-orchestration.md) for the full technical reference.
 
 ## Acceptance Criteria Compliance
 
-The pipeline runs an acceptance criteria compliance check in parallel with code reviewers during the implementation pipeline's code review phase. A dedicated agent evaluates whether the implementation satisfies the acceptance criteria from the original issue.
+The pipeline runs an acceptance criteria compliance check in each code review iteration, after the code reviewers of that iteration have finished, in implementation runs and in PR review runs. A dedicated agent evaluates whether the implementation satisfies the acceptance criteria from the original issue.
 
 ### How It Works
 
 1. The AC agent reads issue context (`.agent/issue-context.md` or linked issue files) and the code changes
 2. It produces a structured JSON report at `.agent/acceptance-criteria.json`
-3. Non-compliant criteria are injected as `[CRITICAL]` findings into the fix prompt
-4. The report is rendered in the PR body as a compliance table
+3. Non-compliant criteria are injected as `[CRITICAL]` findings. In implementation runs they go into the fix prompt. PR review runs never fix, so they raise the `[CRITICAL]` count and make the review request changes.
+4. The report is rendered in the PR body (implementation runs) or in the review body (PR review runs) as a compliance table
 
 ### Configuration
 
@@ -97,7 +96,7 @@ The pipeline runs an acceptance criteria compliance check in parallel with code 
 |---------|------|---------|-------------|
 | `acceptanceCriteriaEnabled` | bool | `true` | Enable/disable the compliance check |
 
-The AC check runs on every review iteration. Non-compliant criteria are re-injected as `[CRITICAL]` findings into the fix prompt, and the compliance table in the PR body reflects the updated code state after each pass.
+The AC check runs on every review iteration. In implementation runs, non-compliant criteria are re-injected as `[CRITICAL]` findings into the fix prompt, and the compliance table in the PR body reflects the updated code state after each pass.
 
 ### Output Format
 
@@ -121,7 +120,7 @@ Status values: `compliant`, `non_compliant`, `not_applicable`.
 
 ### PR Body Rendering
 
-The compliance report appears in the PR body as:
+The compliance report appears in the PR body (implementation runs) or in the review body (PR review runs) as:
 
 ```
 ## Acceptance Criteria Compliance
@@ -142,7 +141,7 @@ Both must be true:
 1. More than 1 review agent is configured
 2. The agent provider supports parallel execution (`SupportsParallelExecution = true`)
 
-Both Kiro CLI and OpenCode providers support parallel execution. When conditions aren't met, agents run sequentially.
+The Kiro CLI, OpenCode and Claude Code providers all support parallel execution. When the conditions aren't met, agents run sequentially.
 
 ### Isolation Model
 
@@ -150,7 +149,7 @@ All review agents unconditionally run in isolated sessions (`UseResume = false`)
 
 ### Output Isolation
 
-Each agent writes findings to a separate file: `.agent/review-findings-{agentName}.md`. Pre-computed diff artifacts (`.agent/diff-stat.txt`, `.agent/full-diff.txt`) are shared read-only across all agents.
+Each agent writes findings to a separate file: `.agent/review-findings-{agent-name}.md`, where the agent name is lower-cased and spaces and slashes become hyphens (for example `.agent/review-findings-securityreviewer.md`). Pre-computed diff artifacts (`.agent/diff-stat.txt`, `.agent/full-diff.txt`) are shared read-only across all agents.
 
 ### Failure Isolation
 
@@ -199,7 +198,7 @@ Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset
 Labels describe a repository's tech stack, so they cannot pick a reviewer that knows the product. A project with the project review on (Settings → Projects → *project* → Project Review, see [Projects — Project Review](projects.md#project-review)) adds its own reviewer to every code review of its repositories:
 
 - **When:** in implementation runs (subject to `CodeReview.MaxIterations`, like the other reviewers) and in PR review runs. It is added after the label-matched reviewers and runs concurrently with them; its findings go through the same inline comments, retries and fix rounds. A project reviewer whose name another reviewer already has gets a number, as each reviewer writes its findings to a file named after it.
-- **What it reads:** right before the review, the agent clones the project's other repositories (the enabled templates other than the run's own) into `.agent/project-repos/<template name>/`. The pipeline appends their list to the project reviewer's instructions, under "Project repositories". The other reviewers and the coding agent are not told about them.
+- **What it reads:** right before the review, the agent clones the project's other repositories (the enabled templates other than the run's own) into `.agent/project-repos/<folder>/`, where the folder is the template name with every character other than an ASCII letter, digit, `-`, `_` or `.` replaced by `_`. The pipeline appends their list to the project reviewer's instructions, under "Project repositories"; the list gives the exact path of each clone. The other reviewers and the coding agent are not told about them.
 - **What it is told:** the default instructions check the change against the rest of the project: contracts between the repositories (endpoints, schemas, events, configuration keys), breaking changes, duplicated rules that now disagree, the project's decisions, its documentation, and the lessons in the brain (`.brain/`). One brain can serve several projects, so the reviewer checks that a lesson concerns this project. It explores the connected MCP servers (for example the ticketing system or the wiki with the architecture decision records) and checks how current each source is before relying on it, as documentation is often outdated. A break this change can avoid is `[CRITICAL]`; a fix that belongs in another repository is `[WARNING]`, naming the repository and file, so fix rounds do not chase it. In a project with a single repository, the reviewer checks the change against the project's decisions, documentation and the brain's lessons only.
 - **Read-only clones:** the clones are inside the agent's metadata directory, which is in the workspace's `.gitignore`, so they never show up in the diff or a commit. A GitHub App repository is cloned with a read-only token. A GitLab or personal-access-token repository is cloned with its own token, as tokens of those kinds cannot be narrowed; after the clone, the agent removes the token from the remote URL, `FETCH_HEAD` and the reflogs, and sets a push URL that is no repository, so a push fails. A clone that cannot be made read-only is removed. The token itself still reaches the agent pod, as the token of the run's own repository does, so with the project review on, a run holds the tokens of the project's other GitLab repositories as well: give them project access tokens with a short expiry.
 - **Cost:** with the project review on, each code review clones the project's other repositories and runs one more reviewer per round.

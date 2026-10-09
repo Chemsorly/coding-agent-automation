@@ -29,6 +29,17 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase where TItem : cl
     /// </summary>
     [Parameter] public bool CanDispatch { get; set; } = true;
     [Parameter] public RenderFragment? HeaderPrefix { get; set; }
+    [Parameter, EditorRequired] public bool HasMore { get; set; }
+    [Parameter, EditorRequired] public int Page { get; set; }
+    [Parameter] public EventCallback OnNextPage { get; set; }
+    [Parameter] public EventCallback OnPrevPage { get; set; }
+    [Parameter] public IReadOnlyList<string> AvailableLabels { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> SelectedLabels { get; set; } = [];
+    [Parameter] public EventCallback<string> OnToggleLabel { get; set; }
+    [Parameter] public EventCallback OnClearLabels { get; set; }
+
+    // Prevent default only disrupts scroll on arrow keys; keeping false avoids keyboard traps (Tab works normally)
+    protected static bool ShouldPreventDefault => false;
 
     protected string _filter = "";
     protected List<TItem> FilteredItems = [];

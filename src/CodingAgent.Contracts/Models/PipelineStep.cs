@@ -61,5 +61,12 @@ public enum PipelineStep
     /// Terminal step: PR was closed without merging while the run was active (during CI polling or at run start).
     /// Run ends as <see cref="WorkItemStatus.Cancelled"/>.
     /// </summary>
-    PrClosed = 32
+    PrClosed = 32,
+
+    /// <summary>
+    /// Post-codegen check step: verifies that identifiers the branch had added in force-resolved
+    /// conflict files were re-applied during code generation (issue #3435).
+    /// Non-blocking: always returns Continue. Runs after GeneratingCode, before ReviewingCode.
+    /// </summary>
+    CheckingDroppedIdentifiers = 33
 }

@@ -17,11 +17,6 @@ namespace CodingAgent.Web.Services;
 /// </summary>
 internal sealed class ApiChatJobDispatcher(IPipelineApiChatClient chatClient) : IChatJobDispatcher
 {
-    // The connect timeout shown in the "did not connect within Xs" error message is owned by the
-    // API. We don't know the exact value here, so report -1 to signal "unknown" — the UI falls
-    // back to ex.Message which already contains the API's description.
-    private const int UnknownTimeoutSeconds = -1;
-
     public async Task<string> DispatchChatPodAsync(
         string agentSelector, string? model, string? effort, CancellationToken cancellationToken)
     {
@@ -29,24 +24,24 @@ internal sealed class ApiChatJobDispatcher(IPipelineApiChatClient chatClient) : 
         {
             return await chatClient.DispatchChatPodAsync(agentSelector, model, effort, cancellationToken);
         }
-        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            // 409 — a chat session is already active for this agent
-            _ = ex;
-            throw new ChatAlreadyActiveException("unknown");
-        }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.ServiceUnavailable)
         {
             // 503 — no credential PVC available
+            // TODO [WARNING]: The API's error detail (carried by ChatDispatchFailedException.Message when ex is a
+            // ChatDispatchFailedException) is discarded here. NoPvcAvailableException takes no message, so the UI
+            // always shows the fixed string "No agent credentials available." rather than the API's reason. This
+            // is an asymmetry with the 504/500/400 paths that do propagate the API's detail. If NoPvcAvailableException
+            // is ever extended to carry a message, pass (ex as ChatDispatchFailedException)?.Message here.
             _ = ex;
             throw new NoPvcAvailableException();
         }
         catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.GatewayTimeout)
         {
-            // 504 — pod did not connect within the API's timeout
-            _ = ex;
-            throw new ChatPodTimeoutException(UnknownTimeoutSeconds);
+            // 504 — pod did not connect within the API's timeout; propagate the exact seconds when known
+            throw new ChatPodTimeoutException((ex as ChatDispatchFailedException)?.TimeoutSeconds ?? 0);
         }
+        // All other exceptions (including ChatDispatchFailedException with non-504 status codes)
+        // propagate uncaught so AgentChat.razor's ClassifyLaunchError can render the API's detail.
     }
 
     public async Task TerminateChatSessionAsync(AgentId agentId, CancellationToken cancellationToken)

@@ -32,27 +32,36 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 │  OrchestratorRunService ├── singleton in-memory state (locking applies)    │
 │  PipelineDbContext (EF Core)  — authoritative Postgres access               │
 │  WorkItemEndpoints, ConfigEndpoints, PipelineRunEndpoints                  │
+│  DispatchLifecycleService: creates K8s Jobs                                 │
+│    (POST /api/work-items/{id}/dispatch, POST /api/work-items/dispatch)      │
 │  DatabaseMaintenanceService (triggered by Scheduler via HTTP)              │
 │  ChatJobDispatcher + ChatSessionWatcher + ChatHeartbeatTracker             │
 │  No leader election lease                                                   │
 └─────────────────────────────────────────────────────────────────────────────┘
-         │  POST /api/work-items (claim)   ▲ hub: ReportOutputLines etc.
+         │  GET /api/work-items/active,    ▲ hub: ReportOutputLines etc.
+         │  POST /api/work-items/{id}/     │
+         │    status                       │
          ▼                                 │
 ┌──────────────────────┐     ┌─────────────────────────────────────────────┐
 │  Job Controller      │     │  Agent Pod (CodingAgent.Agent)          │
 │  (CodingAgent.       │     │  ─────────────                              │
 │   JobController)     │     │  Ephemeral K8s Job                          │
-│  ─────────────────── │     │  caa-agent-{11 hex} (impl/review/decomp)   │
-│  K8s Job dispatch    │     │  caa-cons-{12 hex}  (consolidation legacy)  │
-│  Lease: caa-{rel}-   │     │  Connects to API hub                        │
-│    dispatch-lock     │     │  GET /api/work-items/{id}/assignment         │
-│                      │     │  POST /api/work-items/{id}/status           │
+│  ─────────────────── │     │  caa-{8 hex}  (every work-item run type)    │
+│  Reconciliation      │     │  caa-chat-{8 hex}  (chat pods)              │
+│   Service: timeouts, │     │  caa-models-{8 hex}  (model fetch)          │
+│   K8s Job status     │     │  Connects to API hub                        │
+│   sync, orphan       │     │  GET /api/work-items/{id}/assignment        │
+│   cleanup            │     │  POST /api/work-items/{id}/status           │
+│  Lease: caa-{rel}-   │     │                                             │
+│    dispatch-lock     │     │                                             │
 └──────────────────────┘     └─────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  Scheduler  (CodingAgent.Scheduler)                                    │
 │  ─────────────                                                              │
-│  PipelineLoopService  — dispatches impl/review/decomp runs                  │
+│  PipelineLoopService  — picks issues and creates Pending WorkItems          │
+│  WorkItemDispatchLoop  — dispatches Pending WorkItems                       │
+│    (POST /api/work-items/{id}/dispatch)                                     │
 │  OrphanedLabelRecoveryService                                               │
 │  HousekeepingService                                                        │
 │  WorkItemCountsService  — emits WorkDistributionTelemetry gauges            │
@@ -64,7 +73,7 @@ After Spec 045 the system runs as **five distinct processes** (Orchestrator, Pip
 
 ### Where the Locking-Critical Singletons Live
 
-The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The Orchestrator registers read-model replicas of `AgentRegistryService` and `OrchestratorRunService` — backed by `DistributedAgentRegistryService` / `DistributedRunService` when Redis is configured, keeping the Blazor UI in sync without direct DB access.
+The **authoritative** instances of the services described in this document run in the **Pipeline API** process (`CodingAgent.Api`). The Orchestrator holds no authoritative copy. Its `IAgentRegistryService` is `ApiAgentRegistryService`, a snapshot of `GET /api/agents` that `AgentRegistrySyncService` refreshes in the background, and its `IOrchestratorRunService` is a local in-memory `OrchestratorRunService`. Neither is Redis-backed; the Redis-backed `DistributedAgentRegistryService` and `DistributedRunService` are used only by the Pipeline API.
 
 The Job Controller and Agent pods do **not** hold these singletons. This is important: the guarantee that `AgentEntry.SyncRoot` prevents races on the authoritative dispatch path holds only because all authoritative instances are in the same Pipeline API process.
 
@@ -106,6 +115,7 @@ because multiple properties must change atomically (e.g., status + timestamp).
 - **`Register()`** (update factory) — reconnection: updates ConnectionId, resets status
 - **`UpdateHeartbeat()`** — updates `LastHeartbeatAt`
 - **`TransitionStatus()`** — validates and applies status transitions
+- **`UpdateAgentFieldAsync()`** — sets one named field (activeJobId, orphanRestoredAt, activeChatSessionId, lastJobCompletedAt, disabled)
 
 ## SyncRoot Consumers
 
@@ -120,10 +130,12 @@ across process boundaries.
 
 | Service | File | Usage |
 |---------|------|-------|
-| `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()` |
-| `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
-| `AgentOrphanRecoveryService` | `Hub/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
-| `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on chat-resume path |
+| `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()`, `UpdateAgentFieldAsync()` |
+| `AgentOrphanRecoveryService` | `AgentGateway/AgentOrphanRecoveryService.cs` | Check-and-set `ActiveJobId` on reconnect; sets `OrphanRestoredAt` when no active job reported |
+| `AgentEndpoints` | `Api/AgentEndpoints.cs` | Sets `ActiveChatSessionId` on every chat prompt (`SendChatPrompt`, `POST /api/agents/{agentId}/chat-prompt`) |
+
+`RunLifecycleManager` changes `ActiveJobId` only through `IAgentRegistryService.UpdateAgentFieldAsync`,
+which takes `SyncRoot` inside `AgentRegistryService`.
 
 ### Key invariant
 
@@ -133,8 +145,10 @@ holds two locks simultaneously.
 
 ## Lock Ordering
 
-Only one in-process lock is active in this codebase: `entry.SyncRoot`. All authorized
-consumers acquire it in isolation, with no nesting.
+`entry.SyncRoot` is the only lock that several services share. Other in-process locks exist
+(for example `_cacheUpdateLock` in `DistributedAgentRegistryService` and `_pvcSelectLock` in
+`DispatchLifecycleService`), but each is private to its class. All authorized consumers
+acquire `SyncRoot` in isolation, with no nesting.
 
 ### Why this is deadlock-free
 
@@ -193,27 +207,24 @@ Provider config ids are unique across provider kinds, so the two never collide.
 
 > This is the primary backstop. The guards below reduce the probability of hitting it.
 
-### Defense 2 — `IsIssueBeingProcessed` in-process check
+### Defense 2 — Active-issue pre-check (probabilistic)
 
-<!-- TODO: Clarify that Defense 2 is a probabilistic filter, not an atomic guard. Between
-     the moment IsIssueBeingProcessed returns false and the moment the WorkItem row is
-     inserted, a second replica can also pass the same check (classic TOCTOU window).
-     Defense 1 (unique index) is the backstop for that scenario. The text should note this
-     so readers have the correct mental model. -->
-
-`PipelineRunLifecycleService.IsIssueBeingProcessed()` checks whether the current API
-replica is already tracking a run for this issue. Under multi-replica,
-`DistributedRunService.IsIssueBeingProcessed()` delegates to `IsIssueDistributedAsync` —
-a Postgres query that returns true if a non-terminal `WorkItem` already exists — so this
-check is cross-replica even though the method name sounds in-memory.
+New-run dispatch runs in the Scheduler (`PipelineLoopService` → `DispatchScheduler`). Before
+it creates a WorkItem it skips issues in the cycle's `ActiveIssueIdentifiers` snapshot, which
+`KubernetesWorkDistributor.GetActiveIssueIdentifiersAsync()` reads from
+`GET /api/work-items/active-identifiers` (non-terminal WorkItems in Postgres).
+`IsIssueBeingProcessed()` is also called, but in the Scheduler it always returns false
+(`SchedulerRunQueryService`); in the API process, `DistributedRunService.IsIssueBeingProcessed()`
+queries Postgres for a non-terminal WorkItem. The snapshot can be up to one cycle old, so a
+second replica or cycle can still pass the check; Defense 1 is the backstop.
 
 ### Defense 3 — `IsIssueDistributedAsync` from orphan-recovery
 
-`KubernetesWorkDistributor.IsIssueDistributedAsync()` calls the Pipeline API before
-dispatching. This guard fires on the **orphan-recovery path** only
+`IPipelineApiWorkItemClient.IsIssueDistributedAsync()` (`GET /api/work-items/is-distributed`)
+calls the Pipeline API before the orphan sweep changes an issue's labels. This guard fires on the **orphan-recovery path** only
 (`OrphanedLabelRecoveryService`), not on every primary dispatch decision. It prevents
-the orphan-recovery path from re-dispatching an issue that a different replica has already
-picked up. Primary new-run dispatch relies on Defenses 1 and 2.
+the orphan sweep from swapping an issue that a different replica has already picked up
+to `agent:error`. Primary new-run dispatch relies on the snapshot pre-check and Defense 1.
 
 ### Known gap — no per-agent selection lock
 
@@ -244,10 +255,12 @@ The five processes communicate strictly via defined interfaces:
 |------|----|-----------|
 | Orchestrator | Pipeline API | REST (HTTP via `IPipelineApiConfigClient`, `IPipelineApiWorkItemClient`, `IPipelineApiRunHistoryClient`) |
 | Orchestrator | Pipeline API | SignalR hub subscribe (`IAgentHubConnection`, scoped per Blazor circuit) |
-| Job Controller | Pipeline API | REST — `POST /api/work-items` claim, workitem status updates |
+| Orchestrator | Scheduler | REST — `GET /loop/status`, `POST /loop/start`, `/loop/stop`, `/loop/resume` |
+| Scheduler | Pipeline API | REST — `POST /api/work-items` (create Pending), `GET /api/work-items/pending`, `POST /api/work-items/{id}/dispatch`, `GET /api/work-items/active-identifiers`, `GET /api/work-items/is-distributed`, `POST /api/scheduler/maintenance/retention-sweep`, among others |
+| Job Controller | Pipeline API | REST — `GET /api/work-items/active`, `GET`/`POST /api/work-items/{id}/status` (reconciliation) |
 | Agent pod | Pipeline API | REST — `GET /api/work-items/{id}/assignment`, `POST /api/work-items/{id}/status` |
-| Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, etc. |
-| Pipeline API | Agent pod | SignalR hub push — token vending, cancellation signals |
+| Agent pod | Pipeline API | SignalR hub — `ReportOutputLines`, `ReportStepTransition`, `ReportJobCompleted`, `RequestTokenRefresh` (token vending), etc. |
+| Pipeline API | Agent pod | SignalR hub push — `CancelJob`, `CancelChat`, `AssignChatPrompt`, `ForceDisconnect`, `RequestFetchModels` |
 
 There is no direct process-to-process communication between the Orchestrator and
 Job Controller, or between the Orchestrator and Agent pods.

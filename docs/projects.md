@@ -40,7 +40,7 @@ flowchart LR
 
 Projects are persisted in PostgreSQL (the `Projects` table). Configuration is managed via the web UI (Settings → Projects) or the import/export HTTP API. The runtime store is always PostgreSQL — on first startup against an empty database, the API seed step creates the Default project and seeds the default reviewer configurations. In normal operation there is no file-based runtime storage.
 
-The JSON bundle produced by `GET /api/config/export` includes a `projects` array with the same shape documented below. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
+The JSON bundle produced by `GET /api/config/export` includes a `projects` array. Each entry holds `id`, `name`, `enabled`, `description` and a `settings` string; `settings` is the project serialized in the shape documented below, without the `templateIds` list. The templates are separate entries of the bundle's `jobTemplates` array, each with its `projectId`. This bundle can be used to migrate project configuration between instances (see [Bootstrap](bootstrap.md)).
 
 A project does not store its templates: each template names the project it belongs to. The API returns a project's templates as a read-only `templateIds` list, ordered by name; saving a project ignores that list.
 
@@ -113,11 +113,11 @@ With the project review on, a project reviewer joins every code review of the pr
 
 ## The Default Project
 
-On first startup (or upgrade from a pre-projects version), the system automatically creates a **Default** project:
+On startup, when the Default project is missing, the system automatically creates a **Default** project:
 
 - **ID:** `00000000-0000-0000-0000-000000000000` (stable well-known GUID)
 - **Name:** "Default"
-- **Contains:** All existing templates (migrated automatically)
+- **Contains:** the templates that belong to no existing project. Startup moves such templates here, and so does deleting a project
 - **Cannot be deleted** — attempting to delete returns an error
 
 The Default project behaves identically to any other project: you can rename it, disable it, override settings, and move templates in or out. It cannot be deleted, and as it holds templates that belong to no product, the settings page offers it no project review.
@@ -162,7 +162,7 @@ This ensures no template is ever orphaned.
 Templates within a project are ordered by name, ignoring case. There is no manual order. The order determines:
 
 - **Poll sequence:** Templates are polled in this order within each project
-- **Cross-project ordering:** Projects are sorted alphabetically by name, then templates within each project by name
+- **Cross-project ordering:** Projects are sorted by name with an ordinal comparison (uppercase letters sort before lowercase), then templates within each project by name, ignoring case
 - **Project epic executor:** The first enabled template with `DecompositionEnabled` runs the project's epics (the epics in its `EpicIssueProviderId` tracker). To choose it, rename it or enable decomposition only on that template
 
 ## Use Case: Mono-Repo (Grouping + Settings)
@@ -235,23 +235,31 @@ repository using the `targetRepository` field. Values must EXACTLY match
 a repository name below (case-sensitive).
 
 ### frontend-app
+- **Description:**
 - **Decomposition enabled:** True
 - **Status:** ✓
+- **Local path:** `repos/frontend-app/`
 
 ### backend-api
+- **Description:**
 - **Decomposition enabled:** True
 - **Status:** ✓
+- **Local path:** `.` (workspace root — primary repository)
 
 ### shared-libs
+- **Description:**
 - **Decomposition enabled:** False
 - **Status:** ✓
+- **Local path:** `repos/shared-libs/`
 
 ## Routing Instructions
 
-- Set `targetRepository` in each sub-issue to the exact template name above
-- If an issue spans multiple repositories, assign to the PRIMARY repository
-- Issues without `targetRepository` are created in the default repository
+- Set `targetRepository` in each sub-issue JSON file to the exact template name above
+- If an issue spans multiple repositories, assign to the PRIMARY repository and note cross-cutting dependencies in the issue body
+- Issues without `targetRepository` will be created in the default repository
 ```
+
+A repository that could not be cloned shows `⚠️ unavailable` as its status and has no local path.
 
 ### Routing Behavior
 
@@ -281,7 +289,7 @@ Projects are managed in the **Settings** page under the "Projects" group in the 
 | **Overview** | Name, description, enabled toggle, EpicIssueProviderId dropdown |
 | **Templates** | The project's templates by name, with add/remove controls and a "Move to…" action |
 | **Secrets** | Environment variables injected into every run of the project. Merged with repository-level secrets; the repository value wins on a key collision |
-| **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*" |
+| **Settings** | Behavioral overrides with an "Override" toggle per field; fields without an override show "Using global default: *value*". The tab also holds the **Steering Instructions** text (`SteeringContent`) and the Blacklisted Paths override |
 | **MCP Servers** | Project MCP servers, merged with the agent profile's servers at dispatch time. A server with the same name overrides the profile's; others are added |
 | **Project Review** | The project review switch and the project reviewer's instructions, prefilled with the default ones; "Reset to default" restores them. Instructions equal to the default are stored empty, so the project follows later changes to the default |
 
