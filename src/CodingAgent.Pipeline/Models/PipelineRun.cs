@@ -269,6 +269,27 @@ public sealed partial class PipelineRun
     /// <summary>Whether merge conflicts were force-resolved keeping main's version (main wins).</summary>
     public bool MergeForceResolved { get; set; }
 
+    /// <summary>
+    /// Per-file set of C# type and member names the branch had added in force-resolved conflict files
+    /// (extracted from ForceResolvedContext.BranchChange diffs at CreateBranchStep time).
+    /// Populated only when MergeForceResolved is true. Used post-codegen to detect re-applied vs dropped changes.
+    /// Note: not persisted in Redis — silently defaults to empty after a Redis-restored run (acceptable corner case).
+    /// </summary>
+    // TODO: Public setter on both DroppedIdentifiersByFile and NotReappliedIdentifiersByFile misrepresents
+    // the one-writer/many-readers contract: DroppedIdentifiersByFile is written only by CreateBranchStep,
+    // NotReappliedIdentifiersByFile only by CheckDroppedIdentifiersStep. Consider restricting to init-only
+    // setters or dedicated Set methods to make the ownership explicit and prevent accidental overwrites.
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> DroppedIdentifiersByFile { get; set; }
+        = new Dictionary<string, IReadOnlyList<string>>();
+
+    /// <summary>
+    /// Per-file identifiers from DroppedIdentifiersByFile that were absent from the working tree
+    /// after code generation completed. Populated by CheckDroppedIdentifiersStep.
+    /// Empty until that step runs; empty dict = all re-applied.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> NotReappliedIdentifiersByFile { get; set; }
+        = new Dictionary<string, IReadOnlyList<string>>();
+
     /// <summary>How this run was initiated: "manual" or "loop".</summary>
     public string InitiatedBy { get; init; } = "manual";
 
