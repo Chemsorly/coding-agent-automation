@@ -49,7 +49,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(issueOps);
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath)); // NOSONAR S3236 — names the parameter, not the .Value expression
 
         if (maxIssues < 1)
         {

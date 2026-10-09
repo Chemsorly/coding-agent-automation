@@ -1,6 +1,5 @@
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence.Services;
-using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline.Interfaces;
@@ -131,24 +130,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.AddRun(run);
 
     /// <inheritdoc />
-    public OutputRingBuffer GetOutputBuffer(JobId jobId)
-        => _runService.GetOutputBuffer(jobId.Value);
-
-    /// <inheritdoc />
     public void AppendOutputLines(JobId jobId, IReadOnlyList<string> lines)
         => _runService.AppendOutputLines(jobId.Value, lines);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<string>> GetOutputBacklogAsync(JobId jobId)
-    {
-        // For DistributedRunService, fetch from Redis. For in-memory, use the ring buffer.
-        if (_runService is DistributedRunService distributed)
-            return distributed.GetOutputBacklogAsync(jobId.Value)
-                .ContinueWith(t => (IReadOnlyList<string>)t.Result);
-
-        var buffer = _runService.GetOutputBuffer(jobId.Value);
-        return Task.FromResult<IReadOnlyList<string>>(buffer.GetAll());
-    }
+        => _runService.GetOutputBacklogAsync(jobId.Value);
 
     /// <inheritdoc />
     public void RemoveRun(JobId jobId)

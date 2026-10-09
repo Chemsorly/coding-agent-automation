@@ -22,7 +22,6 @@ public partial class QualityGateExecutor
                 workspacePath,
                 context.QualityGateConfigs,
                 ct,
-                baseBranch: context.RepoProvider.BaseBranch,
                 reportEvent: context.ReportPipelineRunEvent);
         }
 

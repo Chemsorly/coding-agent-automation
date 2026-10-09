@@ -2,7 +2,7 @@ using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using Serilog;
-using Serilog.Enrichers.Span;
+using Serilog.Events;
 using Serilog.Formatting.Compact;
 
 namespace CodingAgent.Agent;
@@ -39,22 +39,10 @@ internal static class AgentSerilogConfiguration
     {
         var logLevel = LogLevelParser.Parse(
             Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel),
-            Serilog.Events.LogEventLevel.Information);
+            LogEventLevel.Information);
 
         return new LoggerConfiguration()
-            .MinimumLevel.Is(logLevel)
-            // Suppress noisy ASP.NET Core request logging (health checks every 10s)
-            .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-            // Suppress noisy HttpClient logging (OpenCode health monitor polls every 5s)
-            .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
-            // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every 10s)
-            .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
-            // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
-            .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
-            // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
-            .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
-            .Enrich.FromLogContext()
-            .Enrich.WithSpan()
+            .ApplyHostDefaults(logLevel)
             // Use agentId.Value (the inner string) rather than the AgentId struct itself.
             // CompactJsonFormatter destructures structs, which would emit "AgentId":{"Value":"..."}
             // instead of a flat string — breaking Loki queries that filter on AgentId.

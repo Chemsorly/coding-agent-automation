@@ -498,10 +498,10 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         var distributedRunService2 = Fixture.RunService2 as DistributedRunService
             ?? throw new InvalidOperationException(
                 $"RunService2 must be DistributedRunService for this test but was {Fixture.RunService2?.GetType().Name}");
-        var backlog = await distributedRunService2.GetOutputBacklogAsync(runId);
+        var backlog = await distributedRunService2.GetOutputBacklogAsync(new RunId(runId));
 
         // Assert: all lines present cross-replica
-        Assert.Equal(lines.Length, backlog.Length);
+        Assert.Equal(lines.Length, backlog.Count);
         Assert.Equal("line-alpha", backlog[0]);
         Assert.Equal("line-beta", backlog[1]);
         Assert.Equal("line-gamma", backlog[2]);
@@ -780,8 +780,8 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         // Verify 500 retained, first line preserved — read via the service API (same as production)
         var distributedRunService1b = Fixture.RunService1 as DistributedRunService
             ?? throw new InvalidOperationException("RunService1 must be DistributedRunService");
-        var after500 = await distributedRunService1b.GetOutputBacklogAsync(runId);
-        Assert.Equal(500, after500.Length);
+        var after500 = await distributedRunService1b.GetOutputBacklogAsync(new RunId(runId));
+        Assert.Equal(500, after500.Count);
         Assert.Equal("line-0000", after500[0]);
         Assert.Equal("line-0499", after500[^1]);
 
@@ -793,8 +793,8 @@ public sealed class MultiReplicaTests : MultiReplicaTestBase
         var distributedRunService2 = Fixture.RunService2 as DistributedRunService
             ?? throw new InvalidOperationException(
                 $"RunService2 must be DistributedRunService for this test but was {Fixture.RunService2?.GetType().Name}");
-        var after501 = await distributedRunService2.GetOutputBacklogAsync(runId);
-        Assert.Equal(500, after501.Length);
+        var after501 = await distributedRunService2.GetOutputBacklogAsync(new RunId(runId));
+        Assert.Equal(500, after501.Count);
         Assert.DoesNotContain("line-0000", after501);
         Assert.Equal("line-0001", after501[0]);
         Assert.Equal("line-0500", after501[^1]);

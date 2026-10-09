@@ -8,11 +8,8 @@ using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using Serilog;
 
 // ── Resolve startup configuration ──
@@ -34,16 +31,10 @@ try
 
     // Configure OpenTelemetry (tracing only — agent pods record no metrics after #2967/#2974/#2978/#2979
     // migrated all metric recording to the API; see issue #2980)
-    builder.Services.AddOpenTelemetry()
-        .ConfigureResource(r => r.AddService(
-            serviceName: Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker",
-            serviceVersion: Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local"))
-        .WithTracing(t => t
-            .AddHttpClientInstrumentation()
-            .AddSource(PipelineTelemetry.SourceName)
-            // Names outbound HTTP spans "{METHOD} {host}" (and drops the shared noise patterns).
-            .AddProcessor(new OtelNoiseSpanProcessor())
-            .AddOtlpExporter());
+    builder.Services.AddHostOpenTelemetry(
+        "coding-agent-worker",
+        includeAspNetCoreInstrumentation: false,
+        includeMetrics: false);
 
     // ── KiroCliLib ──
     var kiroConfig = new Configuration
