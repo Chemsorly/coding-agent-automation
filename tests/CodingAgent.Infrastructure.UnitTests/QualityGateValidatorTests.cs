@@ -607,8 +607,9 @@ public class QualityGateValidatorTests
     // --- Cleanup prologue characterization tests ---
 
     /// <summary>
-    /// Characterization test: ValidateAsync must delete a pre-existing TestResults directory
-    /// before running QGCs. This pins that CleanWorkspacePrologue runs on the ValidateAsync path.
+    /// ValidateAsync must delete a pre-existing TestResults directory before the first QGC process
+    /// starts. The probe checks the workspace when the process starts, so a cleanup moved after the
+    /// gates fails this test.
     /// </summary>
     [Fact]
     public async Task ValidateAsync_CleansPrologue_DeletesTestResultsDirectory()
@@ -621,7 +622,7 @@ public class QualityGateValidatorTests
             Directory.CreateDirectory(testResultsDir);
             File.WriteAllText(Path.Combine(testResultsDir, "old.trx"), "<stale/>");
 
-            var validator = new StubProcessValidator(StubProcessValidator.ProcessBehavior.Succeed);
+            var validator = new WorkspaceProbingValidator();
             var qgc = new QualityGateConfiguration
             {
                 DisplayName = "Test",
@@ -633,20 +634,18 @@ public class QualityGateValidatorTests
             // Act
             await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
 
-            // Assert: the prologue must have deleted the stale TestResults directory
-            // TODO [WARNING]: This test only verifies the directory is gone after ValidateAsync returns,
-            // not that it was absent when the QGC process ran. A teardown-style cleanup (post-run rather
-            // than prologue) would satisfy this assertion. To pin ordering, use a StubProcessValidator
-            // variant that captures workspace state during RunProcessAsync and assert the stale directory
-            // was absent at that point. (TestQualityReviewer review finding)
+            // Assert: the stale TestResults directory must have been deleted before the first QGC process started
+            validator.TestResultsExistedAtProcessStart.Should().ContainSingle()
+                .Which.Should().BeFalse("the stale TestResults directory must be deleted before the first QGC process starts");
             Directory.Exists(testResultsDir).Should().BeFalse("ValidateAsync must clean up stale TestResults before running QGCs");
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
 
     /// <summary>
-    /// Characterization test: ValidateAsync must delete a pre-existing quality-gates output
-    /// directory before running QGCs. This pins that CleanWorkspacePrologue runs on the ValidateAsync path.
+    /// ValidateAsync must delete a pre-existing quality-gates output directory before the first QGC
+    /// process starts. The probe checks the workspace when the process starts, so a cleanup moved
+    /// after the gates fails this test.
     /// </summary>
     [Fact]
     public async Task ValidateAsync_CleansPrologue_DeletesQualityGatesOutputDirectory()
@@ -659,7 +658,7 @@ public class QualityGateValidatorTests
             Directory.CreateDirectory(gatesDir);
             File.WriteAllText(Path.Combine(gatesDir, "old-stdout.txt"), "stale output");
 
-            var validator = new StubProcessValidator(StubProcessValidator.ProcessBehavior.Succeed);
+            var validator = new WorkspaceProbingValidator();
             var qgc = new QualityGateConfiguration
             {
                 DisplayName = "Test",
@@ -671,19 +670,45 @@ public class QualityGateValidatorTests
             // Act
             await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
 
-            // Assert: the prologue must have deleted the stale quality-gates directory
+            // Assert: the stale quality-gates directory must have been deleted before the first QGC process started
             // (WriteGateOutput will recreate it, but the stale file should be gone)
-            // TODO [WARNING]: This assertion only verifies the stale file is gone after ValidateAsync
-            // returns, not that it was absent when the QGC process ran. A teardown-style cleanup would
-            // satisfy this assertion. To pin ordering, capture workspace state inside RunProcessAsync
-            // and assert the stale file was absent at that point. (TestQualityReviewer review finding)
-            // TODO [WARNING]: Asserting File.Exists(staleFile) is weaker than asserting
-            // Directory.Exists(gatesDir) — a partial cleanup that removes the file but not the directory
-            // would pass. Since CleanWorkspacePrologue deletes the entire directory, the assertion should
-            // check Directory.Exists(gatesDir).Should().BeFalse() for consistency with the TestResults
-            // test above. (TestQualityReviewer review finding)
+            validator.QualityGatesDirExistedAtProcessStart.Should().ContainSingle()
+                .Which.Should().BeFalse("the stale quality-gates output directory must be deleted before the first QGC process starts");
             var staleFile = Path.Combine(gatesDir, "old-stdout.txt");
             File.Exists(staleFile).Should().BeFalse("ValidateAsync must clean up the quality-gates output directory before running QGCs");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
+    }
+
+    /// <summary>
+    /// The cleanup removes only the previous attempt's output: the output the gates of this run
+    /// write to .agent/quality-gates must still be there when ValidateAsync returns, because the
+    /// retry prompt tells the agent to read it.
+    /// </summary>
+    [Fact]
+    public async Task ValidateAsync_CleansPrologue_KeepsCurrentRunGateOutput()
+    {
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-prologue-test-{Guid.NewGuid():N}");
+        try
+        {
+            var gatesDir = Path.Combine(tempWorkspace, AgentWorkspacePaths.QualityGatesOutputDirectory);
+            Directory.CreateDirectory(gatesDir);
+            File.WriteAllText(Path.Combine(gatesDir, "old-stdout.txt"), "stale output");
+
+            var validator = new WorkspaceProbingValidator();
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                CompilationCommand = "dotnet",
+                CompilationArguments = ["build"],
+                ProcessTimeoutSeconds = 60
+            };
+
+            await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
+
+            var currentRunOutput = Path.Combine(gatesDir, "Test-compilation-stdout.txt");
+            File.Exists(currentRunOutput).Should().BeTrue("the cleanup must not delete the output this run's gates wrote");
+            File.ReadAllText(currentRunOutput).Should().Be("Build succeeded.");
         }
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
@@ -772,6 +797,28 @@ public class QualityGateValidatorTests
                 ProcessBehavior.ThrowError => throw new InvalidOperationException("Simulated process error"),
                 _ => Task.FromResult((0, "Passed: 5\nTest summary: total: 5; failed: 0; succeeded: 5; skipped: 0; duration: 0.1s", ""))
             };
+    }
+
+    /// <summary>
+    /// Records, each time a QGC process would start, whether the workspace's TestResults and
+    /// quality-gates output directories exist, so tests can check the workspace while a gate runs.
+    /// Every process "succeeds" with stdout "Build succeeded.".
+    /// </summary>
+    private sealed class WorkspaceProbingValidator : QualityGateValidator
+    {
+        public WorkspaceProbingValidator() : base(Serilog.Log.Logger) { }
+
+        public List<bool> TestResultsExistedAtProcessStart { get; } = [];
+        public List<bool> QualityGatesDirExistedAtProcessStart { get; } = [];
+
+        private protected override Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+        {
+            TestResultsExistedAtProcessStart.Add(Directory.Exists(Path.Combine(workingDirectory, "TestResults")));
+            QualityGatesDirExistedAtProcessStart.Add(
+                Directory.Exists(Path.Combine(workingDirectory, AgentWorkspacePaths.QualityGatesOutputDirectory)));
+            return Task.FromResult((0, "Build succeeded.", ""));
+        }
     }
 
     // TODO: Add ActivityListener-based tests verifying that the "QualityGate.Tests" and "QualityGate.Compilation"
