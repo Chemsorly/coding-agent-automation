@@ -1,152 +1,62 @@
 using CodingAgent.Agent;
-using CodingAgent.Infrastructure;
+using CodingAgent.Agent.OpenCode;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using KiroCliLib.Configuration;
-using KiroCliLib.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Http.Resilience;
 using Moq;
 using Serilog;
 
 namespace CodingAgent.Agent.UnitTests;
 
 /// <summary>
-/// Smoke tests that verify the DI container resolves all services registered in K8s mode.
-/// Catches missing registrations (like the Serilog.ILogger bug) at CI time instead of at
-/// pod startup in the cluster.
+/// Smoke tests that verify the DI container resolves all services registered in work-item
+/// mode and chat mode. Catches missing registrations at CI time instead of at pod startup.
 /// </summary>
 /// <remarks>
-/// These tests replicate the DI registrations from Program.cs without starting the actual
-/// WebApplication host (which would require network access). They validate that the service
-/// provider can construct every critical service without throwing.
+/// These tests build the container through the real production registration methods
+/// (<see cref="AgentHostRegistration.AddAgentHostServices"/>,
+/// <see cref="AgentWorkItemModeRegistration.AddK8sModeServices"/>,
+/// <see cref="AgentChatModeRegistration.AddSignalRModeServices"/>) so that any divergence
+/// between Program.cs and the smoke test is caught immediately.
 /// </remarks>
 public class DiResolutionSmokeTests
 {
     /// <summary>
-    /// Builds a ServiceCollection mirroring K8s-mode registrations from Program.cs.
-    /// Uses mocks for infrastructure (IKiroCliOrchestrator) but real DI wiring.
+    /// Builds a <see cref="ServiceProvider"/> for either work-item mode or chat mode using
+    /// the real production registration methods. The only service the test registers itself
+    /// is <see cref="IHostApplicationLifetime"/> (provided by
+    /// <c>WebApplication.CreateBuilder</c> in production).
     /// </summary>
-    private static ServiceProvider BuildK8sModeContainer()
+    private static ServiceProvider BuildContainer(bool workItemMode, string agentProviderType = "")
     {
-        var services = new ServiceCollection();
-
-        // ── Serilog.ILogger (the registration that was previously missing) ──
+        // ── Serilog.ILogger — required by AddK8sModeServices (WorkItemHttpClient reads the static) ──
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Debug()
             .WriteTo.Console()
             .CreateLogger();
-        services.AddSingleton(Log.Logger);
 
-        // ── KiroCliLib ──
-        var kiroConfig = new Configuration
-        {
-            KiroCliPath = "/usr/local/bin/kiro-cli",
-            UseWsl = false,
-            WorkspaceDirectory = "/tmp/workspaces"
-        };
-        services.AddSingleton(kiroConfig);
-        services.AddSingleton<IKiroCliOrchestrator>(sp =>
-        {
-            var cfg = sp.GetRequiredService<Configuration>();
-            return new KiroCliOrchestrator(cfg, Log.Logger);
-        });
+        var services = new ServiceCollection();
 
-        // ── Pipeline configuration ──
-        services.AddSingleton(new PipelineConfiguration());
-
-        // ── Null history service (same as production agent) ──
-        services.AddSingleton<IPipelineRunHistoryService, NullPipelineRunHistoryService>();
-
-        // ── Shared pipeline services ──
-        services.AddPipelineServices(Log.Logger);
-        // BrainUpdateService (Infrastructure.Git) is registered by the host composition root, not by
-        // the Pipeline-side AddPipelineServices helper — mirror that here so the graph resolves.
-        services.AddSingleton<CodingAgent.Pipeline.Interfaces.IBrainUpdateService>(
-            sp => new CodingAgent.Infrastructure.Git.BrainUpdateService(Log.Logger));
-
-        // ── HttpClient infrastructure (needed by AddHttpClient<T>) ──
-        services.AddHttpClient();
-
-        // ── Agent identity ──
-        ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent-di-smoke")));
-
-        // ── Hub connection manager ──
-        services.AddSingleton<IHubConnectionManagerFactory>(new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent-di-smoke", "fake-api-key", Log.Logger));
-        services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
-
-        // ── Pipeline executor ──
-        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<PipelineConfiguration>(),
-            sp.GetRequiredService<IQualityGateValidator>(),
-            Log.Logger,
-            sp.GetRequiredService<IBrainUpdateService>(),
-            AgentIdentity: sp.GetRequiredService<AgentId>())));
-
-        // ── Consolidation executor ──
-        services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
-            Log.Logger));
-
-        // ── K8s-mode registrations (the critical path that had the bug) ──
-        // TODO: [WARNING] These K8s-mode registrations manually duplicate the wiring from AgentWorkItemModeRegistration.cs
-        // instead of calling builder.Services.AddK8sModeServices(startupConfig, logger). Any future change to
-        // AddK8sModeServices that diverges from the registrations below will go undetected by this smoke test.
-        // The canonical wiring now lives in AgentWorkItemModeRegistration.cs (extracted in #1790). Consider replacing
-        // the manual duplications here with a call to AddK8sModeServices so the smoke test exercises the actual
-        // production code path.
-        services.AddHttpClient<WorkItemHttpClient>(client =>
-        {
-            client.BaseAddress = new Uri("http://localhost:9999");
-        })
-        .AddStandardResilienceHandler(options =>
-        {
-            options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(10);
-            options.Retry.MaxRetryAttempts = 1;
-        });
-
-        // ── IHostApplicationLifetime mock (needed by WorkItemAgentService) ──
+        // ── IHostApplicationLifetime — the only service not provided by AddAgentHostServices ──
         services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
 
-        // ── IWorkItemExecutor (router) ──
-        services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
-            sp.GetRequiredService<IPipelineExecutor>(),
-            sp.GetRequiredService<IConsolidationExecutor>(),
-            Log.Logger));
-
-        // ── IWorkItemLifecycleClient ──
-        services.AddSingleton<IWorkItemLifecycleClient>(sp =>
-            sp.GetRequiredService<WorkItemHttpClient>());
-
-        // ── WorkItemAgentService ──
-        services.AddSingleton<IAgentConnectionManager>(sp =>
+        var config = new AgentStartupConfig
         {
-            var factory = sp.GetRequiredService<IHubConnectionManagerFactory>();
-            var hubManager = sp.GetRequiredService<IHubConnectionManager>();
-            return new AgentConnectionManager(
-                hubManager,
-                factory,
-                sp.GetRequiredService<AgentId>(),
-                Log.Logger);
-        });
-        services.AddSingleton<IJobCompletionReporter>(sp =>
-            Mock.Of<IJobCompletionReporter>());
-        services.AddSingleton(sp => new WorkItemAgentService(new WorkItemAgentServiceDependencies(
-            "smoke-test-work-item-id",
-            sp.GetRequiredService<IWorkItemLifecycleClient>(),
-            sp.GetRequiredService<IAgentConnectionManager>(),
-            sp.GetRequiredService<IWorkItemExecutor>(),
-            sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<AgentId>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
-            Log.Logger,
-            ServiceProvider: sp)));
+            AgentApiKey = "fake-api-key",
+            OrchestratorUrl = "http://localhost:9999",
+            AgentId = new AgentId("test-agent-di-smoke"),
+            WorkItemId = workItemMode ? "smoke-test-work-item-id" : null,
+            IsWorkItemMode = workItemMode
+        };
+
+        services.AddAgentHostServices(config, agentProviderType, Log.Logger);
+
+        if (workItemMode)
+            services.AddK8sModeServices(config, Log.Logger);
+        else
+            services.AddSignalRModeServices(Log.Logger);
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {
@@ -155,10 +65,14 @@ public class DiResolutionSmokeTests
         });
     }
 
+    // ══════════════════════════════════════════════════════════════════════
+    // K8s / Work-item Mode
+    // ══════════════════════════════════════════════════════════════════════
+
     [Fact]
     public async Task K8sMode_CanResolve_SerilogILogger()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         var logger = sp.GetService<Serilog.ILogger>();
 
@@ -168,7 +82,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task K8sMode_CanResolve_WorkItemHttpClient()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         // WorkItemHttpClient is registered via AddHttpClient<T> — resolution
         // exercises the full DI chain including Serilog.ILogger injection.
@@ -180,7 +94,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task K8sMode_CanResolve_WorkItemAgentService()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         var service = sp.GetRequiredService<WorkItemAgentService>();
 
@@ -190,7 +104,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task K8sMode_CanResolve_IPipelineExecutor()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         var executor = sp.GetRequiredService<IPipelineExecutor>();
 
@@ -201,7 +115,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task K8sMode_CanResolve_IConsolidationExecutor()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         var executor = sp.GetRequiredService<IConsolidationExecutor>();
 
@@ -212,9 +126,13 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task K8sMode_CanResolve_AllSharedPipelineServices()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         // Services registered by AddPipelineServices()
+        // TODO: [WARNING] Assert.NotNull after GetRequiredService is a no-op assertion — GetRequiredService already throws
+        // InvalidOperationException if the service is unregistered, so the null check never fires. These pre-existing test
+        // names are kept unchanged per acceptance criteria; consider replacing Assert.NotNull with a type assertion or
+        // removing it in a future cleanup.
         Assert.NotNull(sp.GetRequiredService<IQualityGateValidator>());
         Assert.NotNull(sp.GetRequiredService<IBrainUpdateService>());
         Assert.NotNull(sp.GetRequiredService<IAgentPhaseExecutor>());
@@ -224,7 +142,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task K8sMode_CanResolve_HubConnectionManager()
     {
-        await using var sp = BuildK8sModeContainer();
+        await using var sp = BuildContainer(workItemMode: true);
 
         var manager = sp.GetRequiredService<IHubConnectionManager>();
 
@@ -256,116 +174,41 @@ public class DiResolutionSmokeTests
         sp.Dispose();
     }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // SignalR Mode DI Resolution
-    // ══════════════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// Builds a ServiceCollection mirroring SignalR-mode registrations from Program.cs.
-    /// SignalR mode uses AgentWorkerService (not WorkItemHttpClient/WorkItemAgentService).
-    /// </summary>
-    private static ServiceProvider BuildSignalRModeContainer()
+    [Fact]
+    public async Task K8sMode_ResolvesWorkItemAgentServiceAsHostedServiceAndAgentService()
     {
-        var services = new ServiceCollection();
+        await using var sp = BuildContainer(workItemMode: true);
 
-        // ── Serilog.ILogger ──
-        Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Debug()
-            .WriteTo.Console()
-            .CreateLogger();
-        services.AddSingleton(Log.Logger);
+        var hostedServices = sp.GetServices<IHostedService>().ToList();
+        var workItemService = sp.GetRequiredService<WorkItemAgentService>();
+        var agentService = sp.GetRequiredService<IAgentService>();
 
-        // ── KiroCliLib ──
-        var kiroConfig = new Configuration
-        {
-            KiroCliPath = "/usr/local/bin/kiro-cli",
-            UseWsl = false,
-            WorkspaceDirectory = "/tmp/workspaces"
-        };
-        services.AddSingleton(kiroConfig);
-        services.AddSingleton<IKiroCliOrchestrator>(sp =>
-        {
-            var cfg = sp.GetRequiredService<Configuration>();
-            return new KiroCliOrchestrator(cfg, Log.Logger);
-        });
-
-        // ── Pipeline configuration ──
-        services.AddSingleton(new PipelineConfiguration());
-
-        // ── Null history service ──
-        services.AddSingleton<IPipelineRunHistoryService, NullPipelineRunHistoryService>();
-
-        // ── Shared pipeline services ──
-        services.AddPipelineServices(Log.Logger);
-        // BrainUpdateService (Infrastructure.Git) is registered by the host composition root, not by
-        // the Pipeline-side AddPipelineServices helper — mirror that here so the graph resolves.
-        services.AddSingleton<CodingAgent.Pipeline.Interfaces.IBrainUpdateService>(
-            sp => new CodingAgent.Infrastructure.Git.BrainUpdateService(Log.Logger));
-
-        // ── HttpClient infrastructure ──
-        services.AddHttpClient();
-
-        // ── Agent identity ──
-        ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent-signalr-smoke")));
-
-        // ── Hub connection manager ──
-        services.AddSingleton<IHubConnectionManagerFactory>(new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent-signalr-smoke", "fake-api-key", Log.Logger));
-        services.AddSingleton<IHubConnectionManager>(sp => sp.GetRequiredService<IHubConnectionManagerFactory>().Create());
-
-        // ── Pipeline executor ──
-        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(new LocalPipelineExecutorDependencies(
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<PipelineConfiguration>(),
-            sp.GetRequiredService<IQualityGateValidator>(),
-            Log.Logger,
-            sp.GetRequiredService<IBrainUpdateService>(),
-            AgentIdentity: sp.GetRequiredService<AgentId>())));
-
-        // ── Consolidation executor ──
-        services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
-            sp.GetRequiredService<IKiroCliOrchestrator>(),
-            sp.GetRequiredService<IHttpClientFactory>(),
-            Log.Logger));
-
-        // ── IHostApplicationLifetime mock ──
-        services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
-
-        // ── SignalR-mode: AgentWorkerService (not WorkItemHttpClient) ──
-        services.AddSingleton<ChatSlotManager>();
-        services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
-            sp.GetRequiredService<IHubConnectionManager>(),
-            sp.GetRequiredService<IHubConnectionManagerFactory>(),
-            sp.GetRequiredService<AgentId>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
-            Log.Logger));
-        services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
-            sp.GetRequiredService<AgentConnectionLifecycle>(),
-            sp.GetRequiredService<ChatSlotManager>(),
-            new ChatJobExecutor(new ChatJobExecutorDependencies(
-                sp.GetRequiredService<AgentConnectionLifecycle>(),
-                sp.GetRequiredService<ChatSlotManager>(),
-                sp.GetRequiredService<IKiroCliOrchestrator>(),
-                sp.GetRequiredService<IHttpClientFactory>(),
-                sp.GetRequiredService<IHostApplicationLifetime>(),
-                SignalAgentReady: () => Task.CompletedTask,
-                IsOpenCodeProvider: false,
-                IsChatMode: false,
-                Logger: Log.Logger)),
-            Log.Logger)));
-
-        return services.BuildServiceProvider(new ServiceProviderOptions
-        {
-            ValidateOnBuild = true,
-            ValidateScopes = true
-        });
+        Assert.Single(hostedServices.OfType<WorkItemAgentService>());
+        Assert.Same(workItemService, agentService);
+        // TODO: [WARNING] There is no Assert.Same(workItemService, hostedServices.OfType<WorkItemAgentService>().Single())
+        // to verify the IHostedService entry is the same singleton instance as the directly-resolved WorkItemAgentService.
+        // A double-registration bug (e.g. services.AddHostedService<WorkItemAgentService>() instead of forwarding to the
+        // existing singleton) would pass the current assertions while running two instances in production.
     }
+
+    [Fact]
+    public async Task K8sMode_ResolvesHttpPrimaryCompletionReporter()
+    {
+        await using var sp = BuildContainer(workItemMode: true);
+
+        var reporter = sp.GetRequiredService<IJobCompletionReporter>();
+
+        Assert.IsType<HttpPrimaryCompletionReporter>(reporter);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // SignalR / Chat Mode
+    // ══════════════════════════════════════════════════════════════════════
 
     [Fact]
     public async Task SignalRMode_CanResolve_AgentWorkerService()
     {
-        await using var sp = BuildSignalRModeContainer();
+        await using var sp = BuildContainer(workItemMode: false);
 
         var service = sp.GetRequiredService<AgentWorkerService>();
 
@@ -375,7 +218,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task SignalRMode_CanResolve_IPipelineExecutor()
     {
-        await using var sp = BuildSignalRModeContainer();
+        await using var sp = BuildContainer(workItemMode: false);
 
         var executor = sp.GetRequiredService<IPipelineExecutor>();
 
@@ -386,7 +229,7 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task SignalRMode_CanResolve_IConsolidationExecutor()
     {
-        await using var sp = BuildSignalRModeContainer();
+        await using var sp = BuildContainer(workItemMode: false);
 
         var executor = sp.GetRequiredService<IConsolidationExecutor>();
 
@@ -397,8 +240,12 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task SignalRMode_CanResolve_AllSharedPipelineServices()
     {
-        await using var sp = BuildSignalRModeContainer();
+        await using var sp = BuildContainer(workItemMode: false);
 
+        // TODO: [WARNING] Assert.NotNull after GetRequiredService is a no-op assertion — GetRequiredService already throws
+        // InvalidOperationException if the service is unregistered, so the null check never fires. These pre-existing test
+        // names are kept unchanged per acceptance criteria; consider replacing Assert.NotNull with a type assertion or
+        // removing it in a future cleanup.
         Assert.NotNull(sp.GetRequiredService<IQualityGateValidator>());
         Assert.NotNull(sp.GetRequiredService<IBrainUpdateService>());
         Assert.NotNull(sp.GetRequiredService<IAgentPhaseExecutor>());
@@ -408,11 +255,59 @@ public class DiResolutionSmokeTests
     [Fact]
     public async Task SignalRMode_DoesNotRegister_WorkItemHttpClient()
     {
-        await using var sp = BuildSignalRModeContainer();
+        await using var sp = BuildContainer(workItemMode: false);
 
         // SignalR mode should NOT have WorkItemHttpClient registered
         var client = sp.GetService<WorkItemHttpClient>();
 
         Assert.Null(client);
+    }
+
+    [Fact]
+    public async Task SignalRMode_ResolvesAgentWorkerServiceAsHostedServiceAndAgentService()
+    {
+        await using var sp = BuildContainer(workItemMode: false);
+
+        var hostedServices = sp.GetServices<IHostedService>().ToList();
+        var workerService = sp.GetRequiredService<AgentWorkerService>();
+        var agentService = sp.GetRequiredService<IAgentService>();
+
+        Assert.Single(hostedServices.OfType<AgentWorkerService>());
+        Assert.Same(workerService, agentService);
+        // TODO: [WARNING] There is no Assert.Same(workerService, hostedServices.OfType<AgentWorkerService>().Single())
+        // to verify the IHostedService entry is the same singleton instance as the directly-resolved AgentWorkerService.
+        // A double-registration bug (e.g. services.AddHostedService<AgentWorkerService>() instead of forwarding to the
+        // existing singleton) would pass the current assertions while running two instances in production.
+    }
+
+    [Fact]
+    public async Task SignalRMode_ResolvesChatJobExecutorConnectionLifecycleAndRuntimeOptions()
+    {
+        await using var sp = BuildContainer(workItemMode: false);
+
+        Assert.NotNull(sp.GetRequiredService<ChatJobExecutor>());
+        Assert.NotNull(sp.GetRequiredService<AgentConnectionLifecycle>());
+        Assert.NotNull(sp.GetRequiredService<AgentRuntimeOptions>());
+        Assert.NotNull(sp.GetRequiredService<IHubConnectionManager>());
+    }
+
+    [Fact]
+    public async Task SignalRMode_OpenCodeProvider_RegistersOpenCodeHealthMonitor()
+    {
+        await using var sp = BuildContainer(workItemMode: false, agentProviderType: "opencode");
+
+        var hostedServices = sp.GetServices<IHostedService>().ToList();
+
+        Assert.Contains(hostedServices, s => s is OpenCodeHealthMonitor);
+    }
+
+    [Fact]
+    public async Task SignalRMode_DefaultProvider_DoesNotRegisterOpenCodeHealthMonitor()
+    {
+        await using var sp = BuildContainer(workItemMode: false, agentProviderType: "");
+
+        var hostedServices = sp.GetServices<IHostedService>().ToList();
+
+        Assert.DoesNotContain(hostedServices, s => s is OpenCodeHealthMonitor);
     }
 }
