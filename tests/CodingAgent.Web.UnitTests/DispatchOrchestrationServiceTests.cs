@@ -840,6 +840,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "issue-42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "This PR does things",
@@ -867,6 +868,33 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_LinkedPullRequestNumber_IsThePrNumber()
+    {
+        // Regression: Number was hardcoded to 0, so CreateBranchStep's merged/closed guard queried PR #0.
+        SetupStandardMocks();
+        var service = CreateService();
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "3363",
+            PrNumber = 3363,
+            PrBranchName = "chore/consolidate-agent-tests",
+            PrTitle = "Consolidate agent tests",
+            PrUrl = "https://github.com/org/repo/pull/3363",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            InitiatedBy = "review-loop"
+        };
+
+        var result = await service.PrepareReviewDistributionRequestAsync(reviewRequest, TestProject, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.LinkedPullRequest.Should().NotBeNull();
+        result.LinkedPullRequest!.Number.Should().Be(3363);
+        result.IssueIdentifier.Value.Should().Be("3363");
+    }
+
+    [Fact]
     public async Task PrepareReviewDistributionRequestAsync_IdentifiesThePullRequestByItsRepository_AndNeverReadsItFromTheTracker()
     {
         // In GitLab, issue #42 and merge request !42 are different things, so the tracker's #42 is unrelated.
@@ -882,6 +910,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/pages",
             PrTitle = "Add pagination",
             PrDescription = "Pages the API",
@@ -930,6 +959,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "issue-42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "This PR does things",
@@ -985,6 +1015,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "issue-42",
+            PrNumber = 42,
             PrBranchName = "feature/x",
             PrTitle = "X",
             PrUrl = "https://github.com/org/repo/pull/42",
@@ -1067,6 +1098,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "Fixes #99",
@@ -1135,6 +1167,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/refactor",
             PrTitle = "Refactor PR",
             PrDescription = "This PR adds pagination support to the API",
@@ -1231,6 +1264,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "Fixes #99",
@@ -1330,6 +1364,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/big-pr",
             PrTitle = "Big PR",
             PrDescription = "Fixes #1\nFixes #2\nFixes #3\nFixes #4\nFixes #5\nFixes #6\nFixes #7",
@@ -1418,6 +1453,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "Fixes #10\nFixes #11",
@@ -1508,6 +1544,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "See https://github.com/Chemsorly/coding-agent-automation/issues/99 for context.",
@@ -1604,6 +1641,7 @@ public class DispatchOrchestrationServiceTests
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = "42",
+            PrNumber = 42,
             PrBranchName = "feature/my-pr",
             PrTitle = "My PR",
             PrDescription = "Fixes #99\nSee https://github.com/org/repo/issues/99 for details.",

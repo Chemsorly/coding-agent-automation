@@ -294,7 +294,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 Url = reviewRequest.PrUrl,
                 BranchName = reviewRequest.PrBranchName,
                 IsDraft = false,
-                Number = 0
+                Number = reviewRequest.PrNumber
             },
             ReviewPrTargetBranch = reviewRequest.PrTargetBranch,
             ReviewPrDescription = reviewRequest.PrDescription,

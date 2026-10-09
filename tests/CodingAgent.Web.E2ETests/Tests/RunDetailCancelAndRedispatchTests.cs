@@ -530,6 +530,7 @@ public sealed class RunDetailCancelAndRedispatchTests : E2ETestBase
         var reviewRequest = new ReviewDispatchRequest
         {
             PrIdentifier = prId,
+            PrNumber = prNumber,
             PrTitle = $"PR {prId} test",
             PrDescription = $"Closes #{issueId}",
             PrBranchName = "feature/test-4b",
