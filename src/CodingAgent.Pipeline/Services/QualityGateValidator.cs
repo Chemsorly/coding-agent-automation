@@ -41,7 +41,7 @@ public class QualityGateValidator : IQualityGateValidator
         string? baseBranch = null,
         Action<PipelineRunEventReport>? reportEvent = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
         // TODO [WARNING]: baseBranch is accepted on both the interface and this implementation but is

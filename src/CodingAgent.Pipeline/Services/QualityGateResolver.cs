@@ -16,7 +16,7 @@ public sealed class QualityGateResolver
     /// <param name="jobRequiredLabels">The labels required by the job being dispatched.</param>
     /// <returns>Matching QGCs ordered by <see cref="QualityGateConfiguration.ExecutionOrder"/> ascending,
     /// then <see cref="QualityGateConfiguration.DisplayName"/> alphabetically (case-insensitive).</returns>
-    public IReadOnlyList<QualityGateConfiguration> Resolve(
+    public IReadOnlyList<QualityGateConfiguration> Resolve( // NOSONAR S2325 — instance API: callers and tests use an instance
         IReadOnlyList<QualityGateConfiguration> allConfigs,
         IReadOnlyList<string> jobRequiredLabels)
     {

@@ -45,7 +45,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// </summary>
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         var compositeKey = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         return _activeRuns.Values.Any(r => $"{r.IssueProviderConfigId}:{r.IssueIdentifier}" == compositeKey);
     }
@@ -149,7 +149,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <inheritdoc />
     public void MarkRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         _recentlyCompleted[key] = _timeProvider.GetUtcNow();
     }
@@ -157,7 +157,7 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <inheritdoc />
     public bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         var key = $"{issueProviderConfigId.Value}:{issueIdentifier}";
         if (_recentlyCompleted.TryGetValue(key, out var completedAt))
         {

@@ -350,7 +350,7 @@ return hash
     /// <inheritdoc />
     public void MarkRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         _ = _store.SetAsync(
             RecentlyCompletedKey(issueProviderConfigId.Value, issueIdentifier.Value),
             DateTimeOffset.UtcNow.ToString("O"),
@@ -364,7 +364,7 @@ return hash
     /// <inheritdoc />
     public bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         return _store.ExistsAsync(
             RecentlyCompletedKey(issueProviderConfigId.Value, issueIdentifier.Value))
             .GetAwaiter().GetResult(); // Safe: ThreadPool
