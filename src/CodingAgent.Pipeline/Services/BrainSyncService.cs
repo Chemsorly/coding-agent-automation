@@ -32,7 +32,7 @@ public sealed class BrainSyncService : IBrainSyncService
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(brainProvider);
-        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath));
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath)); // NOSONAR S3236 — names the parameter, not the .Value expression
         onOutputLine?.Invoke("🧠 Syncing brain repository...");
         var brainSw = System.Diagnostics.Stopwatch.StartNew();
         var brainPath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainDirectory);

@@ -5,7 +5,6 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Git;
-using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.TestUtilities;
 
@@ -20,7 +19,6 @@ namespace CodingAgent.Web.IntegrationTests.Helpers;
 public class IntegrationTestBase : IDisposable
 {
     protected readonly string TempRoot;
-    protected readonly string RunsDir;
     protected readonly string WorkspaceBase;
     protected readonly InMemoryConfigurationStore ConfigStore;
     protected readonly Mock<IProviderFactory> MockFactory = new();
@@ -33,10 +31,8 @@ public class IntegrationTestBase : IDisposable
     protected IntegrationTestBase()
     {
         TempRoot = Path.Combine(Path.GetTempPath(), $"integration-{Guid.NewGuid()}");
-        RunsDir = Path.Combine(TempRoot, "runs");
         WorkspaceBase = Path.Combine(TempRoot, "workspaces");
         Directory.CreateDirectory(TempRoot);
-        Directory.CreateDirectory(RunsDir);
         Directory.CreateDirectory(WorkspaceBase);
 
         ConfigStore = new InMemoryConfigurationStore();
@@ -124,7 +120,7 @@ public class IntegrationTestBase : IDisposable
             new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), new CiLogWriter(MockLogger.Object), new FeedbackService(MockLogger.Object), MockLogger.Object),
             MockLogger.Object,
             brainUpdateService: new BrainUpdateService(MockLogger.Object),
-            historyService: new PipelineRunHistoryService(MockLogger.Object, RunsDir));
+            historyService: new InMemoryPipelineRunHistoryService());
     }
 
     protected async Task SaveProviderConfigsAsync()
