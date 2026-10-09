@@ -38,18 +38,11 @@ public class QualityGateValidator : IQualityGateValidator
         WorkspacePath workspacePath,
         IReadOnlyList<QualityGateConfiguration> qualityGateConfigs,
         CancellationToken ct,
-        string? baseBranch = null,
         Action<PipelineRunEventReport>? reportEvent = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value, nameof(workspacePath)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(qualityGateConfigs);
 
-        // TODO [WARNING]: baseBranch is accepted on both the interface and this implementation but is
-        // never read inside the method body or forwarded to CleanWorkspacePrologue / RunAllQgcsAsync.
-        // It has been unused since before this refactor. Any caller relying on baseBranch to influence
-        // QGC behaviour (e.g. a coverage-diff gate that needs the base ref) will have the value silently
-        // discarded. Either thread the value through to the helpers that need it, or document explicitly
-        // why it is intentionally ignored. (DotNetSpecialist review finding)
         CleanWorkspacePrologue(workspacePath);
         return await RunAllQgcsAsync(workspacePath, qualityGateConfigs, reportEvent, ct);
     }
