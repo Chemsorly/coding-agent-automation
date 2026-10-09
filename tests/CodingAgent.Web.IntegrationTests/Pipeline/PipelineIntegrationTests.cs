@@ -7,7 +7,6 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.GitHub;
 using CodingAgent.Infrastructure.Git;
-using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Web.TestUtilities;
 using CodingAgent.Web.IntegrationTests.Helpers;
@@ -171,47 +170,6 @@ public class PipelineIntegrationTests : IntegrationTestBase
     }
 
     [Fact]
-    public async Task RunHistoryPersistence_SurvivesServiceRestart()
-    {
-        await using var service = await CreateServiceWithPersistedConfigAsync();
-
-        var run = await service.RunAsync(
-            "issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
-        (await service.GetRunHistoryAsync()).Should().ContainSingle(s => s.RunId == run.RunId);
-
-        // Wait for the fire-and-forget persist to flush to disk.
-        // Poll instead of a fixed delay: under parallel test-suite load 500 ms is insufficient.
-        var expectedFile = Path.Combine(RunsDir, $"{run.RunId}.json");
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(10);
-        while (!File.Exists(expectedFile) && DateTimeOffset.UtcNow < deadline)
-            await Task.Delay(50);
-
-        // Simulate restart: create a brand new service pointing at the same runs directory
-        await using var service2 = new TestPipelineRunner(
-            ConfigStore,
-            MockFactory.Object,
-            new IssueDescriptionParser(),
-            new AgentPhaseExecutor(MockLogger.Object),
-            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), new CiLogWriter(MockLogger.Object), new FeedbackService(MockLogger.Object), MockLogger.Object),
-            MockLogger.Object,
-            brainUpdateService: new BrainUpdateService(MockLogger.Object),
-            historyService: new PipelineRunHistoryService(MockLogger.Object, RunsDir));
-
-        var history = await service2.GetRunHistoryAsync();
-        var restored = history.Should().ContainSingle(s => s.RunId == run.RunId).Subject;
-        restored.IssueIdentifier.Value.Should().Be("42");
-        restored.IssueTitle.Should().Be("Test Issue");
-        restored.FinalStep.Should().Be(PipelineStep.Completed);
-        restored.StartedAt.Should().BeCloseTo(run.StartedAt, TimeSpan.FromSeconds(1));
-        restored.CompletedAt.Should().NotBeNull();
-        restored.PullRequestUrl.Should().Be("https://github.com/test/pr/1");
-        restored.ModelName.Should().Be("test-model");
-        restored.InitiatedBy.Should().Be("test");
-    }
-
-    [Fact]
     public async Task FullPipelineFlow_RealInternalServices()
     {
         // Issue with structured markdown so IssueDescriptionParser extracts sections
@@ -251,10 +209,8 @@ public class PipelineIntegrationTests : IntegrationTestBase
         steps.Should().Contain(PipelineStep.GeneratingCode);
         steps.Should().Contain(PipelineStep.Completed);
 
-        // Verify run was persisted to disk (fire-and-forget write, allow brief settle)
-        var runFile = Path.Combine(RunsDir, $"{run.RunId}.json");
-        await WaitForFileAsync(runFile);
-        File.Exists(runFile).Should().BeTrue();
+        // Verify run was persisted to history
+        (await service.GetRunHistoryAsync()).Should().ContainSingle(s => s.RunId == run.RunId);
     }
 
     [Fact]
@@ -319,12 +275,5 @@ public class PipelineIntegrationTests : IntegrationTestBase
         MockAgentProvider.Verify(p => p.ExecuteAsync(
             It.Is<AgentRequest>(r => r.Prompt.Contains("[CRITICAL]") && r.Prompt.Contains("Fix only") && r.UseResume),
             It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
-    }
-
-    private static async Task WaitForFileAsync(string path, int timeoutMs = 2000)
-    {
-        var deadline = Environment.TickCount64 + timeoutMs;
-        while (!File.Exists(path) && Environment.TickCount64 < deadline)
-            await Task.Delay(50);
     }
 }

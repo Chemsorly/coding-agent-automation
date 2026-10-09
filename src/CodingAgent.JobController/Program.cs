@@ -4,11 +4,8 @@ using CodingAgent.Infrastructure.Telemetry;
 using CodingAgent.JobController;
 using CodingAgent.Pipeline.LeaderElection;
 using CodingAgent.Pipeline.Telemetry;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using Serilog;
-using Serilog.Enrichers.Span;
+using Serilog.Events;
 
 // Bootstrap logger — captures startup log output before UseSerilog takes over
 Log.Logger = HostBootstrap.CreateBootstrapLogger();
@@ -51,7 +48,7 @@ if (!string.Equals(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
 // (i.e. immediately after Log.Logger = HostBootstrap.CreateBootstrapLogger()) to make
 // JobController consistent with its siblings. (review-findings #2865)
 var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
-var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-jobcontroller";
+var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-jobcontroller";
 HostBootstrap.LogStartupIdentity("Job Controller", serviceName, version);
 
 // ── Pipeline API client ───────────────────────────────────────────────────────
@@ -65,70 +62,25 @@ builder.Services.AddPipelineApiClient(new PipelineApiClientOptions
 builder.Services.AddJobControllerServices(builder.Configuration);
 
 // ── Serilog ───────────────────────────────────────────────────────────────────
-// Parse LOG_LEVEL env var — inline to avoid Infrastructure dependency
-var logLevel = Enum.TryParse<Serilog.Events.LogEventLevel>(
-    Environment.GetEnvironmentVariable("LOG_LEVEL"), ignoreCase: true, out var parsedLevel)
-    ? parsedLevel
-    : Serilog.Events.LogEventLevel.Information;
+var logLevel = LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    LogEventLevel.Information);
 
 builder.Host.UseSerilog((ctx, lc) => lc
-    .MinimumLevel.Is(logLevel)
-    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-    // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
-    .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
-    // Suppress per-request HttpClient trace logs (Start/End fire at Debug on every outbound call)
-    .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
-    // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
-    .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
-    // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
-    .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .Enrich.WithSpan()
-    .WriteTo.Console(
-        outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-        theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .ApplyHostDefaults(logLevel)
+    .WriteToHostConsole()
     .WriteToOtlpIfConfigured("coding-agent-jobcontroller", ctx.HostingEnvironment.EnvironmentName));
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────────
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(r => r.AddService(
-        serviceName: serviceName,
-        serviceVersion: version))
-    .WithTracing(t =>
-    {
-        t.AddSource(PipelineTelemetry.SourceName)
-         .AddAspNetCoreInstrumentation(opts =>
-            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
-         .AddHttpClientInstrumentation(opts =>
-             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
-         .AddProcessor(new OtelNoiseSpanProcessor())
-         .AddOtlpExporter();
-    })
-    .WithMetrics(m =>
-    {
-        m.AddAspNetCoreInstrumentation()
-         .AddHttpClientInstrumentation()
-         // The Job Controller owns the reconciliation loop. ReconciliationLoop records
-         // workdistribution.timeout_execution_age_seconds, workdistribution.timeout_canary_violations,
-         // and workdistribution.agent_timeouts via factory-created instruments on this meter.
-         // RecordLastPollEpoch is owned by the Scheduler (WorkItemDispatchLoop); UpdateCredentialPoolMetrics
-         // and RecordDispatchLatency are owned by the API (WorkItemDispatchEndpoints / DispatchLifecycleService).
-         // Those instruments are not called in this process, but the meter registration must remain for
-         // the timeout/canary instruments above.
-         .AddMeter(WorkDistributionTelemetry.MeterName)
-         // PipelineTelemetry instruments (jobs.completed, jobs.failed, job duration, queue wait, etc.)
-         // are recorded via the pipeline library inside the Job Controller process.
-         .AddMeter(PipelineTelemetry.SourceName)
-         // .NET runtime metrics (GC, thread pool, CPU, memory) — built-in since .NET 8.
-         .AddMeter("System.Runtime")
-         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
-         // Not registered in the agent — agent pods must not emit these series.
-         .AddMeter(GitHubTelemetry.MeterName)
-         // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
-         // histograms and counters, which Grafana Cloud silently drops.
-         .AddOtlpExporter((_, readerOptions) =>
-             readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
-    });
+builder.Services.AddHostOpenTelemetry(
+    "coding-agent-jobcontroller",
+    configureMetrics: m => m
+        // The Job Controller owns the reconciliation loop. ReconciliationLoop records
+        // workdistribution.timeout_execution_age_seconds, workdistribution.timeout_canary_violations,
+        // and workdistribution.agent_timeouts via factory-created instruments on this meter.
+        // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+        // Not registered in the agent — agent pods must not emit these series.
+        .AddMeter(GitHubTelemetry.MeterName));
 
 // ── ASPNETCORE_URLS defaults to port 8080 ────────────────────────────────────
 builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL

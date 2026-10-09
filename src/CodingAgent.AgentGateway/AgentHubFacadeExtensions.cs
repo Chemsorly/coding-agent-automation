@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Pipeline.Models;
 using ILogger = Serilog.ILogger;
 
@@ -18,7 +19,7 @@ internal static class AgentHubFacadeExtensions
     /// </summary>
     /// <param name="facade">The facade to call.</param>
     /// <param name="agentId">The agent whose field is being updated.</param>
-    /// <param name="field">The field name (e.g. "activeJobId").</param>
+    /// <param name="field">The field name (e.g. <see cref="AgentFieldNames.ActiveJobId"/>).</param>
     /// <param name="value">The new value (null clears the field).</param>
     /// <param name="logger">Logger for the fault continuation.</param>
     /// <param name="callerContext">Short context string included in the log message (e.g. "ResetAgentToIdle").</param>

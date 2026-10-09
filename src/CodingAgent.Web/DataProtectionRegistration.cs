@@ -1,3 +1,4 @@
+using CodingAgent.Orchestration.Redis;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.DependencyInjection;
@@ -29,6 +30,28 @@ public static class DataProtectionRegistration
 {
     internal const string RedisKey = "caa:data-protection-keys";
     internal const string ApplicationName = "coding-agent-web";
+
+    /// <summary>
+    /// Creates a factory that returns an <see cref="IConnectionMultiplexer"/> for the given
+    /// <paramref name="redisConnectionString"/>, or <c>null</c> if the string is null or empty
+    /// (Redis not configured).
+    ///
+    /// <para>
+    /// The factory defers the actual connection until it is invoked, but the caller
+    /// (<see cref="AddDataProtectionServices"/>) invokes it immediately during service registration.
+    /// <see cref="RedisConnectionOptions.Parse"/> ensures <c>AbortOnConnectFail = false</c>
+    /// so that the connection returns a disconnected multiplexer instead of throwing when Redis
+    /// is unreachable at startup.
+    /// </para>
+    /// </summary>
+    /// <param name="redisConnectionString">Redis connection string, or <c>null</c> / <c>""</c> when Redis is not configured.</param>
+    /// <returns>A factory delegate, or <c>null</c> when <paramref name="redisConnectionString"/> is null or empty.</returns>
+    internal static Func<IConnectionMultiplexer>? CreateMultiplexerFactory(string? redisConnectionString)
+    {
+        if (string.IsNullOrEmpty(redisConnectionString))
+            return null;
+        return () => ConnectionMultiplexer.Connect(RedisConnectionOptions.Parse(redisConnectionString));
+    }
 
     /// <summary>
     /// Configures Data Protection. When <paramref name="connectionMultiplexerFactory"/> is provided

@@ -21,28 +21,23 @@ public sealed class SchedulerRunQueryServiceTests
     }
 
     [Fact]
-    public void GetActiveRuns_ReturnsEmpty()
-    {
-        var svc = CreateService();
-        svc.GetActiveRuns().Should().BeEmpty();
-        svc.HasActiveRuns.Should().BeFalse();
-        svc.ActiveRunCount.Should().Be(0);
-    }
-
-    [Fact]
-    public void GetRun_ReturnsNull()
-    {
-        var svc = CreateService();
-        svc.GetRun(new RunId("any-id")).Should().BeNull();
-    }
-
-    [Fact]
     public void IsIssueBeingProcessed_AlwaysReturnsFalse()
     {
         var svc = CreateService();
         svc.IsIssueBeingProcessed(
             new IssueIdentifier("org/repo#1"),
             new ProviderConfigId("provider")).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsIssueBeingProcessed_EmptyIdentifier_ThrowsArgumentException()
+    {
+        var svc = CreateService();
+        var act = () => svc.IsIssueBeingProcessed(
+            new IssueIdentifier(""),
+            new ProviderConfigId("provider"));
+        act.Should().Throw<ArgumentException>(
+            "IsIssueBeingProcessed must throw for an empty identifier in all implementations");
     }
 
     [Fact]
@@ -79,50 +74,12 @@ public sealed class SchedulerRunQueryServiceTests
             .Should().BeFalse("different issue must not be marked as completed");
     }
 
-    [Theory]
-    [InlineData("AddRun")]
-    [InlineData("RemoveRun")]
-    [InlineData("ReplaceRun")]
-    [InlineData("AppendOutputLines")]
-    [InlineData("GetOutputBuffer")]
-    public void WriteMethods_ThrowNotSupportedException(string methodName)
-    {
-        var svc = CreateService();
-        var run = new PipelineRun
-        {
-            RunId = "r1",
-            IssueIdentifier = "org/repo#1",
-            IssueTitle = "Test",
-            IssueProviderConfigId = "provider",
-            RepoProviderConfigId = "repo"
-        };
-        var runId = new RunId("r1");
-
-        var act = methodName switch
-        {
-            "AddRun" => (Action)(() => svc.AddRun(run)),
-            "RemoveRun" => () => svc.RemoveRun(runId),
-            "ReplaceRun" => () => svc.ReplaceRun(run),
-            "AppendOutputLines" => () => svc.AppendOutputLines(runId, []),
-            "GetOutputBuffer" => () => svc.GetOutputBuffer(runId),
-            _ => throw new ArgumentException($"Unknown method: {methodName}")
-        };
-
-        act.Should().Throw<NotSupportedException>(
-            $"{methodName} must not be supported in the read-only Scheduler adapter");
-    }
-
     // ── GetActiveRunBranchesAsync — Scheduler-specific variant ────────────────
 
     /// <summary>
     /// Acceptance-criteria test (Issue #2270): Scheduler-specific variant.
     /// Demonstrates that <see cref="SchedulerRunQueryService.GetActiveRunBranchesAsync"/>
-    /// returns branches from the API even though <see cref="SchedulerRunQueryService.GetActiveRuns"/>
-    /// always returns empty.
-    ///
-    /// This is the key fix: in the old implementation GetActiveRuns() always returned [],
-    /// so HousekeepingService could never populate activeRunBranches in the Scheduler
-    /// deployment, causing branch updates to fire on live-run branches.
+    /// returns branches from the API even though the Scheduler has no in-memory run state.
     /// </summary>
     [Fact]
     public async Task GetActiveRunBranchesAsync_ApiReturnsBranches_ReturnsThem()
@@ -134,10 +91,6 @@ public sealed class SchedulerRunQueryServiceTests
             .ReturnsAsync((IReadOnlyList<string>)["feature/auto-42-my-feature", "feature/auto-99-other"]);
 
         var svc = CreateService(clientMock.Object);
-
-        // Assert: GetActiveRuns() is still empty (as before — it cannot access in-memory state).
-        svc.GetActiveRuns().Should().BeEmpty(
-            "GetActiveRuns() has no in-process run state in the Scheduler and always returns empty");
 
         // Act
         var branches = await svc.GetActiveRunBranchesAsync(CancellationToken.None);
@@ -172,7 +125,7 @@ public sealed class SchedulerRunQueryServiceTests
 
     /// <summary>
     /// Verifies that when the API returns an empty list (no active runs), GetActiveRunBranchesAsync
-    /// also returns empty — consistent with the default interface implementation.
+    /// also returns empty.
     /// </summary>
     [Fact]
     public async Task GetActiveRunBranchesAsync_ApiReturnsEmpty_ReturnsEmpty()

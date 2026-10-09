@@ -181,8 +181,8 @@ public class OrchestratorRunServicePropertyTests
             runs[0].OutputLines.Enqueue("test output");
             runs[0].ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = "test", Timestamp = DateTime.UtcNow });
 
-            var buffer0 = runService.GetOutputBuffer(runs[0].RunId);
-            buffer0.Add("buffered line");
+            // Use AppendOutputLines (the contract write path) rather than GetOutputBuffer directly
+            runService.AppendOutputLines(runs[0].RunId, ["buffered line"]);
         }
 
         // Verify other runs are unaffected
@@ -193,8 +193,8 @@ public class OrchestratorRunServicePropertyTests
             runs[i].OutputLines.Should().BeEmpty();
             runs[i].ChatHistory.Should().BeEmpty();
 
-            var buffer = runService.GetOutputBuffer(runs[i].RunId);
-            buffer.Count.Should().Be(0);
+            var backlog = runService.GetOutputBacklogAsync(runs[i].RunId).GetAwaiter().GetResult();
+            backlog.Count.Should().Be(0);
         }
     }
 
