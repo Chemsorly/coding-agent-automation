@@ -29,20 +29,20 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         AnalysisGateResult? analysisRecommendation = null,
         IReadOnlyList<GateOutcome>? qualityGateOutcomes = null,
         string? failureReason = null) => new PipelineRunSummary
-    {
-        RunId = runId,
-        IssueIdentifier = new IssueIdentifier(issueId),
-        IssueTitle = $"Issue {issueId}",
-        FinalStep = finalStep,
-        RunType = runType,
-        StartedAtOffset = startedAt,
+        {
+            RunId = runId,
+            IssueIdentifier = new IssueIdentifier(issueId),
+            IssueTitle = $"Issue {issueId}",
+            FinalStep = finalStep,
+            RunType = runType,
+            StartedAtOffset = startedAt,
 #pragma warning disable CS0618
-        StartedAt = startedAt.DateTime,
+            StartedAt = startedAt.DateTime,
 #pragma warning restore CS0618
-        AnalysisRecommendation = analysisRecommendation,
-        QualityGateOutcomes = qualityGateOutcomes,
-        FailureReason = failureReason,
-    };
+            AnalysisRecommendation = analysisRecommendation,
+            QualityGateOutcomes = qualityGateOutcomes,
+            FailureReason = failureReason,
+        };
 
     private static string NewRunId() => Guid.NewGuid().ToString();
 
@@ -222,7 +222,7 @@ public sealed class InsightsAndAttentionTests : E2ETestBase
         Assert.Equal(expectedTotal, badgeCount);
 
         // Navigate to Overview and verify the "Needs attention" KPI tiles
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
 
         // Wait for the attention tiles to appear (they're only rendered when count > 0)

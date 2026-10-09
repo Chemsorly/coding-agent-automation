@@ -142,7 +142,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         try
         {
             // --- Work page: verify default is 60 (no stored value), then set to 10s ---
-            await Page.GotoAsync($"{BaseUrl}/work");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/work");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
             // Wait for the RefreshBar select to appear
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
@@ -171,7 +171,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
                 new() { Timeout = 10_000 });
 
             // --- Runs page: set to Off ---
-            await Page.GotoAsync($"{BaseUrl}/runs");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/runs");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
             // TODO [WARNING]: The Runs page select pre-condition (default 60) is not verified here.
@@ -187,7 +187,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
                 new() { Timeout = 10_000 });
 
             // --- Reload Work page and verify persisted value is 10s ---
-            await Page.GotoAsync($"{BaseUrl}/work");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/work");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
             // OnAfterRenderAsync reads localStorage asynchronously after the default 60s timer starts.
@@ -201,7 +201,7 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             Assert.Equal("10", await Page.InputValueAsync(".refresh-bar-select"));
 
             // --- Reload Runs page and verify persisted value is Off (0) ---
-            await Page.GotoAsync($"{BaseUrl}/runs");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/runs");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
             await Page.WaitForSelectorAsync(".refresh-bar-select", new() { Timeout = 10_000 });
             await Page.WaitForFunctionAsync(
@@ -229,9 +229,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
     {
         try
         {
-            await Page.GotoAsync($"{BaseUrl}/overview");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-            await Page.WaitForBlazorAsync();
 
             // Verify no theme key is stored — fresh context guarantees this, but assert explicitly
             // so a failed cleanup from a previous run surfaces here rather than masking a broken toggle.
@@ -285,9 +284,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             Assert.Equal(expectedAfterToggle, storedTheme);
 
             // Navigate away and back — the theme must survive the reload
-            await Page.GotoAsync($"{BaseUrl}/fleet");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/fleet");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-            await Page.WaitForBlazorAsync();
 
             var themeAfterNav = await Page.EvaluateAsync<string>(
                 "() => document.documentElement.getAttribute('data-theme')");
@@ -317,9 +315,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
             await Page.EmulateMediaAsync(new() { ColorScheme = ColorScheme.Light });
 
             // Fresh browser context per test guarantees no theme key in localStorage
-            await Page.GotoAsync($"{BaseUrl}/overview");
+            await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
             await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-            await Page.WaitForBlazorAsync();
 
             // Confirm no stored theme key
             var stored = await Page.EvaluateAsync<string?>("() => localStorage.getItem('theme')");
@@ -365,9 +362,8 @@ public sealed class UiPreferencesAndInfoPagesTests : E2ETestBase
         // .NET semantics are correct — but this is worth noting as a pattern to be aware of.
         await Fixture.ForceAgentRegistryRefreshAsync();
 
-        await Page.GotoAsync($"{BaseUrl}/overview");
+        await Page.GotoCockpitPageAsync($"{BaseUrl}/overview");
         await Page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await Page.WaitForBlazorAsync();
 
         // Wait for the sidebar health section to become visible.
         // SidebarHealthIndicators wraps its output in @if (_sectionVisible), which is false on

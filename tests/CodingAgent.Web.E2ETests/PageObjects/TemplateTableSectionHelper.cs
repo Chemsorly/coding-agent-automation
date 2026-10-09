@@ -38,9 +38,8 @@ public sealed class TemplateTableSectionHelper
     /// <summary>Navigates to /agent-coding and waits for the page to be interactive.</summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/agent-coding");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/agent-coding");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = 15_000 });
-        await _page.WaitForCockpitPageReadyAsync();
     }
 
     // ── Label preview helpers ─────────────────────────────────────────────

@@ -29,9 +29,8 @@ public sealed class AboutPage
     /// <summary>Navigates to /about and waits for the Blazor circuit and page header to render.</summary>
     public async Task NavigateAsync()
     {
-        await _page.GotoAsync($"{_baseUrl}/about");
+        await _page.GotoCockpitPageAsync($"{_baseUrl}/about");
         await _page.WaitForSelectorAsync("h1", new() { Timeout = DefaultTimeout });
-        await _page.WaitForCockpitPageReadyAsync(DefaultTimeout);
     }
 
     /// <summary>
