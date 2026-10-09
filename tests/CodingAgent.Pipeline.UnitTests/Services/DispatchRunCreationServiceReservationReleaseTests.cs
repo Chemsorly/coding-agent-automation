@@ -106,8 +106,11 @@ public class DispatchRunCreationServiceReservationReleaseTests : IAsyncDisposabl
 
         var request = new DispatchRunRequest
         {
-            IssueProviderId = "issue-1", RepoProviderId = "repo-1",
-            IssueIdentifier = "200", AgentProviderId = "agent-1", AgentId = "agent-x"
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            IssueIdentifier = "200",
+            AgentProviderId = "agent-1",
+            AgentId = "agent-x"
         };
 
         // Act — first dispatch: RegisterDispatchedRun returns false → null result
@@ -164,8 +167,11 @@ public class DispatchRunCreationServiceReservationReleaseTests : IAsyncDisposabl
 
         var request = new DispatchRunRequest
         {
-            IssueProviderId = "issue-1", RepoProviderId = "repo-1",
-            IssueIdentifier = "201", AgentProviderId = "agent-1", AgentId = "agent-x"
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            IssueIdentifier = "201",
+            AgentProviderId = "agent-1",
+            AgentId = "agent-x"
         };
 
         // Act — first dispatch: provider factory throws
@@ -216,8 +222,11 @@ public class DispatchRunCreationServiceReservationReleaseTests : IAsyncDisposabl
 
         var request = new DispatchRunRequest
         {
-            IssueProviderId = "issue-1", RepoProviderId = "repo-1",
-            IssueIdentifier = "202", AgentProviderId = "agent-1", AgentId = "agent-x"
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            IssueIdentifier = "202",
+            AgentProviderId = "agent-1",
+            AgentId = "agent-x"
         };
 
         // Act — first reservation: RegisterDispatchedRun returns false → null result
@@ -275,8 +284,11 @@ public class DispatchRunCreationServiceReservationReleaseTests : IAsyncDisposabl
 
         var request = new DispatchRunRequest
         {
-            IssueProviderId = "issue-1", RepoProviderId = "repo-1",
-            IssueIdentifier = "203", AgentProviderId = "agent-1", AgentId = "agent-x"
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            IssueIdentifier = "203",
+            AgentProviderId = "agent-1",
+            AgentId = "agent-x"
         };
 
         // Act — first reservation: provider factory throws
