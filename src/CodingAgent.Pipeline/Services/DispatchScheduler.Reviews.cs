@@ -36,6 +36,7 @@ internal sealed partial class DispatchScheduler
                     var reviewDispatchReq = new ReviewDispatchRequest
                     {
                         PrIdentifier = pr.Identifier,
+                        PrNumber = pr.Number,
                         PrBranchName = pr.BranchName,
                         PrTitle = pr.Title,
                         PrDescription = pr.Description,

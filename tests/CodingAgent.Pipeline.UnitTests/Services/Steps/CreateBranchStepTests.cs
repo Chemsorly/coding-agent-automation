@@ -4,6 +4,8 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Services.Steps;
 using Moq;
+using Serilog.Core;
+using Serilog.Events;
 
 namespace CodingAgent.Pipeline.UnitTests.Services.Steps;
 
@@ -16,12 +18,14 @@ public class CreateBranchStepTests
 {
     private readonly Mock<IRepositoryProvider> _repoProvider = new();
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
-    private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
+    private readonly CapturingSink _logSink = new();
+    private readonly Serilog.ILogger _logger;
     private readonly List<string> _outputLines = [];
     private readonly List<PipelineStep> _transitions = [];
 
     public CreateBranchStepTests()
     {
+        _logger = new Serilog.LoggerConfiguration().MinimumLevel.Verbose().WriteTo.Sink(_logSink).CreateLogger();
         _callbacks.Setup(c => c.EmitOutputLine(It.IsAny<string>()))
             .Callback<string>(line => _outputLines.Add(line));
         _callbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()))
@@ -172,6 +176,55 @@ public class CreateBranchStepTests
             "must attempt checkout when PR state query fails (fail-open)");
     }
 
+    // ── PR number plumbing ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Regression: review runs were dispatched with <c>LinkedPullRequest.Number = 0</c>, so the guard
+    /// queried PR #0, got a 404 and failed open. The state check must use the linked PR's real number.
+    /// </summary>
+    [Fact]
+    public async Task ReviewRun_QueriesPrStateWithTheLinkedPrNumber()
+    {
+        const int prNum = 3363;
+        var (context, _) = BuildContextWithLinkedPr(prNum, PipelineRunType.Review);
+        SetupOpenPrCheckout(prNum, new MergeResult { Success = true, HasConflicts = false, ConflictFiles = [] });
+
+        await new CreateBranchStep().ExecuteAsync(context, CancellationToken.None);
+
+        _repoProvider.Verify(r => r.GetPullRequestStateAsync(prNum, It.IsAny<CancellationToken>()), Times.Once);
+        _repoProvider.Verify(
+            r => r.GetPullRequestStateAsync(It.Is<int>(n => n != prNum), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    /// <summary>
+    /// A linked PR without a number is a dispatch bug: the step must not query PR #0, must log a
+    /// warning (not debug) so the skipped guard is visible, and must still proceed with checkout.
+    /// </summary>
+    [Fact]
+    public async Task WhenLinkedPrHasNoNumber_SkipsStateCheck_LogsWarning_AndProceedsWithCheckout()
+    {
+        var (context, _) = BuildContextWithLinkedPr(3363, PipelineRunType.Review, linkedPrNumber: 0);
+        _repoProvider.Setup(r => r.CheckoutRemoteBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var result = await new CreateBranchStep().ExecuteAsync(context, CancellationToken.None);
+
+        result.Should().Be(StepResult.Continue);
+        _repoProvider.Verify(
+            r => r.GetPullRequestStateAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "querying PR #0 can only 404");
+        _repoProvider.Verify(
+            r => r.CheckoutRemoteBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        _logSink.Events.Should().ContainSingle(e =>
+            e.Level == LogEventLevel.Warning &&
+            e.MessageTemplate.Text.Contains("no PR number"));
+    }
+
     // ── Open PR passes through ─────────────────────────────────────────────────
 
     /// <summary>
@@ -268,7 +321,7 @@ public class CreateBranchStepTests
     }
 
     private (PipelineStepContext context, PipelineRun run) BuildContextWithLinkedPr(
-        int prNumber, PipelineRunType runType)
+        int prNumber, PipelineRunType runType, int? linkedPrNumber = null)
     {
         var run = new PipelineRun
         {
@@ -282,7 +335,7 @@ public class CreateBranchStepTests
             RunType = runType,
             LinkedPullRequest = new LinkedPullRequest
             {
-                Number = prNumber,
+                Number = linkedPrNumber ?? prNumber,
                 BranchName = $"feature/auto-{prNumber}-test",
                 Url = $"https://github.com/org/repo/pull/{prNumber}",
                 IsDraft = false
@@ -313,5 +366,12 @@ public class CreateBranchStepTests
         };
 
         return (context, run);
+    }
+
+    private sealed class CapturingSink : ILogEventSink
+    {
+        private readonly List<LogEvent> _events = [];
+        public IReadOnlyList<LogEvent> Events => _events;
+        public void Emit(LogEvent logEvent) => _events.Add(logEvent);
     }
 }
