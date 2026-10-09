@@ -196,12 +196,12 @@ The retry loop classifies agent failures into categories to distinguish provider
 
 | Error Category | HTTP Status | Retry Budget Consumed? | Behavior |
 |----------------|-------------|------------------------|----------|
-| `ProviderRateLimit` | 429 | **No** | `RetryCount` is rolled back. Loop waits `TransientRetryDelay` (default: 30 seconds) then retries from the same position without burning a fix attempt. No cap on consecutive transient retries — only the overall job timeout (`agentTimeout`) bounds this. |
+| `ProviderRateLimit` | 429 | **No** | `RetryCount` is not incremented. The loop waits `TransientRetryDelay` (default: 30 seconds), then retries from the same position without spending a fix attempt. After 10 consecutive transient results the loop stops and the run ends with a draft PR; a normal fix attempt resets the count. |
 | `ProviderOverload` | 503 | **No** | Same as `ProviderRateLimit` — waits `TransientRetryDelay`, no budget consumed. |
-| `PermanentAuthFailure` | 401/403 | Yes (1 attempt counted) | Loop aborts immediately — credentials cannot be fixed by retrying. |
+| `PermanentAuthFailure` | 401/403 | **No** | Loop aborts immediately — credentials cannot be fixed by retrying. The run ends with a draft PR. |
 | `None` (default) | — | **Yes** | Normal code-fix attempt: `RetryCount` incremented, QG re-run after fix. |
 
-> **Operator note:** A sustained 429/503 storm from the upstream LLM provider causes the retry loop to spin indefinitely until the job's `agentTimeout` fires. If you observe stalled runs with no code changes, check agent logs for repeated `ProviderRateLimit` or `ProviderOverload` classifications and investigate your LLM provider's rate limits or quota.
+> **Operator note:** A sustained 429/503 storm from the upstream LLM provider ends the retry loop after 10 consecutive transient results, and the run finishes with a draft PR. If the job's `agentTimeout` fires first, the timeout ends the run. If you see draft PRs with no code changes, check agent logs for repeated `ProviderRateLimit` or `ProviderOverload` classifications and investigate your LLM provider's rate limits or quota.
 
 ## Housekeeping
 
@@ -330,19 +330,19 @@ Both limits apply on each sweep: the counts cap the rows per project, the days c
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
-| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`, `coding-agent-worker`). For the web service, configure via `otel.webServiceName` in `values.yaml`. For agent pods, `JobSpecBuilder` sets this to `coding-agent-worker` unconditionally. Other processes use fixed names set in their own deployment templates. |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per process — `coding-agent-web`, `coding-agent-api`, `coding-agent-jobcontroller`, `coding-agent-scheduler`, `coding-agent-worker`). For the web service, configure via `otel.webServiceName` in `values.yaml`. For agent pods, `JobSpecBuilder` sets this to `coding-agent-worker` unconditionally. For the Pipeline API, configure via `otel.apiServiceName` (default `coding-agent-api`). The Job Controller and the Scheduler use fixed names set in their deployment templates. |
 | `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
 
 ### Agent Containers
 
 | Variable | Description |
 |----------|-------------|
-| `ORCHESTRATOR_URL` | URL of the orchestrator's SignalR hub (e.g., `http://orchestrator:8080`) |
+| `ORCHESTRATOR_URL` | Base URL of the Pipeline API, which hosts the agent hub (`/hubs/agent`) and the work-item endpoints (e.g., `http://my-release-coding-agent-automation-api.coding-agent.svc.cluster.local:8080`). The chart sets it from `api.serviceUrl`, else `api.baseUrl`, else the in-cluster API Service. |
 | `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | The agent's own key, `HMAC-SHA256(master key, AGENT_ID)`, used as-is. Every dispatched agent Job (work item, consolidation, chat, model fetch) receives it from its per-Job Secret `caa-key-{job name}`; agent pods never receive the master key. An agent started by hand needs the same derived key. |
 | `AGENT_PROVIDER_TYPE` | Agent backend of a chat pod: the job template's `providerType` (`kiro`, `opencode`, `claude`); `KiroCli`, `OpenCode` and `ClaudeCode` are accepted too. When absent or empty, defaults to Kiro CLI. |
-| `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/root/.local/bin/kiro-cli`) |
+| `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/home/ubuntu/.local/bin/kiro-cli`) |
 | `CLAUDE_CLI_PATH` | Override path for the Claude Code CLI executable (default: `/home/ubuntu/.local/bin/claude`) |
 | `AGENT_CLAUDE_API_KEY` | Anthropic API key for Claude Code agents, injected from the agent Secret key `claude-api-key`. Handed to the `claude` process only, as `ANTHROPIC_API_KEY`; stripped from every other child process. |
 | `AGENT_CLAUDE_OAUTH_TOKEN` | Subscription token (`claude setup-token`) for Claude Code agents, injected from the agent Secret key `claude-oauth-token`. Handed to the `claude` process only, as `CLAUDE_CODE_OAUTH_TOKEN`. |
@@ -457,7 +457,7 @@ Configure MCP servers in the agent's settings directory (written at runtime by `
 }
 ```
 
-The agent CLI automatically discovers and starts configured MCP servers during pipeline runs. The `.agent/` directory is in the pipeline's blacklisted paths, so MCP config and any credentials it contains are never committed.
+The agent CLI automatically discovers and starts configured MCP servers during pipeline runs. The MCP config is written outside the workspace, in the agent user's home directory, so it and any credentials it contains are never committed.
 
 ### HTTP-Type MCP Servers
 

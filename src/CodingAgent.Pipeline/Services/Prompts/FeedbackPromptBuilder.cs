@@ -72,6 +72,9 @@ public static class FeedbackPromptBuilder
             }
         }
 
+        // Force-resolved rebase: not-re-applied identifiers
+        AppendNotReappliedSection(sb, run);
+
         sb.AppendLine();
 
         // Feedback instructions
@@ -149,6 +152,9 @@ public static class FeedbackPromptBuilder
                 sb.AppendLine($"- {error}");
             }
         }
+
+        // Force-resolved rebase: not-re-applied identifiers
+        AppendNotReappliedSection(sb, run);
 
         sb.AppendLine();
 
@@ -262,5 +268,29 @@ public static class FeedbackPromptBuilder
         if (elapsed.TotalMinutes >= 1)
             return $"{elapsed.Minutes}m {elapsed.Seconds}s";
         return $"{elapsed.Seconds}s";
+    }
+
+    /// <summary>
+    /// Appends a section listing identifiers that were not re-applied after a force-resolved rebase,
+    /// if any. Emits nothing when <see cref="PipelineRun.NotReappliedIdentifiersByFile"/> is empty.
+    /// </summary>
+    private static void AppendNotReappliedSection(StringBuilder sb, PipelineRun run)
+    {
+        if (run.NotReappliedIdentifiersByFile.Count == 0)
+            return;
+
+        sb.AppendLine();
+        sb.AppendLine("## Force-resolved rebase: identifiers not re-applied");
+        sb.AppendLine();
+        sb.AppendLine("The rebase onto main force-resolved conflicts by keeping main's version. " +
+            "The following identifiers that this branch had added were not found in the working tree " +
+            "after code generation. They may have been intentionally omitted or accidentally dropped:");
+        sb.AppendLine();
+        foreach (var (path, ids) in run.NotReappliedIdentifiersByFile)
+        {
+            var idList = string.Join(", ", ids.Select(id => $"`{id}`"));
+            sb.AppendLine($"- `{path}`: {idList}");
+        }
+        sb.AppendLine();
     }
 }

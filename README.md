@@ -56,7 +56,7 @@ flowchart TD
         B1[🤖 Implementation Agent<br/>write code]
         C1[🔍 Review Agents<br/>N agents in parallel]
         C2[🤖 Implementation Agent<br/>implements feedback]
-        D1[🏗️ Build + Test + Coverage]
+        D1[🏗️ Build + Test]
         D2[🤖 Implementation Agent<br/>implements error feedback]
 
         B1 --> C1
@@ -125,10 +125,10 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 
 ## Key Concepts
 
-- **Brain repository** — A `.brain/` folder in the target repo containing markdown files (lessons learned, architecture decisions, project context). Agents read it before starting and write to it after completing a run, accumulating knowledge across runs.
+- **Brain repository** — A separate repository (the pipeline job template's brain provider) with markdown files (lessons learned, architecture decisions, project context). Each run clones it into the workspace's `.brain/` folder, which is never committed to the target repo. Agents read it before starting and write to it after completing a run, accumulating knowledge across runs.
 - **Confidence gate** — After analysis, the pipeline evaluates whether the issue is clear enough to implement. Vague or blocked issues are rejected with feedback (`agent:needs-refinement`), and issues that don't require code changes are closed as won't-do (`agent:wont-do`).
-- **Quality gates** — Automated checks that must pass before a PR is created: compilation, tests, code coverage, and optionally external CI pipelines.
-- **Closed-loop mode** — The pipeline polls for labeled issues and processes them autonomously without manual dispatch. Configurable poll interval and backoff.
+- **Quality gates** — Automated checks that must pass before a PR is created: compilation, tests, and optionally external CI pipelines.
+- **Closed-loop mode** — The pipeline polls for labeled issues and processes them autonomously without manual dispatch. Configurable poll interval and circuit breaker.
 - **Label routing** — Repository labels determine which agent container handles the job, which quality gates run, and which review agents are used.
 
 ## Features
@@ -154,6 +154,7 @@ Phase 1 produces a plan for human review. Phase 2 runs only after explicit appro
 - **kubectl** ≥ 1.25 and **Helm** ≥ 3.12 — For deploying and managing the application
 - **Kubernetes cluster** — Local (Rancher Desktop, Docker Desktop) or production
 - **PostgreSQL** — Required; must be accessible from the cluster
+- **Redis** — Required with the default two replicas of the Pipeline API and the web UI; without Redis, install with `api.replicas=1` and `web.replicas=1`
 - **.NET 10 SDK** — For local development only (`dotnet run`)
 - **Issue tracker credentials** — App credentials for issue/repository access and PR creation (e.g., a GitHub App with Issues + Contents + Pull Requests permissions)
 - **Agent CLI authentication** — Kiro credential PVCs need CLI auth tokens (see First-Time Setup below)
@@ -166,8 +167,8 @@ helm install coding-agent ./helm/coding-agent-automation \
   --set secrets.agentApiKey="$(openssl rand -hex 32)" \
   --set database.host=<postgres-host> \
   --set database.auth.existingSecret=<k8s-secret-name> \
-  --set api.enabled=true \
-  --set jobController.enabled=true
+  --set signalr.redis.connectionString=<redis-host>:6379 \
+  --set scheduler.image.tag=coding-agent-scheduler-<version>
 ```
 
 Open the web UI in your browser (check `kubectl get ingress -n coding-agent` or port-forward the service) and sign in as `admin` with the password from the `<release>-coding-agent-automation-admin` Secret. See [Authentication](docs/authentication.md) to connect Keycloak or Entra ID and bind roles.
