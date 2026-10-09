@@ -30,7 +30,7 @@ public static class HostBootstrap
         new LoggerConfiguration()
             .MinimumLevel.Information()
             .WriteTo.Console(
-                outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
+                outputTemplate: HostTelemetry.ConsoleOutputTemplate,
                 theme: ConsoleTheme.None)
             .CreateBootstrapLogger();
 

@@ -1,6 +1,6 @@
 using CodingAgent.Infrastructure.Telemetry;
 using Serilog;
-using Serilog.Enrichers.Span;
+using Serilog.Events;
 
 namespace CodingAgent.Api;
 
@@ -18,36 +18,25 @@ internal static class ApiSerilogRegistration
     {
         var logLevel = LogLevelParser.Parse(
             Environment.GetEnvironmentVariable("LOG_LEVEL"),
-            Serilog.Events.LogEventLevel.Information);
+            LogEventLevel.Information);
         var dbLogLevel = LogLevelParser.Parse(
             Environment.GetEnvironmentVariable("DB_LOG_LEVEL"),
-            Serilog.Events.LogEventLevel.Warning);
+            LogEventLevel.Warning);
 
         hostBuilder.UseSerilog((ctx, lc) => lc
-            .MinimumLevel.Is(logLevel)
-            .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+            .ApplyHostDefaults(logLevel)
+            // Longer prefix wins over the shared Microsoft.AspNetCore override — EF Core
+            // database command logging is controlled separately via DB_LOG_LEVEL.
             .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", dbLogLevel)
-            .MinimumLevel.Override("Npgsql", Serilog.Events.LogEventLevel.Warning)
-            .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
+            .MinimumLevel.Override("Npgsql", LogEventLevel.Warning)
+            .MinimumLevel.Override("Microsoft.EntityFrameworkCore", LogEventLevel.Warning)
             // Suppress AgentApiKey "not authenticated" noise from k8s health probes (every 5-10s).
             // Probes hit unauthenticated endpoints but still pass through UseAuthentication(), causing
             // AuthenticateResult.NoResult() to be logged at Warning by the framework. Genuine invalid-key
             // failures are logged directly via the injected Serilog.ILogger and are NOT affected by this override.
             // Was: LogEventLevel.Warning — probes emit at Warning so that level didn't suppress them.
-            .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", Serilog.Events.LogEventLevel.Error)
-            // Suppress Polly internal telemetry (StrategyExecuting/Executed fire at Debug on every call)
-            .MinimumLevel.Override("Polly", Serilog.Events.LogEventLevel.Warning)
-            // Suppress per-request HttpClient trace logs (Start/End fire at Debug on every outbound call)
-            .MinimumLevel.Override("System.Net.Http.HttpClient", Serilog.Events.LogEventLevel.Warning)
-            // Suppress HttpClientFactory handler lifecycle logging (cleanup cycle every ~10s)
-            .MinimumLevel.Override("Microsoft.Extensions.Http", Serilog.Events.LogEventLevel.Warning)
-            // Suppress OpenTelemetry SDK internal logs (chatty at Debug — export errors still pass at Warning+)
-            .MinimumLevel.Override("OpenTelemetry", Serilog.Events.LogEventLevel.Warning)
-            .Enrich.FromLogContext()
-            .Enrich.WithSpan()
-            .WriteTo.Console(
-                outputTemplate: "[{Timestamp:HH:mm:ss} {Level}] {Message:lj}{NewLine}{Exception}",
-                theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+            .MinimumLevel.Override("Microsoft.AspNetCore.Authentication", LogEventLevel.Error)
+            .WriteToHostConsole()
             .WriteToOtlpIfConfigured("coding-agent-api", ctx.HostingEnvironment.EnvironmentName));
 
         return hostBuilder;

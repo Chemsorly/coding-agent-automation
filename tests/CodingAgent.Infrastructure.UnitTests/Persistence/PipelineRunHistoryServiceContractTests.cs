@@ -13,8 +13,8 @@ namespace CodingAgent.Infrastructure.UnitTests.Persistence;
 
 /// <summary>
 /// Contract tests for <see cref="IPipelineRunHistoryService"/> implementations.
-/// Both FileSystem-backed and Postgres-backed services must satisfy these behavioral contracts.
-/// Prevents behavioral drift between legacy (filesystem) and DB (Postgres) modes.
+/// <see cref="PostgresPipelineRunHistoryService"/>, the only persistent implementation,
+/// must satisfy these behavioral contracts.
 ///
 /// Pattern follows the established contract test structure used across persistence services.
 /// Derived classes provide a concrete service instance via <see cref="CreateService"/>.
@@ -58,12 +58,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         var service = CreateService();
         var baseTime = DateTimeOffset.UtcNow;
 
-        // CRITICAL: Insert in chronological order (oldest first, newest last).
-        // Filesystem uses LIFO (Insert(0,...)), Postgres uses ORDER BY StartedAt DESC.
-        // Both produce newest-first ONLY when insertion order matches chronological order.
-        // TODO(#1776): Add a complementary test where runs are inserted out-of-chronological-order
-        // (e.g., newest first, then oldest) to detect ordering parity divergence between
-        // filesystem (insertion-order) and Postgres (timestamp-order) implementations.
+        // Insert in chronological order; Postgres returns history ordered by StartedAt DESC.
         var oldest = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-1", "Oldest",
             startedAt: baseTime.AddHours(-2));
         var middle = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-2", "Middle",
@@ -87,18 +82,11 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     public async Task MaxHistorySize_OldestEvicted()
     {
         var service = CreateService();
-        // TODO(#1776): MaxHistorySize is referenced from PipelineRunHistoryService (filesystem class).
-        // PostgresPipelineRunHistoryService has its own constant. If they diverge, the Postgres
-        // contract test will silently use the wrong boundary. Consider an interface-level constant
-        // or asserting both implementations share the same value.
-        const int maxSize = PipelineRunHistoryService.MaxHistorySize; // 1000
+        const int maxSize = PostgresPipelineRunHistoryService.MaxHistorySize; // 1000
         const int overflow = 5;
         var baseTime = DateTimeOffset.UtcNow.AddHours(-maxSize - overflow);
 
         // Insert runs in chronological order (oldest first)
-        // TODO(#1776): The filesystem implementation uses fire-and-forget PersistRunSummaryAsync.
-        // With 1005 iterations, hundreds of concurrent file writes may still be in-flight,
-        // potentially causing flaky Dispose() failures under CI load.
         for (var i = 0; i < maxSize + overflow; i++)
         {
             var run = CreateCompletedRun(
@@ -147,12 +135,9 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         var act = () => service.AddRunToHistoryAsync(run);
         await act.Should().NotThrowAsync();
 
-        // At least one entry with that RunId exists in history
-        // (Postgres upserts → 1, Filesystem inserts duplicates → 2; both are valid)
-        // TODO(#1776): Strengthen assertion to verify count is >= 1 && <= 2 to rule out data corruption
-        // while remaining permissive about implementation-specific deduplication behavior.
+        // Postgres upserts by RunId — exactly one entry must exist
         var history = await service.GetRunHistoryAsync();
-        history.Should().Contain(s => s.RunId == runId);
+        history.Where(s => s.RunId == runId).Should().ContainSingle();
     }
 
     [Fact]
@@ -160,18 +145,15 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     {
         // Issue #3024: consolidation exclusion guards were removed from all history service
         // implementations. Consolidation runs must be accepted (no silent drop, no exception).
-        // Issue #3025: the read-time consolidation filter was narrowed to ghost-only rows in
-        // both the Postgres and file-backed implementations. Consolidation runs with valid JSON
-        // (RunType = Consolidation) are now returned by GetRunHistoryAsync in both implementations.
         // The contract here is: must not throw.
-        // TODO(#3025): This test creates the run via PipelineRun.CreateImplementation which sets
-        // RunType = Implementation (not Consolidation). Combined with IssueProviderConfigId =
-        // ConsolidationConstants.ProviderConfigId and InitiatedBy prefix, IsConsolidationGhost
-        // returns true for this row on the Postgres path, so it is silently dropped from
-        // GetRunHistoryAsync. The comment above stating "Consolidation runs with valid JSON are
-        // now returned" does not apply here — this is a ghost row, not a real consolidation run.
-        // Consider adding a separate test that creates a summary with RunType = Consolidation and
-        // asserts it IS retrievable from GetRunHistoryAsync to properly validate the contract.
+        // TODO: This test creates a run via PipelineRun.CreateImplementation with
+        // IssueProviderConfigId = ConsolidationConstants.ProviderConfigId and
+        // InitiatedBy = ConsolidationConstants.InitiatedBy, which causes IsConsolidationGhost
+        // to return true in PostgresPipelineRunHistoryService — the row is silently filtered from
+        // GetRunHistoryAsync. The test name "DoesNotThrow" is therefore the complete contract here:
+        // this is a ghost row and is not expected to appear in history. For the retrieval contract
+        // on a real consolidation run (RunType = Consolidation), see
+        // AddRunSummaryAsync_ConsolidationRunType_IsReturnedByGetRunHistory.
         var service = CreateService();
 
         var consolidationRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
@@ -196,13 +178,6 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     {
         // Issue #3024: consolidation exclusion guards were removed. AddRunSummaryAsync must
         // accept consolidation-prefixed summaries without throwing.
-        // TODO(#3025): This summary does not set RunType = PipelineRunType.Consolidation, so
-        // IsConsolidationGhost returns true for it (InitiatedBy prefix present + RunType defaults
-        // to Implementation). On the Postgres path the row would be silently filtered from
-        // GetRunHistoryAsync. The test only asserts NotThrowAsync, which is still correct, but it
-        // does not validate that a *real* consolidation summary (RunType = Consolidation) is
-        // retrievable after being written. Consider adding RunType = PipelineRunType.Consolidation
-        // and a retrieval assertion to turn this into a meaningful contract test.
         var service = CreateService();
 
         var summary = new PipelineRunSummary
@@ -219,6 +194,36 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         // Must complete without throwing
         var act = async () => await service.AddRunSummaryAsync(summary);
         await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task AddRunSummaryAsync_ConsolidationRunType_IsReturnedByGetRunHistory()
+    {
+        // Issue #3025 read-path guarantee: a summary with RunType = Consolidation and
+        // InitiatedBy = ConsolidationConstants.InitiatedBy must be retrievable via GetRunHistoryAsync.
+        // RunId must be a GUID string because PostgresPipelineRunHistoryService.ToEntity parses it
+        // with Guid.TryParse; a non-GUID RunId causes a new GUID to be generated as the PK, which
+        // would break the SummaryJson round-trip lookup.
+        var service = CreateService();
+        var runId = Guid.NewGuid().ToString();
+
+        var summary = new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = "consolidation-readback",
+            IssueTitle = "Consolidation readback",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAtOffset = DateTimeOffset.UtcNow,
+            InitiatedBy = ConsolidationConstants.InitiatedBy,
+            RunType = PipelineRunType.Consolidation
+        };
+
+        await service.AddRunSummaryAsync(summary);
+
+        var history = await service.GetRunHistoryAsync();
+        var returned = history.Where(s => s.RunId == runId).Should().ContainSingle().Subject;
+        returned.RunType.Should().Be(PipelineRunType.Consolidation);
     }
 
     [Fact]
@@ -267,8 +272,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         // (2_147_485 - 1) * 1000 = 2_147_484_000 > int.MaxValue (2_147_483_647)
         // The pre-check guard uses (long)(page - 1) * pageSize > int.MaxValue, which fires before
         // the checked() expression is reached, converting the unhandled OverflowException into a
-        // descriptive ArgumentOutOfRangeException. Both implementations share this guard via the
-        // same validation block.
+        // descriptive ArgumentOutOfRangeException.
         Func<Task> act = () => service.GetRunHistoryAsync(page: 2_147_485, pageSize: 1000);
 
         await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
@@ -314,63 +318,6 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         run.CurrentStep = PipelineStep.Completed;
         run.MarkCompleted();
         return run;
-    }
-}
-
-// ── FileSystem-backed implementation ────────────────────────────────────────
-
-/// <summary>
-/// Runs the contract tests against <see cref="PipelineRunHistoryService"/> (filesystem-backed).
-/// </summary>
-public class FilePipelineRunHistoryServiceContractTests : PipelineRunHistoryServiceContractTests
-{
-    private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"contract-history-fs-{Guid.NewGuid()}");
-
-    public FilePipelineRunHistoryServiceContractTests()
-    {
-        Directory.CreateDirectory(_tempDir);
-    }
-
-    protected override IPipelineRunHistoryService CreateService()
-        => new PipelineRunHistoryService(new Mock<ILogger>().Object, _tempDir);
-
-    public override void Dispose()
-    {
-        GC.SuppressFinalize(this);
-        if (!Directory.Exists(_tempDir))
-            return;
-
-        // The file-based implementation uses fire-and-forget PersistRunSummaryAsync which may
-        // still hold a .tmp file open via AtomicFileWriter (Windows FlushFileBuffers can take
-        // 100-500ms). Retry with fixed delay; on final failure delete files individually,
-        // skipping locked .tmp files, so the directory itself can be removed.
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            try
-            {
-                Directory.Delete(_tempDir, recursive: true);
-                base.Dispose();
-                return;
-            }
-            catch (IOException) when (attempt < 9)
-            {
-                Thread.Sleep(100);
-            }
-            catch (IOException)
-            {
-                // Final attempt: delete files individually, skipping locked .tmp files.
-                // Locked .tmp files are in-flight AtomicFileWriter temp files; the OS reclaims
-                // them when the process exits. Do not propagate cleanup failures as test failures.
-                try
-                {
-                    foreach (var file in Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories))
-                        try { File.Delete(file); } catch (IOException) { }
-                    Directory.Delete(_tempDir, recursive: true);
-                }
-                catch { /* best-effort — leftover temp files are harmless */ }
-            }
-        }
-        base.Dispose();
     }
 }
 

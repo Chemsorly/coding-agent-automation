@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Telemetry;
@@ -75,7 +76,7 @@ public sealed partial class AgentHub
             // Clear on the local object immediately (for in-memory tests and single-replica deployments)
             agent.OrphanRestoredAt = null;
             // Also propagate to distributed registry so the write is visible to other replicas
-            _facade.UpdateAgentFieldFireAndForget(agent.AgentId, "orphanRestoredAt", null, _logger, "ReportStepTransition");
+            _facade.UpdateAgentFieldFireAndForget(agent.AgentId, AgentFieldNames.OrphanRestoredAt, null, _logger, "ReportStepTransition");
         }
 
         // Push step transition event to subscribed UI circuits (Req 5.2)
