@@ -4,15 +4,18 @@ namespace CodingAgent.Orchestration.Dispatch;
 
 // ─── Exception types ──────────────────────────────────────────────────────────
 
-public sealed class ChatAlreadyActiveException(string jobName)
-    : Exception($"A chat pod is already active for this selector (job: {jobName}).");
-
 public sealed class NoPvcAvailableException()
     : Exception("No agent credentials (PVC) available for a chat pod.");
 
 public sealed class ChatPodTimeoutException(int timeoutSeconds)
     : Exception($"Chat pod did not connect within {timeoutSeconds}s.")
 {
+    // TODO [WARNING]: When timeoutSeconds is 0 (the unknown-timeout sentinel used by ApiChatJobDispatcher),
+    // the exception message reads "Chat pod did not connect within 0s." which is misleading. AgentChat.razor's
+    // ClassifyLaunchError guards on TimeoutSeconds > 0 so the UI is correct, but any caller that surfaces
+    // .Message directly (e.g. a future log line or a fallback that bypasses ClassifyLaunchError) would display
+    // "within 0s." Consider using a sentinel-free message (e.g. "Chat pod did not connect in time.") when
+    // timeoutSeconds == 0, or accepting a nullable int here.
     public int TimeoutSeconds { get; } = timeoutSeconds;
 }
 

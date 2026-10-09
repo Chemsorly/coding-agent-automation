@@ -744,3 +744,147 @@ public class AgentChatAccessTests : BunitContext
         ProjectOptions(cut).Should().Equal("", "6f1c2a9e-0000-0000-0000-00000000000b", "6f1c2a9e-0000-0000-0000-00000000000a");
     }
 }
+
+/// <summary>
+/// bUnit tests for the launch-error path in AgentChat.
+/// Uses the real <see cref="ApiChatJobDispatcher"/> over a mocked <see cref="IPipelineApiChatClient"/>
+/// so the full mapping logic (status code → exception → classified message) is exercised end-to-end.
+/// </summary>
+public class AgentChatLaunchErrorTests : BunitContext
+{
+    private const string TemplateLabels = "kiro";
+
+    private readonly Mock<IPipelineApiChatClient> _chatClient;
+
+    public AgentChatLaunchErrorTests()
+    {
+        Services.AddTestAccess(); // global admin — Guard.DemandAsync passes unconditionally
+
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockStore = new Mock<IConfigurationStore>();
+        _chatClient = new Mock<IPipelineApiChatClient>();
+
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+
+        var lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
+        var registry = new AgentRegistryService(mockLogger.Object);
+
+        Services.AddSingleton(lifecycle);
+        Services.AddSingleton(registry);
+        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(mockStore.Object);
+        Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
+        Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+
+        // Register the real ApiChatJobDispatcher (not a mock) so the status→exception mapping runs.
+        Services.AddSingleton<IChatJobDispatcher>(new ApiChatJobDispatcher(_chatClient.Object));
+
+        var mockHub = new Mock<IAgentHubConnection>();
+        mockHub.Setup(h => h.State).Returns(HubConnectionState.Disconnected);
+        mockHub.Setup(h => h.StartAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.InvokeAsync(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockHub.Setup(h => h.On(It.IsAny<string>(), It.IsAny<Action>())).Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<string, IReadOnlyList<string>>(It.IsAny<string>(), It.IsAny<Action<string, IReadOnlyList<string>>>())).Returns(Mock.Of<IDisposable>());
+        mockHub.Setup(h => h.On<string, int, string?>(It.IsAny<string>(), It.IsAny<Action<string, int, string?>>())).Returns(Mock.Of<IDisposable>());
+        Services.AddSingleton(mockHub.Object);
+
+        Services.AddSingleton(Mock.Of<IPipelineApiAgentClient>());
+        Services.AddSingleton<IChatPromptBuilder>(new ChatPromptBuilder());
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+    }
+
+    private async Task<IRenderedComponent<AgentChat>> RenderAndLaunchAsync()
+    {
+        // TODO [WARNING]: JobTemplateStore.CreateEmpty() contains no templates, so there is no <option value="kiro">
+        // element in the rendered select. The bUnit Change event fires and binds "kiro" to _selectedTemplateLabels,
+        // but any code path in OnTemplateSelected or LaunchChatPod that looks up the selected template by label
+        // will find nothing silently. If AgentChat.razor adds a guard requiring a matching template before dispatch,
+        // the mock dispatcher will never be called and these tests will time out instead of failing with a useful
+        // message. Consider registering a JobTemplateStore containing a "kiro" template, or asserting the dispatcher
+        // is invoked before waiting for the UI warning, to make failure modes explicit.
+        var cut = Render<AgentChat>();
+        var select = cut.Find("select#template-select");
+        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+        var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
+        await cut.InvokeAsync(() => launchBtn.Click());
+        return cut;
+    }
+
+    [Fact]
+    public async Task LaunchChatPod_GatewayTimeoutWithoutApiTimeout_ShowsTextWithoutSeconds()
+    {
+        // A plain HttpRequestException (no TimeoutSeconds) maps to ChatPodTimeoutException(0),
+        // which ClassifyLaunchError renders as "Pod did not connect in time." (no seconds shown).
+        _chatClient
+            .Setup(c => c.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Gateway Timeout", null, System.Net.HttpStatusCode.GatewayTimeout));
+
+        var cut = await RenderAndLaunchAsync();
+
+        cut.WaitForAssertion(() =>
+        {
+            var warning = cut.Find(".agent-detail-warning");
+            warning.TextContent.Trim().Should().Contain(
+                "Pod did not connect in time. Check cluster logs.",
+                "timeout without a known duration must not show a seconds value");
+            cut.Markup.Should().NotContain("-1s",
+                "the old -1 sentinel must never appear in the rendered output");
+        }, timeout: TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task LaunchChatPod_GatewayTimeoutWithApiTimeout_ShowsApiSeconds()
+    {
+        // ChatDispatchFailedException carries TimeoutSeconds=120 from the API body.
+        // ApiChatJobDispatcher maps it to ChatPodTimeoutException(120).
+        // ClassifyLaunchError renders the exact number of seconds.
+        _chatClient
+            .Setup(c => c.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ChatDispatchFailedException(
+                "Chat pod did not connect within 120s.", System.Net.HttpStatusCode.GatewayTimeout, timeoutSeconds: 120));
+
+        var cut = await RenderAndLaunchAsync();
+
+        cut.WaitForAssertion(() =>
+        {
+            var warning = cut.Find(".agent-detail-warning");
+            warning.TextContent.Trim().Should().Contain(
+                "Pod did not connect within 120s. Check cluster logs.",
+                "the API's timeout must be surfaced verbatim in the UI message");
+        }, timeout: TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task LaunchChatPod_ServerErrorWithDetail_ShowsApiReason()
+    {
+        // A ChatDispatchFailedException with a 500 status is not caught by ApiChatJobDispatcher.
+        // ClassifyLaunchError returns null, so LaunchChatPod prefixes the message with "Launch failed:".
+        _chatClient
+            .Setup(c => c.DispatchChatPodAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ChatDispatchFailedException(
+                "No template for selector 'kiro'", System.Net.HttpStatusCode.InternalServerError, null));
+
+        var cut = await RenderAndLaunchAsync();
+
+        cut.WaitForAssertion(() =>
+        {
+            var warning = cut.Find(".agent-detail-warning");
+            warning.TextContent.Trim().Should().Contain(
+                "Launch failed: No template for selector 'kiro'",
+                "the API's error detail must be visible to the user");
+        }, timeout: TimeSpan.FromSeconds(5));
+    }
+}
