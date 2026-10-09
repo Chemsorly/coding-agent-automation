@@ -85,7 +85,21 @@ public static class SchedulerServiceCollectionExtensions
             ?? config.GetValue<string>("SignalR__Redis__ConnectionString");
         if (!string.IsNullOrEmpty(redisCs))
         {
-            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisCs));
+            // Use a factory lambda so the connection is deferred until first resolution.
+            // This prevents a RedisConnectionException crash during service registration
+            // (before Build()) when Redis is temporarily unreachable at startup.
+            // AbortOnConnectFail=false (set by RedisConnectionOptions.Parse) returns a
+            // disconnected multiplexer that reconnects in the background.
+            services.AddSingleton<IConnectionMultiplexer>(_ =>
+            {
+                var multiplexer = ConnectionMultiplexer.Connect(RedisConnectionOptions.Parse(redisCs));
+                multiplexer.ConnectionFailed += (_, e) =>
+                    Log.Warning("Scheduler Redis connection failed: {FailureType} — {Exception}",
+                        e.FailureType, e.Exception?.Message);
+                multiplexer.ConnectionRestored += (_, e) =>
+                    Log.Information("Scheduler Redis connection restored: {EndPoint}", e.EndPoint);
+                return multiplexer;
+            });
             services.AddSingleton<IRedisStore>(sp =>
                 new RedisStore(sp.GetRequiredService<IConnectionMultiplexer>().GetDatabase()));
         }
