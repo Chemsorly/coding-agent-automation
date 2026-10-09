@@ -16,7 +16,7 @@ public sealed class ReviewerResolver
     /// <param name="jobRequiredLabels">The labels required by the job being dispatched.</param>
     /// <returns>Matching configurations ordered by <see cref="ReviewerConfiguration.ExecutionOrder"/> ascending,
     /// then <see cref="ReviewerConfiguration.DisplayName"/> alphabetically (case-insensitive).</returns>
-    public IReadOnlyList<ReviewerConfiguration> Resolve(
+    public IReadOnlyList<ReviewerConfiguration> Resolve( // NOSONAR S2325 — instance API: callers and tests use an instance
         IReadOnlyList<ReviewerConfiguration> allConfigs,
         IReadOnlyList<string> jobRequiredLabels)
     {

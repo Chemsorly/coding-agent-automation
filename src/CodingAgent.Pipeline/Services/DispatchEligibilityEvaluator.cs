@@ -95,7 +95,7 @@ public sealed class DispatchEligibilityEvaluator
     /// <c>DispatchScheduler.Issues.cs</c> passes <c>{AgentLabels.Error, AgentLabels.NeedsRefinement}</c>;
     /// <c>BlockedIssuesService</c> passes its wider <c>NotReadyLabels</c> set.
     /// </param>
-    public DispatchEligibilityResult EvaluateLabelFilter(
+    public DispatchEligibilityResult EvaluateLabelFilter( // NOSONAR S2325 — instance API: callers and tests use an instance
         IReadOnlyCollection<string> labels,
         IReadOnlySet<string> filterSet)
     {
@@ -129,7 +129,7 @@ public sealed class DispatchEligibilityEvaluator
     /// <c>IsIssueAlreadyActive</c> in <c>DispatchScheduler.Issues.cs</c>. Both must
     /// be preserved — do not collapse them into a single flag.
     /// </remarks>
-    public DispatchEligibilityResult EvaluateActiveElsewhere(bool isBeingProcessed, bool isInActiveSet)
+    public DispatchEligibilityResult EvaluateActiveElsewhere(bool isBeingProcessed, bool isInActiveSet) // NOSONAR S2325 — instance API: callers and tests use an instance
     {
         if (isBeingProcessed || isInActiveSet)
             return DispatchEligibilityResult.ActiveElsewhere();
@@ -147,7 +147,7 @@ public sealed class DispatchEligibilityEvaluator
     /// <param name="stateCache">Shared cache for issue state lookups within a poll cycle.</param>
     /// <param name="checker">The dependency checker implementation.</param>
     /// <param name="ct">Cancellation token.</param>
-    public async Task<DispatchEligibilityResult> EvaluateDependencyAsync(
+    public async Task<DispatchEligibilityResult> EvaluateDependencyAsync( // NOSONAR S2325 — instance API: callers and tests use an instance
         IssueIdentifier identifier,
         string? issueBody,
         IIssueProvider provider,
@@ -175,7 +175,7 @@ public sealed class DispatchEligibilityEvaluator
     /// (e.g. <c>activeDecompositionCount + additionalDecompDispatches</c>).
     /// </param>
     /// <param name="maxAllowed">Maximum allowed concurrent instances.</param>
-    public DispatchEligibilityResult EvaluateConcurrencyLimit(int activeCount, int maxAllowed)
+    public DispatchEligibilityResult EvaluateConcurrencyLimit(int activeCount, int maxAllowed) // NOSONAR S2325 — instance API: callers and tests use an instance
     {
         if (activeCount >= maxAllowed)
             return DispatchEligibilityResult.ConcurrencyExhausted();
@@ -190,7 +190,7 @@ public sealed class DispatchEligibilityEvaluator
     /// </summary>
     /// <param name="agentSelector">The WorkItem's agent selector string.</param>
     /// <param name="stoppedSelectors">The per-cycle set of stopped selectors.</param>
-    public DispatchEligibilityResult EvaluateSelectorBlocked(
+    public DispatchEligibilityResult EvaluateSelectorBlocked( // NOSONAR S2325 — instance API: callers and tests use an instance
         string agentSelector,
         IReadOnlySet<string> stoppedSelectors)
     {
