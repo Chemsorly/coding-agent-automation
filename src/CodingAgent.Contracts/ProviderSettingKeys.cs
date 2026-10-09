@@ -58,7 +58,7 @@ public static class ProviderSettingKeys
     // ── Default values ───────────────────────────────────────────────────
 
     /// <summary>Default GitHub API URL.</summary>
-    public const string DefaultApiUrl = "https://api.github.com";
+    public const string DefaultApiUrl = "https://api.github.com"; // NOSONAR S1075 — the single definition of this default endpoint
 
     /// <summary>Default base branch name.</summary>
     public const string DefaultBaseBranch = "main";
@@ -72,7 +72,7 @@ public static class ProviderSettingKeys
     public const string ProjectId = "projectId";
 
     /// <summary>Default GitLab API URL.</summary>
-    public const string DefaultGitLabApiUrl = "https://gitlab.com";
+    public const string DefaultGitLabApiUrl = "https://gitlab.com"; // NOSONAR S1075 — the single definition of this default endpoint
 
     // ── Token vending (written by orchestrator) ──────────────────────────
 

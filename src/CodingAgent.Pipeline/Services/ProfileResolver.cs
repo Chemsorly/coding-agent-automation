@@ -16,7 +16,7 @@ public sealed class ProfileResolver
     /// <param name="profiles">All available profiles to evaluate.</param>
     /// <param name="agentLabels">The labels reported by the agent.</param>
     /// <returns>The highest-priority matching profile, or <c>null</c> if none match.</returns>
-    public AgentProfile? Resolve(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> agentLabels)
+    public AgentProfile? Resolve(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> agentLabels) // NOSONAR S2325 — instance API: callers and tests use an instance
     {
         ArgumentNullException.ThrowIfNull(profiles);
         ArgumentNullException.ThrowIfNull(agentLabels);
