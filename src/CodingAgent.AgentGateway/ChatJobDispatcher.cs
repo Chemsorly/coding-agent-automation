@@ -746,7 +746,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     internal static bool IsTerminal(V1Job job)
         => job.Status?.Conditions?.Any(c =>
-               (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True") == true;
+               (c.Type == KubernetesJobConditions.JobPhaseComplete || c.Type == KubernetesJobConditions.JobPhaseFailed) && c.Status == KubernetesJobConditions.ConditionTrue) == true;
 
     // ─── Test helpers (internal) ──────────────────────────────────────────────
 
