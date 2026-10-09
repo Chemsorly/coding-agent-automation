@@ -154,8 +154,7 @@ public static partial class PromptBuilder
 
         if (brainContextWritten)
         {
-            sb.AppendLine($"Project knowledge and conventions are at `{AgentWorkspacePaths.BrainContextFilePath}` — consult it for coding standards and patterns.");
-            sb.AppendLine();
+            AppendBrainContextReference(sb);
         }
 
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AgentWorkspacePaths.AnalysisFilePath}`.");
@@ -244,8 +243,7 @@ public static partial class PromptBuilder
 
         if (brainContextWritten)
         {
-            sb.AppendLine($"Project knowledge and conventions are at `{AgentWorkspacePaths.BrainContextFilePath}` — consult it for coding standards and patterns.");
-            sb.AppendLine();
+            AppendBrainContextReference(sb);
         }
 
         sb.AppendLine("Implement these changes now.");
@@ -578,13 +576,36 @@ public static partial class PromptBuilder
     }
 
     /// <summary>
+    /// Appends the brain context reference line to a prompt.
+    /// Called from every Build* method that accepts a <c>brainContextWritten</c> flag.
+    /// Extracting this 2-line block to a single helper ensures both call sites stay in sync
+    /// if the brain context path or the phrasing ever changes.
+    /// </summary>
+    private static void AppendBrainContextReference(StringBuilder sb)
+    {
+        sb.AppendLine($"Project knowledge and conventions are at `{AgentWorkspacePaths.BrainContextFilePath}` — consult it for coding standards and patterns.");
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Appends the "## Output Format" heading. Single source of truth for this heading string.
+    /// All prompt builders that need the heading call this helper so that a wording change
+    /// only needs to be made in one place.
+    /// </summary>
+    internal static void AppendOutputFormatHeading(StringBuilder sb)
+        => sb.AppendLine("## Output Format");
+
+    /// <summary>
     /// Appends structured output format instructions to the review prompt.
     /// These instructions guide the review agent to output findings in a parseable format
     /// with file:line references for inline comment placement.
     /// </summary>
-    private static void AppendStructuredOutputInstructions(StringBuilder sb)
+    // TODO: Revert visibility to `private` — the only caller is PromptBuilder.cs:326 (same class).
+    // `internal` is wider than required; no sibling builder calls this method (unlike AppendOutputFormatHeading
+    // which IS called cross-class). Widen only if a future caller outside PromptBuilder needs it.
+    internal static void AppendStructuredOutputInstructions(StringBuilder sb)
     {
-        sb.AppendLine("## Output Format");
+        AppendOutputFormatHeading(sb);
         sb.AppendLine();
         sb.AppendLine("Format each finding on its own line using this structure:");
         sb.AppendLine("[SEVERITY] path/to/file.ext:LINE — description of the issue");
