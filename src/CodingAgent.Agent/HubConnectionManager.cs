@@ -86,7 +86,7 @@ public sealed class HubConnectionManager : IHubConnectionManager
         Func<HttpMessageHandler, HttpMessageHandler>? httpMessageHandlerFactory = null)
     {
         ArgumentNullException.ThrowIfNull(orchestratorUrl);
-        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId));
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(apiKey);
         ArgumentNullException.ThrowIfNull(logger);
 
