@@ -2,6 +2,7 @@ using System.Net;
 using NGitLab;
 using NGitLab.Models;
 using Serilog;
+using CodingAgent.Infrastructure.Git;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -62,7 +63,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     public async Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(
         int page, int pageSize, IReadOnlyList<string>? labels, CancellationToken ct)
     {
-        ValidatePaginationParameters(page, pageSize);
+        SharedPrOperations.ValidatePaginationArgs(page, pageSize);
 
         var client = await GetClientAsync(ct);
         var query = new IssueQuery
@@ -83,7 +84,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     public async Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(
         int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
     {
-        ValidatePaginationParameters(page, pageSize);
+        SharedPrOperations.ValidatePaginationArgs(page, pageSize);
 
         var client = await GetClientAsync(ct);
         var query = new IssueQuery
@@ -376,16 +377,6 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     #region Private Helpers
-
-    /// <summary>
-    /// Validates pagination parameters (page >= 1, pageSize 1–100).
-    /// </summary>
-    private static void ValidatePaginationParameters(int page, int pageSize)
-    {
-        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
-        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
-        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, 100);
-    }
 
     /// <summary>
     /// Enumerates issues from the NGitLab async enumerable using the overfetch-by-one pattern
