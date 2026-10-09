@@ -243,7 +243,7 @@ public class AgentConnectionLifecycleTests
     {
         var (lifecycle, _, _) = CreateLifecycle();
 
-        // FakeHubConnectionManager.IsConnected is always false — ShutdownAsync should
+        // FakeHubConnectionManager.IsConnected defaults to false — ShutdownAsync should
         // skip the deregister invocation and just call StopAsync
         var act = async () => await lifecycle.ShutdownAsync();
         await act.Should().NotThrowAsync("shutdown when not connected must be graceful");

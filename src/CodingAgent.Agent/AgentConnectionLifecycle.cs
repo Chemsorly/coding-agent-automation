@@ -66,6 +66,13 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
 
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Waits between initial-connect attempts in <see cref="ConnectWithRetryAsync"/>. Test seam: tests replace it
+    /// to record the requested backoff without waiting (the real waits add up to about 3 minutes).
+    /// </summary>
+    internal Func<TimeSpan, CancellationToken, Task> ConnectRetryDelayFunc { get; set; }
+        = (delay, ct) => Task.Delay(delay, ct);
+
     /// <summary>Fired when the orchestrator assigns an interactive chat prompt.</summary>
     public event Func<ChatPromptMessage, Task>? OnAssignChatPrompt;
 
@@ -234,7 +241,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                     "Agent {AgentId}: hub connect attempt {Attempt} failed ({Error}), retrying in {Delay}s",
                     _agentId, connectAttempt, ex.Message, delaySecs);
 
-                try { await Task.Delay(TimeSpan.FromSeconds(delaySecs), stoppingToken); }
+                try { await ConnectRetryDelayFunc(TimeSpan.FromSeconds(delaySecs), stoppingToken); }
                 catch (OperationCanceledException) { return false; }
             }
         }

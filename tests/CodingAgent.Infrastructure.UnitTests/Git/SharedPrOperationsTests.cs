@@ -242,20 +242,55 @@ public class SharedPrOperationsTests
         result.Should().BeEmpty();
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── RunDismissLoopAsync ───────────────────────────────────────────────────
 
-    // TODO [WARNING]: RunDismissLoopAsync has no direct unit tests in this class. Two critical
-    // behaviors are untested:
-    //   (a) When dismissItem throws a non-OperationCanceledException on item N, the loop must
-    //       continue and still process item N+1 (continue-on-error). Test by passing a lambda
-    //       that throws InvalidOperationException on the first call and verifies the second item
-    //       is still processed.
-    //   (b) When dismissItem throws OperationCanceledException, it must propagate out of
-    //       RunDismissLoopAsync rather than being swallowed by the catch block. Test by passing
-    //       a lambda that throws OperationCanceledException and asserting the exception escapes.
-    // Without these tests, a regression (e.g. removing the 'when (ex is not OperationCanceledException)'
-    // filter) would go undetected. The corresponding production-code TODO in SharedPrOperations.cs
-    // documents the same gap.
+    [Fact]
+    public async Task RunDismissLoopAsync_DismissItemThrows_ContinuesWithRemainingItems()
+    {
+        var attempted = new List<string>();
+
+        await SharedPrOperations.RunDismissLoopAsync<string>(
+            new[] { "a", "b" },
+            (item, _) =>
+            {
+                attempted.Add(item);
+                return item == "a"
+                    ? Task.FromException(new InvalidOperationException("dismiss failed"))
+                    : Task.CompletedTask;
+            },
+            item => item,
+            "review",
+            7,
+            CancellationToken.None);
+
+        attempted.Should().Equal(new[] { "a", "b" }, "a failed dismissal must not stop the loop");
+    }
+
+    [Fact]
+    public async Task RunDismissLoopAsync_DismissItemThrowsOperationCanceledException_PropagatesAndSkipsRemainingItems()
+    {
+        using var cts = new CancellationTokenSource();
+        var attempted = new List<string>();
+
+        var act = () => SharedPrOperations.RunDismissLoopAsync<string>(
+            new[] { "a", "b" },
+            (item, token) =>
+            {
+                attempted.Add(item);
+                cts.Cancel();
+                token.ThrowIfCancellationRequested();
+                return Task.CompletedTask;
+            },
+            item => item,
+            "review",
+            7,
+            cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>("cancellation must escape the loop");
+        attempted.Should().Equal(new[] { "a" }, "no item is attempted after the cancellation");
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private static PrConversationComment MakeConversationComment(string body, DateTime createdAt)
         => new()
