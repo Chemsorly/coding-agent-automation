@@ -18,10 +18,12 @@ public interface IPipelineApiChatClient
     ///
     /// <para>Blocks until the pod registers (up to the API's configured timeout).</para>
     /// </summary>
-    /// <exception cref="HttpRequestException">
-    /// 409 — a chat pod is already active for the given selector.<br/>
+    /// <exception cref="ChatDispatchFailedException">
+    /// 400 — invalid selector or request parameter.<br/>
+    /// 500 — internal server error (e.g. no template for selector).<br/>
     /// 503 — no credential PVC available.<br/>
-    /// 504 — pod did not connect within the timeout.
+    /// 504 — pod did not connect within the timeout; <see cref="ChatDispatchFailedException.TimeoutSeconds"/>
+    /// contains the API's configured timeout when present.
     /// </exception>
     Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken ct = default);
 
