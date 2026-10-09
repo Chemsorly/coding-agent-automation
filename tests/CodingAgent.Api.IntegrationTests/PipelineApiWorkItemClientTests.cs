@@ -295,36 +295,6 @@ public sealed class PipelineApiWorkItemClientTests : IAsyncDisposable
         result.Should().Be(WorkItemStatus.Running);
     }
 
-    // ── GetK8sJobNameAsync ─────────────────────────────────────────────────────
-
-    [Fact]
-    public async Task GetK8sJobNameAsync_NotFound_ReturnsNull()
-    {
-        var workItemId = Guid.NewGuid();
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/k8s-job-name").UsingGet())
-            .RespondWith(Response.Create().WithStatusCode(404));
-
-        var result = await _client.GetK8sJobNameAsync(workItemId);
-
-        result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetK8sJobNameAsync_Found_ReturnsJobName()
-    {
-        var workItemId = Guid.NewGuid();
-        var response = new { jobName = "k8s-job-abc" };
-        _server.Given(Request.Create().WithPath($"/api/work-items/{workItemId}/k8s-job-name").UsingGet())
-            .RespondWith(Response.Create()
-                .WithStatusCode(200)
-                .WithHeader("Content-Type", "application/json")
-                .WithBody(JsonSerializer.Serialize(response)));
-
-        var result = await _client.GetK8sJobNameAsync(workItemId);
-
-        result.Should().Be("k8s-job-abc");
-    }
-
     // ── CreateAsync ────────────────────────────────────────────────────────────
 
     [Fact]

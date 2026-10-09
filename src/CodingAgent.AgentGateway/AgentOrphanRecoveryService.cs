@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -17,8 +18,6 @@ public sealed class AgentOrphanRecoveryService(
     IChangeNotifier changeNotifier,
     ILogger logger) : IAgentOrphanRecoveryService
 {
-    private const string ActiveJobIdField = "activeJobId";
-
     private readonly IAgentHubFacade _facade = facade;
     private readonly IChangeNotifier _changeNotifier = changeNotifier;
     private readonly ILogger _logger = logger;
@@ -196,7 +195,7 @@ public sealed class AgentOrphanRecoveryService(
             // helper intentionally uses CancellationToken.None for the ContinueWith fault-log continuation.
             // To propagate the recovery token here, IAgentHubFacade.UpdateAgentFieldAsync would need a
             // CancellationToken overload and UpdateAgentFieldFireAndForget would need to be updated.
-            _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "RestoreConsolidationTracking");
+            _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, activeJob.RunId, _logger, "RestoreConsolidationTracking");
         }
 
         _changeNotifier.NotifyChange();
@@ -241,7 +240,7 @@ public sealed class AgentOrphanRecoveryService(
             // helper intentionally uses CancellationToken.None for the ContinueWith fault-log continuation.
             // To propagate the recovery token here, IAgentHubFacade.UpdateAgentFieldAsync would need a
             // CancellationToken overload and UpdateAgentFieldFireAndForget would need to be updated.
-            _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "RestorePipelineRun");
+            _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, activeJob.RunId, _logger, "RestorePipelineRun");
         }
 
         _logger.Information(
@@ -404,7 +403,7 @@ public sealed class AgentOrphanRecoveryService(
             if (trackedEntry.ActiveJobId is null)
             {
                 trackedEntry.ActiveJobId = activeJob.RunId;
-                _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, activeJob.RunId, _logger, "LinkAgentToExistingRun");
+                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, activeJob.RunId, _logger, "LinkAgentToExistingRun");
                 // Transition to Busy only when we actually wrote the ActiveJobId.
                 // The decision is captured inside the lock so a concurrent disconnect handler
                 // that clears ActiveJobId after lock release cannot cause a spurious Busy
@@ -570,10 +569,10 @@ public sealed class AgentOrphanRecoveryService(
                 // consistent with other _localSnapshot writes in this file that also run outside
                 // any snapshot-scoped lock. See DistributedAgentRegistryService.SetLocalSnapshotField
                 // for the full non-atomic read-then-write WARNING. (Correctness WARNING, issue #2616)
-                _facade.SetLocalAgentSnapshotField(agentId, ActiveJobIdField, mostRecent.RunId);
-                _facade.SetLocalAgentSnapshotField(agentId, "orphanRestoredAt", now.ToString("O"));
-                _facade.UpdateAgentFieldFireAndForget(agentId, ActiveJobIdField, mostRecent.RunId, _logger, "DetectAndRestoreOrphans");
-                _facade.UpdateAgentFieldFireAndForget(agentId, "orphanRestoredAt", now.ToString("O"), _logger, "DetectAndRestoreOrphans");
+                _facade.SetLocalAgentSnapshotField(agentId, AgentFieldNames.ActiveJobId, mostRecent.RunId);
+                _facade.SetLocalAgentSnapshotField(agentId, AgentFieldNames.OrphanRestoredAt, now.ToString("O"));
+                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.ActiveJobId, mostRecent.RunId, _logger, "DetectAndRestoreOrphans");
+                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.OrphanRestoredAt, now.ToString("O"), _logger, "DetectAndRestoreOrphans");
                 // The decision to call TransitionStatus is captured inside the lock.
                 // This prevents a concurrent disconnect handler from clearing ActiveJobId
                 // between lock release and the TransitionStatus call.
@@ -638,7 +637,7 @@ public sealed class AgentOrphanRecoveryService(
                 // the field cannot produce a null read after the non-null guard below.
                 existingJobId = entry.ActiveJobId;
                 entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
-                _facade.UpdateAgentFieldFireAndForget(agentId, "orphanRestoredAt", DateTimeOffset.UtcNow.ToString("O"), _logger, "HandleCrashRecoveryAsync");
+                _facade.UpdateAgentFieldFireAndForget(agentId, AgentFieldNames.OrphanRestoredAt, DateTimeOffset.UtcNow.ToString("O"), _logger, "HandleCrashRecoveryAsync");
             }
 
             if (existingJobId is not null)

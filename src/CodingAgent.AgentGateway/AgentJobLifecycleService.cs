@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Orchestration;
 using CodingAgent.Orchestration.Registry;

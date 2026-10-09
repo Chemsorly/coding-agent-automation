@@ -1,5 +1,6 @@
 using CodingAgent.Api.Dispatch;
 using CodingAgent.AgentGateway;
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Registry;
@@ -160,7 +161,7 @@ public static class AgentEndpoints
         lock (entry.SyncRoot)
             entry.ActiveChatSessionId = message.SessionId;
         // Also write to registry for cross-replica visibility
-        _ = registry.UpdateAgentFieldAsync(entry.AgentId, "activeChatSessionId", message.SessionId);
+        _ = registry.UpdateAgentFieldAsync(entry.AgentId, AgentFieldNames.ActiveChatSessionId, message.SessionId);
 
         await hub.Clients.Client(entry.ConnectionId).AssignChatPrompt(message);
         return TypedResults.Ok();

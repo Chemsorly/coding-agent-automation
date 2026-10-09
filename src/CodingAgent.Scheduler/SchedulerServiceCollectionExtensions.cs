@@ -85,7 +85,21 @@ public static class SchedulerServiceCollectionExtensions
             ?? config.GetValue<string>("SignalR__Redis__ConnectionString");
         if (!string.IsNullOrEmpty(redisCs))
         {
-            services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisCs));
+            // Use a factory lambda so the connection is deferred until first resolution.
+            // This prevents a RedisConnectionException crash during service registration
+            // (before Build()) when Redis is temporarily unreachable at startup.
+            // AbortOnConnectFail=false (set by RedisConnectionOptions.Parse) returns a
+            // disconnected multiplexer that reconnects in the background.
+            services.AddSingleton<IConnectionMultiplexer>(_ =>
+            {
+                var multiplexer = ConnectionMultiplexer.Connect(RedisConnectionOptions.Parse(redisCs));
+                multiplexer.ConnectionFailed += (_, e) =>
+                    Log.Warning("Scheduler Redis connection failed: {FailureType} — {Exception}",
+                        e.FailureType, e.Exception?.Message);
+                multiplexer.ConnectionRestored += (_, e) =>
+                    Log.Information("Scheduler Redis connection restored: {EndPoint}", e.EndPoint);
+                return multiplexer;
+            });
             services.AddSingleton<IRedisStore>(sp =>
                 new RedisStore(sp.GetRequiredService<IConnectionMultiplexer>().GetDatabase()));
         }
@@ -150,17 +164,25 @@ public static class SchedulerServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineApiRunHistoryClient>(),
                 Log.Logger));
 
-        // SchedulerRunQueryService provides the IOrchestratorRunService the loop needs.
-        // It overrides GetActiveRunBranchesAsync() to call the API instead of the always-empty
-        // GetActiveRuns(), so HousekeepingService's branch-update guard works correctly here.
+        // SchedulerRunQueryService provides the IRunActivityQuery the loop needs.
+        // It overrides GetActiveRunBranchesAsync() to call the API instead of relying on
+        // in-memory run state, so HousekeepingService's branch-update guard works correctly here.
         services.AddSingleton<SchedulerRunQueryService>(sp =>
             new SchedulerRunQueryService(sp.GetRequiredService<IPipelineApiRunHistoryClient>()));
-        services.AddSingleton<IOrchestratorRunService>(sp =>
+        services.AddSingleton<IRunActivityQuery>(sp =>
             sp.GetRequiredService<SchedulerRunQueryService>());
 
         services.AddSingleton<PipelineRunLifecycleService>(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
+            // TODO: PipelineRunLifecycleService receives null for IOrchestratorRunService because the
+            // Scheduler has no run registry. The four named methods (CreateDispatchedRunAsync,
+            // ReserveRunIdAsync, ReplaceDispatchedRun, ReleaseAgentRunsForHandoff) have no callers in
+            // src at time of writing. If a Scheduler code path ever routes through IDispatchRunCreator
+            // → PipelineRunLifecycleService → a method that dereferences _runService, run-registry
+            // operations will be silently skipped (null-guarded), producing a history entry with no
+            // corresponding active run. Audit PipelineRunLifecycleService members if new Scheduler
+            // call paths are added.
+            null, // no IOrchestratorRunService in the Scheduler — CreateDispatchedRunAsync etc. have no callers in src
             Log.Logger,
             agentCancellationSender: null)); // no hub in Scheduler
 
@@ -177,7 +199,7 @@ public static class SchedulerServiceCollectionExtensions
         services.AddSingleton<IStaleBranchCleaner>(_ => new StaleBranchCleaner(Log.Logger));
         services.AddSingleton<IIssueReworkService>(_ => new IssueReworkService(Log.Logger));
         services.AddSingleton<IHousekeepingService>(sp => new HousekeepingService(
-            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<IRunActivityQuery>(),
             sp.GetRequiredService<IStaleBranchCleaner>(),
             sp.GetRequiredService<IIssueReworkService>(),
             Log.Logger));
@@ -235,7 +257,7 @@ public static class SchedulerServiceCollectionExtensions
         // SchedulerE2EWebApplicationFactory can resolve it by concrete type for test hooks
         // (SweepOnceForTestAsync). Pattern mirrors LoopWatchdogService above.
         services.AddSingleton<OrphanedLabelRecoveryService>(sp => new OrphanedLabelRecoveryService(
-            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<IRunActivityQuery>(),
             sp.GetRequiredService<IPipelineApiConfigClient>(),
             sp.GetRequiredService<IPipelineApiWorkItemClient>(),
             sp.GetRequiredService<IProviderFactory>(),
