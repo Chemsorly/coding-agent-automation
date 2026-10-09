@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Common;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Orchestration.Registry;
@@ -281,7 +282,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         var agent = await _registry.GetByAgentIdAsync(agentId, ct);
         if (agent is not null)
         {
-            await _registry.UpdateAgentFieldAsync(agentId, "activeJobId", runId.Value);
+            await _registry.UpdateAgentFieldAsync(agentId, AgentFieldNames.ActiveJobId, runId.Value);
             _registry.TransitionStatus(agentId, AgentStatus.Busy);
         }
         else
@@ -389,8 +390,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             return;
         }
 
-        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "activeJobId", null);
-        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), "orphanRestoredAt", null);
+        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), AgentFieldNames.ActiveJobId, null);
+        await _registry.UpdateAgentFieldAsync(new AgentId(agentId), AgentFieldNames.OrphanRestoredAt, null);
 
         _registry.TransitionStatus(new AgentId(agentId), AgentStatus.Idle);
     }

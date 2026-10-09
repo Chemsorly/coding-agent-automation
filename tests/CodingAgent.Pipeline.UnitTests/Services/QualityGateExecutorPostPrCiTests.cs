@@ -571,8 +571,7 @@ public class QualityGateExecutorPostPrCiTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(PassingReport);
     }
 
@@ -1155,7 +1154,7 @@ public class QualityGateExecutorEdgeCaseTests
     {
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
@@ -1267,7 +1266,7 @@ public class QualityGateExecutorPostPrCiTelemetryTests
         // path fires → FinalizePullRequest called → WaitForPostPrCiAsync runs
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<Action<PipelineRunEventReport>?>()))
+                It.IsAny<CancellationToken>(), It.IsAny<Action<PipelineRunEventReport>?>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },

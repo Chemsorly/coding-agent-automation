@@ -121,16 +121,17 @@ public class OrchestratorRunServiceExtendedTests
     }
 
     [Fact]
-    public void AddRun_DuplicateRunId_DoesNotOverwrite()
+    public void AddRun_DuplicateRunId_ReplacesStoredRun()
     {
         var run1 = CreateRun("run-1", "org/repo#1");
         var run2 = CreateRun("run-1", "org/repo#2");
 
         _service.AddRun(run1);
-        _service.AddRun(run2); // Should log warning, not overwrite
+        _service.AddRun(run2); // Should replace stored run (upsert)
 
         var result = _service.GetRun("run-1");
-        result!.IssueIdentifier.Value.Should().Be("org/repo#1"); // Original preserved
+        result!.IssueIdentifier.Value.Should().Be("org/repo#2",
+            "the second AddRun must replace the stored run (upsert semantics)");
     }
 
     [Fact]

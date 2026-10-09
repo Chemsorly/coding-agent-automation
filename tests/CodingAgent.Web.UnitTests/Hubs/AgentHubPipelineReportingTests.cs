@@ -133,9 +133,6 @@ public sealed class AgentHubPipelineReportingTests
     [Fact]
     public async Task ReportOutputLines_NullLines_Throws()
     {
-        var buffer = new OutputRingBuffer();
-        _mockFacade.Setup(f => f.GetOutputBuffer(It.IsAny<JobId>())).Returns(buffer);
-
         var hub = CreateHub();
         var act = () => hub.ReportOutputLines("job-1", null!);
 
@@ -146,9 +143,7 @@ public sealed class AgentHubPipelineReportingTests
     public async Task ReportOutputLines_WithRun_AddsLinesToOutputLines()
     {
         var run = CreateRun();
-        var buffer = new OutputRingBuffer();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.GetOutputBuffer("job-1")).Returns(buffer);
 
         var hub = CreateHub();
         await hub.ReportOutputLines("job-1", new[] { "line1", "line2", "line3" });
@@ -159,26 +154,30 @@ public sealed class AgentHubPipelineReportingTests
     }
 
     [Fact]
-    public async Task ReportOutputLines_WithRun_AddsLinesToOutputBuffer()
+    public async Task ReportOutputLines_WithRun_AppendsLinesThroughFacade()
     {
         var run = CreateRun();
-        var buffer = new OutputRingBuffer();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.GetOutputBuffer("job-1")).Returns(buffer);
 
         var hub = CreateHub();
         await hub.ReportOutputLines("job-1", new[] { "alpha", "beta" });
 
-        buffer.GetAll().Should().Contain("alpha").And.Contain("beta");
+        // AppendOutputLines is the only write path after removing the direct GetOutputBuffer call
+        // TODO: The matcher uses Contains checks rather than asserting exact list contents (Count == 2
+        // and SequenceEqual). The test would pass if the call included extra elements beyond "alpha"
+        // and "beta". Tighten to l.Count == 2 && l[0] == "alpha" && l[1] == "beta" to fully pin
+        // the expected call shape.
+        _mockFacade.Verify(f => f.AppendOutputLines(
+            It.Is<JobId>(j => j.Value == "job-1"),
+            It.Is<IReadOnlyList<string>>(l => l.Contains("alpha") && l.Contains("beta"))),
+            Times.Once);
     }
 
     [Fact]
     public async Task ReportOutputLines_WithRun_NotifiesChange()
     {
         var run = CreateRun();
-        var buffer = new OutputRingBuffer();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.GetOutputBuffer("job-1")).Returns(buffer);
 
         var hub = CreateHub();
         await hub.ReportOutputLines("job-1", new[] { "line" });
@@ -187,16 +186,20 @@ public sealed class AgentHubPipelineReportingTests
     }
 
     [Fact]
-    public async Task ReportOutputLines_NullRun_StillAddsToBuffer()
+    public async Task ReportOutputLines_NullRun_StillAppendsThroughFacade()
     {
-        var buffer = new OutputRingBuffer();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
-        _mockFacade.Setup(f => f.GetOutputBuffer("job-1")).Returns(buffer);
 
         var hub = CreateHub();
         await hub.ReportOutputLines("job-1", new[] { "orphan-line" });
 
-        buffer.GetAll().Should().Contain("orphan-line");
+        _mockFacade.Verify(f => f.AppendOutputLines(
+            It.Is<JobId>(j => j.Value == "job-1"),
+            // TODO: This matcher uses Contains rather than asserting exact list contents (Count == 1
+            // and exact element). Tighten to l.Count == 1 && l[0] == "orphan-line" to fully pin the
+            // expected call shape.
+            It.Is<IReadOnlyList<string>>(l => l.Contains("orphan-line"))),
+            Times.Once);
         _mockChangeNotifier.Verify(n => n.NotifyChange(), Times.Never);
     }
 
@@ -204,9 +207,7 @@ public sealed class AgentHubPipelineReportingTests
     public async Task ReportOutputLines_EmptyList_DoesNotThrow()
     {
         var run = CreateRun();
-        var buffer = new OutputRingBuffer();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.GetOutputBuffer("job-1")).Returns(buffer);
 
         var hub = CreateHub();
         var act = () => hub.ReportOutputLines("job-1", Array.Empty<string>());

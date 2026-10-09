@@ -1,4 +1,3 @@
-using CodingAgent.Api.Client;
 using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline.Models;
 using k8s.Autorest;
@@ -8,28 +7,28 @@ namespace CodingAgent.Orchestration.Dispatch;
 
 /// <summary>
 /// K8s-mode implementation of <see cref="IJobCleanupStrategy"/>.
-/// Looks up the K8s Job name via the Pipeline API and deletes the Job to prevent
+/// Looks up the K8s Job name through <see cref="IK8sJobNameLookup"/> and deletes the Job to prevent
 /// the Job controller from retrying (backoffLimit).
 /// </summary>
 public sealed class KubernetesJobCleanup : IJobCleanupStrategy
 {
-    private readonly IPipelineApiWorkItemClient _apiClient;
+    private readonly IK8sJobNameLookup _jobNameLookup;
     private readonly IKubernetesJobClient _jobClient;
     private readonly string _k8sNamespace;
     private readonly ILogger _logger;
 
     public KubernetesJobCleanup(
-        IPipelineApiWorkItemClient apiClient,
+        IK8sJobNameLookup jobNameLookup,
         IKubernetesJobClient jobClient,
         string k8sNamespace,
         ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(apiClient);
+        ArgumentNullException.ThrowIfNull(jobNameLookup);
         ArgumentNullException.ThrowIfNull(jobClient);
         ArgumentNullException.ThrowIfNull(k8sNamespace);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _apiClient = apiClient;
+        _jobNameLookup = jobNameLookup;
         _jobClient = jobClient;
         _k8sNamespace = k8sNamespace;
         _logger = logger;
@@ -43,7 +42,7 @@ public sealed class KubernetesJobCleanup : IJobCleanupStrategy
 
         try
         {
-            var jobName = await _apiClient.GetK8sJobNameAsync(workItemId, ct);
+            var jobName = await _jobNameLookup.GetK8sJobNameAsync(workItemId, ct);
 
             if (string.IsNullOrEmpty(jobName))
                 return;

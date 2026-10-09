@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using Microsoft.AspNetCore.SignalR;
@@ -93,7 +94,7 @@ public sealed partial class AgentHub
         }
 
         agent!.ActiveChatSessionId = null; // Also write to registry for cross-replica visibility
-        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeChatSessionId", null);
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, AgentFieldNames.ActiveChatSessionId, null);
 
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
             message.SessionId, agent.AgentId, message.ExitCode);
