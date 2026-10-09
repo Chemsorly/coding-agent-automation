@@ -14,6 +14,19 @@ public interface IAgentRegistryService
 {
     /// <summary>
     /// Registers an agent or updates an existing entry on reconnection.
+    /// <para>
+    /// <b>Label rule (rule 1):</b> every call stores a defensive copy of
+    /// <c>message.Labels</c> (<c>message.Labels?.ToArray() ?? Array.Empty&lt;string&gt;()</c>).
+    /// Re-registration replaces the previous label set so that <see cref="GetAgentsByLabel"/>
+    /// always routes by the labels the agent currently reports.
+    /// </para>
+    /// <para>
+    /// <b>Status rule (rule 2):</b> the resulting status is <see cref="AgentStatus.Busy"/> when
+    /// the existing entry's <c>ActiveJobId</c> is non-null, and <see cref="AgentStatus.Idle"/>
+    /// otherwise — regardless of the previous status.  When Busy, an existing <c>BusySince</c>
+    /// is kept or set to now; when Idle, <c>BusySince</c> is cleared.  <c>DisconnectedAt</c>
+    /// is always cleared on re-registration.
+    /// </para>
     /// </summary>
     /// <param name="message">Registration message from the connecting agent.</param>
     /// <param name="connectionId">The new SignalR connection ID.</param>
@@ -109,6 +122,26 @@ public interface IAgentRegistryService
     /// Callers that previously mutated <see cref="AgentEntry"/> properties directly must use this
     /// instead — under <c>DistributedAgentRegistryService</c>, <see cref="GetByAgentId"/> returns
     /// a deserialized snapshot and direct mutations are silently lost.
+    /// <para>
+    /// <b>Known fields (rule 3):</b> <c>activeJobId</c>, <c>activeChatSessionId</c>,
+    /// <c>orphanRestoredAt</c>, <c>lastJobCompletedAt</c>, <c>disabled</c>
+    /// (ordinal, case-sensitive).
+    /// </para>
+    /// <para>
+    /// <b>Empty values (rule 4):</b> a <c>null</c> or empty <paramref name="value"/> clears the
+    /// field — <c>null</c> for the two ID fields and the two timestamp fields, <c>false</c> for
+    /// <c>disabled</c>.
+    /// </para>
+    /// <para>
+    /// <b>Malformed values (rule 5):</b> a non-empty timestamp value that fails
+    /// <c>DateTimeOffset.TryParse</c> (RoundtripKind), or a non-empty <c>disabled</c> value that
+    /// fails <c>bool.TryParse</c>, is logged as a warning and ignored — nothing is stored, nothing
+    /// is thrown, and the previous value is preserved.
+    /// </para>
+    /// <para>
+    /// <b>Unknown fields (rule 6):</b> an unrecognised <paramref name="field"/> name is logged as
+    /// a warning and ignored; nothing is written.
+    /// </para>
     /// </summary>
     Task UpdateAgentFieldAsync(AgentId agentId, string field, string? value);
 

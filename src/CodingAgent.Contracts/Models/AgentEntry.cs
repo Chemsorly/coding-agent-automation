@@ -40,7 +40,20 @@ public sealed record AgentEntry
 
     public required string Hostname { get; init; }
 
-    public required IReadOnlyList<string> Labels { get; init; }
+    /// <summary>
+    /// Mutable so that re-registration can replace the labels; assign an immutable copy.
+    /// Every <see cref="IAgentRegistryService.Register"/> call stores
+    /// <c>message.Labels?.ToArray() ?? Array.Empty&lt;string&gt;()</c> so label routing
+    /// always reflects the labels the agent currently reports.
+    /// </summary>
+    // TODO (WARNING): widening from { get; init; } to { get; set; } on this sealed record makes
+    // Labels publicly settable by any code holding an AgentEntry reference — the compiler no
+    // longer enforces the "assign an immutable copy" invariant. A caller that writes
+    // entry.Labels = someList directly will alias the stored array to an external mutable
+    // collection, exposing the same InvalidOperationException race during enumeration that the
+    // init setter was originally guarding against. Consider an internal setter or a dedicated
+    // ReplaceLabels method visible only to IAgentRegistryService implementations.
+    public required IReadOnlyList<string> Labels { get; set; }
 
     /// <summary>Current agent status — transitions between Idle, Busy, and Disconnected.</summary>
     public AgentStatus Status { get; set; } = AgentStatus.Idle;

@@ -47,18 +47,29 @@ public sealed class CreateBranchStep : IPipelineStep
         // LinkedPullRequest != null, which correctly covers rework and Review runs as required by #2954.
         var prNum = pr.Number;
         PullRequestState prState;
-        try
+        if (prNum <= 0)
         {
-            prState = await context.RepoProvider.GetPullRequestStateAsync(prNum, ct);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex)
-        {
-            // Fail open — if we cannot query the state, proceed with the checkout.
-            // The CI polling loop will detect a merged PR on the first poll iteration.
-            context.Logger.Debug(ex, "Pipeline {RunId} PR state check failed for PR #{PrNum} — continuing with checkout",
-                run.RunId, prNum);
+            // A missing PR number is a dispatch bug, not a provider error: the guard cannot run, so say so
+            // loudly instead of querying PR #0 and swallowing the 404.
+            context.Logger.Warning("Pipeline {RunId} ({RunType}) has LinkedPullRequest with no PR number ({PrNum}) for branch {BranchName} — skipping PR state check",
+                run.RunId, run.RunType, prNum, pr.BranchName);
             prState = PullRequestState.Open;
+        }
+        else
+        {
+            try
+            {
+                prState = await context.RepoProvider.GetPullRequestStateAsync(prNum, ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // Fail open — if we cannot query the state, proceed with the checkout.
+                // The CI polling loop will detect a merged PR on the first poll iteration.
+                context.Logger.Debug(ex, "Pipeline {RunId} PR state check failed for PR #{PrNum} — continuing with checkout",
+                    run.RunId, prNum);
+                prState = PullRequestState.Open;
+            }
         }
 
         if (prState == PullRequestState.Merged)
@@ -111,6 +122,7 @@ public sealed class CreateBranchStep : IPipelineStep
                 context.Logger.Information("Pipeline {RunId} rebase force-resolved {ConflictCount} conflict(s) keeping main's version",
                     context.Run.RunId, mergeResult.ConflictFiles.Count);
                 await ReworkContextWriter.WriteAsync(context, mergeResult, ct);
+                context.Run.DroppedIdentifiersByFile = DroppedIdentifierExtractor.ExtractFromMergeResult(mergeResult);
             }
             else if (mergeResult.HasConflicts)
             {
