@@ -310,4 +310,49 @@ public class DiResolutionSmokeTests
 
         Assert.DoesNotContain(hostedServices, s => s is OpenCodeHealthMonitor);
     }
+
+    [Fact]
+    public async Task OpenCodeHttpClient_WithoutPassword_ConfiguresBaseAddressAndTimeout()
+    {
+        // Exercises the AddHttpClient factory lambda (lines 87-100 in AgentHostRegistration.cs)
+        // without a password — covers the if (!string.IsNullOrEmpty(password)) false branch.
+        Environment.SetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword, null);
+        try
+        {
+            await using var sp = BuildContainer(workItemMode: false, agentProviderType: "opencode");
+
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var client = factory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+
+            Assert.NotNull(client.BaseAddress);
+            Assert.Equal(TimeSpan.FromMinutes(60), client.Timeout);
+            Assert.Null(client.DefaultRequestHeaders.Authorization);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword, null);
+        }
+    }
+
+    [Fact]
+    public async Task OpenCodeHttpClient_WithPassword_SetsBasicAuthorizationHeader()
+    {
+        // Exercises the AddHttpClient factory lambda (lines 87-100 in AgentHostRegistration.cs)
+        // with a password set — covers the if (!string.IsNullOrEmpty(password)) true branch.
+        Environment.SetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword, "test-password");
+        try
+        {
+            await using var sp = BuildContainer(workItemMode: false, agentProviderType: "opencode");
+
+            var factory = sp.GetRequiredService<IHttpClientFactory>();
+            var client = factory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+
+            Assert.NotNull(client.DefaultRequestHeaders.Authorization);
+            Assert.Equal("Basic", client.DefaultRequestHeaders.Authorization.Scheme);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword, null);
+        }
+    }
 }
