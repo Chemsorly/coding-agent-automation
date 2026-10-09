@@ -89,7 +89,16 @@ public class GitHubMeterRegistrationTests
 
         source.Should().NotContain("WithMetrics",
             "agent pods must not export metrics — anything they measure is reported to the API");
-        source.Should().Contain("WithTracing", "agent pods still export traces");
+        source.Should().Contain("includeMetrics: false", "agent pods export traces only");
+        // TODO: [WARNING] The positive assertion above only checks for the literal text
+        // "includeMetrics: false". If the entire AddHostOpenTelemetry call were removed from
+        // Agent/Program.cs and the string appeared only in a comment, this test would still
+        // pass. The previous version of this test asserted Contain("WithTracing", ...) as a
+        // positive guard that tracing is registered; that guard was removed by the refactor.
+        // Add an assertion that AddHostOpenTelemetry( is called and that
+        // includeAspNetCoreInstrumentation: false is also present (required by acceptance
+        // criterion 3) so that accidental removal of the call is caught.
+        // (TestQualityReviewer, issue #3446)
     }
 
     [Fact]

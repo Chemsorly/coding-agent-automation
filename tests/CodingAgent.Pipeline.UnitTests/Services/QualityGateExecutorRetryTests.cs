@@ -164,9 +164,8 @@ public class QualityGateExecutorRetryTests
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<string?>(),
                 It.IsAny<Action<PipelineRunEventReport>?>()))
-            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _, Action<PipelineRunEventReport>? _) =>
+            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, Action<PipelineRunEventReport>? _) =>
             {
                 callCount++;
                 if (callCount >= 2)
@@ -189,9 +188,8 @@ public class QualityGateExecutorRetryTests
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<string?>(),
                 It.IsAny<Action<PipelineRunEventReport>?>()))
-            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, string? _, Action<PipelineRunEventReport>? _) =>
+            .Returns((WorkspacePath _, IReadOnlyList<QualityGateConfiguration> _, CancellationToken _, Action<PipelineRunEventReport>? _) =>
             {
                 callCount++;
                 if (callCount >= 2)
@@ -292,8 +290,7 @@ public class QualityGateExecutorRetryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(CompilationPassesTestsFail);
 
         _mockAgent.Setup(a => a.ExecuteAsync(
@@ -328,8 +325,7 @@ public class QualityGateExecutorRetryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(CompilationFailsTestsPass);
 
         _mockAgent.Setup(a => a.ExecuteAsync(
@@ -364,8 +360,7 @@ public class QualityGateExecutorRetryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(PassingReport);
 
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
@@ -382,8 +377,7 @@ public class QualityGateExecutorRetryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(PassingReport);
 
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
@@ -881,8 +875,7 @@ public class QualityGateExecutorRetryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(FailingReport);
     }
 
@@ -1007,8 +1000,7 @@ public class QualityGateExecutorFailureCategoryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(FailingReport);
 
         var config = new PipelineConfiguration
@@ -1044,8 +1036,7 @@ public class QualityGateExecutorFailureCategoryTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 callCount++;

@@ -3,7 +3,6 @@ using Moq;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Git;
 using CodingAgent.Web.TestUtilities;
 
@@ -45,7 +44,7 @@ public class AgentCodingPageTests
             new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new BrainUpdateService(_mockLogger.Object),
-            historyService: new PipelineRunHistoryService(_mockLogger.Object, Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}")));
+            historyService: new InMemoryPipelineRunHistoryService());
     }
 
     private void SetupDefaultMocks()

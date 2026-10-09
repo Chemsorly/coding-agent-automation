@@ -1,3 +1,4 @@
+using CodingAgent.Contracts;
 using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline.Models;
 
@@ -50,7 +51,7 @@ public sealed partial class AgentHub
         // Transition agent to Idle BEFORE delegating to slow I/O
         // (validation above guarantees agent is non-null here)
         agent.ActiveJobId = null; // local snapshot update
-        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null); // distributed write
+        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, AgentFieldNames.ActiveJobId, null); // distributed write
         _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
         // Delegate all consolidation business logic to the facade service (T10)

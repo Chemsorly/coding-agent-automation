@@ -302,7 +302,7 @@ public class CiPollingCoordinatorTests
 
         mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(new QualityGateReport
             {
                 Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "ok" },
@@ -831,7 +831,7 @@ public class CiPollingCoordinatorTests
         // Validator returns a passing compilation/tests report — CI polling is what fails.
         mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(PassingReport);
 
         // CI never starts.
