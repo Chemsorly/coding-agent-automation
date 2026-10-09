@@ -8,8 +8,8 @@ See also: [Pipeline Orchestration](pipeline-orchestration.md) for where feedback
 
 ### How It Works
 
-- **Success path** — Feedback questions are appended to the existing reflection prompt (no extra agent call). The agent reports what caused retries, what context was missing, and what could be improved.
-- **Failure path** — A dedicated 60-second agent call collects feedback after max retries are exhausted, before creating the draft PR.
+- **Success path** — After the PR is marked ready, a separate agent call (`CollectFeedbackAsync`, resuming the run's session) collects the feedback with its own prompt. It runs after the reflection and brain sync, and also when the template has no brain. The agent reports what caused retries, what context was missing, and what could be improved.
+- **Failure path** — A dedicated agent call collects feedback after max retries are exhausted, before creating the draft PR. Both paths time out after `FeedbackTimeoutSeconds` (default 60, range 10-600, overridable per project).
 
 ### Feedback Schema
 
@@ -40,13 +40,14 @@ Dispatches an agent to prune, deduplicate, and organize the `.brain/` knowledge 
 - **One run per brain at a time:** templates that share a brain share its running state and its last run on the Consolidation page, and a second trigger for the same brain is rejected as already running.
 - **Read-only brains:** brain consolidation writes to the brain, so it does not run from a template whose brain is read-only (the template's `BrainReadOnly`, or the global `BrainReadOnly` with the project's override). The button is disabled with the reason, and the trigger refuses it. Trigger it from a template that writes to the brain.
 
-It runs a 5-phase process:
+It runs a six-step process:
 
 1. **Orient** — Scan all files, build inventory
 2. **Gather Signal** — Identify drift, duplicates, contradictions
 3. **Research & Verify** — Check if referenced tools/libraries/versions are still current, validate external links, update outdated information
 4. **Consolidate** — Merge duplicates, resolve contradictions, convert relative dates to absolute
 5. **Prune** — Remove stale entries, clean up empty files
+6. **Generate Project SKILL.md** — Regenerate, from scratch, a `SKILL.md` of about 1500 words for each project folder under `.brain/projects/`, as the distilled context agents get for that project
 
 After the agent produces changes, an **adversarial review** pass evaluates the diff summary (`.agent/brain-consolidation-diff.md`). The discriminator checks for incorrectly removed entries, bad merges, contradictions, and inaccurate factual updates. If CRITICAL or WARNING findings are found, a refinement pass revises the `.brain/` files.
 
@@ -67,7 +68,7 @@ Dispatches agents to analyze the codebase holistically for architectural drift u
 - **Evidence** — the decisive code or tool output, quoted verbatim, and how it was found
 - Acceptance criteria (a bug without criteria defaults to a reproduction test)
 - The commit the analysis ran against, which the line numbers refer to
-- Labels: `agent:generated`
+- Labels: `agent:generated`, plus `agent:next` when the scan is started with the "auto-dispatch created issues" option in the Refactoring Scan dialog, so the pipeline picks the issues up without further approval
 
 The finding categories are one list from detection to issue (`RefactoringCategories`): `duplication`, `structural-drift`, `complexity`, `over-engineering`, `todo`, `dead-code`, `bug`, `stale-documentation`, `naming-inconsistency`, `primitive-obsession`.
 
@@ -113,11 +114,11 @@ Configuration: `HarnessSuggestionsReviewEnabled` (default: `true`) controls the 
 
 ### Consolidation Dispatch
 
-Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. `IConsolidationDispatchService` was removed in #2323; there is no separate synchronous dispatch endpoint or distributed lease for consolidation. The Job Controller dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). The job naming format `caa-cons-{12 hex chars}` is preserved for compatibility with any in-flight Jobs created before that change.
+Consolidation jobs are triggered via `ConsolidationService.TriggerAsync`, which creates a pending `WorkItem` through the standard `IWorkDistributor` path. The Scheduler's `WorkItemDispatchLoop` dispatches consolidation `WorkItem` rows in the lowest-priority tier (4th, after Review, Decomposition, and Implementation). Like every work item, a consolidation Job is named `caa-{8 hex chars}`.
 
 - **Deduplication:** Each consolidation work item has a fixed key `{type}:{scope}`. The scope is what the run works on: the brain (by brain provider ID) for brain consolidation, the template (and so its repository) for a refactoring scan, `global` for harness suggestions. A partial unique index on `(IssueIdentifier, IssueProviderConfigId)` for non-terminal WorkItem statuses ensures that a second trigger for the same key is rejected as already running.
 - **Timeout:** The job's timeout is the `AgentTimeout` its agent runs with: the current global value with the template's project override. Harness suggestions have no template and use the global value.
-- **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Job Controller fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
+- **Dispatch retries:** There are no dispatch retries for consolidation jobs. If the Scheduler's dispatch loop fails to dispatch a consolidation `WorkItem`, the item remains in `Pending` status and will be picked up on the next poll cycle.
 
 ### Consolidation Page
 
@@ -126,6 +127,8 @@ The page is reached through the "Consolidation" item in the sidebar navigation. 
 - Per-template cards with trigger buttons and last-run status
 - Global harness suggestions section
 - Run history table across all consolidation types
+
+A refactoring scan opens a dialog that shows the run parameters (max issues, hotspot lookback, adversarial review) and the auto-dispatch option before it starts.
 
 ### Retention
 

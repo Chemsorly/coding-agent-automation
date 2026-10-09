@@ -24,39 +24,43 @@ Parse → Filter → Cap → Consolidate → Submit
 flowchart TD
     A[PostReviewFindingsStep] --> B{SupportsInlineReviewComments?}
     B -->|Yes| C[DismissPreviousReviewAsync]
-    B -->|No| D[CollapseExistingReviews]
+    B -->|No| D[CollapseExistingReviewsAsync]
     C --> E[Format body via ReviewFindingsFormatter]
     D --> E
     E --> F{InlineComments.Enabled?}
     F -->|No| G[Submit body-only review]
-    F -->|Yes| H[FindingsParser.Parse per agent]
+    F -->|Yes| F2{SupportsInlineReviewComments?}
+    F2 -->|No| G2[Append Findings by Location, submit body-only review]
+    F2 -->|Yes| H[FindingsParser.Parse per agent]
     H --> I{Agent has markers but no file:line findings?}
     I -->|Yes| J[ExecuteFollowUpAsync retry up to MaxRetries]
     I -->|No| K[FindingsSelector.Select]
     J --> K
-    K --> L[Build ReviewSubmission with CommitId]
+    K --> K2[FilterCommentsToDiffHunksAsync]
+    K2 --> L[Build ReviewSubmission with CommitId]
     L --> M[SubmitPullRequestReviewAsync]
     M -->|Success| N[Track InlineCommentsPosted]
-    M -->|422 or Exception| O[Retry body-only]
-    O -->|Success| P[Track degradation]
+    M -->|422 or Exception| O[Mark InlineCommentsDegraded, retry body-only]
     O -->|Failure| Q[Log warning, return Continue]
 ```
 
 ### Steps
 
-1. **Dismiss/Collapse** — If the provider supports inline reviews, dismiss previous bot reviews via the Reviews API. Otherwise, collapse existing review comments.
+1. **Dismiss/Collapse** — If the provider supports inline reviews, dismiss (GitHub) or resolve (GitLab) the previous bot reviews. Otherwise, collapse existing review comments.
 2. **Format body** — Generate the summary body via `ReviewFindingsFormatter.Format`.
 3. **Check enabled** — If `InlineComments.Enabled` is `false`, submit body-only and return.
-4. **Parse** — Run `FindingsParser.Parse` on each agent's output to extract `StructuredFinding` entries.
-5. **Retry** — For agents that produced severity markers but no file:line references, invoke `ExecuteFollowUpAsync` up to `MaxRetries` times.
-6. **Select** — `FindingsSelector` applies: filter by `SeverityThreshold` → stable sort by severity → cap at `MaxInlineComments` → consolidate same file:line.
-7. **Submit** — Build a `ReviewSubmission` with the body, inline comments, and HEAD commit SHA.
-8. **Degrade** — On HTTP 422 or exception, retry once body-only. If that fails, log warning and return `StepResult.Continue`.
+4. **Provider without inline support** — Append the "Findings by Location" section to the body and submit it body-only; steps 5-10 are skipped.
+5. **Parse** — Run `FindingsParser.Parse` on each agent's output to extract `StructuredFinding` entries.
+6. **Retry** — For agents that produced severity markers but no file:line references, invoke `ExecuteFollowUpAsync` up to `MaxRetries` times.
+7. **Select** — `FindingsSelector` applies: filter by `SeverityThreshold` → stable sort by severity → cap at `MaxInlineComments` → consolidate same file:line.
+8. **Filter to the diff** — `FilterCommentsToDiffHunksAsync` reads `.agent/full-diff.txt` and keeps only the comments whose file and line lie inside a diff hunk (parsed by `DiffHunkParser`), because GitHub answers HTTP 422 for a line outside the diff. A dropped comment is not posted inline, and its finding stays in the per-agent sections of the review body. If the diff file is missing or cannot be parsed, all comments are submitted unfiltered. `InlineCommentsPosted` counts the comments that passed this filter.
+9. **Submit** — Build a `ReviewSubmission` with the body, inline comments, and HEAD commit SHA.
+10. **Degrade** — On HTTP 422 or exception, retry once body-only. If that fails, log warning and return `StepResult.Continue`.
 
 ## Per-Agent Retry
 
 - Retries are per-agent, not global
-- Each retry invokes `ExecuteFollowUpAsync` — fresh LLM call with original output + reformat instructions
+- Each retry invokes `ExecuteFollowUpAsync` — a fresh LLM call (no session resume) with the agent's output and the reformat instructions. The first retry gets the original output; a later retry gets the reply of the previous retry. The output is cut to 8000 characters in the prompt.
 - Counter capped at `MaxRetries` (default: 1)
 - Retries are sequential
 
@@ -92,7 +96,8 @@ When `false` but findings have location metadata, a "📍 Findings by Location" 
 
 ## Stale Review Handling
 
-- **GitHub (inline-capable)**: `DismissPreviousReviewAsync` dismisses all previous bot reviews with `<!-- agent:pr-review -->` marker.
+- **GitHub (inline-capable)**: `DismissPreviousReviewAsync` dismisses the previous reviews that carry the `<!-- agent:pr-review -->` marker and are in the Changes requested or Approved state. GitHub cannot dismiss a review that was submitted as a plain comment, so those stay.
+- **GitLab (inline-capable)**: the same method resolves every discussion thread that contains the marker.
 - **Non-inline providers**: Collapses previous reviews in `<details>` blocks with `<!-- agent:pr-review-superseded -->` marker.
 
 ## InlineCommentSettings
@@ -111,4 +116,4 @@ When `false` but findings have location metadata, a "📍 Findings by Location" 
 }
 ```
 
-Existing config files without `InlineComments` key deserialize to defaults (`Enabled = true`). Ranges validated at usage time via `Math.Clamp`.
+Existing config files without `InlineComments` key deserialize to defaults (`Enabled = true`). Ranges are `[Range]` attributes (`MaxInlineComments` 1-50, `MaxRetries` 0-5), checked when settings are saved; usage also clamps with `Math.Clamp`.

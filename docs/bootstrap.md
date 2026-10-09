@@ -10,8 +10,12 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
    ```bash
    helm install coding-agent ./helm/coding-agent-automation \
      --set database.host=postgres.coding-agent.svc.cluster.local \
-     --set database.auth.existingSecret=postgres-secret
+     --set database.auth.existingSecret=postgres-secret \
+     --set signalr.redis.connectionString=<redis-host>:6379 \
+     --set scheduler.image.tag=coding-agent-scheduler-<version>
    ```
+
+   Without Redis, set `api.replicas=1` and `web.replicas=1` instead of `signalr.redis.connectionString`.
 
    > **`secrets.agentApiKey` is optional.** When omitted, the chart auto-generates a cryptographically secure key on first install via a pre-install hook Job and stores it in the chart-managed Secret. The generated key is preserved across upgrades (the hook is a no-op when the Secret already exists). To use your own key, add `--set secrets.agentApiKey="$(openssl rand -hex 32)"`.
    >
@@ -30,8 +34,6 @@ How to set up a fresh Kubernetes deployment or migrate configuration from an exi
    - Go to **Pipelines** and configure: Pipeline Job Templates (use the **+ Add** button)
 
 5. Create a pipeline job template and start a run, or enable closed-loop mode to process `agent:next` issues automatically.
-
-> After upgrading from Spec 041 to a later release, start the pipeline loop manually from the web UI on first boot. Closed-loop auto-start is restored in Spec 045.
 
 ---
 

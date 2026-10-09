@@ -4,36 +4,30 @@ Internal reference for project system implementation specifics.
 
 ## Migration Behavior
 
-On first startup (or upgrade from a pre-projects version), the API startup seed step creates the Default project row if absent and calls `ClaimOrphanedTemplatesAsync` to reparent any orphaned templates:
+On every startup, the API startup seed step creates the Default project row if absent and calls `ClaimOrphanedTemplatesAsync` to reparent any orphaned templates:
 
 ```mermaid
 flowchart TD
     A[Startup] --> B{Default project exists?}
-    B -->|Yes| C[Load projects normally]
-    B -->|No| D[Create Default project]
-    D --> E[Assign all existing templates to Default]
-    E --> F[Persist Default project]
-    F --> C
+    B -->|No| D[Insert Default project row]
+    B -->|Yes| C[Keep it]
+    D --> E[Seed default reviewer configurations if the table is empty]
+    C --> E
+    E --> F[Move templates whose project row is missing to Default]
 ```
 
-The migration is idempotent — running it multiple times produces the same result. In DB mode, templates are stored in the PostgreSQL database; in legacy file-based mode, they were stored in `config/pipeline/` JSON files (historical only — file-based mode is no longer supported).
+The migration is idempotent — running it multiple times produces the same result.
 
 ## Membership
 
 Each template row (`PipelineJobTemplates.ProjectId`) records its project, and that is the only record of membership. `PipelineProject.TemplateIds` is filled from it when projects are loaded, ordered by `TemplateOrder` (name ignoring case, then exact name, then ID), and ignored when a project is saved. Moving a template changes one row.
-
-Until the `RemoveProjectTemplateIds` migration, the project row also stored an ordered `TemplateIds` list, and the Settings JSON a copy of it. The loop and the UI followed the list, so the migration kept what the loop did:
-
-- a template no project listed was never polled, so it is disabled, and shows up again;
-- a template a project listed moves to that project (a project other than Default first, then the first by name);
-- a template whose project no longer exists moves to the Default project.
 
 ## Pipeline Loop Integration
 
 The pipeline loop iterates projects instead of reading templates directly from the global config:
 
 ```
-foreach project in enabled projects (ordered alphabetically by name):
+foreach project in enabled projects (ordered by name, ordinal comparison):
     foreach template in project.TemplateIds (ordered by name):
         if template.Enabled:
             apply project settings overrides
@@ -54,14 +48,13 @@ Pipeline runs carry project metadata for filtering:
 | `ProjectName` | `PipelineRun.ProjectName` | Human-readable name |
 | OpenTelemetry tag | `pipeline.project_id` | On all trace spans |
 | OpenTelemetry tag | `pipeline.project_name` | On all trace spans |
-| Metric dimension | `pipeline.project_id` | On token/cost counters |
-| Metric dimension | `pipeline.project_name` | On token/cost counters |
+| Metric dimension | `pipeline.project_name` | On `pipeline.run.outcomes` only. The token and cost counters (`pipeline.run.tokens`, `pipeline.run.cost_usd`) are tagged by `run_type`, `phase` and `provider`, and no metric has `pipeline.project_id` |
 
 ## Data Flow (Mono-Repo)
 
 ```mermaid
 flowchart LR
-    Global[Global Config DB/JSON] --> Resolve[Settings Resolution]
+    Global[Global config, PipelineConfig table] --> Resolve[Settings Resolution]
     Project[Project overrides] --> Resolve
     Resolve --> Run[PipelineRun with merged settings]
 ```
