@@ -554,6 +554,10 @@ public sealed class DistributedAgentRegistryServiceTests
         entry.Should().NotBeNull();
         entry!.ActiveJobId.Should().Be("run-99",
             "UpdateAgentFieldAsync with an unknown field must not corrupt existing snapshot fields via the _ => current fallback arm");
+
+        // Assert: the unknown field must not have been written to the Redis hash.
+        _store.GetHash("agent:agent-1")!.Should().NotContainKey("nonExistentField",
+            "unknown field names must be rejected before reaching Redis (rule 6)");
     }
 
     [Fact]
