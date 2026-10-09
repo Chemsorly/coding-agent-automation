@@ -27,7 +27,7 @@ public sealed class DependencyChecker : IDependencyChecker
         Dictionary<int, bool> stateCache,
         CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(issueProvider);
         ArgumentNullException.ThrowIfNull(stateCache);
 
@@ -66,7 +66,7 @@ public sealed class DependencyChecker : IDependencyChecker
         DependencyRoutingContext routing,
         CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)); // NOSONAR S3236 — names the parameter, not the .Value expression
         ArgumentNullException.ThrowIfNull(routing);
         var defaultProvider = routing.DefaultProvider;
         var defaultProviderId = routing.DefaultProviderId;
