@@ -424,9 +424,8 @@
     {
         OperationCanceledException when _cts?.IsCancellationRequested == true => "Launch cancelled.",
         NoPvcAvailableException => "No agent credentials available. Try again later.",
-        ChatPodTimeoutException tEx => $"Pod did not connect within {tEx.TimeoutSeconds}s. Check cluster logs.",
-        InvalidOperationException iEx when iEx.Message.Contains("not the leader")
-            => "The server is currently unavailable for chat dispatch. Please try again.",
+        ChatPodTimeoutException tEx when tEx.TimeoutSeconds > 0 => $"Pod did not connect within {tEx.TimeoutSeconds}s. Check cluster logs.",
+        ChatPodTimeoutException => "Pod did not connect in time. Check cluster logs.",
         _ => null // caller logs unexpected
     };
 
