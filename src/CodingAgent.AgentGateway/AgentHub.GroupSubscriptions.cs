@@ -75,7 +75,11 @@ public sealed partial class AgentHub
         var activeRun = _facade.GetRun(new Pipeline.Models.JobId(jobId));
         if (activeRun is not null)
         {
-            var snapshot = BuildRunStateSnapshot(activeRun);
+            // Fetch chat history from the run service (cross-replica in distributed mode).
+            // Called inside this block so it is gated by the ownership check above and
+            // only executes when the run is confirmed active.
+            var chatHistory = await _facade.GetChatHistoryAsync(new Pipeline.Models.JobId(jobId));
+            var snapshot = BuildRunStateSnapshot(activeRun, chatHistory);
             await _uiContext.Clients.Client(Context.ConnectionId)
                 .SendAsync(HubMethodNames.OnRunStateSnapshot, jobId, snapshot);
             _logger.Debug("Pushed RunStateSnapshot to new subscriber for run-{JobId} at step {Step}",
@@ -98,7 +102,7 @@ public sealed partial class AgentHub
     /// <summary>
     /// Builds a <see cref="RunStateSnapshot"/> from the current state of an active <see cref="PipelineRun"/>.
     /// </summary>
-    private static RunStateSnapshot BuildRunStateSnapshot(PipelineRun run) => new()
+    private static RunStateSnapshot BuildRunStateSnapshot(PipelineRun run, IReadOnlyList<ChatEntry> chatHistory) => new()
     {
         CurrentStep = run.CurrentStep,
         HighWaterMark = run.HighWaterMark,
@@ -141,6 +145,6 @@ public sealed partial class AgentHub
         IssueTitle = run.IssueTitle,
         StartedAtOffset = run.StartedAtOffset,
         BrainProviderConfigId = run.BrainProviderConfigId,
-        ChatHistory = run.ChatHistory.ToArray(),
+        ChatHistory = chatHistory,
     };
 }
