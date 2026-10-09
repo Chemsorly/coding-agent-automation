@@ -1,30 +1,22 @@
 using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
-using CodingAgent.Pipeline.Services;
 
 namespace CodingAgent.Scheduler.Services;
 
 /// <summary>
-/// Read-only <see cref="IOrchestratorRunService"/> adapter for the Scheduler.
+/// Read-only <see cref="IRunActivityQuery"/> adapter for the Scheduler.
 /// Implements only the methods called by <see cref="HousekeepingService"/> and
-/// <see cref="OrphanedLabelRecoveryService"/> — all write methods throw <see cref="NotSupportedException"/>.
+/// <see cref="OrphanedLabelRecoveryService"/>.
 ///
 /// <b>Known limitations (Spec 047 deferred items):</b>
 /// <list type="bullet">
-///   <item><description>
-///     <see cref="GetActiveRuns"/> always returns empty. Active run state lives in the API/orchestrator
-///     process's in-memory collection. Use <see cref="GetActiveRunBranchesAsync"/> instead —
-///     it calls <c>GET /api/pipeline-runs/active-branches</c> and returns accurate branch names
-///     for the housekeeping branch-update guard.
-///   </description></item>
 ///   <item><description>
 ///     <see cref="IsIssueBeingProcessed"/> always returns false because in-memory run state is
 ///     unavailable in the Scheduler process.
 ///     <see cref="OrphanedLabelRecoveryService"/> uses Defense 3 (<see cref="IPipelineApiWorkItemClient.IsIssueDistributedAsync"/>)
 ///     as its primary active-run exclusion check, with Defense 1 (re-fetch current labels from GitHub)
-///     as the terminal-label guard. Defense 2 (recently-completed in-memory cache) is inoperative here
-///     since <c>MarkRecentlyCompleted</c> is only called by <c>RunLifecycleManager</c> in the API process.
+///     as the terminal-label guard.
 ///   </description></item>
 ///   <item><description>
 ///     <see cref="WasRecentlyCompleted"/> and <see cref="MarkRecentlyCompleted"/> use an
@@ -34,7 +26,7 @@ namespace CodingAgent.Scheduler.Services;
 ///   </description></item>
 /// </list>
 /// </summary>
-public sealed class SchedulerRunQueryService : IOrchestratorRunService
+public sealed class SchedulerRunQueryService : IRunActivityQuery
 {
     private readonly IPipelineApiRunHistoryClient _runHistoryClient;
 
@@ -61,25 +53,18 @@ public sealed class SchedulerRunQueryService : IOrchestratorRunService
     // ── Read methods used by HousekeepingService and OrphanedLabelRecoveryService ──
 
     /// <summary>
-    /// Always returns empty — in-memory run state is unavailable in the Scheduler process.
-    /// Use <see cref="GetActiveRunBranchesAsync"/> to obtain active branch names via the API.
-    /// </summary>
-    public IReadOnlyList<PipelineRun> GetActiveRuns() => [];
-
-    public bool HasActiveRuns => false; // GetActiveRuns() is always empty
-
-    public int ActiveRunCount => 0; // GetActiveRuns() is always empty
-
-    public PipelineRun? GetRun(RunId runId) => null;
-
-    /// <summary>
-    /// Always returns false because <see cref="GetActiveRuns"/> returns empty.
+    /// Always returns false because in-memory run state is unavailable in the Scheduler process.
     /// OrphanedLabelRecoveryService uses Defense 3 (IsIssueDistributedAsync API call)
-    /// as its primary active-run guard; this method is only reached when that check is
-    /// bypassed (e.g., in tests that mock the work-item client).
+    /// as its primary active-run guard.
     /// </summary>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <paramref name="issueIdentifier"/>.Value is null or empty.
+    /// </exception>
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
-        => false;
+    {
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
+        return false;
+    }
 
     public bool WasRecentlyCompleted(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
@@ -107,30 +92,12 @@ public sealed class SchedulerRunQueryService : IOrchestratorRunService
     /// <summary>
     /// Calls <c>GET /api/pipeline-runs/active-branches</c> to retrieve branch names of all
     /// active pipeline runs from the orchestrator process.
-    /// Overrides the default interface implementation so the housekeeping branch-update guard
-    /// works correctly in the Scheduler deployment — the in-memory <see cref="GetActiveRuns"/>
-    /// is always empty here, but the API returns the live set.
+    /// Overrides the in-memory <c>GetActiveRuns</c>-based approach so the housekeeping
+    /// branch-update guard works correctly in the Scheduler deployment.
     /// </summary>
     public async Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
     {
         var branches = await _runHistoryClient.GetActiveBranchesAsync(ct);
         return branches.ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
-
-    // ── Write methods — not used by Scheduler ──
-
-    public OutputRingBuffer GetOutputBuffer(RunId runId)
-        => throw new NotSupportedException("SchedulerRunQueryService does not support output buffers.");
-
-    public void AppendOutputLines(RunId runId, IReadOnlyList<string> lines)
-        => throw new NotSupportedException("SchedulerRunQueryService does not support output writes.");
-
-    public void AddRun(PipelineRun run)
-        => throw new NotSupportedException("SchedulerRunQueryService is read-only.");
-
-    public PipelineRun? RemoveRun(RunId runId)
-        => throw new NotSupportedException("SchedulerRunQueryService is read-only.");
-
-    public void ReplaceRun(PipelineRun run)
-        => throw new NotSupportedException("SchedulerRunQueryService is read-only.");
 }

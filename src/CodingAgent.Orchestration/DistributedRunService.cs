@@ -246,7 +246,23 @@ return hash
     public void ReplaceRun(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
-        _store.HashSetAsync(RunKey(run.RunId), run.ToHashEntries()).GetAwaiter().GetResult(); // Safe: ThreadPool
+        ReplaceRunAsync(run).GetAwaiter().GetResult(); // Safe: ThreadPool
+    }
+
+    private async Task ReplaceRunAsync(PipelineRun run)
+    {
+        // TODO: TOCTOU race — SetMembersAsync (O(N) SMEMBERS scan) and the subsequent HashSetAsync
+        // are not atomic. A concurrent RemoveRun (Lua SREM+EXPIREAT) can remove the RunId from the
+        // active set between these two calls, causing HashSetAsync to write a hash for an inactive run
+        // and potentially resurrect it without a TTL. Fixing this properly requires an atomic Lua
+        // check-and-set script. Out of scope per issue #3450; leave for a follow-up.
+        var members = await _store.SetMembersAsync(ActiveSetKey);
+        if (!members.Contains(run.RunId))
+        {
+            _logger.Warning("ReplaceRun: run {RunId} is not in the active set — ignoring (run may have been removed)", run.RunId);
+            return;
+        }
+        await _store.HashSetAsync(RunKey(run.RunId), run.ToHashEntries());
         _logger.Debug("Active run replaced: {RunId} for issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
     }
 
@@ -273,29 +289,26 @@ return hash
         await _store.ListTrimAsync(OutputKey(runId), -500, -1); // Keep last 500
     }
 
-    // ── GetOutputBuffer ───────────────────────────────────────────────
+    // ── GetOutputBacklogAsync ─────────────────────────────────────────
 
     /// <inheritdoc />
-    /// Returns an <see cref="OutputRingBuffer"/> pre-populated from the Redis output list.
-    /// Any lines already in Redis are loaded into the buffer so callers that read
-    /// <see cref="OutputRingBuffer.GetAll()"/> — in particular <c>SubscribeToRun</c> backlog
-    /// delivery — receive the full history rather than an empty buffer.
-    public OutputRingBuffer GetOutputBuffer(RunId runId)
+    /// Returns the full output backlog for a run from Redis (for SubscribeToRun cross-replica serving).
+    public Task<IReadOnlyList<string>> GetOutputBacklogAsync(RunId runId, CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
-        var buffer = new OutputRingBuffer();
-        // Synchronously load existing lines from Redis (Safe: ThreadPool context only).
-        var lines = _store.ListRangeAsync(OutputKey(runId.Value), 0, -1).GetAwaiter().GetResult();
-        foreach (var line in lines)
-            buffer.Add(line);
-        return buffer;
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value, nameof(runId));
+        ct.ThrowIfCancellationRequested();
+        return GetOutputBacklogInternalAsync(runId.Value, ct);
     }
 
-    /// <summary>
-    /// Returns the full output backlog for a run from Redis (for SubscribeToRun cross-replica serving).
-    /// </summary>
-    public Task<string[]> GetOutputBacklogAsync(string runId)
-        => _store.ListRangeAsync(OutputKey(runId), 0, -1);
+    private async Task<IReadOnlyList<string>> GetOutputBacklogInternalAsync(string runId, CancellationToken ct)
+    {
+        // TODO: ct is not forwarded to _store.ListRangeAsync because IRedisStore.ListRangeAsync has
+        // no CancellationToken overload. The entry-point guard (ct.ThrowIfCancellationRequested)
+        // catches pre-cancelled tokens, but a cancellation that arrives after the Redis round-trip
+        // starts cannot interrupt it. Add a ct overload to IRedisStore when available.
+        var lines = await _store.ListRangeAsync(OutputKey(runId), 0, -1);
+        return lines;
+    }
 
     // ── IsIssueBeingProcessed ─────────────────────────────────────────
 
@@ -305,6 +318,7 @@ return hash
     /// is the authoritative source. See Spec 046 Req 4.12.
     public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier));
         try
         {
             return _isIssueDistributedAsync(
@@ -317,6 +331,18 @@ return hash
             _logger.Warning(ex, "DistributedRunService.IsIssueBeingProcessed: check failed — returning false (conservative)");
             return false;
         }
+    }
+
+    // ── GetActiveRunBranchesAsync ─────────────────────────────────────
+
+    /// <inheritdoc />
+    public async Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
+    {
+        var runs = await GetActiveRunsAsync();
+        return runs
+            .Where(r => r.BranchName != null)
+            .Select(r => r.BranchName!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
     // ── Recently-completed anti-race ──────────────────────────────────

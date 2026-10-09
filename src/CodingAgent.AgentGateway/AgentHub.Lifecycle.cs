@@ -121,10 +121,7 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(lines);
 
         // Write to ring buffer (in-memory) and/or Redis List (distributed).
-        // GetOutputBuffer ensures the buffer exists; AddRange writes the lines.
-        // AppendOutputLines handles distributed (Redis) persistence when configured.
-        var buffer = _facade.GetOutputBuffer(jobId);
-        buffer.AddRange(lines);
+        // AppendOutputLines handles all persistence paths.
         _facade.AppendOutputLines(jobId, lines);
 
         var run = _facade.GetRun(jobId);
