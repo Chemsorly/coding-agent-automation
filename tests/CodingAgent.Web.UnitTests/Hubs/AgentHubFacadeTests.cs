@@ -160,10 +160,26 @@ public sealed class AgentHubFacadeTests
     }
 
     [Fact]
-    public void GetOutputBuffer_DelegatesToRunService()
+    public async Task GetOutputBacklogAsync_ReturnsLinesAppendedToRunService()
     {
-        var buffer = _facade.GetOutputBuffer("job-1");
-        buffer.Should().NotBeNull();
+        // Arrange: add a run and append lines via the run service (in-memory path)
+        var run = new PipelineRun
+        {
+            RunId = "job-backlog-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp"
+        };
+        _facade.AddRun(run);
+        _facade.AppendOutputLines("job-backlog-1", ["line-a", "line-b"]);
+
+        // Act: read through the facade
+        var backlog = await _facade.GetOutputBacklogAsync("job-backlog-1");
+
+        // Assert
+        backlog.Should().ContainInOrder("line-a", "line-b");
+        backlog.Should().HaveCount(2, "GetOutputBacklogAsync must return lines written via AppendOutputLines");
     }
 
     [Fact]
