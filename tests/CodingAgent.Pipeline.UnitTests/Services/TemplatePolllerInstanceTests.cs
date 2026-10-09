@@ -11,6 +11,8 @@ namespace CodingAgent.Pipeline.UnitTests.Services;
 /// Tests for <see cref="TemplatePoller"/> instance methods:
 /// <see cref="TemplatePoller.AddProjectEpicsAsync"/> and the private
 /// AddSingleProjectEpicsAsync, exercised by pre-populating the ProviderCacheManager.
+/// Also covers the Phase 1 and Phase 2 eligibility filters of the private static FetchEpicIssuesAsync,
+/// which AddSingleProjectEpicsAsync calls.
 /// </summary>
 public class TemplatePolllerInstanceTests
 {
@@ -80,6 +82,19 @@ public class TemplatePolllerInstanceTests
         mockProvider
             .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.EpicApproved)), It.IsAny<CancellationToken>()))
             .ReturnsAsync(EmptyPage());
+        return mockProvider;
+    }
+
+    /// <summary>An epic provider whose agent:epic list is empty and whose agent:epic-approved list returns <paramref name="approved"/>.</summary>
+    private static Mock<IIssueProvider> ApprovedEpicProvider(params IssueSummary[] approved)
+    {
+        var mockProvider = new Mock<IIssueProvider>();
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.Epic)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(EmptyPage());
+        mockProvider
+            .Setup(p => p.ListOpenIssuesAsync(1, It.IsAny<int>(), It.Is<string[]>(l => l.Contains(AgentLabels.EpicApproved)), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SinglePage(approved));
         return mockProvider;
     }
 
@@ -220,6 +235,64 @@ public class TemplatePolllerInstanceTests
             [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
 
         queues["t1"].Should().ContainSingle();
+        queues["t1"][0].Phase.Should().Be(PipelineRunType.Decomposition);
+    }
+
+    // ── AddProjectEpicsAsync — eligibility filters of FetchEpicIssuesAsync ──
+    // Expected rules: docs/internals/decomposition-implementation.md, "Eligibility Filters".
+
+    /// <summary>
+    /// Phase 1: an agent:epic issue that also carries agent:epic-review (its plan awaits human approval),
+    /// agent:in-progress, agent:error or agent:done is not queued, while a clean epic next to it is.
+    /// </summary>
+    [Theory]
+    [InlineData(AgentLabels.EpicReview)]
+    [InlineData(AgentLabels.InProgress)]
+    [InlineData(AgentLabels.Error)]
+    [InlineData(AgentLabels.Done)]
+    public async Task AddProjectEpicsAsync_Phase1EpicWithExclusionLabel_IsNotQueued(string exclusionLabel)
+    {
+        var mockProvider = EpicProvider(
+            MakeIssue("epic-clean", [AgentLabels.Epic]),
+            MakeIssue("epic-excluded", [AgentLabels.Epic, exclusionLabel]));
+        var template = MakeTemplate("t1");
+        var project = MakeProject("p1", "ep-1", [template.Id]);
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1");
+
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
+
+        queues["t1"].Should().ContainSingle(
+            "an agent:epic issue that also carries {0} must not be queued for decomposition analysis", exclusionLabel);
+        queues["t1"][0].Issue.Identifier.Should().Be("epic-clean");
+        queues["t1"][0].Phase.Should().Be(PipelineRunType.DecompositionAnalysis);
+    }
+
+    /// <summary>
+    /// Phase 2: an agent:epic-approved issue that also carries agent:in-progress, agent:error or
+    /// agent:done is not queued, while a clean approved epic next to it is.
+    /// </summary>
+    [Theory]
+    [InlineData(AgentLabels.InProgress)]
+    [InlineData(AgentLabels.Error)]
+    [InlineData(AgentLabels.Done)]
+    public async Task AddProjectEpicsAsync_Phase2ApprovedEpicWithExclusionLabel_IsNotQueued(string exclusionLabel)
+    {
+        var mockProvider = ApprovedEpicProvider(
+            MakeIssue("approved-clean", [AgentLabels.EpicApproved]),
+            MakeIssue("approved-excluded", [AgentLabels.EpicApproved, exclusionLabel]));
+        var template = MakeTemplate("t1");
+        var project = MakeProject("p1", "ep-1", [template.Id]);
+        var poller = CreatePoller(issueProviders: new() { ["ep-1"] = mockProvider.Object });
+        var queues = PolledQueues("t1");
+
+        await poller.AddProjectEpicsAsync(
+            [project], new Dictionary<string, PipelineJobTemplate> { [template.Id] = template }, 3, queues, CancellationToken.None);
+
+        queues["t1"].Should().ContainSingle(
+            "an agent:epic-approved issue that also carries {0} must not be queued for decomposition", exclusionLabel);
+        queues["t1"][0].Issue.Identifier.Should().Be("approved-clean");
         queues["t1"][0].Phase.Should().Be(PipelineRunType.Decomposition);
     }
 
