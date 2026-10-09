@@ -1404,7 +1404,8 @@ public class ChatJobDispatcherTests
         var thread = new Thread(() =>
         {
             do { sendHeartbeat(); } while (!stop.Wait(TimeSpan.FromMilliseconds(200)));
-        }) { IsBackground = true, Name = "test-heartbeats" };
+        })
+        { IsBackground = true, Name = "test-heartbeats" };
         thread.Start();
         return () =>
         {
