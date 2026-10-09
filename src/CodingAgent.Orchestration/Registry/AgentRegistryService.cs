@@ -83,45 +83,33 @@ public sealed class AgentRegistryService : IAgentRegistryService
                     if (!preserveExistingConnectionId)
                         _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
 
-                    // Note: Labels are intentionally not refreshed on re-registration.
-                    // The stored array is immutable (defensive copy from add-factory), so this
-                    // is not a thread-safety concern. However, GetAgentsByLabel routing will
-                    // observe the original label set after reconnection. If label refresh on
-                    // reconnect is needed, assign message.Labels?.ToArray() ?? Array.Empty<string>()
-                    // to existing.Labels inside this lock block.
+                    // Rule 1: replace labels on every re-registration (defensive copy so the
+                    // stored array is never aliased to the caller's mutable list). Reference store
+                    // is atomic on 64-bit .NET so lock-free readers of Labels always see either
+                    // the old or the new array — never a torn reference.
+                    existing.Labels = message.Labels?.ToArray() ?? Array.Empty<string>();
 
                     existing.ConnectionId = connectionId;
                     existing.LastHeartbeatAt = now;
                     existing.DisconnectedAt = null;
 
-                    if (existing.Status == AgentStatus.Disconnected)
+                    // Rule 2: status is Busy when ActiveJobId is set, Idle otherwise —
+                    // regardless of the previous status (aligns with DistributedAgentRegistryService).
+                    var previousStatus = existing.Status;
+                    if (existing.ActiveJobId is not null)
                     {
-                        if (existing.ActiveJobId is not null)
-                        {
-                            // Agent reconnected with active job — restore to Busy (REQ-3.6)
-                            existing.Status = AgentStatus.Busy;
-                            // TODO: Add test coverage for BusySince being set during re-registration with active job.
-                            // Without this, a reconnecting agent could be spuriously reset by a concurrent status sweep.
-                            existing.BusySince = DateTimeOffset.UtcNow;
-                            _logger.Information(
-                                "Agent {AgentId} re-registered after disconnect with active job {JobId}, status restored to Busy",
-                                message.AgentId, existing.ActiveJobId);
-                        }
-                        else
-                        {
-                            existing.Status = AgentStatus.Idle;
-                            _logger.Information(
-                                "Agent {AgentId} re-registered after disconnect, status reset to Idle",
-                                message.AgentId);
-                        }
-                        existing.DisconnectedAt = null;
+                        existing.Status = AgentStatus.Busy;
+                        existing.BusySince ??= DateTimeOffset.UtcNow;
                     }
                     else
                     {
-                        _logger.Information(
-                            "Agent {AgentId} re-registered (connection={ConnectionId})",
-                            message.AgentId, connectionId);
+                        existing.Status = AgentStatus.Idle;
+                        existing.BusySince = null;
                     }
+
+                    _logger.Information(
+                        "Agent {AgentId} re-registered after {PreviousStatus} (connection={ConnectionId}, activeJob={JobId})",
+                        message.AgentId, previousStatus, connectionId, existing.ActiveJobId ?? "none");
                 }
 
                 return existing;
@@ -338,11 +326,65 @@ public sealed class AgentRegistryService : IAgentRegistryService
         {
             switch (field)
             {
-                case AgentFieldNames.ActiveJobId: entry.ActiveJobId = value; break;
-                case AgentFieldNames.OrphanRestoredAt: entry.OrphanRestoredAt = value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture); break;
-                case AgentFieldNames.ActiveChatSessionId: entry.ActiveChatSessionId = value; break;
-                case AgentFieldNames.LastJobCompletedAt: entry.LastJobCompletedAt = value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture); break;
-                case AgentFieldNames.Disabled: entry.Disabled = value is not null && bool.Parse(value); break;
+                case AgentFieldNames.ActiveJobId:
+                    entry.ActiveJobId = string.IsNullOrEmpty(value) ? null : value;
+                    break;
+
+                case AgentFieldNames.ActiveChatSessionId:
+                    entry.ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value;
+                    break;
+
+                case AgentFieldNames.OrphanRestoredAt:
+                    if (string.IsNullOrEmpty(value))
+                    {
+                        entry.OrphanRestoredAt = null;
+                    }
+                    else if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ora))
+                    {
+                        entry.OrphanRestoredAt = ora;
+                    }
+                    else
+                    {
+                        _logger.Warning(
+                            "UpdateAgentFieldAsync: malformed orphanRestoredAt value '{Value}' for agent {AgentId} — ignoring",
+                            value, agentId);
+                    }
+                    break;
+
+                case AgentFieldNames.LastJobCompletedAt:
+                    if (string.IsNullOrEmpty(value))
+                    {
+                        entry.LastJobCompletedAt = null;
+                    }
+                    else if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var ljc))
+                    {
+                        entry.LastJobCompletedAt = ljc;
+                    }
+                    else
+                    {
+                        _logger.Warning(
+                            "UpdateAgentFieldAsync: malformed lastJobCompletedAt value '{Value}' for agent {AgentId} — ignoring",
+                            value, agentId);
+                    }
+                    break;
+
+                case AgentFieldNames.Disabled:
+                    if (string.IsNullOrEmpty(value))
+                    {
+                        entry.Disabled = false;
+                    }
+                    else if (bool.TryParse(value, out var d))
+                    {
+                        entry.Disabled = d;
+                    }
+                    else
+                    {
+                        _logger.Warning(
+                            "UpdateAgentFieldAsync: malformed disabled value '{Value}' for agent {AgentId} — ignoring",
+                            value, agentId);
+                    }
+                    break;
+
                 default:
                     _logger.Warning("UpdateAgentFieldAsync: unknown field '{Field}' for agent {AgentId}", field, agentId);
                     break;
