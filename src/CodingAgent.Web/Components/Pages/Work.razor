@@ -304,23 +304,9 @@
                                     </td>
                                     <td>
                                         @{
-                                            var (readinessText, readinessStyle) = GetReadinessDisplay(b);
-                                            var isActive = IsWorkItemActive(b);
-                                            var effectiveIsReady = b.IsReady && !isActive;
-                                            // TODO: [WARNING] When isActive==true the text is forced to "Running" below,
-                                            //   but finalStyle retains the label's style (e.g. "error" for agent:error,
-                                            //   "warning" for agent:needs-refinement). The chip therefore reads "Running"
-                                            //   but is painted with the error/warning colour — a cosmetic mismatch.
-                                            //   Consider setting finalStyle = "accent" when isActive so the chip colour
-                                            //   matches the "Running" text.
-                                            var finalStyle = effectiveIsReady ? "success" : readinessStyle;
-                                            string finalText;
-                                            if (effectiveIsReady)
-                                                finalText = readinessText;
-                                            else if (isActive)
-                                                finalText = "Running";
-                                            else
-                                                finalText = readinessText;
+                                            var workItemDisplay = GetWorkItemDisplay(b);
+                                            var effectiveIsReady = b.IsReady && workItemDisplay is null;
+                                            var (finalText, finalStyle) = workItemDisplay ?? GetReadinessDisplay(b);
                                         }
                                         @if (effectiveIsReady)
                                         {
@@ -546,8 +532,18 @@
     //   IssueProviderConfigId to BacklogIssue (it is available on PendingWorkItemDto and could be
     //   surfaced on ActiveWorkItemDto) to restore the precise (IssueIdentifier, ProviderConfigId) match.
     private bool IsWorkItemActive(BacklogIssue b)
-        => _active.Any(a => a.IssueIdentifier == b.Identifier)
-        || _pending.Any(p => p.IssueIdentifier == b.Identifier);
+        => GetWorkItemDisplay(b) is not null;
+
+    /// <summary>
+    /// Chip for a backlog issue that already has a WorkItem: "Running" when it is Dispatched or Running
+    /// (<c>_active</c>), "Queued" when it is Pending (<c>_pending</c>); null when it has no WorkItem.
+    /// </summary>
+    private (string Text, string StyleClass)? GetWorkItemDisplay(BacklogIssue b)
+    {
+        if (_active.Any(a => a.IssueIdentifier == b.Identifier)) return ("Running", "accent");
+        if (_pending.Any(p => p.IssueIdentifier == b.Identifier)) return ("Queued", "accent");
+        return null;
+    }
 
     /// <summary>
     /// Returns the display text and CSS style class for a backlog issue's readiness chip.
