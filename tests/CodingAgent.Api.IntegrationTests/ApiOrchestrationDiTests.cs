@@ -40,6 +40,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
 {
     private readonly string _dbName = $"ApiOrchestrationDi-{Guid.NewGuid():N}";
     private ServiceProvider? _provider;
+    private ServiceProvider? _redisProvider;
 
     public async Task InitializeAsync()
     {
@@ -61,6 +62,18 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
                 // internal CancellationTokenSource. If the dispatcher was never started
                 // (StartAsync never called), the CTS may already be in an unexpected state.
                 // The test body assertions already ran successfully — suppress the noise here.
+            }
+        }
+
+        if (_redisProvider is not null)
+        {
+            try
+            {
+                await _redisProvider.DisposeAsync();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Same rationale as _provider above.
             }
         }
     }
@@ -86,14 +99,6 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         // type (e.g. IOrchestratorRunService resolves to OrchestratorRunService without Redis,
         // DistributedRunService with Redis), add .Should().BeOfType<OrchestratorRunService>()
         // to actually validate the correct branch was taken.
-        // See review finding [WARNING] ApiOrchestrationDiTests.cs:86 (TestQualityReviewer review).
-
-        // TODO [WARNING]: This test validates only the no-Redis path (BuildProvider registers no
-        // IConnectionMultiplexer). The Redis path — where ResolveRedisStoreOrNull returns a
-        // non-null store and IOrchestratorRunService resolves to DistributedRunService — is never
-        // exercised. Acceptance criterion 3 ("services resolvable unchanged") should be verified
-        // for both wiring variants. Add a parallel test with a mocked IConnectionMultiplexer to
-        // cover the distributed-service registration branch.
         // See review finding [WARNING] ApiOrchestrationDiTests.cs:86 (TestQualityReviewer review).
 
         // Core orchestration
@@ -254,6 +259,70 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         result.Should().BeNull("without a registered IConnectionMultiplexer the fallback path returns null");
     }
 
+    // ── Redis / no-Redis branch selection ────────────────────────────────────────
+
+    [Fact]
+    public void AddApiOrchestration_WithoutRedis_ResolvesInMemoryRunService()
+    {
+        var sp = _provider!;
+        var runService = sp.GetRequiredService<IOrchestratorRunService>();
+
+        runService.Should().BeOfType<OrchestratorRunService>(
+            "without an IConnectionMultiplexer the in-memory run service must be used");
+        runService.Should().BeSameAs(sp.GetRequiredService<OrchestratorRunService>(),
+            "the interface must forward to the registered OrchestratorRunService singleton");
+    }
+
+    // TODO [WARNING]: _redisProvider is assigned inside a synchronous [Fact]. If BuildProvider
+    // throws, _redisProvider stays null and DisposeAsync silently skips cleanup (no runtime
+    // defect since xUnit creates a fresh instance per test method, but would become a real leak
+    // if the class ever migrates to IClassFixture where a single instance is shared across tests).
+    // See DotNetSpecialist review finding, ApiOrchestrationDiTests.cs:285.
+    [Fact]
+    public void AddApiOrchestration_WithRedis_ResolvesDistributedImplementations()
+    {
+        _redisProvider = BuildProvider(CreateRedisMultiplexerMock());
+
+        _redisProvider.GetRequiredService<IOrchestratorRunService>().Should().BeOfType<DistributedRunService>(
+            "with Redis configured the run state must be shared across API replicas");
+        _redisProvider.GetRequiredService<IAgentRegistryService>().Should().BeOfType<DistributedAgentRegistryService>(
+            "with Redis configured the agent registry must be shared across API replicas");
+    }
+
+    // TODO [WARNING]: _redisProvider is built from BuildProvider(CreateRedisMultiplexerMock()), which
+    // passes _dbName to BuildInMemoryDbFactory — the same InMemory database name used by _provider.
+    // Work items seeded here (issue-redis-1) are visible to any _provider query on the same in-memory
+    // store. Current tests are unaffected (OrchestratorRunService.IsIssueBeingProcessed scans in-memory
+    // runs, not Postgres), but a future test that reads WorkItems through _provider after this test runs
+    // in the same xUnit instance could observe unexpected state. Consider using a unique dbName for
+    // _redisProvider to eliminate the hidden coupling.
+    // See DotNetSpecialist review finding, ApiOrchestrationDiTests.cs:291.
+    // TODO [WARNING]: Only WorkItemStatus.Running is seeded. A regression that accidentally narrows
+    // PipelineConstants.ActiveWorkItemStatuses (e.g. removing Pending, Dispatching, or Reviewing)
+    // would not be caught. Consider parameterising over all ActiveWorkItemStatuses members, or adding
+    // a second variant with a different active status, to close this gap (matches pre-existing TODO
+    // at line 139 for CreateIsIssueDistributedDelegate tests).
+    // See TestQualityReviewer review finding, ApiOrchestrationDiTests.cs:304.
+    [Fact]
+    public async Task AddApiOrchestration_WithRedis_IsIssueBeingProcessedQueriesWorkItems()
+    {
+        _redisProvider = BuildProvider(CreateRedisMultiplexerMock());
+
+        var dbFactory = _redisProvider.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
+        await using (var db = await dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(CreateWorkItem("issue-redis-1", "config-redis-1", WorkItemStatus.Running, null));
+            await db.SaveChangesAsync();
+        }
+
+        var runService = _redisProvider.GetRequiredService<IOrchestratorRunService>();
+
+        runService.IsIssueBeingProcessed(new IssueIdentifier("issue-redis-1"), new ProviderConfigId("config-redis-1"))
+            .Should().BeTrue("in Redis mode IsIssueBeingProcessed must query the WorkItems table through the Postgres delegate");
+        runService.IsIssueBeingProcessed(new IssueIdentifier("issue-redis-2"), new ProviderConfigId("config-redis-1"))
+            .Should().BeFalse("no work item exists for this issue");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -261,7 +330,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
     /// prerequisites and calls <see cref="ApiServiceCollectionExtensions.AddApiOrchestration"/>.
     /// Does NOT use the real Postgres stack — all persistence is InMemory.
     /// </summary>
-    private ServiceProvider BuildProvider()
+    private ServiceProvider BuildProvider(StackExchange.Redis.IConnectionMultiplexer? redisMultiplexer = null)
     {
         var services = new ServiceCollection();
 
@@ -273,6 +342,9 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
             })
             .Build();
         services.AddSingleton<IConfiguration>(config);
+
+        if (redisMultiplexer is not null)
+            services.AddSingleton(redisMultiplexer);
 
         // ── Logging ──────────────────────────────────────────────────────────
         services.AddLogging();
@@ -356,6 +428,16 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
     {
         var name = dbName ?? $"ApiOrchestrationDi-{Guid.NewGuid():N}";
         return new DelegatingDbContextFactory(name);
+    }
+
+    private static StackExchange.Redis.IConnectionMultiplexer CreateRedisMultiplexerMock()
+    {
+        var database = new Mock<StackExchange.Redis.IDatabase>();
+        var multiplexer = new Mock<StackExchange.Redis.IConnectionMultiplexer>();
+        multiplexer
+            .Setup(m => m.GetDatabase(It.IsAny<int>(), It.IsAny<object>()))
+            .Returns(database.Object);
+        return multiplexer.Object;
     }
 
     private static WorkItemEntity CreateWorkItem(
