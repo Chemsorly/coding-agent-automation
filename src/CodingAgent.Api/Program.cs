@@ -7,9 +7,6 @@ using CodingAgent.Pipeline.Telemetry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using Serilog;
 
 // Bootstrap logger: captures log output before UseSerilog takes over
@@ -19,7 +16,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ── Startup identity log ─────────────────────────────────────────────────────
 var version = Environment.GetEnvironmentVariable("SERVICE_VERSION") ?? "local";
-var serviceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-api";
+var serviceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-api";
 HostBootstrap.LogStartupIdentity("Pipeline API", serviceName, version);
 
 // ── Fast-fail: PostgreSQL required ──────────────────────────────────────────
@@ -83,60 +80,23 @@ builder.Host.ConfigureApiSerilog();
 builder.WebHost.UseUrls("http://+:8080"); // NOSONAR S1075 — port is runtime infrastructure config, not a business URL
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────────
-var otelServiceName = builder.Configuration.GetValue<string>("OTEL_SERVICE_NAME") ?? "coding-agent-api";
-
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(r => r.AddService(
-        serviceName: otelServiceName,
-        serviceVersion: version))
-    .WithTracing(t =>
-    {
-        t.AddAspNetCoreInstrumentation(opts =>
-            opts.Filter = OtelNoiseFilter.FilterAspNetCoreRequest)
-         .AddHttpClientInstrumentation(opts =>
-             opts.FilterHttpRequestMessage = OtelNoiseFilter.FilterHttpClientRequest)
-         // AgentHub lives in the API process (moved from monolith in Spec 041).
-         // Without this source, RegisterAgent / JobAccepted / JobCompleted hub invocations
-         // produce no spans — agent lifecycle events are invisible in traces.
-         .AddSource("Microsoft.AspNetCore.SignalR.Server")
-         // The pipeline activity source carries the API's own spans (Hub.ReportJobCompleted,
-         // TokenVending.GenerateToken).
-         .AddSource(PipelineTelemetry.SourceName)
-         // Npgsql database query spans — the API is the only host with a database connection.
-         // Requires Npgsql.OpenTelemetry package in CodingAgent.Api.csproj to activate
-         // Npgsql's ActivitySource emission via assembly-load hooks.
-         .AddSource("Npgsql")
-         .AddProcessor(new OtelNoiseSpanProcessor())
-         .AddOtlpExporter();
-    })
-    .WithMetrics(m =>
-    {
-        m.AddAspNetCoreInstrumentation()
-         .AddHttpClientInstrumentation()
-         // WorkDistributionTelemetry.MeterName is exported here because the API owns the dispatch
-         // instruments: dispatch latency, dispatch attempts, pod start time, PVC pool exhaustions and
-         // the credential-pool gauges (DispatchWorkItemService). The dispatcher poll epoch and the
-         // workitems-by-status gauges belong to the Scheduler; DispatchStateBuilder does NOT call
-         // RecordLastPollEpoch, so the DispatcherStalled / CredentialPoolExhausted alert rules each
-         // evaluate a single authoritative series.
-         .AddMeter(WorkDistributionTelemetry.MeterName)
-         // The API hosts AgentRegistryService and registers agent.jobs.active /
-         // agent.connections.total ObservableGauges on PipelineTelemetry.Meter via
-         // RegisterApiObservableGauges(). Without this AddMeter those gauges are created
-         // on the meter but the meter is not subscribed — measurements are silently dropped.
-         .AddMeter(PipelineTelemetry.SourceName)
-         // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
-         // Not registered in the agent — agent pods must not emit these series.
-         .AddMeter(GitHubTelemetry.MeterName)
-         // Npgsql connection-pool metrics (pool_active_connections, pool_idle_connections, etc.)
-         .AddMeter("Npgsql")
-         // .NET runtime metrics (GC, thread pool, CPU, memory) — built-in since .NET 8.
-         .AddMeter("System.Runtime")
-         // Prometheus requires Cumulative temporality; the OTLP exporter defaults to Delta for
-         // histograms and counters, which Grafana Cloud silently drops. Matches the monolith.
-         .AddOtlpExporter((_, readerOptions) =>
-             readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
-    });
+builder.Services.AddHostOpenTelemetry(
+    "coding-agent-api",
+    configureTracing: t => t
+        // AgentHub lives in the API process (moved from monolith in Spec 041).
+        // Without this source, RegisterAgent / JobAccepted / JobCompleted hub invocations
+        // produce no spans — agent lifecycle events are invisible in traces.
+        .AddSource("Microsoft.AspNetCore.SignalR.Server")
+        // Npgsql database query spans — the API is the only host with a database connection.
+        // Requires Npgsql.OpenTelemetry package in CodingAgent.Api.csproj to activate
+        // Npgsql's ActivitySource emission via assembly-load hooks.
+        .AddSource("Npgsql"),
+    configureMetrics: m => m
+        // GitHub-facing metrics (github.api.requests counter, github.rate_limit.remaining gauge).
+        // Not registered in the agent — agent pods must not emit these series.
+        .AddMeter(GitHubTelemetry.MeterName)
+        // Npgsql connection-pool metrics (pool_active_connections, pool_idle_connections, etc.)
+        .AddMeter("Npgsql"));
 
 var app = builder.Build();
 
