@@ -3,6 +3,7 @@ using CodingAgent.Infrastructure;
 using CodingAgent.Infrastructure.Persistence.Services;
 using CodingAgent.Kubernetes;
 using CodingAgent.Orchestration.Dispatch;
+using CodingAgent.Orchestration.Redis;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Web.Services;
 using Serilog;
@@ -79,11 +80,8 @@ public static partial class WorkDistributionRegistration
             return;
 
         // Shared config and connection reference — used by both the SignalR factory and DI registration.
-        var config = ConfigurationOptions.Parse(redisConnectionString);
+        var config = RedisConnectionOptions.Parse(redisConnectionString);
         config.ChannelPrefix = RedisChannel.Literal("caa");
-        config.AbortOnConnectFail = false;
-        config.ConnectRetry = 5;
-        config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
 
         IConnectionMultiplexer? sharedConnection = null;
         var connectionLock = new object();

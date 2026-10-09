@@ -504,8 +504,7 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
         _mockValidator.SetupSequence(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(InitialFailingReport)   // call 1: pre-loop — causes retry loop to be entered
             .ReturnsAsync(InLoopPassingReport);   // call 2: in-loop — lets AppendExternalCiIfNeededAsync reach the CI/conflict check
 

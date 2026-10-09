@@ -57,7 +57,7 @@ public sealed partial class IssueImageExtractor
     /// <summary>
     /// Extracts image references from an issue/PR body and optional comments.
     /// </summary>
-    public IReadOnlyList<ImageReference> Extract(
+    public IReadOnlyList<ImageReference> Extract( // NOSONAR S2325 — instance API: callers and tests use an instance
         string body,
         IReadOnlyList<IssueComment>? comments,
         string sourceIdentifier,
