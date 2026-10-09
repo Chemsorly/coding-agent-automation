@@ -132,6 +132,7 @@ public sealed class PrReviewDrawerService : IPrReviewDrawerService, IDisposable
                 var reviewRequest = new ReviewDispatchRequest
                 {
                     PrIdentifier = pr.Identifier,
+                    PrNumber = pr.Number,
                     PrBranchName = pr.BranchName,
                     PrTitle = pr.Title ?? "",
                     PrUrl = pr.Url,

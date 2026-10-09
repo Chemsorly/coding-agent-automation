@@ -137,6 +137,20 @@ public class PrReviewDrawerServiceTests
         Assert.Contains("Queued", msg);
     }
 
+    [Fact]
+    public async Task DispatchPrReviewAsync_PassesThePrNumberToTheReviewDispatch()
+    {
+        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMinimalRequest());
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
+
+        await _service.DispatchPrReviewAsync(MakePr("3363"), MakeTemplate(), IssueProviders, RepoProviders, null);
+
+        _mockDispatchOrchestration.Verify(d => d.PrepareReviewDistributionRequestAsync(
+            It.Is<ReviewDispatchRequest>(r => r.PrNumber == 3363), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── DispatchFromPrDrawerAsync ──
 
     [Fact]

@@ -183,6 +183,7 @@
         }),
         new("Code Generation", "code-generation", new[] {
             PipelineStep.GeneratingCode,
+            PipelineStep.CheckingDroppedIdentifiers,
             PipelineStep.ReviewingCode,
             PipelineStep.RunningQualityGates
         }),
@@ -262,7 +263,8 @@
         // Hide implementation-only steps for review runs
         if (step is PipelineStep.VerifyingBaseline or PipelineStep.AnalyzingCode
                 or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
-                or PipelineStep.GeneratingCode or PipelineStep.RunningQualityGates
+                or PipelineStep.GeneratingCode or PipelineStep.CheckingDroppedIdentifiers
+                or PipelineStep.RunningQualityGates
                 or PipelineStep.PreparingForPullRequest or PipelineStep.FinalizingPullRequest
                 or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
             return true;
@@ -311,7 +313,8 @@
         if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
             && step is PipelineStep.CreatingBranch or PipelineStep.VerifyingBaseline
                 or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis or PipelineStep.PostingAnalysis
-                or PipelineStep.GeneratingCode or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
+                or PipelineStep.GeneratingCode or PipelineStep.CheckingDroppedIdentifiers
+                or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
                 or PipelineStep.ExtractingLinkedIssues or PipelineStep.PostingFindings
                 or PipelineStep.PreparingForPullRequest or PipelineStep.FinalizingPullRequest
                 or PipelineStep.ReflectingOnRun or PipelineStep.SyncingBrainRepoPostRun)
@@ -453,22 +456,23 @@
         [PipelineStep.ReviewingAnalysis] = 7,
         [PipelineStep.PostingAnalysis] = 8,
         [PipelineStep.GeneratingCode] = 9,
-        [PipelineStep.ReviewingCode] = 10,
-        [PipelineStep.RunningQualityGates] = 11,
-        [PipelineStep.ExtractingLinkedIssues] = 12,
-        [PipelineStep.PostingFindings] = 13,
-        [PipelineStep.PreparingForPullRequest] = 14,
-        [PipelineStep.FinalizingPullRequest] = 15,
-        [PipelineStep.ReflectingOnRun] = 16,
-        [PipelineStep.SyncingBrainRepoPostRun] = 17,
-        [PipelineStep.DownloadingOpenIssues] = 18,
-        [PipelineStep.ExploringCodebase] = 19,
-        [PipelineStep.GeneratingPlan] = 20,
-        [PipelineStep.ReviewingPlan] = 21,
-        [PipelineStep.PostingPlan] = 22,
-        [PipelineStep.GeneratingSubIssues] = 23,
-        [PipelineStep.CreatingIssues] = 24,
-        [PipelineStep.PostingSummary] = 25,
+        [PipelineStep.CheckingDroppedIdentifiers] = 10,
+        [PipelineStep.ReviewingCode] = 11,
+        [PipelineStep.RunningQualityGates] = 12,
+        [PipelineStep.ExtractingLinkedIssues] = 13,
+        [PipelineStep.PostingFindings] = 14,
+        [PipelineStep.PreparingForPullRequest] = 15,
+        [PipelineStep.FinalizingPullRequest] = 16,
+        [PipelineStep.ReflectingOnRun] = 17,
+        [PipelineStep.SyncingBrainRepoPostRun] = 18,
+        [PipelineStep.DownloadingOpenIssues] = 19,
+        [PipelineStep.ExploringCodebase] = 20,
+        [PipelineStep.GeneratingPlan] = 21,
+        [PipelineStep.ReviewingPlan] = 22,
+        [PipelineStep.PostingPlan] = 23,
+        [PipelineStep.GeneratingSubIssues] = 24,
+        [PipelineStep.CreatingIssues] = 25,
+        [PipelineStep.PostingSummary] = 26,
         [PipelineStep.Completed] = 100,
         [PipelineStep.Failed] = 101,
         [PipelineStep.Cancelled] = 102,
