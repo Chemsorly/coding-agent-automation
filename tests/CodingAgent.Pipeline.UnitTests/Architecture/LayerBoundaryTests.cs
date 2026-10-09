@@ -583,6 +583,19 @@ public partial class LayerBoundaryTests
                 "public const string ActiveJobId = \"activeJobId\";",
             },
 
+            // AgentEntryFieldApplier — canonical apply helper extracted in issue #3519.
+            // `Apply` uses a record `with {}` expression to return a NEW AgentEntry copy;
+            // it never mutates a live shared entry.  The caller (AgentRegistryService) is
+            // responsible for copying the returned fields back onto the live entry under
+            // lock(entry.SyncRoot).  Category (a): with-expression on a record copy.
+            // Line 32 is the switch-arm label `AgentFieldNames.ActiveJobId =>` which is
+            // matched by the ActiveJobId=[^=] regex (=> contains =>) — not an assignment.
+            ["AgentEntryFieldApplier.cs"] = new(StringComparer.Ordinal)
+            {
+                "AgentFieldNames.ActiveJobId =>",
+                "current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },",
+            },
+
             // DistributedAgentRegistryService — snapshot object-initializer (BuildSnapshot method):
             // constructs a new AgentEntry snapshot; the object is not yet shared.
             // Also: _localSnapshot update via record `with { ActiveJobId = ... }` in UpdateAgentFieldAsync
