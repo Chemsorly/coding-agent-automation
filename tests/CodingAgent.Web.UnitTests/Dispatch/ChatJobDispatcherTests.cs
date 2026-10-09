@@ -1483,6 +1483,72 @@ public class ChatJobDispatcherTests
     }
 
     /// <summary>
+    /// Without Redis the watcher reads only the local heartbeat ticks, so client heartbeats must keep the
+    /// pod alive through the local tick update in RecordClientHeartbeat alone.
+    /// </summary>
+    [Fact]
+    public async Task WatcherIdleKill_HeartbeatReceivedWithoutRedis_PodRemainsAlive()
+    {
+        var jobClientMock = CreateJobClientMock();
+        var registry = CreateRegistry();
+        string? createdJobName = null;
+
+        // ReadJobAsync always returns non-terminal — pod won't exit on its own
+        jobClientMock.Setup(c => c.ReadJobAsync(It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Status = new V1JobStatus { Conditions = [] } });
+
+        jobClientMock.Setup(c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()))
+            .Callback<V1Job, string, CancellationToken>((j, _, _) =>
+            {
+                createdJobName = j.Metadata.Name;
+                var dispatchId = j.Metadata.Labels.TryGetValue("caa/chat-session-id", out var did) ? did : "";
+                RegisterChatAgent(registry, createdJobName!, dispatchId, "conn-alive-no-redis");
+            })
+            .Returns(Task.CompletedTask);
+
+        // Idle timeout of 2s; heartbeats every 200ms for 6s, then they stop
+        var options = CreateOptions(connectTimeoutSeconds: 5, gracePeriod: 1);
+        options.ChatIdleTimeoutSeconds = 2;
+
+        // No Redis: the watcher sees only the local ticks that RecordClientHeartbeat writes.
+        await using var dispatcher = CreateDispatcher(
+            jobClient: jobClientMock.Object,
+            registry: registry,
+            options: options,
+            redis: null);
+
+        await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+
+        // Without honoured heartbeats the watcher would exit about 3–4s after dispatch, so a 6s window
+        // can only pass when the local tick update keeps the session alive.
+        var stopHeartbeats = StartHeartbeats(() => dispatcher.RecordClientHeartbeat(createdJobName!));
+        try
+        {
+            var watcherDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(6));
+            watcherDone.Should().BeFalse("watcher must NOT exit while client heartbeats are arriving without Redis");
+            jobClientMock.Verify(c => c.DeleteJobAsync(
+                It.IsAny<string>(), TestNamespace, It.IsAny<CancellationToken>()),
+                Times.Never,
+                "the pod must not be deleted while client heartbeats are arriving without Redis");
+        }
+        finally
+        {
+            stopHeartbeats();
+        }
+
+        // Heartbeats have stopped: the idle kill must fire now
+        var idleKillDone = await dispatcher.WaitForWatcherAsync(createdJobName!, TimeSpan.FromSeconds(60));
+        idleKillDone.Should().BeTrue("watcher must exit after heartbeats stop and idle timeout fires");
+
+        jobClientMock.Verify(c => c.DeleteJobAsync(
+            It.Is<string>(n => n == createdJobName),
+            TestNamespace,
+            It.IsAny<CancellationToken>()),
+            Times.Once,
+            "pod must be force-deleted after heartbeats stop");
+    }
+
+    /// <summary>
     /// Cross-replica scenario: keepalive arrives on a different replica than the one that owns
     /// the watcher. The "remote" replica writes to the shared Redis store but has no
     /// WatcherEntry for the agentId (so local ticks on the watcher replica are never updated).
@@ -2386,24 +2452,56 @@ public class ChatJobDispatcherTests
             })
             .Returns(Task.CompletedTask);
 
-        await using var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object, registry: registry);
+        // The watcher mock hands out the session's WatcherEntry and then only waits for cancellation,
+        // so nothing but RecordClientHeartbeat writes LastClientHeartbeatTicks.
+        var entryCaptured = new TaskCompletionSource<ChatJobDispatcher.WatcherEntry>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var watcher = new Mock<IChatSessionWatcher>();
+        watcher
+            .Setup(w => w.WatchJobUntilTerminalAsync(
+                It.IsAny<string>(),
+                It.IsAny<ChatJobDispatcher.WatcherEntry>(),
+                It.IsAny<Func<AgentId, CancellationToken, Task>>(),
+                It.IsAny<Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<string, ChatJobDispatcher.WatcherEntry,
+                     Func<AgentId, CancellationToken, Task>,
+                     Action<AgentId, ChatJobDispatcher.WatcherEntry, string, string>,
+                     CancellationToken>(
+                (_, watcherEntry, _, _, ct) =>
+                {
+                    entryCaptured.TrySetResult(watcherEntry);
+                    return Task.Delay(Timeout.InfiniteTimeSpan, ct).ContinueWith(
+                        _ => Task.CompletedTask, CancellationToken.None,
+                        TaskContinuationOptions.OnlyOnCanceled, TaskScheduler.Default).Unwrap();
+                });
+
+        // No Redis: without a heartbeat tracker the local ticks are the only heartbeat record.
+        await using var dispatcher = new ChatJobDispatcher(
+            jobClientMock.Object,
+            CreateHubContextMock().Object,
+            CreateTemplateStore(),
+            registry,
+            CreateOptions(),
+            Mock.Of<ILogger>(),
+            heartbeatTracker: null,
+            sessionWatcher: watcher.Object);
+
         await dispatcher.DispatchChatPodAsync(TestSelector, null, null, CancellationToken.None);
+        var entry = await entryCaptured.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
-        var ticksBefore = DateTimeOffset.UtcNow.UtcTicks;
-        await Task.Delay(5); // small gap so ticks advance
+        Interlocked.Read(ref entry.LastClientHeartbeatTicks).Should().Be(entry.StartedAt.UtcTicks,
+            "the idle clock starts at dispatch, before any heartbeat");
+
+        // Let the clock move on, so a heartbeat time can be told apart from StartedAt.
+        await Task.Delay(TimeSpan.FromMilliseconds(50));
+        var ticksBeforeHeartbeat = DateTimeOffset.UtcNow.UtcTicks;
         dispatcher.RecordClientHeartbeat(capturedJobName!);
+        var ticksAfterHeartbeat = DateTimeOffset.UtcNow.UtcTicks;
 
-        // TODO [WARNING]: This test does not actually assert that LastClientHeartbeatTicks was
-        // updated. HasActiveSession only checks _activeWatchers.ContainsKey — it would pass even
-        // if RecordClientHeartbeat were emptied entirely. To prove the tick update, measure the
-        // tick value before and after via idle-kill behavior (short timeout) or expose ticks
-        // through an internal test helper. See review finding: TestQualityReviewer WARNING @ line 2122.
-        // The watcher's TryGetWatcherFields doesn't expose ticks directly, but
-        // HasActiveSession confirms the session is alive and we verify through
-        // the idle-kill behavior: after recording a heartbeat the watcher must not
-        // immediately idle-kill even with a very short timeout.
-        dispatcher.HasActiveSession(capturedJobName!).Should().BeTrue(
-            "session must still be active after recording a heartbeat");
+        Interlocked.Read(ref entry.LastClientHeartbeatTicks).Should().BeInRange(
+            ticksBeforeHeartbeat, ticksAfterHeartbeat,
+            "RecordClientHeartbeat must move the session's local idle clock to the time of the heartbeat");
     }
 
     [Fact]
