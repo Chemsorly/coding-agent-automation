@@ -51,12 +51,13 @@ public static partial class ChatEndpoints
     ///
     /// <para>
     /// Blocks until the pod registers (up to <c>ChatPodConnectTimeoutSeconds</c>).
-    /// Returns 409 when a chat job is already active for the given selector.
+    /// Returns 400 when the selector or request is invalid.
+    /// Returns 500 when an internal error occurs (e.g. no template for selector).
     /// Returns 503 when no credential PVC is available.
     /// Returns 504 when the pod does not connect within the timeout.
     /// </para>
     /// </summary>
-    internal static async Task<Results<Ok<DispatchChatPodResponse>, Conflict<string>, StatusCodeHttpResult>> DispatchChatPod(
+    internal static async Task<Results<Ok<DispatchChatPodResponse>, ProblemHttpResult>> DispatchChatPod(
         DispatchChatPodRequest request,
         IChatJobDispatcher dispatcher,
         CancellationToken ct)
@@ -68,13 +69,33 @@ public static partial class ChatEndpoints
 
             return TypedResults.Ok(new DispatchChatPodResponse(agentId));
         }
-        catch (NoPvcAvailableException)
+        catch (NoPvcAvailableException ex)
         {
-            return TypedResults.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            return TypedResults.Problem(detail: ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
-        catch (ChatPodTimeoutException)
+        catch (ChatPodTimeoutException tEx)
         {
-            return TypedResults.StatusCode(StatusCodes.Status504GatewayTimeout);
+            return TypedResults.Problem(
+                detail: tEx.Message,
+                statusCode: StatusCodes.Status504GatewayTimeout,
+                extensions: new Dictionary<string, object?> { ["timeoutSeconds"] = tEx.TimeoutSeconds });
+        }
+        catch (ArgumentException ex)
+        {
+            // TODO [WARNING]: ex.Message is returned verbatim as the HTTP 400 detail field. ArgumentException
+            // messages can include the parameter name suffix (e.g. "(Parameter 'agentSelector')"), disclosing
+            // internal method signatures to the caller. The endpoint is Operator-only, which limits exposure,
+            // but consider stripping the suffix or using a controlled message if this catch is widened.
+            return TypedResults.Problem(detail: ex.Message, statusCode: StatusCodes.Status400BadRequest);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // TODO [WARNING]: ex.Message is returned verbatim as the HTTP 500 detail field. InvalidOperationException
+            // is a broad base type thrown throughout the .NET runtime for unrelated internal errors (disposed objects,
+            // concurrency faults, etc.). A non-domain InvalidOperationException from infrastructure code would leak
+            // internal state or configuration detail to the caller. The Operator auth policy limits the blast radius,
+            // but consider filtering to known-safe messages or using a generic 500 detail for non-domain exceptions.
+            return TypedResults.Problem(detail: ex.Message, statusCode: StatusCodes.Status500InternalServerError);
         }
     }
 
