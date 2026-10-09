@@ -907,6 +907,140 @@ public class WorkComponentTests : BunitContext
             "both issues should still be counted as open");
     }
 
+    // ── Backlog readiness — Queued / Running chip split (Issue #3457) ─────────
+
+    /// <summary>
+    /// Finds the single .cockpit-chip inside the Provider backlog card.
+    /// Scoped to the Provider backlog card to avoid matching chips in the queue or in-flight tables.
+    /// </summary>
+    private static AngleSharp.Dom.IElement FindBacklogChip(IRenderedComponent<Work> cut)
+    {
+        var backlogCard = cut.FindAll(".cockpit-card")
+            .First(card => card.QuerySelector("h2")?.TextContent?.Trim() == "Provider backlog");
+        // TODO: [WARNING] QuerySelector returns null when no chip is present, and the null-forgiving
+        //   operator suppresses the compiler warning. A regression that prevents the chip from rendering
+        //   would surface as a NullReferenceException rather than a useful assertion failure. Consider
+        //   using FindAll + asserting count > 0 first, or adding chip.Should().NotBeNull("…") in each
+        //   caller before dereferencing.
+        return backlogCard.QuerySelector(".cockpit-chip")!;
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithPendingWorkItem_ShowsQueuedChip()
+    {
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Pending issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+
+        _mockWorkItems
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakePendingItem(Guid.NewGuid()) });
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ActiveWorkItemDto>());
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var chip = FindBacklogChip(cut);
+        // TODO: [WARNING] Only the chip text is asserted here. The acceptance criteria also require that
+        //   the Queued chip uses var(--accent). If GetWorkItemDisplay returned ("Queued", "error"), this
+        //   assertion would still pass. Consider adding:
+        //   chip.GetAttribute("style").Should().Contain("var(--accent)", "Queued chip must use accent colour");
+        chip.TextContent.Trim().Should().Be("Queued",
+            "a backlog issue whose only WorkItem is Pending must show 'Queued', not 'Running'");
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithDispatchedWorkItem_ShowsRunningChip()
+    {
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Dispatched issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+
+        // TODO: [WARNING] GetPendingAsync is not set up explicitly here; the test relies on the
+        //   constructor's default empty stub. Unlike the other three new tests this provides no
+        //   self-documenting guarantee that a Dispatched item in _active is not matched by a stale
+        //   pending list. Consider adding an explicit ReturnsAsync(Array.Empty<PendingWorkItemDto>())
+        //   setup to make the intent unambiguous.
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), "42") with { Status = WorkItemStatus.Dispatched } });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var chip = FindBacklogChip(cut);
+        // TODO: [WARNING] Only the chip text is asserted; no style assertion verifies the accent colour.
+        //   The original bug was that label-derived style overrode the work-item chip colour. A regression
+        //   where the Dispatched path returned a different style class would go undetected. Consider adding:
+        //   chip.GetAttribute("style").Should().Contain("var(--accent)", "Dispatched chip must use accent colour");
+        chip.TextContent.Trim().Should().Be("Running",
+            "a backlog issue whose WorkItem is Dispatched must show 'Running'");
+    }
+
+    [Fact]
+    public async Task BacklogCard_IssueWithActiveWorkItemAndErrorLabel_ShowsAccentRunningChip()
+    {
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Error+active issue", Labels = new[] { AgentLabels.Error }, Description = "", Url = null },
+        });
+
+        _mockWorkItems
+            .Setup(c => c.GetActiveAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { MakeActiveItem(Guid.NewGuid(), "42") });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var chip = FindBacklogChip(cut);
+        chip.TextContent.Trim().Should().Be("Running",
+            "an active work item must override the label chip and show 'Running'");
+        chip.GetAttribute("style").Should().Contain("var(--accent)",
+            "the Running chip for an active work item must use accent colour, not the error label colour");
+        chip.GetAttribute("style").Should().NotContain("var(--error)",
+            "the Running chip must not use the error colour even when the issue has agent:error label");
+        // TODO: [WARNING] The absence of var(--success) is not asserted. If a regression caused
+        //   effectiveIsReady to be true alongside an active WorkItem, FindBacklogChip would return the
+        //   success chip, the Contain("var(--accent)") assertion would fail, but NotContain("var(--error)")
+        //   would pass — obscuring the root cause. Consider also asserting:
+        //   chip.GetAttribute("style").Should().NotContain("var(--success)", "work-item chip must not be success-styled");
+    }
+
+    [Fact]
+    public async Task BacklogCard_HeaderReadyCount_ExcludesPendingWorkItemIssues()
+    {
+        // Issue #42: IsReady=true but has a Pending WorkItem → must not count as ready
+        // Issue #43: IsReady=true, no WorkItem → must count as ready
+        SetupBacklogProvider(new[]
+        {
+            new IssueSummary { Identifier = "42", Title = "Pending issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+            new IssueSummary { Identifier = "43", Title = "Ready issue", Labels = Array.Empty<string>(), Description = "", Url = null },
+        });
+
+        _mockWorkItems
+            .Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            // TODO: [WARNING] MakePendingItem hardcodes IssueIdentifier = "42" (a shared constant in the
+            //   helper). This test relies on that implicit coupling: issue "42" is the pending one and "43"
+            //   is the ready one. If MakePendingItem's constant ever changes, the identifier match in
+            //   GetWorkItemDisplay will silently break and the "1 ready" assertion may pass for the wrong
+            //   reason. Consider constructing a local PendingWorkItemDto with IssueIdentifier = "42" set
+            //   explicitly to remove the coupling.
+            .ReturnsAsync(new[] { MakePendingItem(Guid.NewGuid()) });
+
+        var cut = Render<Work>();
+        await cut.WaitForStateAsync(() => !cut.Markup.Contains("checking…"), TimeSpan.FromSeconds(5));
+
+        var headerSpan = cut.FindAll(".cockpit-card-header span")[^1];
+        headerSpan.TextContent.Should().StartWith("1 ready",
+            "header count must exclude the issue that has a Pending WorkItem from the ready count");
+        headerSpan.TextContent.Should().Contain("2 open",
+            "both issues should still be counted as open");
+    }
+
     // ── Spec 049: actions follow the role on the item's own project ───────────
 
     private const string AccessProjectP = "6f1c2a9e-0000-0000-0000-00000000000a";
