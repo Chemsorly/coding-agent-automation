@@ -63,7 +63,6 @@ public interface IPipelineRunHistoryService
     /// <para>
     /// <b>Services that do NOT override this overload (silent no-op for <paramref name="since"/>):</b>
     /// <list type="bullet">
-    ///   <item><c>PipelineRunHistoryService</c> (file-backed) — used only in non-Postgres local deployments; not on the Insights call path.</item>
     ///   <item><c>ApiBackedPipelineRunHistoryService</c> — the orchestrator's HTTP-bridged service; <c>Insights.razor</c> calls
     ///   <c>IPipelineApiRunHistoryClient</c> directly and never routes through this service, so the no-op is harmless.</item>
     /// </list>

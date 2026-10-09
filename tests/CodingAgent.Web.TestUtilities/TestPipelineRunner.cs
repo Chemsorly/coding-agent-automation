@@ -4,7 +4,6 @@ using CodingAgent.Pipeline.Models;
 using CodingAgent.Pipeline.Services;
 using CodingAgent.Pipeline.Services.Prompts;
 using CodingAgent.Pipeline.Services.Steps;
-using CodingAgent.Infrastructure.Persistence;
 
 namespace CodingAgent.Web.TestUtilities;
 
@@ -82,8 +81,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         _prOrchestrator = prOrchestrator ?? new PullRequestOrchestrator(logger);
         _brainSync = new BrainSyncService(
             brainUpdateService ?? new NullBrainUpdateService(), logger);
-        _historyService = historyService ?? new PipelineRunHistoryService(
-            logger, Path.Combine(Path.GetTempPath(), $"test-runs-{Guid.NewGuid()}"));
+        _historyService = historyService ?? new InMemoryPipelineRunHistoryService();
         _lifecycle = new PipelineRunLifecycleService(_historyService, null, logger);
     }
 

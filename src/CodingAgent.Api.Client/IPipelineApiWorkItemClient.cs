@@ -27,12 +27,6 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     Task PostLastProgressAsync(Guid workItemId, DateTimeOffset timestamp, CancellationToken ct = default);
 
     /// <summary>
-    /// Returns the K8s Job name set on a WorkItem, or null if not found / not set.
-    /// Used by KubernetesJobCleanup to cancel the running Job when an issue is cancelled.
-    /// </summary>
-    Task<string?> GetK8sJobNameAsync(Guid workItemId, CancellationToken ct = default);
-
-    /// <summary>
     /// Returns the current status of a WorkItem, or null if not found.
     /// Used by KubernetesWorkDistributor.GetJobStatusAsync.
     /// </summary>

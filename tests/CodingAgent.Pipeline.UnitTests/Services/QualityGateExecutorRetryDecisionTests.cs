@@ -320,8 +320,7 @@ public class QualityGateExecutorRetryDecisionTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 validatorCallCount++;
@@ -499,8 +498,7 @@ public class QualityGateExecutorRetryDecisionTests
         _mockValidator.Setup(v => v.ValidateAsync(
                 It.IsAny<WorkspacePath>(),
                 It.IsAny<IReadOnlyList<QualityGateConfiguration>>(),
-                It.IsAny<CancellationToken>(),
-                It.IsAny<string?>()))
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(FailingReport);
     }
 
