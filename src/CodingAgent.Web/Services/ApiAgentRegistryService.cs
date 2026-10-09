@@ -169,7 +169,7 @@ public sealed class ApiAgentRegistryService : IAgentRegistryService
             AgentId = message.AgentId,
             ConnectionId = connectionId,
             Hostname = message.Hostname,
-            Labels = message.Labels,
+            Labels = message.Labels?.ToArray() ?? Array.Empty<string>(),
             Status = AgentStatus.Idle,
             RegisteredAt = now,
             LastHeartbeatAt = now

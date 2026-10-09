@@ -376,6 +376,11 @@ public sealed class ProjectSwitcherTests : E2ETestBase
         // And pages must still be scoped to P2: P1 runs absent.
         var runsAfterReload = new RunsPage(Page, BaseUrl);
         await runsAfterReload.NavigateAsync();
+        // After navigating to a new page, CockpitLayout.OnAfterRenderAsync runs again and restores
+        // the project from localStorage asynchronously. Wait until the switcher's DOM value matches
+        // localStorage before asserting row visibility, to avoid reading stale all-projects data
+        // that was loaded before the restoration fired.
+        await Page.WaitForProjectSwitcherRestoredAsync();
 
         Assert.False(await runsAfterReload.IsRunVisibleAsync(P1RunA),
             $"Runs after reload: P1 run #{P1RunA} must NOT appear when P2 is selected");
