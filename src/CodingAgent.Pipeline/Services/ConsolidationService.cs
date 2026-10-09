@@ -76,7 +76,7 @@ public sealed class ConsolidationService : IConsolidationService
         var startedAtUtc = DateTimeOffset.UtcNow;
         var traceContext = PipelineTelemetry.CaptureTraceContext("TriggerConsolidation");
 
-        var request = BuildConsolidationDistributionRequest(runId, startedAtUtc, traceContext, type, selectorLabels, scope, autoDispatch);
+        var request = BuildConsolidationDistributionRequest(traceContext, type, selectorLabels, scope, autoDispatch);
 
         var result = await TryDistributeAsync(_workDistributor, request, type, scope.TemplateIdValue, ct);
         if (result is null)
@@ -183,11 +183,9 @@ public sealed class ConsolidationService : IConsolidationService
 
     /// <summary>
     /// Builds a <see cref="JobDistributionRequest"/> from the resolved consolidation scope and
-    /// the timing/tracing values captured in <see cref="TriggerAsync"/> before dispatch.
+    /// the trace context captured in <see cref="TriggerAsync"/> before dispatch.
     /// </summary>
     private static JobDistributionRequest BuildConsolidationDistributionRequest(
-        string runId,
-        DateTimeOffset startedAtUtc,
         Dictionary<string, string>? traceContext,
         ConsolidationRunType type,
         IReadOnlyList<string> selectorLabels,
