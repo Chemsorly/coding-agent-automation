@@ -55,40 +55,22 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         var (issueProviderId, issueIdentifier, compositeKey) = ValidateAndBuildKey(request);
 
-        // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
-        if (!_dispatchingIssues.TryAdd(compositeKey, 0))
-        {
-            _logger.Warning("Issue {IssueIdentifier} is already being dispatched by another caller, skipping", issueIdentifier);
-            return null;
-        }
-
-        try
-        {
-            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
+        return await WithIssueReservationAsync(
+            compositeKey, issueIdentifier, issueProviderId,
+            operationSuffix: "dispatch",
+            body: async () =>
             {
-                _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
-                return null;
-            }
+                var run = await ResolveAndCreateRunAsync(request, ct);
 
-            var run = await ResolveAndCreateRunAsync(request, ct);
+                if (!_lifecycle.RegisterDispatchedRun(run))
+                    return null;
 
-            if (!_lifecycle.RegisterDispatchedRun(run))
-                return null;
+                _logger.Information(
+                    "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
+                    run.RunId, issueIdentifier, request.AgentId);
 
-            _logger.Information(
-                "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
-                run.RunId, issueIdentifier, request.AgentId);
-
-            return run;
-        }
-        finally
-        {
-            // TODO: Add a unit test that verifies reservation release on failure paths (e.g.,
-            // RegisterDispatchedRun returns false or ResolveAndCreateRunAsync throws). If this
-            // TryRemove is accidentally moved or an early return is added before the try block,
-            // the reservation would leak and permanently block dispatch for this issue.
-            _dispatchingIssues.TryRemove(compositeKey, out _);
-        }
+                return run;
+            });
     }
 
     /// <inheritdoc />
@@ -96,45 +78,27 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         var (issueProviderId, issueIdentifier, compositeKey) = ValidateAndBuildKey(request);
 
-        // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
-        if (!_dispatchingIssues.TryAdd(compositeKey, 0))
-        {
-            _logger.Warning("Issue {IssueIdentifier} is already being dispatched by another caller, skipping reservation", issueIdentifier);
-            return null;
-        }
-
-        try
-        {
-            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
+        return await WithIssueReservationAsync(
+            compositeKey, issueIdentifier, issueProviderId,
+            operationSuffix: "reservation",
+            body: async () =>
             {
-                _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
-                return null;
-            }
+                // startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
+                // If excluding provider resolution latency from start time matters, move this
+                // assignment after the ResolveAndCreateRunAsync call below.
+                var startedAt = DateTimeOffset.UtcNow;
 
-            // TODO: startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
-            // Original code captured it after provider resolution. If excluding provider resolution
-            // latency from start time matters, move this assignment after the helper call.
-            var startedAt = DateTimeOffset.UtcNow;
+                var sentinel = await ResolveAndCreateRunAsync(request with { RunType = PipelineRunType.Implementation }, ct);
 
-            var sentinel = await ResolveAndCreateRunAsync(request with { RunType = PipelineRunType.Implementation }, ct);
+                if (!_lifecycle.RegisterDispatchedRun(sentinel))
+                    return null;
 
-            if (!_lifecycle.RegisterDispatchedRun(sentinel))
-                return null;
+                _logger.Information(
+                    "Reserved run {RunId} for issue {IssueIdentifier}",
+                    sentinel.RunId, issueIdentifier);
 
-            _logger.Information(
-                "Reserved run {RunId} for issue {IssueIdentifier}",
-                sentinel.RunId, issueIdentifier);
-
-            return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
-        }
-        finally
-        {
-            // TODO: Add a unit test that verifies reservation release on failure paths (e.g.,
-            // RegisterDispatchedRun returns false or ResolveAndCreateRunAsync throws). If this
-            // TryRemove is accidentally moved or an early return is added before the try block,
-            // the reservation would leak and permanently block reservation for this issue.
-            _dispatchingIssues.TryRemove(compositeKey, out _);
-        }
+                return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
+            });
     }
 
     /// <inheritdoc />
@@ -161,6 +125,68 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         var issueIdentifier = request.IssueIdentifier;
         var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
         return (issueProviderId, issueIdentifier, compositeKey);
+    }
+
+    /// <summary>
+    /// Atomic issue-reservation guard shared by <see cref="CreateDispatchedRunAsync"/> and
+    /// <see cref="ReserveRunIdAsync"/>. Performs the TryAdd reservation, the
+    /// <see cref="PipelineRunLifecycleService.IsIssueBeingProcessed"/> check, invokes
+    /// <paramref name="body"/>, and unconditionally releases the reservation in a finally block.
+    /// </summary>
+    /// <typeparam name="T">The return type of the body delegate; must be a reference type so that
+    /// <c>null</c> can serve as the "skipped/rejected" sentinel value.</typeparam>
+    /// <param name="compositeKey">The <c>{issueProviderId}:{issueIdentifier}</c> key used as the
+    /// reservation token in <see cref="_dispatchingIssues"/>.</param>
+    /// <param name="issueIdentifier">Used for the <see cref="PipelineRunLifecycleService.IsIssueBeingProcessed"/>
+    /// guard and for structured log properties.</param>
+    /// <param name="issueProviderId">Used for the <see cref="PipelineRunLifecycleService.IsIssueBeingProcessed"/>
+    /// guard.</param>
+    /// <param name="operationSuffix">Short suffix appended to warning log messages to distinguish
+    /// dispatch from reservation paths (e.g. <c>"dispatch"</c> or <c>"reservation"</c>).</param>
+    /// <param name="body">The caller-specific logic to execute inside the reservation window.</param>
+    /// <returns>The result of <paramref name="body"/>, or <c>null</c> if the reservation was denied
+    /// or the lifecycle guard fired.</returns>
+    // TODO: Consider propagating CancellationToken explicitly through the helper signature rather
+    // than capturing it via closure. Currently 'ct' reaches ResolveAndCreateRunAsync through closure
+    // capture, which is functionally correct but means any future async operation added directly
+    // inside WithIssueReservationAsync (e.g. logging flush, metrics) would have no access to 'ct'.
+    // The conventional .NET pattern for async helpers is to accept CancellationToken as an explicit
+    // parameter. See review finding: DotNetSpecialist [WARNING] line 163.
+    private async Task<T?> WithIssueReservationAsync<T>(
+        string compositeKey,
+        IssueIdentifier issueIdentifier,
+        ProviderConfigId issueProviderId,
+        string operationSuffix,
+        Func<Task<T?>> body)
+        where T : class
+    {
+        // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
+        if (!_dispatchingIssues.TryAdd(compositeKey, 0))
+        {
+            _logger.Warning(
+                "Issue {IssueIdentifier} is already being dispatched by another caller, skipping {OperationSuffix}",
+                issueIdentifier, operationSuffix);
+            return null;
+        }
+
+        try
+        {
+            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
+            {
+                _logger.Warning(
+                    "Issue {IssueIdentifier} is already being processed, skipping {OperationSuffix}",
+                    issueIdentifier, operationSuffix);
+                return null;
+            }
+
+            return await body();
+        }
+        finally
+        {
+            // Unconditional release — ensures TryRemove runs on all paths (success, null return,
+            // and exception) so the reservation never leaks and permanently blocks this issue.
+            _dispatchingIssues.TryRemove(compositeKey, out _);
+        }
     }
 
     /// <summary>

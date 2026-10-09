@@ -50,14 +50,14 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `workdistribution.dispatch.attempts` | Counter | `{attempt}` | `result`, `reason` | API | Outcome of every `POST /api/work-items/{id}/dispatch`. `result`: `dispatched`, `deferred`, `transient`; `reason`: `none`, `concurrency_limit`, `not_pending`, `no_template`, `pvc_unavailable`, `lock_timeout`, `k8s_error` |
 | `workdistribution.pod_start_seconds` | Histogram | s | — | API | Dispatched → the agent's first `GET /assignment` |
 | `workdistribution.credential_pool_available` / `_claimed` | ObservableGauge | `{pvc}` | `pool` | API | Kiro credential PVCs, as last computed during dispatch. Only the API emits them |
-| `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | `pool` | API | A dispatch found no free credential PVC |
+| `workdistribution.pvc_pool_exhaustions` | Counter | `{event}` | — | API | A dispatch found no free credential PVC |
 | `workdistribution.progress_write_failures` | Counter | `{failure}` | — | API | Failed `LastProgressAt` writes; sustained failures risk false-positive timeouts |
 | `workdistribution.dispatcher_polls` | Counter | `{poll}` | — | Scheduler | Dispatch poll cycles |
 | `workdistribution.dispatcher_last_poll_epoch_seconds` | ObservableGauge | s | — | Scheduler | Epoch seconds of the last dispatch poll; drives `DispatcherStalled` |
 | `workdistribution.workitems_by_status` | ObservableGauge | `{item}` | `status`, `agent_selector` | Scheduler | Current WorkItem counts |
 | `workdistribution.pending.oldest_age_seconds` | ObservableGauge | s | — | Scheduler | Age of the oldest Pending WorkItem; absent when none is pending |
 | `workdistribution.timeout_execution_age_seconds` | Histogram | s | `agent_selector` | Job Controller | Execution age when a timeout is enforced. If p10 clusters near zero, the timeout anchor is wrong |
-| `workdistribution.timeout_canary_violations` | Counter | `{violation}` | — | Job Controller | Timeouts skipped by the canary invariant; any non-zero value is a timestamp bug |
+| `workdistribution.timeout_canary_violations` | Counter | `{violation}` | `agent_selector` | Job Controller | Timeouts skipped by the canary invariant; any non-zero value is a timestamp bug |
 | `workdistribution.agent_timeouts` | Counter | `{job}` | `agent_selector` | Job Controller | Agent jobs killed by the session timeout |
 | `workdistribution.chat.*` | Histogram / UpDownCounter / Counter | — | `agent_selector`, `pool` | API | Chat pods: `dispatch_latency_seconds`, `sessions_active`, `session_duration_seconds`, `pod_connect_timeouts`, `pod_force_terminations`, `pvc_utilization` |
 | `pipeline.db_retention.pipeline_runs_deleted` / `.work_items_deleted` | Counter | `{row}` | — | API | Rows removed by the per-project retention sweep |
@@ -66,7 +66,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 
 | Metric | Type | Tags | Recorded by | Description |
 |--------|------|------|-------------|-------------|
-| `pipeline.loop.polls` | Counter | `result` (`success`, `failure`) | Scheduler | Closed-loop poll cycles |
+| `pipeline.loop.polls` | Counter | `result` (`success`, `partial_failure`, `failure`) | Scheduler | Closed-loop poll cycles. `partial_failure` means some but not all templates failed to poll |
 | `pipeline.loop.issues_found` | Counter | — | Scheduler | Issues/PRs/epics discovered per poll |
 | `pipeline.loop.dispatch_decisions` | Counter | `decision` | Scheduler | `dispatched`, `skipped_already_processing`, `skipped_dependency_blocked`, `skipped_no_agent`, `skipped_max_runs`, `skipped_filtered_by_label` |
 | `pipeline.loop.backoff_events` | Counter | — | Scheduler | Template poll failures that escalated the backoff |
@@ -81,8 +81,8 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pipeline.housekeeping.slot_exhausted` | Counter | `repo_provider_id` | Scheduler | Cycles that hit the in-flight slot limit |
 | `pipeline.housekeeping.pr_evaluated` | Counter | `repo_provider_id`, `mergeability_status` | Scheduler | PRs evaluated per mergeability status |
 | `pipeline.housekeeping.reprobe_triggered` / `.reprobe_resolved` | Counter | `repo_provider_id` (+ `resolved_state`) | Scheduler | Re-probes for PRs whose mergeability came back unknown |
-| `pipeline.housekeeping.conflict_rework_triggered` | Counter | — | Scheduler | Issues re-queued because their PR has a merge conflict |
-| `pipeline.housekeeping.branch_deleted` | Counter | — | Scheduler | Stale agent branches deleted |
+| `pipeline.housekeeping.conflict_rework_triggered` | Counter | `repo_provider_id` | Scheduler | Issues re-queued because their PR has a merge conflict |
+| `pipeline.housekeeping.branch_deleted` | Counter | `repo_provider_id` | Scheduler | Stale agent branches deleted |
 | `pipeline.pull_requests.closed` | Counter | `outcome` (`merged`, `closed_unmerged`) | Scheduler | Agent PRs merged or closed, once per PR per leader instance |
 | `pipeline.pull_requests.time_to_merge` | Histogram (s) | — | Scheduler | PR creation → merge (merge time approximated by the poll time) |
 | `label_swap_remove_exhausted_total` | Counter | `label`, `identifier` | API, Scheduler | Label swaps that could not remove the old `agent:*` label after 3 attempts (dual-label state) |
@@ -156,7 +156,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 
 A Prometheus series that starts at 1 shows no `increase()`, so counters with closed tag sets are seeded with `Add(0)` at startup. `MetricPreInitialization.Run` builds the host's `MeterProvider` first — measurements made before a provider listens to a meter are dropped, so seeding straight after `builder.Build()` records nothing — then emits the zero series and flushes them.
 
-- **API** (`Program.EmitPreInitCounters`): `pipeline.run.outcomes` (5 run types × 15 outcome/failure_reason combinations; `pipeline.project_name` is left out because it is unbounded), `pipeline.run.sub_issues`, `pipeline.run.brain_updates`, `pipeline.run.quality_gate.results`, `pipeline.run.ci.not_started_retriggers`, `pipeline.run.agent_stalls` (run type × phase × kind), the four per-phase usage counters (run type × phase × provider; `model` excluded), `pipeline.run.token_usage`, `pipeline.run.billing_cost_usd`, `pipeline.run.agent_turns`, `pipeline.run.web_search_requests`, `pipeline.run.rate_limit_events` (`provider=claude`), and `workdistribution.dispatch.attempts`.
+- **API** (`Program.EmitPreInitCounters`): `pipeline.run.outcomes` (5 run types × 15 outcome/failure_reason combinations; `pipeline.project_name` is left out because it is unbounded), `pipeline.run.sub_issues`, `pipeline.run.brain_updates`, `pipeline.run.quality_gate.results`, `pipeline.run.ci.not_started_retriggers`, `pipeline.run.agent_stalls` (run type × phase × kind), the four per-phase usage counters (run type × phase × provider; `pipeline.run.agent_sessions` is seeded with `model="unknown"` only, because real model names are unbounded), `pipeline.run.token_usage`, `pipeline.run.billing_cost_usd`, `pipeline.run.agent_turns`, `pipeline.run.web_search_requests`, `pipeline.run.rate_limit_events` (`provider=claude`), and `workdistribution.dispatch.attempts`.
 - **API, Scheduler, Web** (`GitHubTelemetry.PreInitialize`): `github.api.requests` (operation × outcome) and `pipeline.pull_requests.closed`.
 
 Histograms and gauges are not pre-initialized.
@@ -189,11 +189,11 @@ Cache token fields are populated for **OpenCode** and **Claude Code** agents. Ki
 
 **Claude Code usage:** the provider reads the `result` event of `claude -p --output-format stream-json` and reports, per call, input / output / reasoning / cache tokens, the CLI's cost estimate (`total_cost_usd`), turns, API time, web searches, a per-model breakdown and subscription rate-limit readings (`rate_limit_event`). A resumed session reports the whole conversation's totals, so the provider subtracts what it saw at the end of the previous call. The per-model breakdown and rate-limit readings are logged per call (`Claude Code model usage` / `Claude Code rate limit` log lines); the totals feed the counters above.
 
-`PipelineRunSummary.PhaseBreakdown` is keyed by the raw phase key (e.g. `analysis`, `codegen`, `review_correctness`, `quality_gate`). Each entry carries `Tokens` and `Cost`; the Run page (`/runs/{id}`) renders it as the "Cost Breakdown" table. It is `null` for runs recorded before the feature existed.
+`PipelineRunSummary.PhaseBreakdown` is keyed by the raw phase key (e.g. `analysis`, `codegen`, `review_correctness`, `quality_gate`). Each entry carries `Tokens` and `Cost`; the Run page (`/runs/{id}`) renders it as the "Cost & token breakdown" table (the pipeline sidebar shows the same data as "Cost Breakdown"). It is `null` for runs recorded before the feature existed.
 
 ### LLM Usage Telemetry Architecture
 
-1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and accumulates the session's time, tokens and cost into `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key.
+1. **Agent side** — `AgentStallMonitor.ExecuteWithMonitoringAsync` creates a per-invocation span (see "Session Spans" below) and adds the session count and elapsed time to `PipelineRun.Metrics.PhaseBreakdown` under the invocation's phase key. The calling phase executors add the tokens and cost with `AccumulateTokenUsage` under the same key.
 2. **Wire** — `LocalPipelineExecutor.BuildPayloadBase` converts `PhaseBreakdown` into `JobCompletionPayload.PhaseBreakdown` for transmission to the API.
 3. **API side** — `WorkItemStatusTransitionService.EmitTerminalStatusTelemetryAsync` reads the breakdown and records the `pipeline.run.*` usage counters with the normalized `phase` tag.
 
@@ -280,10 +280,13 @@ POST /api/work-items (API request span)
         │   └── RunQualityGates
         │       ├── QualityGate.Compilation
         │       ├── QualityGate.Tests
-        │       └── WaitForCi  (pre-PR external CI)
-        ├── Step CreatePullRequest
-        │   └── CreatePullRequest
-        │       └── WaitForCi  (post-PR external CI)
+        │       ├── WaitForCi  (pre-PR external CI, pipeline.ci_path=pre_pr)
+        │       ├── CreatePullRequest
+        │       │   ├── GeneratePrDescription
+        │       │   ├── Reflection
+        │       │   ├── BrainSyncPostRun
+        │       │   └── FeedbackCollection
+        │       └── WaitForCi  (post-PR external CI, pipeline.ci_path=post_pr)
         └── PrePrCleanup
 ```
 
@@ -293,7 +296,7 @@ Every agent CLI call inside a step adds an `invoke_agent {phase}` span (see [Ses
 
 - `PipelineStepRunner` creates one `Step {StepName}` span per step with `pipeline.step` and `pipeline.run_id` tags.
 - Steps that start their own inner span (e.g. `CloneRepository`, `AnalyzeIssue`) nest that inner span inside the runner-created `Step` span — giving two span levels per step.
-- Steps without an inner span (`VerifyBaseline`, `FetchIssue`, etc.) have only the runner-created span.
+- Steps without an inner span (`FetchIssue`, `DetectRework`, `DownloadIssueImages`, etc.) have only the runner-created span.
 - `VerifyBaseline` is a named inner span with `pipeline.run_id` and `pipeline.issue` tags.
 - `WaitForCi` is emitted for both the pre-PR CI path (`QualityGateExecutor.RunExternalCiPollAsync`) and the post-PR CI path (`CiPollingCoordinator.WaitForPostPrCiAsync`). Tags: `pipeline.run_id`, `pipeline.run_type`, `pipeline.ci_path` (`pre_pr` or `post_pr`), `pipeline.ci_status`, `pipeline.ci_infra_retries`.
 - `PrePrCleanup` is emitted by `PipelineCleanup.RunAsync` as a child of `ExecutePipeline`.
@@ -312,7 +315,7 @@ The Scheduler emits spans only when actual work occurs — idle ticks produce no
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result` | `WorkItemDispatchLoop.PollAndDispatchAsync` — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, or `Transient` |
+| `Dispatch.Attempt` | `work_item_id`, `agent_selector`, `result` | `WorkItemDispatchLoop.DispatchItemAsync` (called from `PollAndDispatchAsync`) — one span per item dispatched; result is `Dispatched`, `PermanentRejection`, `Transient`, plus `Cancelled` (shutdown) and `Exception` (unexpected client error) |
 | `Loop.Enqueue` | `issue_identifier`, `template_name` | `DispatchScheduler.DispatchIssueRoundAsync` — one span per issue the closed loop enqueues |
 | `Housekeeping.BranchUpdate` | `pr_number`, `repo_provider_id` | `HousekeepingService.UpdateAsync` — one span per PR branch update triggered |
 | `Housekeeping.ConflictRework` | `issue_id`, `pr_number` | `IssueReworkService.TrySwapIssueToNextAsync` — one span per issue re-queued for rework due to merge conflict |
@@ -346,7 +349,7 @@ All emitted by the agent pod.
 
 | Span Name | Tags | Emitter |
 |-----------|------|---------|
-| `ExecutePipeline` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.project_id`, `pipeline.project_name`, `pipeline.final_step`, `pipeline.agent_id` | Top-level span wrapping the full pipeline execution (`LocalPipelineExecutor`). Error status set only when run ends `Failed`. |
+| `ExecutePipeline` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.project_id`, `pipeline.project_name`, `pipeline.final_step`, `pipeline.agent_id`, `pipeline.failure_reason`, `pipeline.cancelled` | Top-level span wrapping the full pipeline execution (`LocalPipelineExecutor`). Error status set only when run ends `Failed`. |
 | `invoke_agent {phase}` | see [Session Spans](#session-spans-genai-semantic-conventions) | One per agent CLI call (`AgentStallMonitor`) |
 | `Step {StepName}` | `pipeline.step`, `pipeline.run_id` | Runner-created span per step (emitted by `PipelineStepRunner`). Error status set on unhandled exception. Non-critical failures add exception event, no Error. |
 | `CloneRepository` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type`, `pipeline.repository` | Repository clone into workspace (child of `Step CloneRepository`) |
@@ -364,7 +367,7 @@ All emitted by the agent pod.
 | `WaitForCi` | `pipeline.run_id`, `pipeline.run_type`, `pipeline.ci_path`, `pipeline.ci_status`, `pipeline.ci_infra_retries` | External CI polling span. `pipeline.ci_path` is `pre_pr` (inside `RunExternalCiPollAsync`) or `post_pr` (inside `WaitForPostPrCiAsync`). |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
 | `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
-| `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `pipeline.review_agent`, `pipeline.isolated` | Individual review agent execution (child of CodeReview.Iteration) |
+| `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `code_review.agent_name`, `code_review.iteration`, `code_review.exit_code`, `code_review.findings_critical`, `code_review.findings_warning`, `code_review.findings_suggestion`, `code_review.has_findings_file` | Individual review agent execution (child of CodeReview.Iteration) |
 | `CreatePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation, then the post-PR sequence (description, reflection, brain sync, feedback) |
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
@@ -389,9 +392,13 @@ All emitted by the agent pod.
 | `BrainConsolidation.Push` | `pipeline.run_id` | Pushing brain consolidation changes |
 | `RefactoringDetection.Clone` | `pipeline.run_id` | Code repo clone for refactoring detection |
 | `RefactoringDetection.HotspotAnalysis` | `pipeline.run_id` | Git hotspot analysis |
-| `RefactoringDetection.AgentExecution` | `pipeline.run_id` | Main agent LLM call for refactoring detection |
+| `RefactoringDetection.Phase0.ContextExtraction` | `pipeline.run_id` | Project convention extraction |
+| `RefactoringDetection.Phase1.StructuralDebt` | `pipeline.run_id` | Structural debt detection agent (one of three parallel detection agents) |
+| `RefactoringDetection.Phase1.Correctness` | `pipeline.run_id` | Correctness detection agent (one of three parallel detection agents) |
+| `RefactoringDetection.Phase1.DesignConsistency` | `pipeline.run_id` | Design consistency detection agent (one of three parallel detection agents) |
+| `RefactoringDetection.Phase2.Aggregation` | `pipeline.run_id` | Aggregation and prioritization of the detected proposals |
 | `RefactoringDetection.AdversarialReview` | `pipeline.run_id` | Adversarial review of refactoring proposals |
-| `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count` | Creating GitHub issues for proposals |
+| `RefactoringDetection.CreateIssues` | `pipeline.run_id`, `pipeline.proposal_count`, `pipeline.rejected_proposal_count` | Creating GitHub issues for proposals |
 | `HarnessSuggestion.AgentExecution` | `pipeline.run_id` | Main agent LLM call for harness suggestions |
 | `HarnessSuggestion.WriteToFile` | `pipeline.run_id` | Write-to-file agent call (LLM execution) |
 | `HarnessSuggestion.AdversarialReview` | `pipeline.run_id` | Adversarial review of harness suggestions |
@@ -402,9 +409,11 @@ All emitted by the agent pod.
 |-----|--------|-------------|
 | `pipeline.run_id` | UUID | Unique identifier for the pipeline run |
 | `pipeline.issue` | string | Issue or PR identifier (e.g., `42`) |
-| `pipeline.run_type` | `Implementation`, `Review`, `Decomposition` | Run type (**PascalCase** — differs from metric tags) |
+| `pipeline.run_type` | `Implementation`, `Review`, `DecompositionAnalysis`, `Decomposition` | Run type (**PascalCase** — differs from metric tags) |
 | `pipeline.final_step` | step name or `Cancelled` | Last step reached before completion |
-| `pipeline.agent_id` | hostname | Agent container hostname (on `ExecutePipeline`) |
+| `pipeline.agent_id` | Job name | Agent identity (`AGENT_ID`, the K8s Job name; the container hostname only when `AGENT_ID` is unset), on `ExecutePipeline` |
+| `pipeline.failure_reason` | `FailureReason` member name (e.g. `QualityGateExhausted`) | Set when the run ends without completing and a category is known (on `ExecutePipeline`) |
+| `pipeline.cancelled` | `true` | Set when the run was cancelled (on `ExecutePipeline`) |
 | `pipeline.phase` | `analysis`, `analysis_review`, `codegen`, `review`, `quality_gate`, `acceptance_criteria`, `pr_description`, `reflection`, `decomposition`, `other` | Normalized phase on `invoke_agent` spans; same values as the metric `phase` tag |
 | `pipeline.repository` | string | Repository name (on `CloneRepository` span) |
 | `pipeline.branch_name` | string | Branch name created or checked out (on `CreateBranch` span) |
@@ -418,8 +427,7 @@ All emitted by the agent pod.
 | `code_review.iteration` | integer | Code review iteration index (1-based) |
 | `code_review.max_iterations` | integer | Total configured review iterations |
 | `code_review.parallel` | `true`/`false` | Whether review agents ran in parallel |
-| `pipeline.review_agent` | string | Review agent name (on `CodeReview.Agent` span) |
-| `pipeline.isolated` | `true`/`false` | Whether review agent ran in isolated session |
+| `code_review.agent_name` | string | Review agent name (on `CodeReview.Agent` span) |
 
 > **Note on tag value casing**: Metric `run_type` values are lowercased (`implementation`), while span `pipeline.run_type` values are PascalCase (`Implementation`). Use the appropriate casing when querying your observability backend.
 
@@ -437,7 +445,7 @@ Telemetry is exported via OTLP. The OpenTelemetry SDK reads configuration from s
 
 ### Service Names
 
-Every host reads `OTEL_SERVICE_NAME` and falls back to a fixed name. `service.version` comes from `SERVICE_VERSION` (set in the Dockerfiles) or the assembly version; `deployment.environment` comes from `OTEL_RESOURCE_ATTRIBUTES`, then the host environment name, then `ASPNETCORE_ENVIRONMENT` / `DOTNET_ENVIRONMENT`, then `Production`.
+Every host reads `OTEL_SERVICE_NAME` and falls back to a fixed name. `service.version` comes from `SERVICE_VERSION` (set in the Dockerfiles to the git commit SHA); when it is unset the web host uses the assembly version and the other hosts and the agent use `local`. Traces and metrics get `deployment.environment` only from `OTEL_RESOURCE_ATTRIBUTES` (`otel.resourceAttributes` in the Helm values). The log sink also falls back to the host environment name, then `ASPNETCORE_ENVIRONMENT` / `DOTNET_ENVIRONMENT`, then `Production`.
 
 | `service.name` | Component | Port | How configured |
 |----------------|-----------|------|----------------|
@@ -445,7 +453,7 @@ Every host reads `OTEL_SERVICE_NAME` and falls back to a fixed name. `service.ve
 | `coding-agent-api` *(default)* or override | REST/WebSocket API | Port 8080 | Set via `otel.apiServiceName` in `values.yaml` (default: `coding-agent-api`). Override if you need a different name. |
 | `coding-agent-jobcontroller` | Job Controller | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
 | `coding-agent-scheduler` | Scheduler | Port 8080 | Fixed fallback; overridable via `OTEL_SERVICE_NAME` env var |
-| `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder` via `OTEL_SERVICE_NAME` on each Job pod. Per-run identity exposed via `service.instance.id` = K8s Job name (e.g., `caa-agent-7f3a9b2e1c4`), set in `OTEL_RESOURCE_ATTRIBUTES` |
+| `coding-agent-worker` | Agent pods (K8s Jobs) | — | Set unconditionally by `JobSpecBuilder` via `OTEL_SERVICE_NAME` on each Job pod. Per-run identity exposed via `service.instance.id` = K8s Job name (e.g., `caa-7f3a9b2e`), set in `OTEL_RESOURCE_ATTRIBUTES` |
 
 > **Run identity in `service.instance.id`:** Agent pods all share the stable `service.name=coding-agent-worker`. The individual run is identified by `service.instance.id` (set to the Kubernetes Job name, e.g. `caa-abcdef12`) in `OTEL_RESOURCE_ATTRIBUTES`. This keeps service cardinality stable — queries no longer need regex to match per-run service names.
 
@@ -506,14 +514,13 @@ ExecutePipeline
 │   └── RunQualityGates
 │       ├── QualityGate.Compilation
 │       ├── QualityGate.Tests
-│       └── WaitForCi  (pre-PR external CI, pipeline.ci_path=pre_pr)
-├── Step CreatePullRequest
-│   └── CreatePullRequest
-│       ├── GeneratePrDescription
-│       ├── WaitForCi  (post-PR external CI, pipeline.ci_path=post_pr)
-│       ├── Reflection
-│       ├── BrainSyncPostRun
-│       └── FeedbackCollection
+│       ├── WaitForCi  (pre-PR external CI, pipeline.ci_path=pre_pr)
+│       ├── CreatePullRequest
+│       │   ├── GeneratePrDescription
+│       │   ├── Reflection
+│       │   ├── BrainSyncPostRun
+│       │   └── FeedbackCollection
+│       └── WaitForCi  (post-PR external CI, pipeline.ci_path=post_pr)
 └── PrePrCleanup
 ```
 
@@ -522,6 +529,7 @@ For a review run:
 ```
 ExecutePipeline
 ├── Step ExtractLinkedIssues
+│   └── ExtractLinkedIssues
 ├── Step ReviewCode
 │   └── ReviewCode
 ├── Step PostReviewFindings
@@ -533,8 +541,11 @@ For a decomposition run (Phase 1):
 
 ```
 ExecutePipeline
-└── Step DecompositionAnalysis
-    └── PostDecompositionPlan
+├── Step DecompositionAnalysis
+│   └── DecompositionAnalysis
+├── Step PostDecompositionPlan
+│   └── PostDecompositionPlan
+└── PrePrCleanup
 ```
 
 For a brain consolidation run:
@@ -555,7 +566,11 @@ For a refactoring detection run:
 ExecuteConsolidation
 ├── RefactoringDetection.Clone
 ├── RefactoringDetection.HotspotAnalysis
-├── RefactoringDetection.AgentExecution
+├── RefactoringDetection.Phase0.ContextExtraction
+├── RefactoringDetection.Phase1.StructuralDebt
+├── RefactoringDetection.Phase1.Correctness
+├── RefactoringDetection.Phase1.DesignConsistency
+├── RefactoringDetection.Phase2.Aggregation
 ├── RefactoringDetection.AdversarialReview
 └── RefactoringDetection.CreateIssues
 ```

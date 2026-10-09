@@ -1118,6 +1118,8 @@ public class ChatJobDispatcherTests
     [Fact]
     public void IsTerminal_CompleteConditionTrue_ReturnsTrue()
     {
+        // TODO: Replace raw "Complete" and "True" literals with KubernetesJobConditions.JobPhaseComplete / KubernetesJobConditions.ConditionTrue
+        // so a wrong constant value would be caught by this test.
         var job = new V1Job { Status = new V1JobStatus { Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }] } };
         ChatJobDispatcher.IsTerminal(job).Should().BeTrue();
     }
@@ -1125,6 +1127,8 @@ public class ChatJobDispatcherTests
     [Fact]
     public void IsTerminal_FailedConditionTrue_ReturnsTrue()
     {
+        // TODO: Replace raw "Failed" and "True" literals with KubernetesJobConditions.JobPhaseFailed / KubernetesJobConditions.ConditionTrue
+        // so a wrong constant value would be caught by this test.
         var job = new V1Job { Status = new V1JobStatus { Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }] } };
         ChatJobDispatcher.IsTerminal(job).Should().BeTrue();
     }
@@ -1132,6 +1136,8 @@ public class ChatJobDispatcherTests
     [Fact]
     public void IsTerminal_CompleteConditionFalse_ReturnsFalse()
     {
+        // TODO: Replace raw "Complete" literal with KubernetesJobConditions.JobPhaseComplete
+        // so a wrong constant value would be caught by this test.
         var job = new V1Job { Status = new V1JobStatus { Conditions = [new V1JobCondition { Type = "Complete", Status = "False" }] } };
         ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
     }
@@ -1398,7 +1404,8 @@ public class ChatJobDispatcherTests
         var thread = new Thread(() =>
         {
             do { sendHeartbeat(); } while (!stop.Wait(TimeSpan.FromMilliseconds(200)));
-        }) { IsBackground = true, Name = "test-heartbeats" };
+        })
+        { IsBackground = true, Name = "test-heartbeats" };
         thread.Start();
         return () =>
         {

@@ -247,7 +247,7 @@ internal sealed class ChatSessionWatcher : IChatSessionWatcher
         else
         {
             var isFailed = job.Status?.Conditions?.Any(
-                c => c.Type == "Failed" && c.Status == "True") == true;
+                c => c.Type == KubernetesJobConditions.JobPhaseFailed && c.Status == KubernetesJobConditions.ConditionTrue) == true;
 
             if (isFailed)
                 _logger.Warning(

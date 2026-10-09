@@ -20,8 +20,9 @@ The pipeline uses these `agent:*` labels (created automatically on first run):
 | `agent:epic` | 🟣 Purple | Epic queued for decomposition analysis |
 | `agent:epic-review` | 🟡 Yellow | Decomposition plan posted, awaiting human approval |
 | `agent:epic-approved` | 🟢 Green | Plan approved, queued for sub-issue creation |
+| `agent:generated` | 🔵 Light blue | Issue was created by the pipeline (a decomposition sub-issue or a refactoring issue); stays on the issue next to its status label |
 
-Only one `agent:*` label should be present on an issue at a time (except during the brief swap window). The pipeline swaps labels by first adding the new label, then removing all other `agent:*` labels. This add-first ordering ensures the issue is never left without a status label if the operation is interrupted mid-swap. During the brief swap window, two `agent:*` labels may coexist on the issue.
+Only one status label (every `agent:*` label except `agent:generated`) should be present on an issue at a time, except during the brief swap window; `agent:generated` stays next to it. The pipeline swaps labels by first adding the new label, then removing the other status labels. This add-first ordering ensures the issue is never left without a status label if the operation is interrupted mid-swap. During the brief swap window, two status labels may coexist on the issue.
 
 ## Flow 1: Happy Path
 
@@ -77,7 +78,7 @@ Only one `agent:*` label should be present on an issue at a time (except during 
 7. **Pipeline** pushes to the existing branch (updates the PR automatically) and refreshes the PR body with current quality gate results
 8. **Pipeline** adds `agent:done` label on success
 
-If the user wants a fresh run instead of rework, they close the existing PR first, then add `agent:next`. The pipeline only enters rework mode when an open agent PR exists for the issue.
+If the user wants a fresh run instead of rework, they close the existing PR first, then add `agent:next`. The pipeline only enters rework mode when an open, non-draft agent PR exists for the issue. An open draft agent PR (left by a run whose quality gates failed, Flow 4) is closed, and the run starts on a fresh branch.
 
 ## Flow 7: Epic Decomposition
 
@@ -102,6 +103,10 @@ When a **project** has an `EpicIssueProviderId` configured, epics in that tracke
 - Issues are created as regular issues, not platform-specific sub-issues, ensuring compatibility across all issue providers
 
 See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) and [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decomposition) for configuration details.
+
+## Issue Dependencies
+
+An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) and GitLab URLs with nested subgroups are not recognized and do not block dispatch.
 
 ## Closed-Loop Mode
 

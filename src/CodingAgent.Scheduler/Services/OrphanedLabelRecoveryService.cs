@@ -208,27 +208,19 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
         foreach (var providerConfigId in issueProviderIds)
         {
-            // Track identifiers resolved by Pass 1 so Pass 2 can skip them and avoid calling
-            // SwapLabelAsync twice for the same issue in a single sweep.
-            // An issue carrying [agent:in-progress, agent:done] appears in both the Pass 1
-            // agent:in-progress query and the Pass 2 agent:done query. Without this guard,
-            // both passes would call TrySwapToDualLabelResolutionAsync for the same issue,
-            // producing two back-to-back swap calls (duplicate-add + not-found-remove on the
-            // second call, with unpredictable behaviour depending on the provider).
-            // TODO: Cross-pass deduplication only covers Pass 1 → later passes. Passes 2, 3, and 4
-            // never write to this set, so a dual-label combination that spans two of those passes
-            // (e.g. {agent:done, agent:error} appearing in both Pass 2 and Pass 3, or
-            // {agent:error, agent:needs-refinement} in both Pass 3 and Pass 4) can be processed
-            // twice in the same sweep. The second SwapLabelAsync call is usually a no-op add
-            // followed by a not-found remove, but it generates an avoidable provider API call and
-            // a Warning log. Fix: rename to resolvedIdentifiers and have ScanProviderForDualLabelIssuesAsync
-            // write each resolved identifier into the shared set before returning, mirroring the
-            // pattern already used in ScanProviderAsync.
-            var pass1ResolvedIdentifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // Shared deduplication set for all four passes within this provider's sweep.
+            // An issue carrying two agent:* status labels may be returned by multiple pass queries
+            // (e.g. {agent:in-progress, agent:done} surfaces in both Pass 1 and Pass 2;
+            // {agent:done, agent:error} surfaces in both Pass 2 and Pass 3). Each pass records the
+            // identifier of every issue it successfully resolves so subsequent passes can skip it
+            // and avoid a double-swap (duplicate-add + not-found-remove on the second call).
+            // The identifier is added only on success — a failed swap must not block a later pass
+            // from retrying the same issue.
+            var resolvedIdentifiers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
-                recoveredCount += await ScanProviderAsync(providerConfigId, pass1ResolvedIdentifiers, sweepCt);
+                recoveredCount += await ScanProviderAsync(providerConfigId, resolvedIdentifiers, sweepCt);
             }
             catch (Exception ex)
             {
@@ -237,7 +229,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, AgentLabels.Done, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.Done, sweepCt);
             }
             catch (Exception ex)
             {
@@ -246,7 +238,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, AgentLabels.Error, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.Error, sweepCt);
             }
             catch (Exception ex)
             {
@@ -255,7 +247,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             try
             {
-                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, pass1ResolvedIdentifiers, AgentLabels.NeedsRefinement, sweepCt);
+                recoveredCount += await ScanProviderForDualLabelIssuesAsync(providerConfigId, resolvedIdentifiers, AgentLabels.NeedsRefinement, sweepCt);
             }
             catch (Exception ex)
             {
@@ -409,10 +401,10 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     ///   <item>Pass 4 — <c>agent:needs-refinement</c> (e.g. <c>{agent:needs-refinement, agent:next}</c>).</item>
     /// </list>
     /// </para>
-    /// Issues already resolved by Pass 1 in the same sweep are skipped via
-    /// <paramref name="pass1ResolvedIdentifiers"/> to prevent double-swapping.
+    /// Issues already resolved in the same sweep are skipped via
+    /// <paramref name="resolvedIdentifiers"/> to prevent double-swapping.
     /// </summary>
-    private async Task<int> ScanProviderForDualLabelIssuesAsync(string providerConfigId, HashSet<string> pass1ResolvedIdentifiers, string primaryLabel, CancellationToken ct)
+    private async Task<int> ScanProviderForDualLabelIssuesAsync(string providerConfigId, HashSet<string> resolvedIdentifiers, string primaryLabel, CancellationToken ct)
     {
         var allProviders = await _configClient.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, ct);
         var providerConfig = allProviders.FirstOrDefault(p => p.Id == providerConfigId);
@@ -437,15 +429,16 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             foreach (var issue in result.Items)
             {
-                // Skip issues already resolved by Pass 1 in this sweep.
-                // An issue carrying [agent:in-progress, agent:done] appears in both the Pass 1
-                // agent:in-progress query and this Pass 2 agent:done query. Pass 1 runs first and
-                // records resolved identifiers; skipping here prevents a double-swap (two back-to-back
-                // SwapLabelAsync calls) for the same issue within a single sweep.
-                if (pass1ResolvedIdentifiers.Contains(issue.Identifier))
+                // Skip issues already resolved in this sweep (by any earlier pass).
+                // An issue carrying two agent:* labels may be returned by multiple pass queries —
+                // e.g. {agent:done, agent:error} appears in both the Pass 2 agent:done query and
+                // the Pass 3 agent:error query. The first pass to resolve it records the identifier
+                // here; subsequent passes skip it to prevent a double-swap (duplicate-add +
+                // not-found-remove on the second SwapLabelAsync call) within a single sweep.
+                if (resolvedIdentifiers.Contains(issue.Identifier))
                 {
                     _logger.Debug(
-                        "Dual-label recovery: issue {Identifier} already resolved by Pass 1 in this sweep, skipping",
+                        "Dual-label recovery: issue {Identifier} already resolved in this sweep, skipping",
                         issue.Identifier);
                     continue;
                 }
@@ -457,7 +450,13 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
                 // here to avoid the GetIssueAsync round-trip for issues in the grace period.
 
                 if (await TryResolveSingleDualLabelIssueAsync(issue, issueProvider, providerConfigId, ct))
+                {
                     resolved++;
+                    // Record the resolved identifier so later passes (e.g. Pass 3 after Pass 2,
+                    // or Pass 4 after Pass 3) skip this issue and avoid a double-swap.
+                    // Only added on success — a failed swap must not block a later pass from retrying.
+                    resolvedIdentifiers.Add(issue.Identifier);
+                }
             }
 
             if (!result.HasMore)
