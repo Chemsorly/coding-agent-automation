@@ -402,16 +402,16 @@ public sealed class IssueDrawerService : IIssueDrawerService, IDisposable
     /// active work item. <see cref="WorkItemStatus.Pending"/> means "Queued";
     /// <see cref="WorkItemStatus.Running"/> means "Running or Dispatched".
     /// </summary>
-    public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, string issueProviderConfigId)
+    public WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
     {
-        var key = (issueIdentifier, (ProviderConfigId)issueProviderConfigId);
+        var key = (issueIdentifier, issueProviderConfigId);
         return ActiveIssues.TryGetValue(key, out var status) ? status : null;
     }
 
-    public bool IsIssueActive(IssueIdentifier issueIdentifier, string issueProviderConfigId)
-        => ActiveIssues.ContainsKey((issueIdentifier, (ProviderConfigId)issueProviderConfigId));
+    public bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
+        => ActiveIssues.ContainsKey((issueIdentifier, issueProviderConfigId));
 
-    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
+    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => _workDistributor.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId, CancellationToken.None);
 
     // ── Cross-drawer coordination ──

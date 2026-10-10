@@ -397,7 +397,7 @@ public sealed class KubernetesWorkDistributorTests
     [Fact]
     public async Task IsIssueDistributedAsync_ReturnsClientResult()
     {
-        _client.Setup(c => c.IsIssueDistributedAsync("GH-1", "github", It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.IsIssueDistributedAsync(new IssueIdentifier("GH-1"), new ProviderConfigId("github"), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var result = await _sut.IsIssueDistributedAsync(
@@ -409,7 +409,7 @@ public sealed class KubernetesWorkDistributorTests
     [Fact]
     public async Task IsIssueDistributedAsync_WhenFalse_ReturnsFalse()
     {
-        _client.Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _client.Setup(c => c.IsIssueDistributedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         var result = await _sut.IsIssueDistributedAsync(

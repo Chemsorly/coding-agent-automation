@@ -20,7 +20,7 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     new Task<bool> PostStatusAsync(Guid workItemId, WorkItemStatusUpdate request, CancellationToken ct = default);
     Task RequeueAsync(Guid workItemId, CancellationToken ct = default);
     Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct = default);
-    Task<WorkItemStalenessResult?> GetStalenessAsync(string issueIdentifier, string issueProviderConfigId, DateTimeOffset since, CancellationToken ct = default);
+    Task<WorkItemStalenessResult?> GetStalenessAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, DateTimeOffset since, CancellationToken ct = default);
     Task<Guid> CreateAsync(JobDistributionRequest request, CancellationToken ct = default);
     Task PostLabelSwapAsync(Guid workItemId, string label, CancellationToken ct = default);
     Task<IReadOnlyList<ActiveWorkItemDto>> GetActiveAsync(int olderThanSeconds, string? projectId = null, CancellationToken ct = default);
@@ -36,7 +36,7 @@ public interface IPipelineApiWorkItemClient : IWorkItemSweepClient
     /// Returns true when the issue has a non-terminal WorkItem or was recently terminated.
     /// Used by KubernetesWorkDistributor.IsIssueDistributedAsync for dispatch deduplication.
     /// </summary>
-    Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct = default);
+    Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct = default);
 
     /// <summary>
     /// Sets the dispatch priority weight for a Pending WorkItem.
