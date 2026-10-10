@@ -169,8 +169,7 @@ public class TokenVendingServiceTests
                 DisplayName = "Agent",
                 Settings = new Dictionary<string, string>
                 {
-                    [ProviderSettingKeys.Model] = "auto",
-                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli"
+                    [ProviderSettingKeys.Model] = "auto"
                 }
             }
         };
@@ -264,7 +263,6 @@ public class TokenVendingServiceTests
                 Settings = new Dictionary<string, string>
                 {
                     [ProviderSettingKeys.Model] = "claude-sonnet-4",
-                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
                 }
             }
         };
@@ -272,7 +270,6 @@ public class TokenVendingServiceTests
         var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
 
         result[0].Settings[ProviderSettingKeys.Model].Should().Be("claude-sonnet-4");
-        result[0].Settings[ProviderSettingKeys.ExecutablePath].Should().Be("/usr/bin/kiro-cli");
     }
 
     [Fact]

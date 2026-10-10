@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgent.Infrastructure.Persistence;
 using CodingAgent.Infrastructure.Persistence.Entities;
+using CodingAgent.Kubernetes;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Orchestration.Dispatch;
@@ -178,8 +179,25 @@ public static class ConfigEndpoints
     internal static async Task<IResult> SaveProviderConfig(
         [FromBody] ProviderConfig config,
         IProviderConfigStore store,
+        JobTemplateStore templates,
+        IAgentProfileStore profileStore,
         CancellationToken ct)
     {
+        if (config.Kind == ProviderKind.Agent)
+        {
+            // TODO: The check below has a TOCTOU race: we load profiles, check, then save the
+            // provider. A concurrent SaveAgentProfile call between the load and this save could
+            // create a mismatching profile that slips through. This is acceptable for a
+            // low-traffic settings API but the invariant is not atomically enforced.
+            var profiles = await profileStore.LoadAgentProfilesAsync(ct);
+            foreach (var profile in profiles.Where(p => p.AgentProviderConfigId == config.Id))
+            {
+                var mismatch = templates.FindProviderTypeMismatch(profile, config);
+                if (mismatch is not null)
+                    return TypedResults.BadRequest(mismatch);
+            }
+        }
+
         return await SaveAsync(() => store.SaveProviderConfigAsync(config, ct));
     }
 
@@ -205,8 +223,20 @@ public static class ConfigEndpoints
     internal static async Task<IResult> SaveAgentProfile(
         [FromBody] AgentProfile profile,
         IAgentProfileStore store,
+        JobTemplateStore templates,
+        IProviderConfigStore providerStore,
         CancellationToken ct)
     {
+        // TODO: When profile.AgentProviderConfigId is an empty string, GetProviderConfigByIdAsync
+        // returns null (store treats unknown IDs as "not found"), so FindProviderTypeMismatch
+        // returns null and the save proceeds. A profile with no provider config can therefore be
+        // saved. This is a pre-existing latent defect (the model permits empty-string IDs through
+        // JSON deserialization despite the required annotation) and is not introduced by this diff.
+        var provider = await providerStore.GetProviderConfigByIdAsync(profile.AgentProviderConfigId, ProviderKind.Agent, ct);
+        var mismatch = templates.FindProviderTypeMismatch(profile, provider);
+        if (mismatch is not null)
+            return TypedResults.BadRequest(mismatch);
+
         return await SaveAsync(() => store.SaveAgentProfileAsync(profile, ct));
     }
 

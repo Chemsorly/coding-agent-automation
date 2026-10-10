@@ -61,7 +61,7 @@ The Claude image runs the Claude Code CLI. Its job templates use `providerType: 
 
 ## Agent Profiles
 
-Agent Profiles map label sets to agent provider configs (model, effort, CLI path). Configured in Settings → Label Routing → Agent Profiles.
+Agent Profiles map label sets to agent provider configs (model, effort). Configured in Settings → Label Routing → Agent Profiles.
 
 | Profile | Match Labels | Effect |
 |---------|-------------|--------|
@@ -70,6 +70,8 @@ Agent Profiles map label sets to agent provider configs (model, effort, CLI path
 | Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model |
 
 Resolution: the profile must contain every label of the repository; among those, the profile with the most labels wins, then the higher Priority, then the Id. A profile with empty MatchLabels matches only a repository with no required labels; it is a catch-all only for consolidation runs, which match by agent labels. Agent Chat does not offer it: a chat pod needs labels to pick its job template.
+
+The agent provider's type must match the `providerType` of the job template that the profile's labels select (`KiroCli` with `kiro`, `OpenCode` with `opencode`, `ClaudeCode` with `claude`). Saving a profile or an agent provider that breaks this constraint is refused with a plain-text reason. The Agent Profiles page flags existing mismatches — for example after a Helm change that switches a job template's `providerType`.
 
 ## Quality Gate Configurations
 
