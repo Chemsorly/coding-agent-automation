@@ -59,35 +59,7 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var caller = _facade.GetByConnectionId(Context.ConnectionId);
-        if (caller is null)
-        {
-            _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), "unknown");
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent unknown");
-        }
-
-        // TODO: Context.ConnectionAborted is cancelled when the agent's SignalR connection is
-        // aborted mid-call (e.g. transient disconnect). If GetByAgentIdAsync throws
-        // OperationCanceledException it propagates unhandled — surfaced as a generic internal
-        // error rather than a structured HubException, diverging from every other rejection
-        // path in this file. Consider using CancellationToken.None or catching
-        // OperationCanceledException and converting it to a HubException for consistency.
-        var authoritativeEntry = await _facade.GetByAgentIdAsync(caller.AgentId, Context.ConnectionAborted);
-        if (authoritativeEntry is null)
-        {
-            _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), caller.AgentId.Value);
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {caller.AgentId.Value}");
-        }
-
-        var (isValid, agentId) = ValidateChatSessionOwnership(authoritativeEntry, message.SessionId);
-        if (!isValid)
-        {
-            _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), agentId);
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
-        }
+        var caller = await ValidateOwnershipAsync("ReportChatResponse", message.SessionId, Context.ConnectionAborted);
 
         // Broadcast to subscribed UI circuits
         await _uiContext.Clients.Group($"chat-session-{message.SessionId}")
@@ -111,32 +83,7 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var caller = _facade.GetByConnectionId(Context.ConnectionId);
-        if (caller is null)
-        {
-            _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), "unknown");
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent unknown");
-        }
-
-        // TODO: Context.ConnectionAborted is cancelled when the agent's SignalR connection is
-        // aborted mid-call. If GetByAgentIdAsync throws OperationCanceledException it propagates
-        // unhandled rather than as a structured HubException. See ReportChatResponse for details.
-        var authoritativeEntry = await _facade.GetByAgentIdAsync(caller.AgentId, Context.ConnectionAborted);
-        if (authoritativeEntry is null)
-        {
-            _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), caller.AgentId.Value);
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {caller.AgentId.Value}");
-        }
-
-        var (isValid, agentId) = ValidateChatSessionOwnership(authoritativeEntry, message.SessionId);
-        if (!isValid)
-        {
-            _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
-                SanitizeForLog(message.SessionId), agentId);
-            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
-        }
+        var caller = await ValidateOwnershipAsync("ReportChatCompleted", message.SessionId, Context.ConnectionAborted);
 
         // Clear the session stamp in the authoritative store before broadcasting completion,
         // so the UI input box is never re-enabled before the session is fully cleared.
@@ -150,5 +97,44 @@ public sealed partial class AgentHub
             .SendAsync(HubMethodNames.OnChatCompleted, message.SessionId, message.ExitCode, message.Error);
 
         _chatNotifier.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);
+    }
+
+    /// <summary>
+    /// Validates that the calling connection owns the given chat session by performing three checks:
+    /// <list type="number">
+    ///   <item>The connection has a registered <see cref="AgentEntry"/> (not null).</item>
+    ///   <item>The authoritative registry entry for that agent exists in the backing store.</item>
+    ///   <item>The authoritative entry's <c>ActiveChatSessionId</c> matches <paramref name="sessionId"/>.</item>
+    /// </list>
+    /// Throws <see cref="HubException"/> on any check failure.
+    /// </summary>
+    /// <returns>The validated authoritative <see cref="AgentEntry"/> (the caller's registry record).</returns>
+    private async Task<AgentEntry> ValidateOwnershipAsync(string methodName, string sessionId, CancellationToken ct)
+    {
+        var caller = _facade.GetByConnectionId(Context.ConnectionId);
+        if (caller is null)
+        {
+            _logger.Warning("{Method} rejected — session {SessionId} not assigned to agent {AgentId}",
+                methodName, SanitizeForLog(sessionId), "unknown");
+            throw new HubException($"Session {SanitizeForLog(sessionId)} not assigned to agent unknown");
+        }
+
+        var authoritativeEntry = await _facade.GetByAgentIdAsync(caller.AgentId, ct);
+        if (authoritativeEntry is null)
+        {
+            _logger.Warning("{Method} rejected — session {SessionId} not assigned to agent {AgentId}",
+                methodName, SanitizeForLog(sessionId), caller.AgentId.Value);
+            throw new HubException($"Session {SanitizeForLog(sessionId)} not assigned to agent {caller.AgentId.Value}");
+        }
+
+        var (isValid, agentId) = ValidateChatSessionOwnership(authoritativeEntry, sessionId);
+        if (!isValid)
+        {
+            _logger.Warning("{Method} rejected — session {SessionId} not assigned to agent {AgentId}",
+                methodName, SanitizeForLog(sessionId), agentId);
+            throw new HubException($"Session {SanitizeForLog(sessionId)} not assigned to agent {agentId}");
+        }
+
+        return authoritativeEntry;
     }
 }
