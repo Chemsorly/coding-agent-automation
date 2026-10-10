@@ -444,6 +444,17 @@ public class AgentChatMcpConfigPathTests : BunitContext
     }
 
     [Fact]
+    public async Task ResolvePodLaunchProfileAsync_EmptyProviderType_FallsBackToKiroPath()
+    {
+        // Given: the provider config has no provider type (logged as a warning) and no explicit path
+        var agentConfig = MakeProviderConfig("");
+
+        var msg = await LaunchAndCapturePromptMessageAsync(agentConfig);
+
+        Assert.Equal("/home/ubuntu/.kiro/settings/mcp.json", msg.McpConfigPath);
+    }
+
+    [Fact]
     public async Task LaunchChatPod_ProfileWithMissingProviderConfig_ShowsErrorAndDoesNotDispatch()
     {
         // Given: the profile points to an agent provider config that does not exist. Launching
