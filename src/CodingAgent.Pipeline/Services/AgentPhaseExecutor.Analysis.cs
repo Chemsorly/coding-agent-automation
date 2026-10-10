@@ -147,10 +147,15 @@ public partial class AgentPhaseExecutor
                     assessment = await RunSingleAnalysisAttemptAsync(context, analysisFilePath, assessmentFilePath, ct);
                     break; // Success — exit retry loop
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException and not AnalysisIncompleteException)
+                catch (Exception ex) when (ex is not OperationCanceledException and not AnalysisIncompleteException and not ProviderUnavailableException)
                 {
                     throw new AnalysisIncompleteException($"Agent execution failed: {ex.Message}", ex);
                 }
+            }
+            catch (ProviderUnavailableException ex)
+            {
+                await FailForUnavailableProviderAsync(context, ex);
+                return (false, null);
             }
             catch (AnalysisIncompleteException ex)
             {
@@ -248,6 +253,10 @@ public partial class AgentPhaseExecutor
         _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
             run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
 
+        if (!analysisResult.Success && ProviderUnavailableException.IsProviderFailure(analysisResult.ErrorCategory))
+            throw new ProviderUnavailableException(analysisResult.ErrorCategory,
+                $"Agent provider unavailable ({analysisResult.ErrorCategory}), exit code {analysisResult.ExitCode}");
+
         ValidateAnalysisFile(run, analysisFilePath, analysisResult);
 
         run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
@@ -263,6 +272,23 @@ public partial class AgentPhaseExecutor
         }
 
         return await ReadAssessmentAsync(run, ct);
+    }
+
+    /// <summary>
+    /// Ends a run whose model provider is unavailable (rate limit, overload, rejected credentials) as an
+    /// infrastructure failure, without the needs-refinement label: the issue is not at fault, and that
+    /// label would take it out of dispatch until someone removes it.
+    /// </summary>
+    private async Task FailForUnavailableProviderAsync(AgentPhaseContext context, ProviderUnavailableException ex)
+    {
+        var run = context.Run;
+        _logger.Error("Pipeline {RunId} analysis stopped: {Message}", run.RunId, ex.Message);
+        context.Callbacks.EmitOutputLine($"❌ {ex.Message} — an infrastructure failure, not a problem with the issue");
+        run.FailureReason = ex.Message;
+        run.FailureCategory = FailureReason.InfrastructureFailure;
+        run.MarkCompleted();
+        context.Callbacks.TransitionTo(PipelineStep.Failed);
+        await context.Callbacks.AddRunToHistoryAsync(run);
     }
 
     /// <summary>Validates that analysis.md exists and meets minimum length. Throws AnalysisIncompleteException if not.</summary>
@@ -326,6 +352,10 @@ public partial class AgentPhaseExecutor
             line => context.Callbacks.EmitOutputLine(line),
             _logger,
             ct);
+
+        // The reviewer and the refinement are agent calls of their own; count their tokens too.
+        run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: "analysis");
+        run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: "analysis");
 
         if (!reviewResult.RefinementTriggered) return currentAssessment;
 

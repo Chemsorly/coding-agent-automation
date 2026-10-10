@@ -31,6 +31,7 @@ public sealed class ChatJobExecutor : IAsyncDisposable
     private readonly AgentProviderType _providerType;
     private readonly Func<ChatPromptMessage, IAgentProvider> _claudeCodeProviderFactory;
     private readonly string? _claudeRulesDirectory;
+    private readonly string? _openCodeSteeringDirectory;
     private readonly Func<ChatPromptMessage, IAgentProvider> _openCodeProviderFactory;
 
     /// <summary>
@@ -75,6 +76,7 @@ public sealed class ChatJobExecutor : IAsyncDisposable
         _openCodeProviderFactory = deps.OpenCodeProviderFactory
             ?? (_ => new OpenCodeAgentProvider(_httpClientFactory, deps.Logger, deps.ChatModel));
         _claudeRulesDirectory = deps.ClaudeRulesDirectory;
+        _openCodeSteeringDirectory = deps.OpenCodeSteeringDirectory;
         _isChatMode = deps.IsChatMode;
         _chatTaskCompletionGracePeriod = deps.ChatTaskCompletionGracePeriod;
         _logger = deps.Logger;
@@ -175,14 +177,24 @@ public sealed class ChatJobExecutor : IAsyncDisposable
                     $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}",
                     chatToken);
             }
+            else if (!message.UseResume)
+            {
+                McpConfigWriter.RemoveStaleConfig(message.McpConfigPath, _providerType);
+            }
 
             // Write project steering before dispatching to the provider.
             // For Kiro CLI, this must precede the warm-up prompt which triggers session init
             // (and .kiro/steering/ loading). Only written on first prompt (UseResume = false).
             if (!message.UseResume && !string.IsNullOrEmpty(message.ProjectSteeringContent))
             {
-                ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _providerType, _claudeRulesDirectory);
+                ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _providerType, _claudeRulesDirectory, _openCodeSteeringDirectory);
                 await outputBatcher.AddLineAsync("📋 Wrote project steering to workspace", chatToken);
+            }
+            else if (!message.UseResume && _providerType is (AgentProviderType.ClaudeCode or AgentProviderType.OpenCode))
+            {
+                // Claude Code's and OpenCode's steering lives in the user's home, outside the workspace:
+                // clear the last conversation's, so a chat without steering does not load another project's.
+                ChatSteeringWriter.Write(string.Empty, chatWorkspace, _providerType, _claudeRulesDirectory, _openCodeSteeringDirectory);
             }
 
             if (!message.UseResume && message.ProjectSecrets is { Count: > 0 })

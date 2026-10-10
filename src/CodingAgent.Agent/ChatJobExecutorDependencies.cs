@@ -65,4 +65,7 @@ public sealed record ChatJobExecutorDependencies(
 
     /// <summary>Directory for Claude Code steering rules; null means <c>~/.claude/rules</c>.</summary>
     public string? ClaudeRulesDirectory { get; init; }
+
+    /// <summary>Directory for OpenCode steering instruction files; null means <c>~/.opencode</c>.</summary>
+    public string? OpenCodeSteeringDirectory { get; init; }
 }

@@ -129,13 +129,10 @@ internal static class RepositoryGitOperations
 
         StageAllChangedFiles(repo, preStatus);
 
-        // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
+        // Hardcoded: ALWAYS unstage pipeline-owned paths regardless of configured blacklist.
         var universalHardcoded = new[] { AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory };
-        var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
-            ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-            : universalHardcoded;
 
-        var unstaged = UnstageBlacklistedPaths(repo, hardcodedBlacklist, blacklistedPaths);
+        var unstaged = UnstageBlacklistedPaths(repo, universalHardcoded, pipelineInjectedPaths, blacklistedPaths);
 
         return ValidateStagedCountAndCommit(repo, workspacePath, message, allowEmpty, unstaged);
     }
@@ -180,15 +177,27 @@ internal static class RepositoryGitOperations
     /// if provided, <paramref name="configurableBlacklist"/>. Returns the set of normalized
     /// paths that were unstaged (used to skip already-unstaged entries in the configurable pass).
     /// </summary>
+    /// <param name="repo">The repository whose index is filtered.</param>
+    /// <param name="hardcodedBlacklist">Pipeline-owned paths: every change under them is unstaged.</param>
+    /// <param name="providerInjectedPaths">
+    /// Paths the agent provider writes into (e.g. <c>.kiro</c>): only new files there are unstaged. A
+    /// file the repository already tracks (its own steering, say) may be edited by the run, and that
+    /// edit is committed.
+    /// </param>
+    /// <param name="configurableBlacklist">The configured blacklist: every change under it is unstaged.</param>
     private static HashSet<string> UnstageBlacklistedPaths(
         Repository repo,
         IReadOnlyList<string> hardcodedBlacklist,
+        IReadOnlyList<string>? providerInjectedPaths,
         IReadOnlyList<string>? configurableBlacklist)
     {
         var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var hardcodedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in hardcodedChanges.Where(c => PathBlacklist.IsPathBlacklisted(c.Path, hardcodedBlacklist)))
+        foreach (var change in hardcodedChanges.Where(c =>
+                     PathBlacklist.IsPathBlacklisted(c.Path, hardcodedBlacklist)
+                     || (c.Status == ChangeKind.Added && providerInjectedPaths is { Count: > 0 }
+                         && PathBlacklist.IsPathBlacklisted(c.Path, providerInjectedPaths))))
         {
             Commands.Unstage(repo, change.Path);
             unstaged.Add(change.Path.Replace('\\', '/'));

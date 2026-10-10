@@ -70,7 +70,12 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
     public bool SupportsVisionInput => !AgentModelCapabilities.IsTextOnlyModel(_model);
 
     /// <inheritdoc />
-    public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
+    /// <remarks>
+    /// Pipeline steering lives in <c>~/.opencode</c>, outside the workspace, so the repository's own
+    /// <c>AGENTS.md</c> is never touched. Listed is OpenCode's project config directory, whose new
+    /// files (e.g. the <c>.gitignore</c> OpenCode adds) are not committed.
+    /// </remarks>
+    public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".opencode"];
 
     /// <param name="httpClientFactory">Provides the named OpenCode client (Basic auth, base address).</param>
     /// <param name="logger">Logger; defaults to the static Serilog logger.</param>

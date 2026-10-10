@@ -92,6 +92,18 @@ public static class McpConfigWriter
     }
 
     /// <summary>
+    /// For a job or chat with no MCP servers: deletes the Claude Code <c>--mcp-config</c> file an earlier
+    /// job on this long-lived agent left behind, which the provider would otherwise pass to the CLI,
+    /// with that project's servers and auth headers. That file is the pipeline's own; the other
+    /// providers' files are the CLI's own config and are left alone.
+    /// </summary>
+    public static void RemoveStaleConfig(string fullPath, AgentProviderType providerType)
+    {
+        if (providerType == AgentProviderType.ClaudeCode && File.Exists(fullPath))
+            File.Delete(fullPath);
+    }
+
+    /// <summary>
     /// Writes an OpenCode config file (<c>~/.opencode/opencode.json</c>) with an <c>mcp</c> section, the
     /// only place OpenCode reads MCP servers from: local servers as
     /// <c>{"type":"local","command":[command, ...args],"environment":{...}}</c>, remote ones as
@@ -102,39 +114,41 @@ public static class McpConfigWriter
         ArgumentNullException.ThrowIfNull(fullPath);
         ArgumentNullException.ThrowIfNull(servers);
 
-        var directory = Path.GetDirectoryName(fullPath);
-        if (directory is not null)
-            Directory.CreateDirectory(directory);
-
-        var mcp = new Dictionary<string, Dictionary<string, object>>();
+        var mcp = new System.Text.Json.Nodes.JsonObject();
         foreach (var server in servers)
         {
-            var entry = new Dictionary<string, object>();
+            var entry = new System.Text.Json.Nodes.JsonObject();
             if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
             {
                 entry["type"] = "remote";
                 entry["url"] = server.Url ?? string.Empty;
                 if (server.Headers.Count > 0)
-                    entry["headers"] = server.Headers;
+                    entry["headers"] = ToJsonObject(server.Headers);
             }
             else
             {
                 entry["type"] = "local";
-                entry["command"] = new[] { server.Command ?? string.Empty }.Concat(server.Args).ToArray();
+                entry["command"] = new System.Text.Json.Nodes.JsonArray(
+                    new[] { server.Command ?? string.Empty }.Concat(server.Args)
+                        .Select(arg => (System.Text.Json.Nodes.JsonNode?)arg).ToArray());
                 if (server.Env.Count > 0)
-                    entry["environment"] = server.Env;
+                    entry["environment"] = ToJsonObject(server.Env);
             }
             entry["enabled"] = !server.Disabled;
             mcp[server.Name] = entry;
         }
 
-        var config = new Dictionary<string, object>
-        {
-            ["$schema"] = "https://opencode.ai/config.json",
-            ["mcp"] = mcp
-        };
-        File.WriteAllText(fullPath, JsonSerializer.Serialize(config, PipelineJsonOptions.Default));
+        // Merged: the steering writer keeps its "instructions" in the same file.
+        OpenCodeConfigFile.Update(fullPath, root => root["mcp"] = mcp);
+    }
+
+    private static System.Text.Json.Nodes.JsonObject ToJsonObject(IReadOnlyDictionary<string, string> values)
+    {
+        var json = new System.Text.Json.Nodes.JsonObject();
+        foreach (var (key, value) in values)
+            json[key] = value;
+        return json;
     }
 
     /// <summary>
