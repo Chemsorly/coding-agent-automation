@@ -33,6 +33,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\CodingAgent.AgentGateway\CodingAgent.AgentGateway.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Api\CodingAgent.Api.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Kubernetes\CodingAgent.Kubernetes.csproj" />
     <ProjectReference Include="..\..\src\CodingAgent.Orchestration\CodingAgent.Orchestration.csproj" />

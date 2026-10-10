@@ -199,6 +199,25 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     }
 
     /// <inheritdoc />
+    public void AppendChatEntry(RunId runId, ChatEntry entry)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        ArgumentNullException.ThrowIfNull(entry);
+        if (_activeRuns.TryGetValue(runId.Value, out var run))
+            run.ChatHistory.Enqueue(entry);
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ChatEntry>> GetChatHistoryAsync(RunId runId, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        IReadOnlyList<ChatEntry> history = _activeRuns.TryGetValue(runId.Value, out var run)
+            ? run.ChatHistory.ToArray()
+            : Array.Empty<ChatEntry>();
+        return Task.FromResult(history);
+    }
+
+    /// <inheritdoc />
     public Task<HashSet<string>> GetActiveRunBranchesAsync(CancellationToken ct = default)
     {
         var branches = GetActiveRuns()
