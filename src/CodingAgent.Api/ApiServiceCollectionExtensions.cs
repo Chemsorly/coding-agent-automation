@@ -129,6 +129,16 @@ public static class ApiServiceCollectionExtensions
         // IDbContextFactory<PipelineDbContext> and uses a context-per-operation pattern.
         services.AddSingleton<IFeedbackCommentOutbox, PostgresFeedbackCommentOutboxStore>();
 
+        // ── Triage ──────────────────────────────────────────────────────────
+        // Singleton for the same reason: it takes only the DbContext factory. The hub's triage operations
+        // record the results agents report.
+        services.AddSingleton<ITriageStore>(sp =>
+            new PostgresTriageStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+        services.AddSingleton<IHubTriageOperations>(sp => new HubTriageOperations(
+            sp.GetRequiredService<IAgentHubFacade>(),
+            sp.GetRequiredService<ITriageStore>(),
+            Serilog.Log.Logger));
+
         // ── IDatabaseProbe (no-op — real DB connectivity is handled by DatabaseStartupService) ─
         services.AddSingleton<IDatabaseProbe, NoOpDatabaseProbe>();
 

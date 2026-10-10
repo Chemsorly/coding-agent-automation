@@ -2006,6 +2006,32 @@ public class LocalPipelineExecutorTests : IDisposable
         mcpIndex.Should().BeLessThan(steeringIndex);
     }
 
+    // ── BuildTriageStepPipeline ──────────────────────────────────────────
+
+    [Fact]
+    public async Task BuildTriageStepPipeline_ClonesTheProject_ThenWritesContext_Investigates_AndReports()
+    {
+        var job = CreateMinimalJobAssignment();
+        await using var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+
+        var steps = AgentStepPipelineBuilder.BuildTriageStepPipeline(job, proxy, CreateMinimalRepoConfig()).ToList();
+
+        var order = new[]
+        {
+            steps.FindIndex(s => s is CloneProjectRepositoriesStep),
+            steps.FindIndex(s => s is WriteMcpConfigStep),
+            steps.FindIndex(s => s is RunEnvironmentSetupStep),
+            steps.FindIndex(s => s is WriteProjectContextStep),
+            steps.FindIndex(s => s is WriteTriageContextStep),
+            steps.FindIndex(s => s is TriageInvestigationStep),
+            steps.FindIndex(s => s is ReportTriageResultStep),
+        };
+        order.Should().OnlyContain(i => i >= 0).And.BeInAscendingOrder();
+        steps.Last().Should().BeOfType<ReportTriageResultStep>();
+        steps.Should().NotContain(s => s is CreateBranchStep);
+    }
+
     // ── BuildDecompositionStepPipeline ───────────────────────────────────
 
     [Fact]

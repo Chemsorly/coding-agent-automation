@@ -100,6 +100,28 @@ internal static class AgentStepPipelineBuilder
     }
 
     /// <summary>
+    /// Builds the step pipeline for a triage run.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteTriageContext → TriageInvestigation → ReportTriageResult.
+    /// A triage of a tracker issue posts its result on the issue; an operator triage (the "triage" sentinel
+    /// tracker) reports it only to the API.
+    /// </summary>
+    internal static IReadOnlyList<IPipelineStep> BuildTriageStepPipeline(
+        JobAssignmentMessage job,
+        OrchestratorProxy proxy,
+        ProviderConfig repoConfig)
+    {
+        var reportToTracker = !TriageConstants.IsOperatorTriage(job.IssueProviderConfigId);
+        var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
+        steps.AddRange([
+            new WriteProjectContextStep(),
+            new WriteTriageContextStep(job.TriageContextMarkdown),
+            new TriageInvestigationStep(reportToTracker),
+            new ReportTriageResultStep(reportToTracker)
+        ]);
+        return steps;
+    }
+
+    /// <summary>
     /// Builds the step pipeline for Decomposition (Phase 2).
     /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
     /// WriteProjectContextStep is included so the agent has cross-repo routing context

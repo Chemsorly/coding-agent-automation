@@ -172,6 +172,11 @@ public static class AgentWorkspacePaths
     public const string DecompositionReviewFilePath = ".agent/decomposition-review.md";
 
     /// <summary>
+    /// The file path (relative to workspace) of the project's repository list, written for project-scoped runs.
+    /// </summary>
+    public const string ProjectContextFilePath = ".agent/project-context.md";
+
+    /// <summary>
     /// The file path (relative to workspace) where the triage agent writes its result (JSON).
     /// </summary>
     public const string TriageResultFilePath = ".agent/triage-result.json";

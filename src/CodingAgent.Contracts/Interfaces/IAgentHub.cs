@@ -54,6 +54,9 @@ public interface IAgentHub
     Task<IReadOnlyList<IssueComment>> RequestListComments(JobId jobId, string identifier);
     Task RequestUpdateComment(JobId jobId, string issueId, string commentId, string body);
 
+    // Triage: the result of the caller's own triage run, as JSON (read leniently by the API)
+    Task ReportTriageResult(JobId jobId, string resultJson);
+
     // Token refresh
     Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind, bool includeIssuePermission = false);
 
