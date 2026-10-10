@@ -75,7 +75,11 @@
                 @foreach (var problem in Access.Grant.Matches.Where(m => m.Problem is not null))
                 {
                     <div class="auth-warning" data-testid="profile-binding-warning">
-                        Binding @problem.Subject → @AccessRoleNames.ToName(problem.Role) on project "@problem.ProjectName" grants nothing: @problem.Problem.
+                        @* TODO: @problem.ProjectId is rendered without a null-guard or visual delimiter. If a future MatchedBinding
+                           carries a non-null Problem but a null ProjectId, this renders "on project  grants nothing:" with an
+                           empty slot and no fallback text. Add a null-coalescing fallback (e.g. @(problem.ProjectId ?? "(unknown)"))
+                           and consider wrapping the ID in <code> tags for readability. *@
+                        Binding @problem.Subject → @AccessRoleNames.ToName(problem.Role) on project @problem.ProjectId grants nothing: @problem.Problem.
                     </div>
                 }
                 <div class="monitoring-table-wrap">
@@ -87,7 +91,7 @@
                             @foreach (var match in Access.Grant.Matches.Where(m => m.Problem is null))
                             {
                                 <tr>
-                                    <td>@(match.ProjectName is null ? "Global" : $"Project {match.ProjectName}")</td>
+                                    <td>@(match.ProjectId is null ? "Global" : (match.ProjectName is not null ? $"Project {match.ProjectName} ({match.ProjectId})" : $"Project {match.ProjectId}"))</td>
                                     <td>@AccessRoleNames.ToName(match.Role)</td>
                                     <td><code>@match.Subject</code></td>
                                 </tr>

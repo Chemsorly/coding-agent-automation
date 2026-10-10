@@ -90,7 +90,7 @@ public sealed class OidcWebApplicationFactory(string issuer) : CustomWebApplicat
     private static readonly string[] AuthVariables =
     [
         "Auth__Oidc__Enabled", "Auth__Oidc__Name", "Auth__Oidc__Issuer", "Auth__Oidc__ClientId", "Auth__Oidc__ClientSecret",
-        "Auth__Rbac__Bindings__0__Group", "Auth__Rbac__Bindings__0__Role", "Auth__Rbac__Bindings__0__Project",
+        "Auth__Rbac__Bindings__0__Group", "Auth__Rbac__Bindings__0__Role", "Auth__Rbac__Bindings__0__ProjectId",
         "Auth__Rbac__Bindings__1__Group", "Auth__Rbac__Bindings__1__Role",
     ];
 
@@ -105,7 +105,7 @@ public sealed class OidcWebApplicationFactory(string issuer) : CustomWebApplicat
         Environment.SetEnvironmentVariable("Auth__Oidc__ClientSecret", KeycloakFixture.ClientSecret);
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__0__Group", "team-a");
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__0__Role", "operator");
-        Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__0__Project", "payments");
+        Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__0__ProjectId", KeycloakFixture.PaymentsProjectId);
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__1__Group", "platform-team");
         Environment.SetEnvironmentVariable("Auth__Rbac__Bindings__1__Role", "admin");
 

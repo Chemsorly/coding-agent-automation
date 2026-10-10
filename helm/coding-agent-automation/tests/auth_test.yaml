@@ -46,7 +46,7 @@ tests:
       auth.rbac.bindings:
         - group: team-a
           role: operator
-          project: payments
+          projectId: 6f1c2a9e-0000-0000-0000-000000000000
     asserts:
       - matchRegex:
           path: data["auth.json"]
@@ -56,7 +56,7 @@ tests:
           pattern: '"group": "team-a"'
       - matchRegex:
           path: data["auth.json"]
-          pattern: '"project": "payments"'
+          pattern: '"projectId": "6f1c2a9e-0000-0000-0000-000000000000"'
 
   - it: keeps the OIDC client secret out of auth.json
     template: templates/web-auth-configmap.yaml
