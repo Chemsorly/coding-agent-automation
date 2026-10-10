@@ -371,7 +371,7 @@ public partial class AgentCoding : IDisposable
             : await PageService.AddTemplateAsync(_addForm);
         if (!success) { _errorMessage = error; return; }
         _showAddForm = false;
-        _successMessage = successMessage;
+        _successMessage = WithLoopNote(successMessage);
         _ = ClearSuccessAfterDelay();
     }
 
@@ -381,7 +381,7 @@ public partial class AgentCoding : IDisposable
         var (success, error, successMessage) = await PageService.RemoveTemplateAsync(_deletingTemplate);
         if (!success) { _errorMessage = error; return; }
         _showDeleteConfirm = false;
-        _successMessage = successMessage;
+        _successMessage = WithLoopNote(successMessage);
         _deletingTemplate = null;
         _ = ClearSuccessAfterDelay();
     }
@@ -390,8 +390,11 @@ public partial class AgentCoding : IDisposable
     {
         var (success, error, successMessage) = await PageService.MoveTemplateToProjectAsync(args.TemplateId, args.SourceProjectId, args.TargetProjectId);
         if (!success) { _errorMessage = error; return; }
-        if (successMessage != null) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
+        if (successMessage != null) { _successMessage = WithLoopNote(successMessage); _ = ClearSuccessAfterDelay(); }
     }
+
+    private string? WithLoopNote(string? message) =>
+        message is not null && LoopService.IsLoopActive ? $"{message} The running loop applies it from its next cycle." : message;
 
     // ── Loop Controls ──
 
