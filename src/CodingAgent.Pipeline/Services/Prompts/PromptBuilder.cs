@@ -236,6 +236,7 @@ public static partial class PromptBuilder
 
         // Pipeline mechanics (non-configurable)
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
+        sb.AppendLine(PipelineConstants.GateIntegrityRule);
         sb.AppendLine($"The analysis for this issue is at `{AgentWorkspacePaths.AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
@@ -357,6 +358,7 @@ public static partial class PromptBuilder
         sb.AppendLine(fixInstructions);
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
+        sb.AppendLine(PipelineConstants.GateIntegrityRule);
         sb.AppendLine();
         sb.AppendLine($"Review findings have been written to `{AgentWorkspacePaths.ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
         return sb.ToString().TrimEnd();

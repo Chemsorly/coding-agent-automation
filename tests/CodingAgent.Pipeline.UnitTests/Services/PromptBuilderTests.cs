@@ -1114,6 +1114,16 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void BuildPrompt_GateIntegrityRuleAfterGitRestriction()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        var gitIndex = result.IndexOf("Do NOT run git write commands", StringComparison.Ordinal);
+        var ruleIndex = result.IndexOf(PipelineConstants.GateIntegrityRule, StringComparison.Ordinal);
+        ruleIndex.Should().BeGreaterThan(gitIndex,
+            "GateIntegrityRule should appear after GitRestrictionFull");
+    }
+
+    [Fact]
     public void ScopeFences_DoNotContainAnyFiles()
     {
         PromptBuilder.ReviewScopeFence.Should().NotContain("any files");
