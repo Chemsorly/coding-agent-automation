@@ -40,9 +40,6 @@ public static class ProviderSettingKeys
     /// <summary>Effort level for the agent (e.g., "low", "medium", "high", "xhigh", "max").</summary>
     public const string Effort = "effort";
 
-    /// <summary>Path to the agent CLI executable.</summary>
-    public const string ExecutablePath = "executablePath";
-
     /// <summary>Base URL for HTTP-based agent providers (e.g., OpenCode).</summary>
     public const string BaseUrl = "baseUrl";
 

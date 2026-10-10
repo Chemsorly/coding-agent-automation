@@ -172,7 +172,7 @@ public class SettingsPageComponentTests : BunitContext
     }
 
     [Fact]
-    public void Settings_ClickAddAgentProvider_ShowsFormWithExecutablePath()
+    public void Settings_ClickAddAgentProvider_ShowsFormWithoutExecutablePath()
     {
         // Navigate to Agent Providers section via URL (NavLink sections are URL-driven)
         var nav = Services.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>();
@@ -184,7 +184,7 @@ public class SettingsPageComponentTests : BunitContext
         addButton.Click();
 
         Assert.Contains("Add Agent Provider", component.Markup);
-        Assert.Contains("Executable Path", component.Markup);
+        Assert.DoesNotContain("Executable Path", component.Markup);
         Assert.Contains("Timeout", component.Markup);
         Assert.Contains("Agent Name", component.Markup);
     }

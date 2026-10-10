@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgent.Kubernetes;
+using CodingAgent.Pipeline.Models;
 using YamlDotNet.Core;
 using Xunit;
 
@@ -517,5 +518,149 @@ public sealed class JobTemplateStoreTests
         {
             File.Delete(tempFile);
         }
+    }
+
+    // ── MatchesProviderConfigType ─────────────────────────────────────────────
+
+    [Theory]
+    [InlineData("kiro", "KiroCli", true)]
+    [InlineData("KiroCli", "KiroCli", true)]
+    [InlineData("KIRO", "KiroCli", true)]
+    [InlineData("kiro", "kiroCLI", true)]    // case-insensitive on right side too
+    [InlineData("opencode", "OpenCode", true)]
+    [InlineData("OpenCode", "OpenCode", true)]
+    [InlineData("OPENCODE", "OpenCode", true)]
+    [InlineData("claude", "ClaudeCode", true)]
+    [InlineData("ClaudeCode", "ClaudeCode", true)]
+    [InlineData("CLAUDE", "ClaudeCode", true)]
+    [InlineData(null, "KiroCli", true)]
+    [InlineData("kiro", null, true)]
+    [InlineData("", "KiroCli", true)]
+    [InlineData("kiro", "", true)]
+    [InlineData("unknown-type", "KiroCli", true)]   // unknown job template type → no opinion
+    [InlineData("kiro", "ClaudeCode", false)]
+    [InlineData("claude", "KiroCli", false)]
+    [InlineData("opencode", "KiroCli", false)]
+    [InlineData("kiro", "OpenCode", false)]
+    // TODO: Missing cross-type mismatch cases: ("opencode", "ClaudeCode", false) and
+    // ("claude", "OpenCode", false). Also missing: (null, null, true) to document the
+    // both-null guard, and ("kiro", "unknownProviderType", true) to exercise a known
+    // job-template type paired with an unknown provider config type (right-hand "no opinion").
+    public void MatchesProviderConfigType_ReturnsExpectedResult(
+        string? jobTemplateType, string? providerConfigType, bool expected)
+    {
+        var result = JobTemplateProviderType.MatchesProviderConfigType(jobTemplateType, providerConfigType);
+        result.Should().Be(expected);
+    }
+
+    // ── FindProviderTypeMismatch ──────────────────────────────────────────────
+
+    private const string KiroTemplateYaml = """
+        - labels: dotnet,kiro
+          image: kiro-agent:latest
+          providerType: kiro
+        """;
+
+    private static AgentProfile MakeProfile(
+        string id = "profile-1",
+        string displayName = "Test Profile",
+        bool enabled = true,
+        string[]? labels = null,
+        string providerId = "provider-1")
+        => new()
+        {
+            Id = id,
+            DisplayName = displayName,
+            Enabled = enabled,
+            MatchLabels = labels ?? ["dotnet", "kiro"],
+            AgentProviderConfigId = providerId
+        };
+
+    private static ProviderConfig MakeProvider(
+        string id = "provider-1",
+        string providerType = "KiroCli",
+        string displayName = "Kiro Provider")
+        => new()
+        {
+            Id = id,
+            Kind = ProviderKind.Agent,
+            ProviderType = providerType,
+            DisplayName = displayName
+        };
+
+    [Fact]
+    public void FindProviderTypeMismatch_DisabledProfile_ReturnsNull()
+    {
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+        var profile = MakeProfile(enabled: false);
+        var provider = MakeProvider();
+
+        store.FindProviderTypeMismatch(profile, provider).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindProviderTypeMismatch_EmptyMatchLabels_ReturnsNull()
+    {
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+        var profile = MakeProfile(labels: []);
+        var provider = MakeProvider();
+
+        store.FindProviderTypeMismatch(profile, provider).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindProviderTypeMismatch_NullProvider_ReturnsNull()
+    {
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+        var profile = MakeProfile();
+
+        store.FindProviderTypeMismatch(profile, null).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindProviderTypeMismatch_NoMatchingTemplate_ReturnsNull()
+    {
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+        var profile = MakeProfile(labels: ["python", "kiro"]);  // no template for these labels
+        var provider = MakeProvider(providerType: "ClaudeCode");
+
+        store.FindProviderTypeMismatch(profile, provider).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindProviderTypeMismatch_TypesMatch_ReturnsNull()
+    {
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+        var profile = MakeProfile();
+        var provider = MakeProvider(providerType: "KiroCli");
+
+        store.FindProviderTypeMismatch(profile, provider).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindProviderTypeMismatch_EmptyStore_ReturnsNull()
+    {
+        var store = JobTemplateStore.CreateEmpty();
+        var profile = MakeProfile();
+        var provider = MakeProvider(providerType: "ClaudeCode");
+
+        store.FindProviderTypeMismatch(profile, provider).Should().BeNull();
+    }
+
+    [Fact]
+    public void FindProviderTypeMismatch_TypesMismatch_ReturnsExactMessage()
+    {
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+        var profile = MakeProfile(displayName: "My Profile");
+        var provider = MakeProvider(providerType: "ClaudeCode", displayName: "My Claude Provider");
+
+        var result = store.FindProviderTypeMismatch(profile, provider);
+
+        result.Should().NotBeNull();
+        result.Should().Be(
+            "Agent profile 'My Profile' uses agent provider 'My Claude Provider' " +
+            "of type ClaudeCode, but the job template for labels [dotnet,kiro] starts " +
+            "kiro pods. Choose an agent provider of the matching type, or change the " +
+            "job template's providerType in the Helm values.");
     }
 }

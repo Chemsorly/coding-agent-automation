@@ -415,7 +415,6 @@ Agent provider configs of type `ClaudeCode` run the Claude Code CLI headless (`c
 
 | Setting | Description |
 |---------|-------------|
-| Executable Path | Path to the `claude` binary (default `/home/ubuntu/.local/bin/claude`) |
 | Model | Full model ID to pin a version (e.g. `claude-opus-5-5`, `claude-opus-4-8`), an alias for the latest of a family (`opus`, `sonnet`, `haiku`, `fable`), or `auto` for the CLI default. The CLI cannot list models, so the form suggests a fixed list and accepts any other ID. |
 | Effort | `low`, `medium`, `high`, `xhigh`, `max` or `auto` — passed as `--effort` |
 | Auth Mode | `auto` (API key if configured, else subscription token), `apiKey`, or `subscription`. Exactly one credential reaches the CLI, because an API key always wins over a subscription token in the CLI's precedence order. |
