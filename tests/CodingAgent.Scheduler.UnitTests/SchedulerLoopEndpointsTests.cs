@@ -797,4 +797,143 @@ public sealed class SchedulerLoopEndpointsTests
         mockLoop.Verify(l => l.StartLoopAsync(), Times.Never,
             "non-leader must not call StartLoopAsync locally");
     }
+
+    /// <summary>
+    /// StartLoopWithRelay on a non-leader — relay succeeds and returns the leader's StartResult.
+    /// </summary>
+    [Fact]
+    public async Task StartLoopWithRelay_NonLeader_RelaySucceeds_ReturnsLeaderStartResult()
+    {
+        var mockLoop = MockLoopService();
+        var mockConfig = new Mock<IPipelineApiConfigClient>();
+        var mockLeaderGate = new Mock<ILeaderGate>();
+        mockLeaderGate.Setup(g => g.IsLeader).Returns(false);
+        var mockStore = new Mock<IRedisStore>();
+
+        var leaderResult = new LoopStartResultDto(true, null);
+        var mockRelay = new Mock<ILoopCommandRelay>();
+        mockRelay.Setup(r => r.SendAsync(LoopCommand.Start, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopCommandResult(true, StartResult: leaderResult));
+
+        var result = await SchedulerLoopEndpoints.StartLoopWithRelay(
+            mockRelay.Object, mockLoop.Object, mockConfig.Object,
+            mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStartResultDto>>().Subject;
+        ok.Value.Should().Be(leaderResult, "the leader's StartResult must be returned to the caller");
+        mockLoop.Verify(l => l.StartLoopAsync(), Times.Never,
+            "non-leader must not call StartLoopAsync locally");
+    }
+
+    /// <summary>
+    /// StartLoopWithRelay on the leader — runs locally, does not use the relay.
+    /// </summary>
+    [Fact]
+    public async Task StartLoopWithRelay_Leader_RunsLocallyWithoutRelay()
+    {
+        var mockLoop = MockLoopService();
+        mockLoop.Setup(l => l.StartLoopAsync()).ReturnsAsync(true);
+        var mockConfig = new Mock<IPipelineApiConfigClient>();
+        mockConfig.Setup(c => c.UpdatePipelineConfigAsync(
+                It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var mockLeaderGate = new Mock<ILeaderGate>();
+        mockLeaderGate.Setup(g => g.IsLeader).Returns(true);
+        var mockStore = new Mock<IRedisStore>();
+
+        var mockRelay = new Mock<ILoopCommandRelay>();
+
+        var result = await SchedulerLoopEndpoints.StartLoopWithRelay(
+            mockRelay.Object, mockLoop.Object, mockConfig.Object,
+            mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
+
+        var ok = result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.Ok<LoopStartResultDto>>().Subject;
+        ok.Value!.Started.Should().BeTrue();
+        mockLoop.Verify(l => l.StartLoopAsync(), Times.Once, "leader must call StartLoopAsync locally");
+        mockRelay.Verify(r => r.SendAsync(It.IsAny<LoopCommand>(), It.IsAny<CancellationToken>()), Times.Never,
+            "leader must not use the relay");
+    }
+
+    /// <summary>
+    /// StopLoopWithRelay on a non-leader — relay succeeds, returns NoContent.
+    /// </summary>
+    [Fact]
+    public async Task StopLoopWithRelay_NonLeader_RelaySucceeds_ReturnsNoContent()
+    {
+        var mockLoop = MockLoopService();
+        var mockConfig = new Mock<IPipelineApiConfigClient>();
+        mockConfig.Setup(c => c.UpdatePipelineConfigAsync(
+                It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var mockLeaderGate = new Mock<ILeaderGate>();
+        mockLeaderGate.Setup(g => g.IsLeader).Returns(false);
+        var mockStore = new Mock<IRedisStore>();
+
+        var mockRelay = new Mock<ILoopCommandRelay>();
+        mockRelay.Setup(r => r.SendAsync(LoopCommand.Stop, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopCommandResult(true));
+
+        var result = await SchedulerLoopEndpoints.StopLoopWithRelay(
+            mockRelay.Object, mockLoop.Object, mockConfig.Object,
+            mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NoContent>(
+            "relay success must return 204 NoContent");
+        mockConfig.Verify(c => c.UpdatePipelineConfigAsync(
+            It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(),
+            It.IsAny<CancellationToken>()), Times.Once,
+            "config persist must happen regardless of relay outcome");
+    }
+
+    /// <summary>
+    /// ResumeLoopWithRelay on a non-leader — relay succeeds, returns NoContent.
+    /// </summary>
+    [Fact]
+    public async Task ResumeLoopWithRelay_NonLeader_RelaySucceeds_ReturnsNoContent()
+    {
+        var mockLoop = MockLoopService();
+        var mockLeaderGate = new Mock<ILeaderGate>();
+        mockLeaderGate.Setup(g => g.IsLeader).Returns(false);
+        var mockStore = new Mock<IRedisStore>();
+
+        var mockRelay = new Mock<ILoopCommandRelay>();
+        mockRelay.Setup(r => r.SendAsync(LoopCommand.Resume, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopCommandResult(true));
+
+        var result = await SchedulerLoopEndpoints.ResumeLoopWithRelay(
+            mockRelay.Object, mockLoop.Object,
+            mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.NoContent>(
+            "relay success must return 204 NoContent");
+        mockLoop.Verify(l => l.ResumeLoop(), Times.Never,
+            "non-leader must not call ResumeLoop locally");
+    }
+
+    /// <summary>
+    /// ResumeLoopWithRelay on a non-leader — relay fails, returns 503 Problem.
+    /// </summary>
+    [Fact]
+    public async Task ResumeLoopWithRelay_NonLeader_RelayFails_Returns503()
+    {
+        var mockLoop = MockLoopService();
+        var mockLeaderGate = new Mock<ILeaderGate>();
+        mockLeaderGate.Setup(g => g.IsLeader).Returns(false);
+        var mockStore = new Mock<IRedisStore>();
+
+        var mockRelay = new Mock<ILoopCommandRelay>();
+        mockRelay.Setup(r => r.SendAsync(LoopCommand.Resume, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new LoopCommandResult(false, Error: "leader did not confirm"));
+
+        var result = await SchedulerLoopEndpoints.ResumeLoopWithRelay(
+            mockRelay.Object, mockLoop.Object,
+            mockLeaderGate.Object, mockStore.Object, CancellationToken.None);
+
+        result.Should().BeOfType<Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult>(
+            "relay failure must return a 503 problem result");
+        var problem = (Microsoft.AspNetCore.Http.HttpResults.ProblemHttpResult)result;
+        problem.StatusCode.Should().Be(StatusCodes.Status503ServiceUnavailable);
+    }
 }
