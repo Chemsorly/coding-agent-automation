@@ -45,15 +45,15 @@ public sealed class AgentHubOnDisconnectedTests
         string connectionId,
         IReadOnlyList<string>? labels = null,
         string? activeJobId = null) => new()
-    {
-        AgentId = agentId,
-        ConnectionId = connectionId,
-        Hostname = "host",
-        Labels = labels ?? Array.Empty<string>(),
-        Status = AgentStatus.Idle,
-        ActiveJobId = activeJobId,
-        RegisteredAt = DateTimeOffset.UtcNow
-    };
+        {
+            AgentId = agentId,
+            ConnectionId = connectionId,
+            Hostname = "host",
+            Labels = labels ?? Array.Empty<string>(),
+            Status = AgentStatus.Idle,
+            ActiveJobId = activeJobId,
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
 
     // ── Fix 1: chat agent deregistered on disconnect ──────────────────────────
 
@@ -226,4 +226,140 @@ public sealed class AgentHubOnDisconnectedTests
             Times.Once);
         _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
     }
+
+    // ── Fix 2: cross-replica reconnect guard (issue #3554) ───────────────────
+
+    /// <summary>
+    /// When the agent has already re-registered on another connection (cross-replica reconnect),
+    /// the old connection closing on this replica must NOT mark the agent Disconnected.
+    /// Test 1 (work-item agent) — this test must fail before the fix is applied.
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_CrossReplicaReconnect_WorkerAgent_SkipsTransitionStatus()
+    {
+        // Arrange: local snapshot sees conn-old as the closing connection
+        var agentEntry = CreateAgent("caa-worker-xreplica", "conn-old", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByConnectionId("conn-old")).Returns(agentEntry);
+
+        // Redis (authoritative) shows the agent already moved to conn-new on another replica
+        var currentEntry = CreateAgent("caa-worker-xreplica", "conn-new", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-worker-xreplica")))
+            .Returns(currentEntry);
+
+        var hub = CreateHub("conn-old");
+        await hub.OnDisconnectedAsync(null);
+
+        // Neither TransitionStatus nor Deregister must be called
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When the agent has already re-registered on another connection (cross-replica reconnect),
+    /// the old connection closing on this replica must NOT deregister a chat agent.
+    /// Test 2 (chat agent).
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_CrossReplicaReconnect_ChatAgent_SkipsDeregister()
+    {
+        // Arrange: local snapshot sees conn-old as the closing connection
+        var agentEntry = CreateAgent("caa-chat-xreplica", "conn-old", labels: new[] { "chat=true" });
+        _facade.Setup(f => f.GetByConnectionId("conn-old")).Returns(agentEntry);
+
+        // Redis (authoritative) shows the agent already moved to conn-new on another replica
+        var currentEntry = CreateAgent("caa-chat-xreplica", "conn-new", labels: new[] { "chat=true" });
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-chat-xreplica")))
+            .Returns(currentEntry);
+
+        var hub = CreateHub("conn-old");
+        await hub.OnDisconnectedAsync(null);
+
+        // Neither TransitionStatus nor Deregister must be called
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When the authoritative store returns the same connection ID, a worker agent
+    /// is still marked Disconnected as today (same-connection path).
+    /// Test 3.
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_SameConnection_WorkerAgent_TransitionsToDisconnected()
+    {
+        var agentEntry = CreateAgent("caa-worker-same", "conn-1", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agentEntry);
+
+        // Authoritative store confirms conn-1 is still the registered connection
+        var currentEntry = CreateAgent("caa-worker-same", "conn-1", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-worker-same")))
+            .Returns(currentEntry);
+
+        var hub = CreateHub("conn-1");
+        await hub.OnDisconnectedAsync(null);
+
+        _facade.Verify(f => f.TransitionStatus(
+            It.Is<AgentId>(a => a.Value == "caa-worker-same"),
+            AgentStatus.Disconnected),
+            Times.Once);
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When the authoritative store returns the same connection ID, a chat agent
+    /// is still deregistered as today (same-connection path).
+    /// Test 4.
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_SameConnection_ChatAgent_Deregisters()
+    {
+        var agentEntry = CreateAgent("caa-chat-same", "conn-1", labels: new[] { "chat=true" });
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agentEntry);
+        _facade.Setup(f => f.Deregister(It.IsAny<AgentId>())).Returns(true);
+
+        // Authoritative store confirms conn-1 is still the registered connection
+        var currentEntry = CreateAgent("caa-chat-same", "conn-1", labels: new[] { "chat=true" });
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-chat-same")))
+            .Returns(currentEntry);
+
+        var hub = CreateHub("conn-1");
+        await hub.OnDisconnectedAsync(null);
+
+        _facade.Verify(f => f.Deregister(It.Is<AgentId>(a => a.Value == "caa-chat-same")), Times.Once);
+        _facade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
+    }
+
+    /// <summary>
+    /// When the authoritative store returns null (entry TTL-expired or already deregistered),
+    /// the existing behavior is unchanged: a worker agent is marked Disconnected.
+    /// Test 5.
+    /// </summary>
+    [Fact]
+    public async Task OnDisconnectedAsync_NullCurrentEntry_WorkerAgent_TransitionsToDisconnected()
+    {
+        var agentEntry = CreateAgent("caa-worker-nullentry", "conn-1", labels: new[] { "dotnet" });
+        _facade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agentEntry);
+
+        // Authoritative store returns null — entry TTL-expired or deregistered cross-replica
+        _facade.Setup(f => f.GetByAgentId(It.Is<AgentId>(a => a.Value == "caa-worker-nullentry")))
+            .Returns((AgentEntry?)null);
+
+        var hub = CreateHub("conn-1");
+        await hub.OnDisconnectedAsync(null);
+
+        _facade.Verify(f => f.TransitionStatus(
+            It.Is<AgentId>(a => a.Value == "caa-worker-nullentry"),
+            AgentStatus.Disconnected),
+            Times.Once);
+        _facade.Verify(f => f.Deregister(It.IsAny<AgentId>()), Times.Never);
+    }
+    // TODO (WARNING, issue #3554): Add an explicit null-current-entry test for the chat-agent branch.
+    // When GetByAgentId returns null for a chat agent, the guard must not fire and Deregister must
+    // still be called. Pre-existing tests (OnDisconnectedAsync_ChatAgent_CallsDeregister_NotTransitionStatus,
+    // OnDisconnectedAsync_ChatAgentWithException_CallsDeregister) cover this implicitly via the Moq
+    // loose mock returning null from GetByAgentId, but there is no explicit test anchoring the
+    // "null entry → deregister chat agent" path. A concrete test scenario:
+    //   GetByConnectionId("conn-1") returns a chat=true agent;
+    //   GetByAgentId(...) returns null;
+    //   Assert Deregister is called once and TransitionStatus is never called.
 }
