@@ -98,6 +98,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** one image per agent tool and stack.
 **Revisit when:** a stack needs two versions side by side (for example Java 17 and 21), or image size measurably slows pod start.
 
+### Projects share the agents, their capacity and the namespace; the operator sizes them
+<!-- 2026-10-10 -->
+**Rule:** One deployment serves several teams, each with its own projects. The operator runs the deployment and owns the agents. Capacity is global: each job template's `maxConcurrent`, the decomposition cap and the loop's limits apply across all projects, with no quota or fair share per project. All agent pods run in the release's namespace, and the chart adds no network isolation between the pods of different projects.
+**Why:** Lean, like ArgoCD: the operator runs one deployment for all teams and decides how big it is. Quotas, fair-share dispatch and namespaces or network policies per team add concepts that no current scenario needs. **Accepting:** one project's work can delay or starve another's (see [Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation)); an agent pod reaches whatever the other projects' pods reach in the namespace.
+**Not:** quotas or fair-share dispatch per project; a namespace or network policy per project.
+**Revisit when:** one project's work measurably starves another's, or a team must not share a network with another team's repositories.
+
 ### MessagePack int ordinals for SignalR — homogeneous deployment assumed
 <!-- 2026-07-04 -->
 **Rule:** Hub messages use MessagePack with integer enum ordinals and numbered keys, so member order and key numbers are a wire contract. Never reorder enum members in hub types. A retired key stays tombstoned; never reuse its number.
@@ -142,6 +149,13 @@ The rules a plausible change could break. Details are in the linked entries.
 **Not:** per-label gating config; webhook approval gates.
 **Revisit when:** a human gate needs something other than a label, such as a UI action.
 
+### Repository and project content runs next to the agent's credentials
+<!-- 2026-10-10 -->
+**Rule:** What a repository or its pipeline configuration brings runs inside the agent pod, next to the pod's agent credentials (the agent key, the Claude credentials, the OpenCode configuration). This covers setup steps, project and repository secrets, MCP servers, steering, and the repository's own agent configuration such as `.claude/settings.json` hooks and `.mcp.json`. Whoever can change a repository or its project's configuration can use those credentials. Handing the Claude credentials only to the CLI process guards against accidental leaks, not against intent.
+**Why:** The agent must run the repository's build, tests and tools, and the pod is the sandbox. Separating credentials per step would make every tool integration harder, and no current scenario needs it. **Accepting:** a repository owner can read or use the agent credentials of the pods that run their repository. Keep agent credentials rotatable, and give repositories that can't be trusted their own job template and credentials.
+**Not:** credential isolation per step; an environment-variable denylist for setup steps.
+**Revisit when:** teams that must not share agent credentials use one deployment.
+
 ### Web UI sign-in: one OIDC provider, roles in Helm values, no user database
 <!-- 2026-10-04 -->
 **Rule:** Every web UI page requires a signed-in user, and sign-in can't be turned off. Users sign in through one OIDC identity provider or the local `admin` account. Three fixed roles (`readonly` < `operator` < `admin`) are bound to OIDC groups or users in the Helm values, globally or for one project.
@@ -160,11 +174,11 @@ The rules a plausible change could break. Details are in the linked entries.
 ## Dispatch and scheduling
 
 ### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
-<!-- 2026-08-14; updated 2026-09-13 -->
-**Rule:** Pending work dispatches by tier: Review, then Decomposition, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable.
-**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier.
-**Not:** configurable weights per run type; age-based promotion; round-robin; label-based priority.
-**Revisit when:** several teams share the system and lower tiers visibly starve, or someone needs cross-tier urgency.
+<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 -->
+**Rule:** Pending work dispatches by tier: Review, then Decomposition, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable. All projects share this one queue.
+**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
+**Not:** configurable weights per run type; age-based promotion; round-robin; label-based priority; fair share between projects.
+**Revisit when:** lower tiers or one project's work visibly starve in practice, or someone needs cross-tier urgency.
 
 ### MaxConcurrentDecompositions and MinIssueSlots: global-only
 <!-- 2026-09-30 -->
@@ -436,11 +450,11 @@ The rules a plausible change could break. Details are in the linked entries.
 ## Agents and context
 
 ### Agent provider abstraction supports N backends as first-class citizens
-<!-- 2026-07-04 -->
-**Rule:** Kiro and OpenCode are both full agent backends. Kiro is the main development focus; OpenCode is maintained as a peer, not best effort. The provider abstraction allows more backends.
+<!-- 2026-07-04; updated 2026-10-10 -->
+**Rule:** Kiro, OpenCode and Claude Code are all full agent backends. Kiro is the main development focus; OpenCode and Claude Code are maintained as peers, not best effort. The provider abstraction allows more backends.
 **Why:** Provider diversity enables competitive evaluation and model or runtime flexibility.
 **Not:** a single backend; OpenCode only as a proof of extensibility.
-**Revisit when:** a third backend is added, or keeping both creates a disproportionate test burden.
+**Revisit when:** a fourth backend is added, or keeping all three creates a disproportionate test burden.
 
 ### OpenCode health monitoring: session-status polling, not OS process signals
 <!-- 2026-09-21 -->
