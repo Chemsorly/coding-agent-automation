@@ -58,7 +58,7 @@ public class QualityGateExecutorConflictRestartPollTests
 
         // Default: CI never starts (Pending, no jobs) — so the not-started path is taken
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
     }
 
@@ -158,7 +158,7 @@ public class QualityGateExecutorConflictRestartPollTests
         // Subsequent calls return Running with jobs → WaitForCompletionAsync is entered.
         var pollCallCount = 0;
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 pollCallCount++;
@@ -169,7 +169,7 @@ public class QualityGateExecutorConflictRestartPollTests
                     : new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] };
             });
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] });
 
         var context = BuildContext(run, ciNotStartedMaxRetries: 2);
@@ -206,7 +206,7 @@ public class QualityGateExecutorConflictRestartPollTests
         // Same pattern as UnknownMergeability test: first poll Pending, then Running with jobs.
         var pollCallCount = 0;
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 pollCallCount++;
@@ -215,7 +215,7 @@ public class QualityGateExecutorConflictRestartPollTests
                     : new PipelineRunStatus { State = PipelineRunState.Running, Jobs = [new() { Name = "build", State = PipelineRunState.Running }] };
             });
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = [] });
 
         var context = BuildContext(run, ciNotStartedMaxRetries: 2);
@@ -332,7 +332,7 @@ public class QualityGateExecutorConflictRestartAppendTests
 
         // Default: CI never starts (Pending, no jobs)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
     }
 
@@ -531,7 +531,7 @@ public class QualityGateExecutorConflictRestartRetryLoopTests
 
         // CI never starts (Pending, no jobs) → not-started path is taken, conflict check fires
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // Repo default stubs (needed by AppendExternalCiIfNeededAsync commit/push path)

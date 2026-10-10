@@ -250,14 +250,14 @@ public class PreparingForPullRequestPropertyTests
         {
             var mockPipelineProvider = new Mock<IPipelineProvider>();
             mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                    It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PipelineRunStatus
                 {
                     State = PipelineRunState.Running,
                     Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
                 });
             mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                    It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PipelineRunStatus
                 {
                     State = PipelineRunState.Passed,
@@ -364,7 +364,9 @@ public class PreparingForPullRequestPropertyTests
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "Test description",
                 Labels = Array.Empty<string>()
             });
         mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
