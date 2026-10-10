@@ -31,6 +31,24 @@ public class RefactoringExecutorTests : IDisposable
         _mockIssueProvider
             .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(emptyResult);
+
+        // Default: return empty closed-issue pages so CollectScanIssueReferencesAsync and
+        // TryBuildOutcomeContextAsync both succeed without null-task NullReferenceExceptions.
+        // ListClosedIssuesAsync is a Default Interface Method (DIM); Moq does not invoke DIM bodies
+        // on mock objects — without an explicit setup the call returns null for Task<…> return types,
+        // causing a NullReferenceException that is silently swallowed by the catch blocks in those
+        // callers.  The setup here ensures all ExecuteAsync tests exercise the happy path.
+        var emptyClosedResult = new PagedResult<IssueSummary> { Items = [], Page = 1, PageSize = 100, HasMore = false };
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyClosedResult);
+
+        // FormatIssueReference is also a DIM; set up the default "#N" implementation so
+        // CollectScanIssueReferencesAsync can format identifiers correctly in all tests.
+        _mockIssueProvider
+            .Setup(x => x.FormatIssueReference(It.IsAny<IssueIdentifier>()))
+            .Returns((IssueIdentifier id) => $"#{id}");
     }
 
     public void Dispose()
@@ -2084,17 +2102,105 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
 
-        // TODO [WARNING]: ListClosedIssuesAsync is not set up here. Moq does not invoke default interface
-        // method (DIM) bodies on mocks; without a setup the call returns null (Task<PagedResult<…>>),
-        // which causes NullReferenceException that is silently swallowed by the catch blocks in
-        // CollectScanIssueReferencesAsync and TryBuildOutcomeContextAsync. The test currently passes by
-        // exercising error paths rather than the happy path. Add a ListClosedIssuesAsync setup returning
-        // an empty PagedResult to make the test exercise the intended code path instead.
+        // ListClosedIssuesAsync is set up in the constructor with an empty PagedResult so both
+        // CollectScanIssueReferencesAsync and TryBuildOutcomeContextAsync exercise the happy path.
         await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
         _mockIssueProvider.Verify(
             x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()),
             Times.Once);
+    }
+
+    // ── WriteHotspotAnalysisAsync: predicate path with real git repo (issue #3540) ──────────
+
+    [Fact]
+    public async Task ExecuteAsync_WithScanIssueReferences_HotspotFileContainsOnlyNonExcludedCommits()
+    {
+        // Exercises the isExcludedCommit predicate code path inside WriteHotspotAnalysisAsync
+        // (lines that require a real git repo to reach). A scan issue reference "#42" is returned
+        // by CollectScanIssueReferencesAsync; a commit with "(#42)" in its subject must be excluded
+        // from the hotspot output, while a commit without it must be included.
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        // Arrange: the clone callback initialises a real git repo with two commits.
+        // Commit 1 — subject references the scan issue and should be excluded.
+        // Commit 2 — ordinary subject, its files should appear in the hotspot file.
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((workspacePath, _) =>
+            {
+                // Initialise git repo so WriteHotspotAnalysisAsync can run git log successfully.
+                RunGit(workspacePath, "init");
+                RunGit(workspacePath, "config user.email \"test@example.com\"");
+                RunGit(workspacePath, "config user.name \"Test\"");
+
+                // Commit 1: the scan commit — should be excluded.
+                var scanFile = Path.Combine(workspacePath, "scan-file.cs");
+                File.WriteAllText(scanFile, "// scan");
+                RunGit(workspacePath, "add scan-file.cs");
+                RunGit(workspacePath, "commit --allow-empty -m \"Refactoring scan (#42)\"");
+
+                // Commit 2: a normal commit — files should appear in the hotspot list.
+                var normalFile = Path.Combine(workspacePath, "important.cs");
+                File.WriteAllText(normalFile, "// important");
+                RunGit(workspacePath, "add important.cs");
+                RunGit(workspacePath, "commit -m \"Normal feature commit\"");
+            })
+            .Returns(Task.CompletedTask);
+
+        // CollectScanIssueReferencesAsync will return "#42" from the closed issues page.
+        var scanFooter = RefactoringExecutor.GeneratedIssueFooter;
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items =
+                [
+                    new IssueSummary
+                    {
+                        Identifier = "42",
+                        Title = "Scan issue",
+                        Labels = ["agent:generated"],
+                        Description = $"Some description. {scanFooter}"
+                    }
+                ],
+                Page = 1, PageSize = 100, HasMore = false
+            });
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert: the hotspot file should exist and contain the normal file but not the scan file.
+        var hotspotPath = Path.Combine(_tempDir, job.JobId, ".agent", "hotspot-analysis.txt");
+        File.Exists(hotspotPath).Should().BeTrue("WriteHotspotAnalysisAsync should produce the hotspot file");
+
+        var content = await File.ReadAllTextAsync(hotspotPath);
+        content.Should().Contain("important.cs", "the normal commit's file should appear in the hotspot analysis");
+        content.Should().NotContain("scan-file.cs", "the scan commit's file should be excluded by the isExcludedCommit predicate");
+    }
+
+    /// <summary>Runs a git command in the given directory; throws on non-zero exit code.</summary>
+    private static void RunGit(string workingDir, string arguments)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", arguments)
+        {
+            WorkingDirectory = workingDir,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        using var process = System.Diagnostics.Process.Start(psi)!;
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+            throw new InvalidOperationException(
+                $"git {arguments} failed: {process.StandardError.ReadToEnd()}");
     }
 }
