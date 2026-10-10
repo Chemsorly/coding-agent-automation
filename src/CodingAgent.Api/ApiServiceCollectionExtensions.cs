@@ -97,8 +97,9 @@ public static class ApiServiceCollectionExtensions
             sp.GetRequiredService<WorkItemTransitionService>()));
 
         // ── PostgresConfigurationStore with cache DISABLED (Req 5.6b) ──────
-        // Cache is disabled via a negative TTL sentinel so two processes don't serve stale config.
-        // The store skips _cache.Set when _cacheTtl <= TimeSpan.Zero.
+        // Cache is disabled via a negative TTL sentinel so two API replicas don't serve stale config.
+        // With caching disabled, LoadPipelineConfigAsync always reads from the database, and
+        // SavePipelineConfigAsync / UpdatePipelineConfigAsync do not populate the in-memory cache.
         services.AddSingleton<IConfigurationStore>(sp =>
             new PostgresConfigurationStore(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),

@@ -233,8 +233,8 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         {
             try
             {
-                await _pipelineConfigStore.SavePipelineConfigAsync(
-                    config with { ClosedLoopAutoStart = true }, CancellationToken.None).ConfigureAwait(false);
+                await _pipelineConfigStore.UpdatePipelineConfigAsync(
+                    c => c with { ClosedLoopAutoStart = true }, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
