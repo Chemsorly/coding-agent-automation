@@ -90,6 +90,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>Creates the orchestrator for an isolated call; tests replace it.</summary>
     internal Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> CreateEphemeralOrchestratorWith
     {
+        get => _createEphemeralOrchestrator;
         init => _createEphemeralOrchestrator = value;
     }
 
