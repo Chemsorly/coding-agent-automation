@@ -483,7 +483,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var payload = MakePayload();
 
@@ -507,7 +507,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var payload = MakePayload(PipelineStep.Failed);
 
@@ -530,7 +530,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var payload = MakePayload();
 
@@ -553,7 +553,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Cancelled, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var payload = MakePayload(PipelineStep.Cancelled);
 
@@ -576,7 +576,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Done, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var payload = MakePayload(finalLabel: "custom:unknown");
 
@@ -601,7 +601,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // FinalLabel = agent:needs-refinement overrides the Failed-step default (agent:error)
         var payload = MakePayload(PipelineStep.Failed, finalLabel: AgentLabels.NeedsRefinement);
@@ -632,7 +632,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // FinalLabel = agent:needs-refinement overrides the Cancelled-step default (agent:cancelled)
         var payload = MakePayload(PipelineStep.Cancelled, finalLabel: AgentLabels.NeedsRefinement);
@@ -664,7 +664,7 @@ public sealed class AgentJobLifecycleServiceTests
             "job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>())).ReturnsAsync(run);
         _issueOps.Setup(o => o.SwapLabelAsync(run, AgentLabels.Error, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(run, It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var payload = MakePayload(PipelineStep.Failed, finalLabel: "not-an-agent-label");
 
@@ -869,7 +869,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var payload = MakePayload();
 
@@ -893,7 +893,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var payload = MakePayload();
 
@@ -933,7 +933,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var payload = MakePayload();
 
@@ -1606,7 +1606,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "activeJobId", null))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
         _logger
@@ -1646,7 +1646,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "orphanRestoredAt", null))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
         _logger
@@ -1686,7 +1686,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _facade.Setup(f => f.UpdateAgentFieldAsync(agent.AgentId, "lastJobCompletedAt", It.IsAny<string?>()))
             .Returns(Task.FromException(new InvalidOperationException("Redis down")));
         _logger
@@ -1731,7 +1731,7 @@ public sealed class AgentJobLifecycleServiceTests
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
         _logger
             .Setup(l => l.Warning(
                 It.IsAny<Exception>(),
