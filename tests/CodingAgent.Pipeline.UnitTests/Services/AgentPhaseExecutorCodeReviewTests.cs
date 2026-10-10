@@ -966,6 +966,44 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    public async Task CodeReview_AcceptanceCriteria_NotApplicable_NotInjected()
+    {
+        // Arrange: AC writes 1 not_applicable criterion → not injected as CRITICAL
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                // Call 1: review agent — no findings
+                // Call 2: AC agent — writes not_applicable
+                if (callCount == 2)
+                {
+                    WriteAcceptanceCriteriaJson("""
+                    {
+                        "criteria": [
+                            { "criterion": "Duplication density goes down", "status": "not_applicable", "reasoning": "Cannot be verified in the workspace: needs SonarCloud" }
+                        ],
+                        "summary": "1 criterion cannot be verified in the workspace."
+                    }
+                    """);
+                }
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = "Fix the issues" }
+        };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: not_applicable is never counted as CRITICAL
+        _run.CodeReviewCriticalCount.Should().Be(0);
+    }
+
+    [Fact]
     public async Task CodeReview_AcceptanceCriteria_TokenUsageAccumulated()
     {
         // Arrange: 2 iterations with AC on each → token usage from all 5 calls accumulated

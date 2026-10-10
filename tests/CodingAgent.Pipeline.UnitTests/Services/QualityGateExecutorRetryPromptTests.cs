@@ -140,4 +140,24 @@ public class QualityGateExecutorRetryPromptTests
         prompt.Should().NotContain("- Tests:");
         prompt.Should().Contain("- Compilation: FAILED");
     }
+
+    /// <summary>
+    /// Both overloads include the non-configurable gate integrity rule and ask for a minimal
+    /// code fix instead of the old "minimal fix" wording.
+    /// </summary>
+    [Fact]
+    public void BuildQualityGateRetryPrompt_IncludesGateIntegrityRule()
+    {
+        var report = BuildReport();
+
+        var boolOverload = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3, hasQualityGateOutput: true);
+        var priorErrorsOverload = QualityGateExecutor.BuildQualityGateRetryPrompt(report, 1, 3, priorRetryErrors: null);
+
+        foreach (var prompt in new[] { boolOverload, priorErrorsOverload })
+        {
+            prompt.Should().Contain(PipelineConstants.GateIntegrityRule);
+            prompt.Should().Contain("minimal code fix");
+            prompt.Should().NotContain("**What is the minimal fix**");
+        }
+    }
 }
