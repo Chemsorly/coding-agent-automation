@@ -49,6 +49,19 @@ public class KiroCliSettingsWriterTests : IDisposable
     }
 
     [Fact]
+    public async Task ApplyAsync_GptModel_WritesReasoningEffort()
+    {
+        // GPT models read reasoning.effort, Claude models output_config.effort (kiro.dev/docs/models/effort).
+        await KiroCliSettingsWriter.ApplyAsync(
+            "gpt-5.6-sol", "max", CancellationToken.None,
+            settingsPathOverride: _cliJsonPath);
+
+        var model = JsonNode.Parse(await File.ReadAllTextAsync(_cliJsonPath))!["chat.modelDefaults"]!["gpt-5.6-sol"]!;
+        model["reasoning"]!["effort"]!.GetValue<string>().Should().Be("max");
+        model["output_config"].Should().BeNull();
+    }
+
+    [Fact]
     public async Task ApplyAsync_WithModelOnly_NoEffort_WritesDefaultModelButNoEffort()
     {
         await KiroCliSettingsWriter.ApplyAsync(

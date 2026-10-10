@@ -132,9 +132,19 @@ public sealed class AgentProviderFactory : IProviderFactory
     private KiroCliAgentProvider CreateKiroCliAgentProvider(ProviderConfig config)
     {
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, AgentDefaults.KiroCliPath);
+        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath);
+        if (string.IsNullOrWhiteSpace(executablePath))
+            executablePath = AgentDefaults.KiroCliPath; // the UI saves "" when the field is cleared
+        var agentName = config.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName);
         var effort = AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort));
-        return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath, effort);
+
+        // The injected orchestrator runs the default CLI path with no model or agent flags. A provider
+        // that sets any of them gets its own orchestrator, so every run, shared or isolated, carries them.
+        var runConfig = KiroCliAgentProvider.CreateRunConfiguration(executablePath, model, agentName);
+        var orchestrator = runConfig.Model is null && runConfig.AgentName is null && executablePath == AgentDefaults.KiroCliPath
+            ? _orchestrator
+            : new KiroCliOrchestrator(runConfig, Serilog.Log.Logger);
+        return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath, effort, agentName);
     }
 
     /// <summary>

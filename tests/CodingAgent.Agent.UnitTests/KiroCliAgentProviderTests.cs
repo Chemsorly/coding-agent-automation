@@ -166,11 +166,11 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_UseResumeTrue_CallsOrchestratorWithUseResumeTrue()
+    public async Task ExecuteAsync_UseResumeWithoutAMainSession_StartsAFreshSessionOnTheSharedOrchestrator()
     {
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
-                "follow up", "/workspace", true,
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
@@ -179,8 +179,61 @@ public class KiroCliAgentProviderTests
 
         result.ExitCode.Should().Be(0);
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
-            "follow up", "/workspace", true,
-            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
+            "follow up", "/workspace", false,
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), null), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureSessionAsync_NonZeroWarmUpExit_DoesNotMarkSessionEstablished()
+    {
+        _mockOrchestrator
+            .SetupSequence(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(1)
+            .ReturnsAsync(0);
+
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task IsolatedCall_IsCoveredByHealthAndKill_WhileItRuns()
+    {
+        var ephemeral = new Mock<IKiroCliOrchestrator>();
+        var started = new TaskCompletionSource();
+        var lastOutput = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
+        ephemeral.Setup(o => o.IsExecuting).Returns(true);
+        ephemeral.Setup(o => o.LastOutputTime).Returns(lastOutput);
+        ephemeral.Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
+                {
+                    started.SetResult();
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0;
+                });
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
+            _mockProcessStarter.Object, createEphemeralOrchestrator: _ => ephemeral.Object);
+        using var cts = new CancellationTokenSource();
+
+        var run = provider.ExecuteAsync(
+            new AgentRequest { Prompt = "review", WorkspacePath = "/workspace", Timeout = TimeSpan.FromMinutes(1) }, cts.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        provider.GetHealthStatus().LastOutputTime.Should().Be(lastOutput);
+        await provider.KillAsync();
+        ephemeral.Verify(o => o.Kill(), Times.Once);
+
+        await cts.CancelAsync();
+        await run.Invoking(t => t).Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]

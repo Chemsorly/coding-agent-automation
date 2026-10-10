@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using CodingAgent.Pipeline;
@@ -15,6 +16,11 @@ namespace CodingAgent.Agent.KiroCli;
 /// Follows the same invocation pattern as KiroExecutionService.
 /// The agent provider does NOT construct prompts — it receives pre-built prompts from the orchestrator.
 /// </summary>
+/// <remarks>
+/// Sessions: the first session started in a workspace is its main conversation. <c>UseResume</c>
+/// continues it by ID, never with <c>--resume</c>, which picks the newest session in the directory:
+/// after an isolated reviewer, the reviewer's.
+/// </remarks>
 public partial class KiroCliAgentProvider : IAgentProvider
 {
     private readonly IKiroCliOrchestrator _orchestrator;
@@ -22,11 +28,19 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly string? _model;
     private readonly AgentEffortLevel _effort;
     private readonly string _executablePath;
+    private readonly string? _agentName;
     private readonly IProcessStarter _processStarter;
-    private readonly HashSet<string> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> _createEphemeralOrchestrator;
+    private readonly ConcurrentDictionary<string, byte> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, string> _mainSessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<IKiroCliOrchestrator, byte> _activeOrchestrators = new();
+    private int _cliSettingsApplied;
 
     internal const string WarmUpPrompt =
         "Briefly describe the project structure of this workspace. Do not make any changes.";
+
+    /// <summary>Bounds the warm-up prompt, which runs outside any request timeout.</summary>
+    internal static readonly TimeSpan WarmUpTimeout = TimeSpan.FromMinutes(10);
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
@@ -48,12 +62,15 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>The effort level configured for this agent provider.</summary>
     public AgentEffortLevel Effort => _effort;
 
-    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.High)
-        : this(orchestrator, logger, model, executablePath, effort, null)
+    public KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger = null, string? model = null, string executablePath = AgentDefaults.KiroCliPath, AgentEffortLevel effort = AgentEffortLevel.High, string? agentName = null)
+        : this(orchestrator, logger, model, executablePath, effort, null, agentName)
     {
     }
 
-    internal KiroCliAgentProvider(IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, AgentEffortLevel effort, IProcessStarter? processStarter)
+    internal KiroCliAgentProvider(
+        IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, AgentEffortLevel effort,
+        IProcessStarter? processStarter, string? agentName = null,
+        Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator>? createEphemeralOrchestrator = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(executablePath);
@@ -62,29 +79,50 @@ public partial class KiroCliAgentProvider : IAgentProvider
         _model = model;
         _effort = effort;
         _executablePath = executablePath;
+        _agentName = agentName;
         _processStarter = processStarter ?? new DefaultProcessStarter();
+        _createEphemeralOrchestrator = createEphemeralOrchestrator ?? (config => new KiroCliOrchestrator(config, _logger));
     }
+
+    /// <summary>
+    /// The run settings for this provider's orchestrators: the CLI path, and the model and agent that
+    /// every run passes as flags. A blank or <c>auto</c> model and a blank agent are left out.
+    /// </summary>
+    public static KiroCliLib.Configuration.Configuration CreateRunConfiguration(string executablePath, string? model, string? agentName) => new()
+    {
+        KiroCliPath = executablePath,
+        UseWsl = OperatingSystem.IsWindows(),
+        Model = string.IsNullOrWhiteSpace(model) || model.Equals("auto", StringComparison.OrdinalIgnoreCase) ? null : model.Trim(),
+        AgentName = string.IsNullOrWhiteSpace(agentName) ? null : agentName.Trim()
+    };
 
     /// <inheritdoc />
     public async Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
         var normalizedPath = Path.GetFullPath(workspacePath);
 
-        if (_establishedSessions.Contains(normalizedPath))
+        if (_establishedSessions.ContainsKey(normalizedPath))
             return;
 
-        // Persist model + effort settings to ~/.kiro/settings/cli.json
-        await ApplyCliSettingsAsync(ct);
+        await ApplyCliSettingsOnceAsync(ct);
 
         try
         {
-            await _orchestrator.ExecutePromptAsync(
-                WarmUpPrompt,
-                workspacePath,
-                useResume: false,
-                ct);
+            var exitCode = await TimeoutHelper.ExecuteWithTimeoutAsync(
+                WarmUpTimeout, ct,
+                linkedCt => _orchestrator.ExecutePromptAsync(WarmUpPrompt, workspacePath, useResume: false, linkedCt),
+                () => Task.FromResult(ExitCodes.Timeout));
 
-            _establishedSessions.Add(normalizedPath);
+            if (exitCode != ExitCodes.Success)
+            {
+                _logger.Warning("Warm-up prompt exited with code {ExitCode} for workspace {WorkspacePath}; session not established",
+                    exitCode, normalizedPath);
+                return;
+            }
+
+            _establishedSessions[normalizedPath] = 0;
+            if (!_mainSessionByWorkspace.ContainsKey(normalizedPath))
+                await TrackMainSessionAsync(workspacePath, normalizedPath, ct);
             _logger.Information("Session established via warm-up prompt for workspace {WorkspacePath}", normalizedPath);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -93,19 +131,33 @@ public partial class KiroCliAgentProvider : IAgentProvider
         }
     }
 
-    public AgentHealthStatus GetHealthStatus() => new()
+    /// <summary>
+    /// Health of the most recently active run, including isolated calls on their own orchestrators;
+    /// the shared orchestrator's when nothing runs.
+    /// </summary>
+    public AgentHealthStatus GetHealthStatus()
     {
-        IsExecuting = _orchestrator.IsExecuting,
-        ProcessId = _orchestrator.ActiveProcessId,
-        IsProcessAlive = _orchestrator.IsActiveProcessAlive,
-        LastOutputTime = _orchestrator.LastOutputTime
-    };
+        var orchestrator = _activeOrchestrators.Keys
+            .Where(o => o.IsExecuting)
+            .OrderByDescending(o => o.LastOutputTime ?? DateTime.MinValue)
+            .FirstOrDefault() ?? _orchestrator;
+        return new AgentHealthStatus
+        {
+            IsExecuting = orchestrator.IsExecuting,
+            ProcessId = orchestrator.ActiveProcessId,
+            IsProcessAlive = orchestrator.IsActiveProcessAlive,
+            LastOutputTime = orchestrator.LastOutputTime
+        };
+    }
 
     public async Task<AgentResult> ExecuteAsync(
         AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        await ApplyCliSettingsOnceAsync(ct);
+        var normalizedPath = Path.GetFullPath(request.WorkspacePath);
+        var (resumeSessionId, onMainConversation) = ResolveSession(request, normalizedPath);
         var outputLines = new List<string>();
 
         // For isolated (non-resume) calls, create an ephemeral orchestrator with its own
@@ -115,17 +167,18 @@ public partial class KiroCliAgentProvider : IAgentProvider
         // session continuity.
         var isIsolatedCall = !request.UseResume && request.ResumeSessionId is null;
         var orchestrator = isIsolatedCall ? CreateEphemeralOrchestrator() : _orchestrator;
+        _activeOrchestrators[orchestrator] = 0;
 
         try
         {
-            return await TimeoutHelper.ExecuteWithTimeoutAsync(
+            var result = await TimeoutHelper.ExecuteWithTimeoutAsync(
                 request.Timeout, ct,
                 async linkedCt =>
                 {
                     var exitCode = await orchestrator.ExecutePromptAsync(
                         request.Prompt,
                         request.WorkspacePath,
-                        useResume: request.UseResume,
+                        useResume: false,
                         linkedCt,
                         onOutputLine: line =>
                         {
@@ -134,7 +187,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
                             onOutputLine?.Invoke(clean);
                             return Task.CompletedTask;
                         },
-                        resumeSessionId: request.ResumeSessionId,
+                        resumeSessionId: resumeSessionId,
                         environmentVariables: request.EnvironmentVariables);
 
                     return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
@@ -144,12 +197,40 @@ public partial class KiroCliAgentProvider : IAgentProvider
                     _logger.Warning("Agent execution timed out after {Timeout}", request.Timeout);
                     return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
                 });
+
+            // A run on the main conversation may have started it, or fallen back to a fresh session
+            // because its ID could not be loaded; either way the newest session is now the main one.
+            if (onMainConversation)
+                await TrackMainSessionAsync(request.WorkspacePath, normalizedPath, ct);
+            return result;
         }
         finally
         {
+            _activeOrchestrators.TryRemove(orchestrator, out _);
             if (isIsolatedCall && orchestrator is IDisposable disposable)
                 disposable.Dispose();
         }
+    }
+
+    /// <summary>
+    /// The session a call runs in, and whether that is the workspace's main conversation. An explicit
+    /// ID wins. <c>UseResume</c> continues the main conversation, or starts it when there is none; an
+    /// isolated call starts it only in a workspace that has none yet.
+    /// </summary>
+    private (string? ResumeSessionId, bool OnMainConversation) ResolveSession(AgentRequest request, string normalizedPath)
+    {
+        var hasMain = _mainSessionByWorkspace.TryGetValue(normalizedPath, out var mainSessionId);
+        if (request.ResumeSessionId is not null)
+            return (request.ResumeSessionId, hasMain && request.ResumeSessionId == mainSessionId);
+        if (request.UseResume)
+            return (hasMain ? mainSessionId : null, true);
+        return (null, !hasMain);
+    }
+
+    private async Task TrackMainSessionAsync(string workspacePath, string normalizedPath, CancellationToken ct)
+    {
+        if (await QueryNewestSessionIdAsync(workspacePath, ct) is { } sessionId)
+            _mainSessionByWorkspace[normalizedPath] = sessionId;
     }
 
     /// <summary>
@@ -158,22 +239,28 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// </summary>
     private IKiroCliOrchestrator CreateEphemeralOrchestrator()
     {
-        var config = new KiroCliLib.Configuration.Configuration
-        {
-            KiroCliPath = _executablePath,
-            UseWsl = OperatingSystem.IsWindows()
-        };
+        var config = CreateRunConfiguration(_executablePath, _model, _agentName);
         _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
-        return new KiroCliOrchestrator(config, _logger);
+        return _createEphemeralOrchestrator(config);
     }
 
     /// <inheritdoc />
+    /// <remarks>
+    /// Checks the login first: <c>doctor --all --strict</c> exits 0 even when signed out, and every run
+    /// would then wait about 10 minutes on a device login.
+    /// </remarks>
     public async Task ValidateAsync(CancellationToken ct)
+    {
+        await RunCliCheckAsync("whoami", "kiro-cli is not logged in", ct);
+        await RunCliCheckAsync("doctor --all --strict", "kiro-cli doctor failed", ct);
+    }
+
+    private async Task RunCliCheckAsync(string arguments, string failure, CancellationToken ct)
     {
         var psi = new System.Diagnostics.ProcessStartInfo
         {
             FileName = _executablePath,
-            Arguments = "doctor --all --strict",
+            Arguments = arguments,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -184,8 +271,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
         using var process = _processStarter.Start(psi);
         if (process is null)
         {
-            _logger.Error("Failed to start kiro-cli doctor process");
-            throw new InvalidOperationException("Failed to start kiro-cli doctor process");
+            _logger.Error("Failed to start kiro-cli {Arguments} process", arguments);
+            throw new InvalidOperationException($"Failed to start kiro-cli {arguments} process");
         }
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
@@ -197,14 +284,25 @@ public partial class KiroCliAgentProvider : IAgentProvider
         if (process.ExitCode != 0)
         {
             var details = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : stdout.Trim();
-            _logger.Error("kiro-cli doctor exited with code {ExitCode}. {Details}", process.ExitCode, details);
+            _logger.Error("kiro-cli {Arguments} exited with code {ExitCode}. {Details}", arguments, process.ExitCode, details);
             throw new InvalidOperationException(
-                $"kiro-cli doctor exited with code {process.ExitCode}. {details}");
+                $"{failure}: kiro-cli {arguments} exited with code {process.ExitCode}. {details}");
         }
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
+    /// <remarks>
+    /// The workspace's main conversation when this provider tracks one; otherwise the newest session
+    /// the CLI lists for the workspace.
+    /// </remarks>
+    public Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
+    {
+        return _mainSessionByWorkspace.TryGetValue(Path.GetFullPath(workspacePath), out var mainSessionId)
+            ? Task.FromResult<string?>(mainSessionId)
+            : QueryNewestSessionIdAsync(workspacePath, ct);
+    }
+
+    private async Task<string?> QueryNewestSessionIdAsync(string workspacePath, CancellationToken ct)
     {
         try
         {
@@ -308,10 +406,23 @@ public partial class KiroCliAgentProvider : IAgentProvider
     }
 
     /// <inheritdoc />
+    /// <remarks>Kills the shared orchestrator's process and every isolated call's.</remarks>
     public Task KillAsync()
     {
         _orchestrator.Kill();
+        foreach (var orchestrator in _activeOrchestrators.Keys)
+            orchestrator.Kill();
         return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Writes the CLI settings on first use, for every job type: the warm-up that used to be the only
+    /// writer runs for analysis only, and a fresh pod has no <c>cli.json</c>.
+    /// </summary>
+    private async Task ApplyCliSettingsOnceAsync(CancellationToken ct)
+    {
+        if (Interlocked.Exchange(ref _cliSettingsApplied, 1) == 0)
+            await ApplyCliSettingsAsync(ct);
     }
 
     /// <summary>

@@ -96,15 +96,13 @@ public class ProcessWrapper : IProcessWrapper
         if (!File.Exists(promptFile))
             _logger.Warning("Prompt file {PromptFile} does not exist after write — potential filesystem issue", promptFile);
 
-        // The @path syntax expands file contents inline before sending (per Kiro docs).
+        // The prompt goes in by @path reference. Interactive sessions expand it inline; kiro-cli 2.29 V2
+        // non-interactive runs pass the reference on and the model reads the file with a tool.
         // Use explicit relative path (@./path) to avoid prompt name collision.
         // TODO: Use AgentWorkspacePaths.MetadataDirectory here once KiroCliLib can reference CodingAgent.Contracts
         //       without a circular dependency. For now, AgentMetadataDirectory mirrors it locally.
         var inlinePrompt = $"@{AgentMetadataDirectory}/prompt-input-{promptId}.md";
-        var resumeFlag = BuildResumeFlag(resumeSessionId, useResume);
-        var kiroArgs = resumeFlag is not null
-            ? $"chat {AgentEngineArgument} --no-interactive {resumeFlag} --trust-all-tools \"{inlinePrompt}\""
-            : $"chat {AgentEngineArgument} --no-interactive --trust-all-tools \"{inlinePrompt}\"";
+        var kiroArgs = BuildArguments(_config, BuildResumeFlag(resumeSessionId, useResume), inlinePrompt);
 
         var startInfo = new ProcessStartInfo
         {
@@ -138,6 +136,10 @@ public class ProcessWrapper : IProcessWrapper
         _process = new Process { StartInfo = startInfo };
         _process.OutputDataReceived += OnOutputDataReceived;
         _process.ErrorDataReceived += OnErrorDataReceived;
+        // Count the start as output: until the first line, LastOutputTime would otherwise read as
+        // DateTime.MinValue, which a stall monitor takes for centuries of silence. kiro-cli 2.29 prints
+        // nothing before the model's first action.
+        _lastOutputTime = DateTime.UtcNow;
         _process.EnableRaisingEvents = true;
 
         try
@@ -171,6 +173,26 @@ public class ProcessWrapper : IProcessWrapper
             try { File.Delete(promptFile); } catch { /* best-effort cleanup */ }
         }
     }
+
+    /// <summary>
+    /// The <c>kiro-cli</c> arguments for one non-interactive run. <paramref name="config"/> supplies the
+    /// model and agent; a blank or <c>auto</c> model leaves the choice to the CLI's settings.
+    /// </summary>
+    internal static string BuildArguments(Configuration.Configuration config, string? resumeFlag, string inlinePrompt)
+    {
+        var args = new System.Text.StringBuilder($"chat {AgentEngineArgument} --no-interactive");
+        if (!string.IsNullOrWhiteSpace(config.Model) && !config.Model.Equals("auto", StringComparison.OrdinalIgnoreCase))
+            args.Append(" --model ").Append(Quote(config.Model));
+        if (!string.IsNullOrWhiteSpace(config.AgentName))
+            args.Append(" --agent ").Append(Quote(config.AgentName));
+        if (resumeFlag is not null)
+            args.Append(' ').Append(resumeFlag);
+        args.Append(" --trust-all-tools ").Append(Quote(inlinePrompt));
+        return args.ToString();
+    }
+
+    /// <summary>Quotes one value for <see cref="ProcessStartInfo.Arguments"/>, escaping embedded quotes.</summary>
+    private static string Quote(string value) => $"\"{value.Trim().Replace("\"", "\\\"")}\"";
 
     /// <summary>
     /// The resume argument: a specific session when <paramref name="resumeSessionId"/> is set, otherwise the

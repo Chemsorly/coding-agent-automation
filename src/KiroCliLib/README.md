@@ -117,7 +117,7 @@ KiroCliLib uses the `--resume` / `--resume-id` flags to maintain conversation hi
 2. **Subsequent prompts (session-targeted)**: Invokes `kiro-cli chat --agent-engine v2 --no-interactive --resume-id <sessionId> --trust-all-tools "@.agent/prompt-input-<id>.md"` — continues a specific named session (primary path when `resumeSessionId` is provided to `ExecutePromptAsync`).
 3. **Subsequent prompts (stateless resume)**: Invokes `kiro-cli chat --agent-engine v2 --no-interactive --resume --trust-all-tools "@.agent/prompt-input-<id>.md"` — resumes the most recent session in the workspace (used when `useResume: true` but no `resumeSessionId` is provided).
 
-The prompt is written to that file first; Kiro's `@path` syntax expands it inline.
+The prompt is written to that file first and passed by its `@path` reference. kiro-cli 2.29 V2 non-interactive runs do not expand it inline; the model reads the file with a tool.
 
 If `--resume-id` names a session the CLI cannot load (kiro-cli 2.29 exits 1 with `error: ACP load_session failed`, for example for a session created in another pod), `KiroCliOrchestrator` runs the prompt again in a fresh session, as older CLI versions did on their own.
 

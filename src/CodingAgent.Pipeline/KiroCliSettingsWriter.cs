@@ -10,7 +10,7 @@ public static partial class KiroCliSettingsWriter
     /// <summary>
     /// Persists model and effort settings to <c>~/.kiro/settings/cli.json</c>.
     /// Sets <c>chat.defaultModel</c> and, when effort is provided,
-    /// <c>chat.modelDefaults.{model}.output_config.effort</c>.
+    /// <c>chat.modelDefaults.{model}.output_config.effort</c> (<c>reasoning.effort</c> for GPT models).
     /// </summary>
     /// <param name="model">Model name to set. Must be non-empty and not "auto".</param>
     /// <param name="effort">Effort level string, e.g. "high" or "low". Null or empty → not written.</param>
@@ -75,11 +75,12 @@ public static partial class KiroCliSettingsWriter
                                     ?? new System.Text.Json.Nodes.JsonObject();
                     modelDefaults[model] = modelNode;
 
-                    var outputConfig = modelNode["output_config"]?.AsObject()
+                    var effortSection = EffortSection(model);
+                    var effortConfig = modelNode[effortSection]?.AsObject()
                                        ?? new System.Text.Json.Nodes.JsonObject();
-                    modelNode["output_config"] = outputConfig;
+                    modelNode[effortSection] = effortConfig;
 
-                    outputConfig["effort"] = effort;
+                    effortConfig["effort"] = effort;
                 }
             }
 
@@ -94,6 +95,13 @@ public static partial class KiroCliSettingsWriter
             Serilog.Log.Warning(ex, "KiroCliSettingsWriter: failed to persist CLI settings to {Path}", settingsPath);
         }
     }
+
+    /// <summary>
+    /// The per-model section that holds the effort level: GPT models read <c>reasoning.effort</c>,
+    /// Claude models <c>output_config.effort</c> (https://kiro.dev/docs/models/effort/).
+    /// </summary>
+    internal static string EffortSection(string model) =>
+        model.StartsWith("gpt", StringComparison.OrdinalIgnoreCase) ? "reasoning" : "output_config";
 
     /// <summary>Pattern for valid model names: alphanumeric, dots, hyphens, underscores.</summary>
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]

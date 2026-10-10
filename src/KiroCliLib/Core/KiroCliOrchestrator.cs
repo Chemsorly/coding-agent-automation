@@ -142,8 +142,10 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         }
         catch (OperationCanceledException ex)
         {
+            // Rethrown, not mapped to an exit code: callers tell a timeout from a cancellation by the
+            // exception (TimeoutHelper), and ProcessWrapper has already killed the process.
             _logger.Information(ex, "Kiro CLI execution was cancelled");
-            return ExitCodes.Cancelled;
+            throw;
         }
         catch (Exception ex)
         {

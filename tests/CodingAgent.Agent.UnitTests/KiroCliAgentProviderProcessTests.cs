@@ -104,6 +104,48 @@ public class KiroCliAgentProviderProcessTests
     }
 
     [Fact]
+    public async Task ValidateAsync_NotLoggedIn_FailsOnWhoami()
+    {
+        // `doctor --all --strict` exits 0 while signed out; `whoami` does not.
+        var arguments = new List<string>();
+        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
+            .Callback<ProcessStartInfo>(psi => arguments.Add(psi.Arguments))
+            .Returns(() => StartShellProcess(stdout: "Not logged in", exitCode: 1));
+
+        var act = () => CreateProvider().ValidateAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*not logged in*");
+        arguments.Should().Equal("whoami");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_UseResume_ContinuesTheTrackedMainSessionById()
+    {
+        var newestSession = "main-1";
+        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
+            .Returns(() => StartShellProcess(stdout: $$"""[{"cwd":"/w","sessions":[{"sessionId":"{{newestSession}}","updatedAt":"2026-10-10T15:00:00Z"}]}]"""));
+        var calls = new List<(bool UseResume, string? SessionId)>();
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, useResume, _, _, sessionId, _) => calls.Add((useResume, sessionId)))
+            .ReturnsAsync(0);
+        var provider = CreateProvider();
+        AgentRequest Continue(string prompt) => new() { Prompt = prompt, WorkspacePath = "/workspace", UseResume = true };
+
+        await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);   // starts the main session
+        await provider.ExecuteAsync(Continue("codegen"), CancellationToken.None);    // continues it by ID
+        newestSession = "fresh-2"; // e.g. the CLI fell back to a fresh session for an unloadable ID
+        await provider.ExecuteAsync(Continue("fix"), CancellationToken.None);
+        await provider.ExecuteAsync(Continue("summary"), CancellationToken.None);
+
+        calls.Should().Equal((false, null), (false, "main-1"), (false, "main-1"), (false, "fresh-2"));
+        (await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None)).Should().Be("fresh-2");
+    }
+
+    [Fact]
     public async Task ValidateAsync_NullProcess_ThrowsInvalidOperationException()
     {
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
@@ -210,7 +252,7 @@ public class KiroCliAgentProviderProcessTests
         _mockLogger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
             It.IsAny<string>(),
-            It.IsAny<WorkspacePath>()), Times.Once);
+            It.IsAny<string>()), Times.Once);
     }
 
     // ─── OTEL env-var stripping ──────────────────────────────────────────

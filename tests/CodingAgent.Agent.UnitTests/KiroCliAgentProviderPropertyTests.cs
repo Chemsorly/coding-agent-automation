@@ -117,13 +117,13 @@ public class KiroCliAgentProviderPropertyTests
     }
 
     /// <summary>
-    /// Feature: provider-interface-gaps, Property 3: UseResume flag forwarding
-    /// For any AgentRequest with a UseResume value (true or false), ExecuteAsync passes the
-    /// identical boolean to IKiroCliOrchestrator.ExecutePromptAsync.
-    /// **Validates: Requirements 1.4**
+    /// Feature: provider-interface-gaps, Property 3: no implicit --resume
+    /// For any AgentRequest, ExecuteAsync never asks the orchestrator for <c>--resume</c>, which picks
+    /// the newest session in the directory (after an isolated reviewer, the reviewer's). UseResume is
+    /// resolved to the main conversation's ID instead; without one, the run starts a fresh session.
     /// </summary>
     [Property(MaxTest = 20)]
-    public void ExecuteAsync_Forwards_UseResume_To_Orchestrator(bool useResume)
+    public void ExecuteAsync_NeverPassesImplicitResume_To_Orchestrator(bool useResume)
     {
         // Arrange
         var capturedUseResume = (bool?)null;
@@ -154,9 +154,9 @@ public class KiroCliAgentProviderPropertyTests
         provider.ExecuteAsync(request, CancellationToken.None)
             .GetAwaiter().GetResult();
 
-        // Assert — the useResume parameter forwarded to ExecutePromptAsync matches the request
+        // Assert — the shared orchestrator ran, without --resume
         Assert.NotNull(capturedUseResume);
-        Assert.Equal(useResume, capturedUseResume.Value);
+        Assert.False(capturedUseResume.Value);
     }
 
     /// <summary>
