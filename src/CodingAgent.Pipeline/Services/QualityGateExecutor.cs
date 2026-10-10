@@ -93,7 +93,9 @@ public partial class QualityGateExecutor : IQualityGateExecutor
         sb.AppendLine("Before fixing, reflect:");
         sb.AppendLine("1. **What specific code change caused this failure?** (identify the exact lines)");
         sb.AppendLine("2. **Why did you make that change?** (what was the intent)");
-        sb.AppendLine("3. **What is the minimal fix** that addresses the failure without reverting the intended behavior?");
+        sb.AppendLine("3. **What is the minimal code fix** that addresses the failure without reverting the intended behavior or weakening a check?");
+        sb.AppendLine();
+        sb.AppendLine(PipelineConstants.GateIntegrityRule);
         sb.AppendLine();
         sb.Append("Apply the targeted fix, then verify by running the failing command again.");
         return sb.ToString();

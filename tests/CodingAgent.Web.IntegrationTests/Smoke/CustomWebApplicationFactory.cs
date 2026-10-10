@@ -201,6 +201,9 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             .ReturnsAsync(Array.Empty<PipelineProject>());
         mock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+        // AgentChat.razor lists agent profiles on first render.
+        mock.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
         return mock.Object;
     }
 

@@ -8,8 +8,8 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///
 /// This file used to hold four tests guarding the pre-Kubernetes chat UI, where an operator
 /// picked a connected idle agent out of an <c>#agent-select</c> dropdown and a "No idle agents"
-/// warning appeared when the pool was empty. Chat is now on-demand: you choose a job template and
-/// <c>ChatJobDispatcher</c> launches a pod for it. Neither the dropdown nor the warning exists in
+/// warning appeared when the pool was empty. Chat is now on-demand: you choose an agent profile and
+/// <c>ChatJobDispatcher</c> launches a pod from the job template its labels name. Neither the dropdown nor the warning exists in
 /// <c>AgentChat.razor</c> any more — the string "No idle agents" appears nowhere in <c>src/</c> —
 /// so the three tests asserting them were removed rather than ported. The same applies to
 /// <c>AgentChatTests</c>, deleted entirely for the same reason.
@@ -51,9 +51,9 @@ public sealed class AgentChatSignalRTests : E2ETestBase
         var title = await Page.TitleAsync();
         Assert.NotEmpty(title);
 
-        // The template selector is the entry point of the current chat flow. The old version of
+        // The profile selector is the entry point of the current chat flow. The old version of
         // this assertion also accepted any <h1>, which made it true on every page that renders.
-        var templateSelect = await Page.QuerySelectorAsync("#template-select");
-        Assert.True(templateSelect is not null, "Chat page should render the job template selector");
+        var profileSelect = await Page.QuerySelectorAsync("#profile-select");
+        Assert.True(profileSelect is not null, "Chat page should render the agent profile selector");
     }
 }
