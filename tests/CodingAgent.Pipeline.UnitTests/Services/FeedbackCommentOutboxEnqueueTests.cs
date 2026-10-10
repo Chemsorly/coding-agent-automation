@@ -123,7 +123,7 @@ public sealed class FeedbackCommentOutboxEnqueueTests
             // Its presence falsely implies the comment could still be posted in this scenario.
             // Also add: _outbox.Verify(o => o.MarkCompletedAsync(...), Times.Never) to guard against
             // an erroneous future change that calls MarkCompleted after cancellation.
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         var feedback = MakeFeedbackWithDescription();
         // Payload carries feedback so JobCompletionMapper.Apply preserves it
@@ -191,7 +191,7 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         var run = MakeRun();
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Payload has NO feedback → Apply sets run.Feedback = null → guard fails → no enqueue
         await _sut.HandleJobCompletedAsync(jobId, agent, MakePayload(), CancellationToken.None);
@@ -218,7 +218,7 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         var run = MakeRun();
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         var feedbackWithNullDescription = new RunFeedback
         {
@@ -251,7 +251,7 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         _facade.Setup(f => f.GetRun(jobId)).Returns(run);
 
         _issueOps.Setup(o => o.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
 
         // Capture the enqueued entry's ID to verify MarkCompleted is called with it
         FeedbackCommentOutboxEntry? capturedEntry = null;
@@ -372,7 +372,7 @@ public sealed class FeedbackCommentOutboxEnqueueTests
         _issueOps.Setup(o => o.SwapLabelAsync(run, It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _issueOps.Setup(o => o.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync(true);
 
         // Capture the enqueued entry so we can confirm EnqueueAsync was actually called.
         FeedbackCommentOutboxEntry? capturedEntry = null;

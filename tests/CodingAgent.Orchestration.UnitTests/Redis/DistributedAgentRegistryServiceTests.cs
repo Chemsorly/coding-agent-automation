@@ -234,6 +234,68 @@ public sealed class DistributedAgentRegistryServiceTests
         _store.GetSet("agents:all").Should().NotContain("agent-ghost");
     }
 
+    /// <summary>
+    /// Regression test for the WithAgentField / _localSnapshot snapshot bug (issue #3519):
+    /// after UpdateAgentFieldAsync writes lastJobCompletedAt to Redis and to _localSnapshot,
+    /// a TTL expiry followed by a heartbeat must re-register from the snapshot with the
+    /// updated value intact. Before the fix, lastJobCompletedAt fell through to '_ => current'
+    /// in WithAgentField and was dropped from the snapshot, so re-registration would write
+    /// null back to Redis for that field.
+    /// </summary>
+    [Fact]
+    public async Task UpdateHeartbeat_AfterTtlExpiry_ReRegistersWithUpdatedLastJobCompletedAt()
+    {
+        var agentId = new AgentId("agent-1");
+        _sut.Register(Msg("agent-1"), "conn-1");
+        var timestamp = new DateTimeOffset(2026, 5, 20, 14, 0, 0, TimeSpan.Zero);
+
+        await _sut.UpdateAgentFieldAsync(agentId, "lastJobCompletedAt", timestamp.ToString("O"));
+
+        // Simulate TTL expiry: remove the Redis hash so UpdateHeartbeatAsync falls into
+        // the "ExistsAsync == false → re-register from _localSnapshot" path.
+        _store.ForceExpire("agent:agent-1");
+
+        // Trigger heartbeat — this re-registers from _localSnapshot via UpdateHeartbeatAsync.
+        _sut.UpdateHeartbeat(agentId, DateTimeOffset.UtcNow);
+        await _sut.LastHeartbeatTask;
+
+        // After re-registration, the Redis hash must carry the lastJobCompletedAt value from
+        // the snapshot. Without the fix, this field was null in the snapshot and would be
+        // written back as empty string ("") to Redis.
+        var hash = _store.GetHash("agent:agent-1");
+        hash.Should().NotBeNull("heartbeat must have re-registered the agent from _localSnapshot");
+        hash!["lastJobCompletedAt"].Should().Be(timestamp.ToString("O"),
+            "lastJobCompletedAt written via UpdateAgentFieldAsync must survive a TTL expiry + heartbeat re-registration");
+    }
+
+    /// <summary>
+    /// Regression test for the WithAgentField / _localSnapshot snapshot bug (issue #3519):
+    /// clearing the 'disabled' field with an empty string must update the snapshot to false.
+    /// Before the fix, bool.TryParse("") returned false (parse failure) leaving the snapshot
+    /// unchanged while Redis already held "" (mapped to false by HashToEntry reader).
+    /// </summary>
+    [Fact]
+    public async Task UpdateHeartbeat_AfterTtlExpiry_ReRegistersWithClearedDisabled()
+    {
+        var agentId = new AgentId("agent-1");
+        _sut.Register(Msg("agent-1"), "conn-1");
+        await _sut.UpdateAgentFieldAsync(agentId, "disabled", "true");
+
+        // Clear the disabled field
+        await _sut.UpdateAgentFieldAsync(agentId, "disabled", "");
+
+        _store.ForceExpire("agent:agent-1");
+
+        _sut.UpdateHeartbeat(agentId, DateTimeOffset.UtcNow);
+        await _sut.LastHeartbeatTask;
+
+        var hash = _store.GetHash("agent:agent-1");
+        hash.Should().NotBeNull();
+        hash!["disabled"].Should().Be("False",
+            "clearing disabled with empty string must update the snapshot to false; " +
+            "the re-registered entry must not carry the stale 'true' value");
+    }
+
     // ── CancellationToken forwarding ──────────────────────────────────────────
 
     // TODO (WARNING): All five tests below use a pre-cancelled token, which means cancellation is

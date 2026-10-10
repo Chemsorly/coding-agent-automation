@@ -131,6 +131,11 @@ public class GitHubIssueProviderTests
         await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
+    // TODO: Add invalid-argument tests for ListClosedIssuesAsync (invalid page, invalid pageSize,
+    // pageSize > 100) to match the coverage above for ListOpenIssuesAsync. A regression that removes
+    // the SharedPrOperations.ValidatePaginationArgs call from ListClosedIssuesAsync would not currently
+    // be caught. (Review finding [WARNING] — TestQualityReviewer, issue #3523)
+
     [Fact]
     public async Task GetIssueAsync_InvalidIdentifier_ThrowsArgumentException()
     {

@@ -698,7 +698,7 @@ public partial class AgentCoding : IDisposable
     /// Used by drawer component <c>GetProcessingStatus</c> parameter (Func&lt;string, WorkItemStatus?&gt;).
     /// Returns Pending (Queued), Running (Running/Dispatched), or null (not active).
     /// </summary>
-    private WorkItemStatus? IsIssueActive(string issueIdentifier, string issueProviderConfigId)
+    private WorkItemStatus? IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId)
         => PageService.GetIssueWorkItemStatus(issueIdentifier, issueProviderConfigId);
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
