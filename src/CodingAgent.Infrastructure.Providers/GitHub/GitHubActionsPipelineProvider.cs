@@ -66,9 +66,14 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     }
 
     public async Task<PipelineRunStatus> GetRunStatusAsync(
-        string branchName, string? commitSha, CancellationToken ct)
+        BranchName branchName, string? commitSha, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(branchName);
+        // NOTE (issue #3535): BranchName is a readonly record struct with a public primary
+        // constructor, so `new BranchName(null)` compiles and produces a value whose Value is null,
+        // bypassing the implicit-operator guard. The previous `ArgumentNullException.ThrowIfNull`
+        // guard was removed because it is a no-op on a struct. All current call sites pass via
+        // implicit string→BranchName conversion which validates. See BranchName.cs for the
+        // existing TODO tracking the constructor-gap fix.
 
         // Pass head_sha as a server-side filter when a specific SHA is requested.
         // Previously this was a client-side Where() on the default page of results (30 runs),
@@ -132,9 +137,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
     }
 
     public Task<PipelineRunStatus> WaitForCompletionAsync(
-        string branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
+        BranchName branchName, string? commitSha, TimeSpan timeout, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(branchName);
+        // NOTE (issue #3535): Same null-Value risk as GetRunStatusAsync above —
+        // BranchName constructed directly with null bypasses the implicit-operator guard.
+        // All current call sites pass via implicit conversion. See BranchName.cs TODO.
 
         _logger.Information("Polling CI for branch {Branch} (commit: {CommitSha}, timeout: {Timeout})",
             branchName, commitSha ?? "any", timeout);
@@ -209,9 +216,9 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         foreach (var run in runs)
         {
             var state = ClassifyRun(run);
-            if (state == PipelineRunState.Running)       hasRunning = true;
-            else if (state == PipelineRunState.Pending)  hasPending = true;
-            else if (state == PipelineRunState.Failed)   hasFailed = true;
+            if (state == PipelineRunState.Running) hasRunning = true;
+            else if (state == PipelineRunState.Pending) hasPending = true;
+            else if (state == PipelineRunState.Failed) hasFailed = true;
             else if (state == PipelineRunState.Cancelled) hasCancelled = true;
         }
 
@@ -238,7 +245,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 
         if (run.Status.Value == WorkflowRunStatus.Completed)
         {
-            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)  return PipelineRunState.Failed;
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure) return PipelineRunState.Failed;
             if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled) return PipelineRunState.Cancelled;
         }
 

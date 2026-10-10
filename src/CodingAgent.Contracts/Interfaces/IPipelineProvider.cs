@@ -18,7 +18,7 @@ public interface IPipelineProvider : IAsyncDisposable
     /// Gets the latest pipeline run status for a specific branch and commit.
     /// </summary>
     Task<PipelineRunStatus> GetRunStatusAsync(
-        string branchName,
+        BranchName branchName,
         string? commitSha,
         CancellationToken ct);
 
@@ -30,7 +30,7 @@ public interface IPipelineProvider : IAsyncDisposable
     /// so callers receive actionable diagnostics without a second call.
     /// </summary>
     Task<PipelineRunStatus> WaitForCompletionAsync(
-        string branchName,
+        BranchName branchName,
         string? commitSha,
         TimeSpan timeout,
         CancellationToken ct);
