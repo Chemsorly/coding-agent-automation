@@ -184,17 +184,8 @@ public partial class QualityGateExecutor
         callbacks.EmitOutputLine("🔄 PR conflicted with main — re-queuing as agent:next for rework...");
         callbacks.TransitionTo(PipelineStep.ConflictRestart);
         run.MarkCompleted();
-        return new QualityGateReport
-        {
-            Compilation = report.Compilation,
-            Tests = report.Tests, // null when Tests is null (build-only QGC / legacy deserialization path)
-            ExternalCi = new GateResult
-            {
-                GateName = ExternalCiName,
-                Passed = false,
-                Details = "Conflict restart — PR conflicted with main; re-dispatched as agent:next"
-            }
-        };
+        return WithExternalCiOutcome(report, passed: false,
+            details: "Conflict restart — PR conflicted with main; re-dispatched as agent:next");
     }
 
     /// <summary>
@@ -209,17 +200,8 @@ public partial class QualityGateExecutor
         // run.CurrentStep is already set by BuildPrMergedStatus in CiPollingCoordinator.
         // This report is returned so ProceedToQualityGatesAsync can detect the terminal step
         // via the run.CurrentStep guard and return without further processing.
-        return new QualityGateReport
-        {
-            Compilation = report.Compilation,
-            Tests = report.Tests,
-            ExternalCi = new GateResult
-            {
-                GateName = ExternalCiName,
-                Passed = true,
-                Details = "PR was merged — run ended Succeeded"
-            }
-        };
+        return WithExternalCiOutcome(report, passed: true,
+            details: "PR was merged — run ended Succeeded");
     }
 
     /// <summary>
@@ -232,18 +214,32 @@ public partial class QualityGateExecutor
     private static QualityGateReport BuildPrClosedReport(QualityGateReport report)
     {
         // run.CurrentStep is already set by BuildPrClosedStatus in CiPollingCoordinator.
-        return new QualityGateReport
+        return WithExternalCiOutcome(report, passed: false,
+            details: "PR was closed without merging — run ended Cancelled");
+    }
+
+    /// <summary>
+    /// Constructs a <see cref="QualityGateReport"/> that preserves the <c>Compilation</c> and
+    /// <c>Tests</c> pass-through from <paramref name="report"/> and sets the <c>ExternalCi</c>
+    /// gate to the given <paramref name="passed"/> flag and <paramref name="details"/> string.
+    /// Used by the three terminal Build* methods to eliminate duplicate
+    /// <c>new GateResult { GateName = ExternalCiName, ... }</c> initializers.
+    /// NOTE: <c>Tests = report.Tests</c> (no null-forgiving operator) is intentional — Tests may
+    /// be null from legacy deserialization of build-only QGC payloads; the null is preserved as-is.
+    /// </summary>
+    private static QualityGateReport WithExternalCiOutcome(
+        QualityGateReport report, bool passed, string details) =>
+        new()
         {
             Compilation = report.Compilation,
-            Tests = report.Tests,
+            Tests = report.Tests, // null when Tests is null (build-only QGC / legacy deserialization path)
             ExternalCi = new GateResult
             {
                 GateName = ExternalCiName,
-                Passed = false,
-                Details = "PR was closed without merging — run ended Cancelled"
+                Passed = passed,
+                Details = details
             }
         };
-    }
 
     /// <summary>
     /// Commits and pushes the workspace branch. Returns true when CI should be skipped
