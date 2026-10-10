@@ -18,6 +18,8 @@ namespace CodingAgent.Agent.UnitTests.OpenCode;
 public class OpenCodeSseEventTests
 {
     private const string Session = "ses_main";
+    private static readonly string[] EnvPattern = [".env"];
+    private static readonly string[] AnyPattern = ["*"];
 
     private static string Frame(string type, object properties) =>
         $"data: {JsonSerializer.Serialize(new { id = "evt", type, properties })}\n\n";
@@ -99,8 +101,8 @@ public class OpenCodeSseEventTests
     {
         var sse = Frame("permission.asked", new
         {
-            id = "per_1", sessionID = "ses_child", permission = "read", patterns = new[] { ".env" },
-            metadata = new { }, always = new[] { "*" }
+            id = "per_1", sessionID = "ses_child", permission = "read", patterns = EnvPattern,
+            metadata = new { }, always = AnyPattern
         });
 
         var (_, handler) = await ProcessAsync(sse);

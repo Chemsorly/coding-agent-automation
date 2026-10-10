@@ -247,22 +247,10 @@ internal static class ClaudeStreamJsonParser
         state.TurnInProgress = true;
         state.SessionId ??= GetString(root, "session_id");
 
-        // Messages from subagents carry the ID of the tool call that started them. Only the main
-        // conversation's API errors describe the call; a main message without one means any
-        // earlier retried error was recovered from.
+        // Messages from subagents carry the ID of the tool call that started them.
         var isSubagent = GetString(root, "parent_tool_use_id") is not null;
         if (!isSubagent)
-        {
-            if (GetString(root, "error") is { } error)
-            {
-                state.LastErrorCategory = error;
-            }
-            else
-            {
-                state.LastErrorCategory = null;
-                state.LastErrorStatus = null;
-            }
-        }
+            TrackMainConversationError(root, state);
 
         if (!root.TryGetProperty("message", out var message)
             || !message.TryGetProperty("content", out var content)
@@ -288,6 +276,21 @@ internal static class ClaudeStreamJsonParser
         }
 
         return lines;
+    }
+
+    /// <summary>
+    /// Only the main conversation's API errors describe the call; a main message without one means any
+    /// earlier retried error was recovered from.
+    /// </summary>
+    private static void TrackMainConversationError(JsonElement root, ClaudeStreamState state)
+    {
+        if (GetString(root, "error") is { } error)
+        {
+            state.LastErrorCategory = error;
+            return;
+        }
+        state.LastErrorCategory = null;
+        state.LastErrorStatus = null;
     }
 
     private static IReadOnlyList<string> ProcessResult(JsonElement root, ClaudeStreamState state)

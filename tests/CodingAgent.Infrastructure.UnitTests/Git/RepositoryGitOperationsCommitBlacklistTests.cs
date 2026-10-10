@@ -11,6 +11,12 @@ namespace CodingAgent.Infrastructure.UnitTests.Git;
 [Trait("Category", "Integration")]
 public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
 {
+    private static readonly string[] KiroPaths = [".kiro"];
+    private static readonly string[] OpenCodePaths = [".opencode"];
+    private static readonly string[] KiroAndClaudePaths = [".kiro", "CLAUDE.local.md"];
+    private static readonly string[] DefaultBlacklist = [".agent", ".brain"];
+    private static readonly string[] UnrelatedBlacklist = ["node_modules", "dist"];
+
     private readonly string _workspacePath;
 
     public RepositoryGitOperationsCommitBlacklistTests()
@@ -132,7 +138,7 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         // Act
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
             blacklistedPaths: null, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".kiro" });
+            pipelineInjectedPaths: KiroPaths);
 
         // Assert: the repository's own file is committed, the pipeline's new file is not
         unstaged.Should().Equal(".kiro/steering/pipeline-repo.md");
@@ -159,8 +165,8 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         File.WriteAllText(Path.Combine(_workspacePath, ".opencode", ".gitignore"), "node_modules");
 
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
-            blacklistedPaths: new[] { ".agent", ".brain" }, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".opencode" });
+            blacklistedPaths: DefaultBlacklist, allowEmpty: false,
+            pipelineInjectedPaths: OpenCodePaths);
 
         unstaged.Should().Equal(".opencode/.gitignore");
         using var committed = new Repository(_workspacePath);
@@ -185,7 +191,7 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
 
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
             blacklistedPaths: null, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".kiro" });
+            pipelineInjectedPaths: KiroPaths);
 
         unstaged.Should().Equal(".kiro/steering/pipeline-repo.md");
         using var committed = new Repository(_workspacePath);
@@ -203,7 +209,7 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         // Act: pass .kiro as pipeline-injected path (from KiroCliAgentProvider.PipelineInjectedPaths)
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
             blacklistedPaths: null, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".kiro" });
+            pipelineInjectedPaths: KiroPaths);
 
         // Assert
         unstaged.Should().Contain(f => f.StartsWith(".kiro/"));
@@ -225,7 +231,7 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         // Act: pass .opencode as pipeline-injected path (from OpenCodeAgentProvider.PipelineInjectedPaths)
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
             blacklistedPaths: null, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".opencode" });
+            pipelineInjectedPaths: OpenCodePaths);
 
         // Assert
         unstaged.Should().Contain(".opencode/.gitignore");
@@ -251,8 +257,8 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
 
         // Act: blacklist only contains unrelated paths, but provider injects .kiro + CLAUDE.local.md
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
-            blacklistedPaths: new[] { "node_modules", "dist" }, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".kiro", "CLAUDE.local.md" });
+            blacklistedPaths: UnrelatedBlacklist, allowEmpty: false,
+            pipelineInjectedPaths: KiroAndClaudePaths);
 
         // Assert: all hardcoded paths unstaged (universal: .agent, .brain; provider: .kiro, CLAUDE.local.md)
         unstaged.Should().Contain(f => f.StartsWith(".agent/"));

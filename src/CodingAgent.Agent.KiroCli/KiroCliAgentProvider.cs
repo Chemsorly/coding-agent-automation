@@ -30,7 +30,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly string _executablePath;
     private readonly string? _agentName;
     private readonly IProcessStarter _processStarter;
-    private readonly Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> _createEphemeralOrchestrator;
+    private Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> _createEphemeralOrchestrator;
     private readonly ConcurrentDictionary<string, byte> _establishedSessions = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, string> _mainSessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<IKiroCliOrchestrator, byte> _activeOrchestrators = new();
@@ -73,8 +73,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
     internal KiroCliAgentProvider(
         IKiroCliOrchestrator orchestrator, ILogger? logger, string? model, string executablePath, AgentEffortLevel effort,
-        IProcessStarter? processStarter, string? agentName = null,
-        Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator>? createEphemeralOrchestrator = null)
+        IProcessStarter? processStarter, string? agentName = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(executablePath);
@@ -85,7 +84,13 @@ public partial class KiroCliAgentProvider : IAgentProvider
         _executablePath = executablePath;
         _agentName = agentName;
         _processStarter = processStarter ?? new DefaultProcessStarter();
-        _createEphemeralOrchestrator = createEphemeralOrchestrator ?? (config => new KiroCliOrchestrator(config, _logger));
+        _createEphemeralOrchestrator = config => new KiroCliOrchestrator(config, _logger);
+    }
+
+    /// <summary>Creates the orchestrator for an isolated call; tests replace it.</summary>
+    internal Func<KiroCliLib.Configuration.Configuration, IKiroCliOrchestrator> CreateEphemeralOrchestratorWith
+    {
+        init => _createEphemeralOrchestrator = value;
     }
 
     /// <summary>

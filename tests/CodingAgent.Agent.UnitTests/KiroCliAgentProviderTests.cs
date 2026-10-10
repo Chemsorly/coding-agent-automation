@@ -221,7 +221,7 @@ public class KiroCliAgentProviderTests
                 });
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
-            _mockProcessStarter.Object, createEphemeralOrchestrator: _ => ephemeral.Object);
+            _mockProcessStarter.Object) { CreateEphemeralOrchestratorWith = _ => ephemeral.Object };
         using var cts = new CancellationTokenSource();
 
         var run = provider.ExecuteAsync(
@@ -245,7 +245,7 @@ public class KiroCliAgentProviderTests
         var ephemerals = new Queue<IKiroCliOrchestrator>([alive.Object, exiting.Object]);
         var provider = new KiroCliAgentProvider(
             _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
-            _mockProcessStarter.Object, createEphemeralOrchestrator: _ => ephemerals.Dequeue());
+            _mockProcessStarter.Object) { CreateEphemeralOrchestratorWith = _ => ephemerals.Dequeue() };
         using var cts = new CancellationTokenSource();
         var review = new AgentRequest { Prompt = "review", WorkspacePath = "/workspace", Timeout = TimeSpan.FromMinutes(1) };
 

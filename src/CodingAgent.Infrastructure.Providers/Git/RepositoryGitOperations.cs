@@ -200,13 +200,15 @@ internal static class RepositoryGitOperations
         var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var hardcodedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in hardcodedChanges.Where(c =>
-                     PathBlacklist.IsPathBlacklisted(c.Path, hardcodedBlacklist)
-                     || (c.Status == ChangeKind.Added && providerInjectedPaths is { Count: > 0 }
-                         && PathBlacklist.IsPathBlacklisted(c.Path, providerInjectedPaths))))
+        var hardcodedPaths = hardcodedChanges
+            .Where(c => PathBlacklist.IsPathBlacklisted(c.Path, hardcodedBlacklist)
+                        || (c.Status == ChangeKind.Added && providerInjectedPaths is { Count: > 0 }
+                            && PathBlacklist.IsPathBlacklisted(c.Path, providerInjectedPaths)))
+            .Select(change => change.Path);
+        foreach (var path in hardcodedPaths)
         {
-            Commands.Unstage(repo, change.Path);
-            unstaged.Add(change.Path.Replace('\\', '/'));
+            Commands.Unstage(repo, path);
+            unstaged.Add(path.Replace('\\', '/'));
         }
 
         // Apply configurable blacklist (may overlap with hardcoded — skip already-unstaged paths)

@@ -187,6 +187,8 @@ internal sealed class SystemClaudeProcess : IClaudeProcess
     }
 
     /// <summary>POSIX <c>kill(2)</c>; .NET has no managed way to send SIGTERM to another process.</summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Interoperability", "SYSLIB1054",
+        Justification = "LibraryImport needs AllowUnsafeBlocks for the project; two ints need no generated marshalling.")]
     [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
     [DefaultDllImportSearchPaths(DllImportSearchPath.SafeDirectories)]
     private static extern int SendSignal(int pid, int signal);

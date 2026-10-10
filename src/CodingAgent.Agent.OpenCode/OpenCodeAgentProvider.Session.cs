@@ -89,9 +89,9 @@ public sealed partial class OpenCodeAgentProvider
     /// observability into subagent retries that don't surface on the parent session's SSE stream.
     /// </summary>
     private Task PollAllSessionStatusesAsync(string workspacePath, CancellationToken ct) =>
-        PollAllSessionStatusesAsync(workspacePath, ct, initialDelayMs: 2000);
+        PollAllSessionStatusesAsync(workspacePath, initialDelayMs: 2000, ct);
 
-    private async Task PollAllSessionStatusesAsync(string? workspacePath, CancellationToken ct, int initialDelayMs)
+    private async Task PollAllSessionStatusesAsync(string? workspacePath, int initialDelayMs, CancellationToken ct)
     {
         // Small initial delay to let the session start
         try { await Task.Delay(initialDelayMs, ct); } catch (OperationCanceledException) { return; }
@@ -125,7 +125,7 @@ public sealed partial class OpenCodeAgentProvider
 
     /// <summary>Exposes PollAllSessionStatusesAsync for unit testing with a configurable initial delay.</summary>
     internal Task PollAllSessionStatusesAsyncForTest(CancellationToken ct, int initialDelayMs = 2000, string? workspacePath = null) =>
-        PollAllSessionStatusesAsync(workspacePath, ct, initialDelayMs);
+        PollAllSessionStatusesAsync(workspacePath, initialDelayMs, ct);
 
     /// <summary>Exposes _allSessionsSummary for unit testing.</summary>
     internal string? AllSessionsSummaryForTest => _allSessionsSummary;

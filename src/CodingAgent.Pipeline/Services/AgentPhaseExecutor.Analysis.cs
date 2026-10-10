@@ -10,6 +10,9 @@ namespace CodingAgent.Pipeline.Services;
 
 public partial class AgentPhaseExecutor
 {
+    /// <summary>The phase the analysis agent calls' token usage is recorded under.</summary>
+    private const string AnalysisPhase = "analysis";
+
     /// <summary>
     /// Executes the analysis phase: checks for existing analysis, runs agent analysis if needed,
     /// reads the analysis file, evaluates the confidence gate, and posts the analysis comment.
@@ -246,9 +249,9 @@ public partial class AgentPhaseExecutor
             ct,
             line => context.Callbacks.EmitOutputLine(line),
             reportStallEvent: BuildStallEventReporter(context.ReportPipelineRunEvent),
-            phase: "analysis");
+            phase: AnalysisPhase);
 
-        run.AccumulateTokenUsage(analysisResult, phase: "analysis");
+        run.AccumulateTokenUsage(analysisResult, phase: AnalysisPhase);
 
         _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
             run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
@@ -355,8 +358,8 @@ public partial class AgentPhaseExecutor
             ct);
 
         // The reviewer and the refinement are agent calls of their own; count their tokens too.
-        run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: "analysis");
-        run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: "analysis");
+        run.AccumulateTokenUsage(reviewResult.ReviewTokenUsage, phase: AnalysisPhase);
+        run.AccumulateTokenUsage(reviewResult.RefinementTokenUsage, phase: AnalysisPhase);
 
         if (!reviewResult.RefinementTriggered) return currentAssessment;
 
