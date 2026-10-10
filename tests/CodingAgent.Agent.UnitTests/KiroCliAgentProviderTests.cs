@@ -166,11 +166,11 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
-    public async Task ExecuteAsync_UseResumeTrue_CallsOrchestratorWithUseResumeTrue()
+    public async Task ExecuteAsync_UseResumeWithoutAMainSession_StartsAFreshSessionOnTheSharedOrchestrator()
     {
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
-                "follow up", "/workspace", true,
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .ReturnsAsync(0);
 
@@ -179,8 +179,107 @@ public class KiroCliAgentProviderTests
 
         result.ExitCode.Should().Be(0);
         _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
-            "follow up", "/workspace", true,
-            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Once);
+            "follow up", "/workspace", false,
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), null), Times.Once);
+    }
+
+    [Fact]
+    public async Task EnsureSessionAsync_NonZeroWarmUpExit_DoesNotMarkSessionEstablished()
+    {
+        _mockOrchestrator
+            .SetupSequence(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .ReturnsAsync(1)
+            .ReturnsAsync(0);
+
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        await _provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+
+        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task IsolatedCall_IsCoveredByHealthAndKill_WhileItRuns()
+    {
+        var ephemeral = new Mock<IKiroCliOrchestrator>();
+        var started = new TaskCompletionSource();
+        var lastOutput = new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc);
+        ephemeral.Setup(o => o.IsExecuting).Returns(true);
+        ephemeral.Setup(o => o.LastOutputTime).Returns(lastOutput);
+        ephemeral.Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
+                {
+                    started.SetResult();
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0;
+                });
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
+            _mockProcessStarter.Object) { CreateEphemeralOrchestratorWith = _ => ephemeral.Object };
+        using var cts = new CancellationTokenSource();
+
+        var run = provider.ExecuteAsync(
+            new AgentRequest { Prompt = "review", WorkspacePath = "/workspace", Timeout = TimeSpan.FromMinutes(1) }, cts.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        provider.GetHealthStatus().LastOutputTime.Should().Be(lastOutput);
+        await provider.KillAsync();
+        ephemeral.Verify(o => o.Kill(), Times.Once);
+
+        await cts.CancelAsync();
+        await run.Invoking(t => t).Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task GetHealthStatus_ParallelCalls_ReportsALiveProcessOverOneThatJustExited()
+    {
+        // The finishing reviewer still counts as executing for a moment, with the newest output.
+        var alive = HangingEphemeral(alive: true, lastOutput: new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc), out var aliveStarted);
+        var exiting = HangingEphemeral(alive: false, lastOutput: new DateTime(2026, 10, 10, 12, 5, 0, DateTimeKind.Utc), out var exitingStarted);
+        var ephemerals = new Queue<IKiroCliOrchestrator>([alive.Object, exiting.Object]);
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
+            _mockProcessStarter.Object) { CreateEphemeralOrchestratorWith = _ => ephemerals.Dequeue() };
+        using var cts = new CancellationTokenSource();
+        var review = new AgentRequest { Prompt = "review", WorkspacePath = "/workspace", Timeout = TimeSpan.FromMinutes(1) };
+
+        var runs = new[] { provider.ExecuteAsync(review, cts.Token), provider.ExecuteAsync(review, cts.Token) };
+        await Task.WhenAll(aliveStarted, exitingStarted).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var health = provider.GetHealthStatus();
+        health.IsProcessAlive.Should().BeTrue();
+        health.LastOutputTime.Should().Be(new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc));
+
+        await cts.CancelAsync();
+        foreach (var run in runs)
+            await run.Invoking(t => t).Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    private static Mock<IKiroCliOrchestrator> HangingEphemeral(bool alive, DateTime lastOutput, out Task started)
+    {
+        var orchestrator = new Mock<IKiroCliOrchestrator>();
+        var startedSource = new TaskCompletionSource();
+        orchestrator.Setup(o => o.IsExecuting).Returns(true);
+        orchestrator.Setup(o => o.IsActiveProcessAlive).Returns(alive);
+        orchestrator.Setup(o => o.LastOutputTime).Returns(lastOutput);
+        orchestrator.Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
+                {
+                    startedSource.TrySetResult();
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0;
+                });
+        started = startedSource.Task;
+        return orchestrator;
     }
 
     [Fact]
@@ -274,250 +373,17 @@ public class KiroCliAgentProviderTests
         provider.Model.Should().Be("claude-sonnet-4.6");
     }
 
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelIsNull_DoesNothing()
+    [Theory]
+    [InlineData(AgentEffortLevel.Auto, null)]
+    [InlineData(AgentEffortLevel.Low, "low")]
+    [InlineData(AgentEffortLevel.Medium, "medium")]
+    [InlineData(AgentEffortLevel.High, "high")]
+    [InlineData(AgentEffortLevel.XHigh, "high")] // kiro-cli 2.29 has no xhigh
+    [InlineData(AgentEffortLevel.Max, "max")]
+    public void CreateRunConfiguration_PassesTheEffortKiroAccepts(AgentEffortLevel effort, string? expected)
     {
-        // _provider already has model=null
-        await _provider.ApplyCliSettingsAsync(CancellationToken.None);
-
-        // Early return path — no warning should be logged
-        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelIsAuto_DoesNothing()
-    {
-        var provider = new KiroCliAgentProvider(
-            _mockOrchestrator.Object, _mockLogger.Object, model: "auto",
-            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyCliSettingsAsync(CancellationToken.None);
-
-        // Early return path — no warning should be logged
-        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelIsAutoUpperCase_DoesNothing()
-    {
-        var provider = new KiroCliAgentProvider(
-            _mockOrchestrator.Object, _mockLogger.Object, model: "Auto",
-            "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-        await provider.ApplyCliSettingsAsync(CancellationToken.None);
-
-        // Early return path — no warning should be logged
-        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelContainsInvalidChars_DoesNotWriteFile()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var settingsPath = Path.Combine(tempDir, "cli.json");
-        try
-        {
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: "foo\" && rm -rf /",
-                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
-
-            // Invalid model name must be rejected — no file written.
-            // Warning is emitted via Serilog.Log (static), not the injected mock logger.
-            // TODO: This assertion (file not written) would also pass if the ApplyAsync call were
-            // accidentally omitted entirely (tempDir is never created, so cli.json can't exist).
-            // A stronger guard would assert that KiroCliSettingsWriter.ApplyAsync is actually
-            // invoked (e.g. via a seam or by verifying Directory.Exists(tempDir) is true, since
-            // Directory.CreateDirectory runs before the model-name check). See review warning (issue #2346).
-            File.Exists(settingsPath).Should().BeFalse("invalid model name must not be written to cli.json");
-        }
-        finally
-        {
-            // Note: if the model was correctly rejected, tempDir is still created by
-            // Directory.CreateDirectory inside KiroCliSettingsWriter (before the regex check).
-            // Directory.Delete is safe whether or not the directory was created.
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
-        }
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WhenModelContainsSpaces_DoesNotWriteFile()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var settingsPath = Path.Combine(tempDir, "cli.json");
-        try
-        {
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: "model with spaces",
-                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
-
-            // Invalid model name must be rejected — no file written.
-            // Warning is emitted via Serilog.Log (static), not the injected mock logger.
-            // TODO: This assertion (file not written) would also pass if the ApplyAsync call were
-            // accidentally omitted entirely (tempDir is never created, so cli.json can't exist).
-            // A stronger guard would assert that KiroCliSettingsWriter.ApplyAsync is actually
-            // invoked (e.g. via a seam or by verifying Directory.Exists(tempDir) is true, since
-            // Directory.CreateDirectory runs before the model-name check). See review warning (issue #2346).
-            File.Exists(settingsPath).Should().BeFalse("model name with spaces must not be written to cli.json");
-        }
-        finally
-        {
-            // Note: if the model was correctly rejected, tempDir is still created by
-            // Directory.CreateDirectory inside KiroCliSettingsWriter (before the regex check).
-            // Directory.Delete is safe whether or not the directory was created.
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort */ }
-        }
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WritesModelAndEffort_ToCliJson()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var settingsPath = Path.Combine(tempDir, "cli.json");
-        try
-        {
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-opus-4.6",
-                "/usr/bin/fake-kiro-cli", AgentEffortLevel.Max, _mockProcessStarter.Object);
-
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
-
-            File.Exists(settingsPath).Should().BeTrue();
-
-            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
-            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.6");
-            json["chat.modelDefaults"]!["claude-opus-4.6"]!["output_config"]!["effort"]!.GetValue<string>().Should().Be("max");
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WithEffortHigh_WritesCorrectValue()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var settingsPath = Path.Combine(tempDir, "cli.json");
-        try
-        {
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-sonnet-4.6",
-                "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
-
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
-
-            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
-            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-sonnet-4.6");
-            json["chat.modelDefaults"]!["claude-sonnet-4.6"]!["output_config"]!["effort"]!.GetValue<string>().Should().Be("high");
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_WithEffortAuto_OmitsModelDefaults()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var settingsPath = Path.Combine(tempDir, "cli.json");
-        try
-        {
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-opus-4.6",
-                "/usr/bin/fake-kiro-cli", AgentEffortLevel.Auto, _mockProcessStarter.Object);
-
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
-
-            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
-            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.6");
-            json["chat.modelDefaults"].Should().BeNull();
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
-    }
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_PreservesExistingSettings()
-    {
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var settingsPath = Path.Combine(tempDir, "cli.json");
-        try
-        {
-            // Pre-populate with existing settings
-            Directory.CreateDirectory(tempDir);
-            await File.WriteAllTextAsync(settingsPath,
-                """{"mcp.loadedBefore": true, "mcp.initTimeout": 30}""");
-
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: "claude-opus-4.6",
-                "/usr/bin/fake-kiro-cli", AgentEffortLevel.Max, _mockProcessStarter.Object);
-
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, settingsPath);
-
-            var json = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(settingsPath));
-            // New settings present
-            json!["chat.defaultModel"]!.GetValue<string>().Should().Be("claude-opus-4.6");
-            json["chat.modelDefaults"]!["claude-opus-4.6"]!["output_config"]!["effort"]!.GetValue<string>().Should().Be("max");
-            // Existing settings preserved
-            json["mcp.loadedBefore"]!.GetValue<bool>().Should().BeTrue();
-            json["mcp.initTimeout"]!.GetValue<int>().Should().Be(30);
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
-    }
-
-    // --- AC3: Provider output matches KiroCliSettingsWriter output for same inputs ---
-
-    [Fact]
-    public async Task ApplyCliSettingsAsync_ProducesIdenticalOutputToKiroCliSettingsWriter()
-    {
-        // Verifies that delegating to KiroCliSettingsWriter produces the same cli.json
-        // as calling the writer directly with the same inputs. This is the regression
-        // guard required by acceptance criterion 3.
-        var tempDir = Path.Combine(Path.GetTempPath(), $"kiro-test-{Guid.NewGuid():N}");
-        var providerPath = Path.Combine(tempDir, "provider-cli.json");
-        var writerPath = Path.Combine(tempDir, "writer-cli.json");
-        try
-        {
-            const string model = "claude-opus-4.6";
-            const AgentEffortLevel effortLevel = AgentEffortLevel.High;
-
-            // Call via provider
-            var provider = new KiroCliAgentProvider(
-                _mockOrchestrator.Object, _mockLogger.Object, model: model,
-                "/usr/bin/fake-kiro-cli", effortLevel, _mockProcessStarter.Object);
-            await provider.ApplyCliSettingsAsync(CancellationToken.None, providerPath);
-
-            // Call writer directly with equivalent inputs
-            await KiroCliSettingsWriter.ApplyAsync(model, effortLevel.ToCliValue(), CancellationToken.None, writerPath);
-
-            // Both files must exist and have identical contents
-            File.Exists(providerPath).Should().BeTrue("provider must write cli.json");
-            File.Exists(writerPath).Should().BeTrue("writer must write cli.json");
-
-            var providerJson = await File.ReadAllTextAsync(providerPath);
-            var writerJson = await File.ReadAllTextAsync(writerPath);
-
-            providerJson.Should().Be(writerJson,
-                "provider must produce exactly the same cli.json as KiroCliSettingsWriter for identical inputs");
-
-            // TODO: This test only verifies byte-for-byte file equality but does not assert that
-            // the effort node is actually present in the output. If AgentEffortLevel.High.ToCliValue()
-            // were to return null or an unrecognised string, the writer would silently omit
-            // chat.modelDefaults, both files would still match, and this test would still pass.
-            // Consider adding an explicit assertion that chat.modelDefaults["claude-opus-4.6"]
-            // ["output_config"]["effort"] equals the expected effort string (e.g. "high").
-            // See review warning (issue #2346).
-        }
-        finally
-        {
-            try { Directory.Delete(tempDir, recursive: true); } catch { /* best-effort cleanup */ }
-        }
+        KiroCliAgentProvider.CreateRunConfiguration("/usr/bin/fake-kiro-cli", "claude-sonnet-4.6", null, effort)
+            .Effort.Should().Be(expected);
     }
 
     // --- ExecuteAsync timeout tests ---

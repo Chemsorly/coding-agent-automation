@@ -82,6 +82,8 @@ GRACE_PERIOD=9
 
 cleanup() {
     echo "Received shutdown signal, initiating graceful shutdown..."
+    # Terminated before the worker started: report it as such (128 + SIGTERM), not as success.
+    SHUTDOWN_EXIT_CODE=143
 
     # Stop Agent Worker first (with grace period)
     if [ -n "$WORKER_PID" ] && kill -0 "$WORKER_PID" 2>/dev/null; then
@@ -105,6 +107,13 @@ cleanup() {
         fi
     fi
 
+    # Exit with the worker's own code (143 on SIGTERM, 137 after SIGKILL), so a drained or
+    # evicted pod counts as failed and the Job's retry and pod failure policy apply.
+    if [ -n "$WORKER_PID" ]; then
+        SHUTDOWN_EXIT_CODE=0
+        wait "$WORKER_PID" 2>/dev/null || SHUTDOWN_EXIT_CODE=$?
+    fi
+
     # Stop OpenCode server
     if kill -0 "$OPENCODE_PID" 2>/dev/null; then
         echo "Sending SIGTERM to OpenCode server (PID: $OPENCODE_PID)..."
@@ -112,8 +121,8 @@ cleanup() {
         wait "$OPENCODE_PID" 2>/dev/null || true
     fi
 
-    echo "Graceful shutdown complete."
-    exit 0
+    echo "Graceful shutdown complete (exit $SHUTDOWN_EXIT_CODE)."
+    exit "$SHUTDOWN_EXIT_CODE"
 }
 
 trap cleanup TERM INT
@@ -186,8 +195,9 @@ echo "Agent Worker started (PID: $WORKER_PID)"
 # -----------------------------------------------------------------------------
 # When the Agent Worker exits (for any reason), terminate the OpenCode server
 # and exit with the worker's exit code (Requirement 2.7, 8.10).
-wait "$WORKER_PID"
-WORKER_EXIT_CODE=$?
+# "|| ..." keeps set -e from ending the script on a non-zero exit before OpenCode is stopped.
+WORKER_EXIT_CODE=0
+wait "$WORKER_PID" || WORKER_EXIT_CODE=$?
 
 echo "Agent Worker exited with code: $WORKER_EXIT_CODE"
 

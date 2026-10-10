@@ -79,15 +79,6 @@ public static class OpenCodeTestHelpers
     }
 
     /// <summary>
-    /// Enqueues a diff response with the given file diffs.
-    /// </summary>
-    public static void EnqueueDiffResponse(MockOpenCodeHandler handler, params FileDiff[] diffs)
-    {
-        var json = JsonSerializer.Serialize(diffs, OpenCodeJson.JsonOptions);
-        handler.EnqueueResponse(HttpStatusCode.OK, json);
-    }
-
-    /// <summary>
     /// Creates a minimal <see cref="AgentRequest"/> for testing.
     /// </summary>
     public static AgentRequest CreateRequest(

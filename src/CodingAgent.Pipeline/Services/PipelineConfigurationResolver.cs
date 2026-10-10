@@ -190,16 +190,6 @@ public static class PipelineConfigurationResolver
     }
 
     /// <summary>
-    /// Merges provider-specific pipeline-injected paths into the configurable blacklist.
-    /// Called after agent provider creation to ensure injected files are excluded from commits.
-    /// </summary>
-    public static PipelineConfiguration ApplyProviderBlacklist(PipelineConfiguration config, IReadOnlyList<string> providerPaths)
-    {
-        if (providerPaths.Count == 0) return config;
-        return config with { BlacklistedPaths = config.BlacklistedPaths.Concat(providerPaths).Distinct().ToList() };
-    }
-
-    /// <summary>
     /// Applies template-level overrides to the pipeline configuration.
     /// Resolution order: find the template by its repository → apply BrainReadOnly
     /// (one-directional: only overrides to true) → apply blacklist from repo provider config.

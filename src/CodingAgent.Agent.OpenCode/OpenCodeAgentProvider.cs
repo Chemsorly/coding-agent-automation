@@ -12,14 +12,28 @@ namespace CodingAgent.Agent.OpenCode;
 
 /// <summary>
 /// Agent provider that communicates with an OpenCode server via localhost HTTP API.
-/// Implements IAgentProvider for pipeline integration and IOpenCodeDiffProvider for
-/// diff retrieval. Does not spawn processes — uses IHttpClientFactory named client.
+/// Does not spawn processes — uses IHttpClientFactory named client.
 /// </summary>
-public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvider
+/// <remarks>
+/// Sessions: the first session started in a workspace is its main conversation, which
+/// <c>UseResume</c> continues; later fresh sessions are isolated calls (reviewers, review agents).
+/// </remarks>
+public sealed partial class OpenCodeAgentProvider : IAgentProvider
 {
+    /// <summary>
+    /// Bounds every call besides the prompt itself (session create, abort, usage, replies): the client
+    /// has no timeout of its own, so that a long prompt is limited only by the request's timeout, and a
+    /// wedged server must not hang a run or a kill.
+    /// </summary>
+    internal static readonly TimeSpan ControlCallTimeout = TimeSpan.FromSeconds(30);
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly string? _model;
+    private readonly Uri? _baseUrl;
+
+    /// <summary>Sessions with a call in progress, mapped to their workspace, so KillAsync can abort them all.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _activeSessions = new(StringComparer.Ordinal);
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
     private int _activeExecutionCount; // Tracks concurrent executions for correct IsExecuting
     private volatile string? _sessionStatus; // "idle", "busy", "retry"
@@ -49,7 +63,12 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
     public string? Model => _model;
 
     /// <inheritdoc />
-    public string McpConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".opencode", "mcp.json");
+    /// <remarks>
+    /// OpenCode reads <c>~/.opencode/opencode.json</c> when it first serves a workspace (only the global
+    /// <c>~/.config/opencode</c> config is cached at startup), so servers written here before the
+    /// first call reach it. The agent's MCP config writer fills its <c>mcp</c> section.
+    /// </remarks>
+    public string McpConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".opencode", "opencode.json");
 
     /// <inheritdoc />
     public bool SupportsParallelExecution => true;
@@ -58,17 +77,28 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
     public bool SupportsVisionInput => !AgentModelCapabilities.IsTextOnlyModel(_model);
 
     /// <inheritdoc />
-    public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
+    /// <remarks>
+    /// Pipeline steering lives in <c>~/.opencode</c>, outside the workspace, so the repository's own
+    /// <c>AGENTS.md</c> is never touched. Listed is OpenCode's project config directory, whose new
+    /// files (e.g. the <c>.gitignore</c> OpenCode adds) are not committed.
+    /// </remarks>
+    public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".opencode"];
 
+    /// <param name="httpClientFactory">Provides the named OpenCode client (Basic auth, base address).</param>
+    /// <param name="logger">Logger; defaults to the static Serilog logger.</param>
+    /// <param name="model">Model in <c>provider/model</c> form, sent with every prompt; null or <c>auto</c> leaves it to the server.</param>
+    /// <param name="baseUrl">Server address overriding the named client's; null keeps the client's.</param>
     public OpenCodeAgentProvider(
         IHttpClientFactory httpClientFactory,
         ILogger? logger = null,
-        string? model = null)
+        string? model = null,
+        string? baseUrl = null)
     {
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         _httpClientFactory = httpClientFactory;
         _logger = logger ?? Serilog.Log.Logger;
         _model = model;
+        _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? null : new Uri(baseUrl);
     }
 
     // ── Thread-safe state access ────────────────────────────────────────
@@ -103,17 +133,18 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         Interlocked.Increment(ref _activeExecutionCount);
         ResetExecutionState();
 
-        var sseEmitted = false;
-        // NOTE: Per-call local variable for SSE dedup — avoids races with concurrent parallel calls.
+        // Per-call SSE state (assistant messages seen, text already emitted): parallel calls must not share it.
+        var sseState = new SseCallState();
+        var workspacePath = Path.GetFullPath(request.WorkspacePath);
 
         var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var pollTask = PollAllSessionStatusesAsync(pollCts.Token);
+        var pollTask = PollAllSessionStatusesAsync(workspacePath, pollCts.Token);
+        string? sessionId = null;
 
         try
         {
             // 1. Session selection — always create/resolve per workspace path (stateless)
-            var workspacePath = Path.GetFullPath(request.WorkspacePath);
-            var sessionId = await ResolveSessionIdAsync(request, ct);
+            sessionId = await ResolveSessionIdAsync(request, ct);
             if (sessionId is null)
             {
                 return new AgentResult
@@ -125,30 +156,31 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
 
             // Track for diagnostics/health only
             _lastKnownSessionId = sessionId;
+            _activeSessions[sessionId] = workspacePath;
 
             // 2. Timeout enforcement
             var sseCts = new CancellationTokenSource();
 
             // 3. Start SSE reader (always — needed for permission auto-approval)
-            var sseTask = ConnectAndProcessSseAsync(sessionId, onOutputLine, sseCts.Token,
-                workspacePath, _ => { sseEmitted = true; });
+            var sseTask = ConnectAndProcessSseAsync(sessionId, onOutputLine, sseCts.Token, workspacePath, sseState);
 
             // 4. Send message (synchronous — blocks until agent finishes)
             AgentResult result;
             try
             {
                 result = await SendMessageWithTimeoutAsync(
-                    request, sessionId, workspacePath, sseEmitted, onOutputLine, ct);
+                    request, sessionId, workspacePath, sseState, onOutputLine, ct);
             }
             catch (OperationCanceledException oce)
             {
+                // Abort on any cancellation: the server keeps running the turn after the client
+                // gives up, and would go on editing the workspace while the pipeline moves on.
                 // Use ct.IsCancellationRequested in the catch BODY rather than a when-filter to avoid
                 // the timing race where IsCancellationRequested is momentarily false when the exception
-                // is first caught but becomes true before the body executes. By the time execution
-                // reaches this body, the token propagation has had a thread-switch to complete.
+                // is first caught but becomes true before the body executes.
+                await AbortBestEffortAsync(sessionId, workspacePath);
                 if (ct.IsCancellationRequested)
                 {
-                    await AbortBestEffortAsync(sessionId, workspacePath);
                     _ = await CaptureSessionTokenDeltaAsync(sessionId, workspacePath);
                     throw; // finally block handles SSE cleanup
                 }
@@ -195,6 +227,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         }
         finally
         {
+            if (sessionId is not null)
+                _activeSessions.TryRemove(sessionId, out _);
             Interlocked.Decrement(ref _activeExecutionCount);
             // Stop polling
             try { await pollCts.CancelAsync(); } catch (OperationCanceledException) { /* expected during shutdown */ }
@@ -221,7 +255,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         AgentRequest request,
         string sessionId,
         string workspacePath,
-        bool sseEmitted,
+        SseCallState sseState,
         Action<string>? onOutputLine,
         CancellationToken ct)
     {
@@ -237,7 +271,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
                 var messageRequest = new SendMessageRequest
                 {
                     Parts = parts,
-                    Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
+                    // The configured provider/model; null leaves it to the server's config.
+                    Model = OpenCodeModelRef.Parse(_model)
                 };
 
                 _logger.Debug("POST /session/{SessionId}/message", sessionId);
@@ -247,7 +282,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
                 if (!response.IsSuccessStatusCode)
                     return await HandleHttpErrorResponseAsync(response, sessionId, workspacePath);
 
-                return await ParseAndEmitResponseAsync(response, sseEmitted, onOutputLine);
+                return await ParseAndEmitResponseAsync(response, sseState, onOutputLine);
             },
             async () =>
             {
@@ -345,11 +380,12 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
     }
 
     /// <summary>
-    /// Reads and parses the message HTTP response, emitting output lines if SSE did not
-    /// already stream the assistant content for this call.
+    /// Reads and parses the message HTTP response, emitting the text parts SSE did not already
+    /// stream. A turn that failed (bad key, quota, exhausted retries) still answers HTTP 200, with
+    /// the error on the assistant message.
     /// </summary>
     private async Task<AgentResult> ParseAndEmitResponseAsync(
-        HttpResponseMessage response, bool sseEmitted, Action<string>? onOutputLine)
+        HttpResponseMessage response, SseCallState sseState, Action<string>? onOutputLine)
     {
         var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
         SendMessageResponse? messageResponse;
@@ -367,24 +403,37 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
             };
         }
 
-        // Extract text parts, concatenate, split into lines
         var textParts = messageResponse?.Parts
             .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
-            .Select(p => p.Text ?? string.Empty)
-            ?? [];
-        var combinedText = string.Join("\n", textParts);
-        var outputLines = combinedText.Split('\n')
+            .ToList() ?? [];
+        var outputLines = string.Join("\n", textParts.Select(p => p.Text ?? string.Empty))
+            .ReplaceLineEndings("\n")
+            .Split('\n')
             .Select(line => StripAnsiEscapes(line))
             .ToList();
 
-        // Dedup: Only emit HTTP response lines to the output callback if
-        // SSE did not already stream assistant content for this call.
-        // Use the local `sseEmitted` variable — not the shared _sseEmittedAssistantContent
-        // which can be set by concurrent parallel calls.
-        if (onOutputLine is not null && !sseEmitted)
+        // Dedup by part: emit only the text parts the SSE stream did not already show.
+        if (onOutputLine is not null)
         {
-            foreach (var line in outputLines.Where(l => !string.IsNullOrWhiteSpace(l)))
-                onOutputLine(line);
+            foreach (var part in textParts.Where(p => p.Id is null || sseState.EmittedTextPartIds.TryAdd(p.Id, 0)))
+            {
+                foreach (var line in (part.Text ?? "").ReplaceLineEndings("\n").Split('\n').Where(l => !string.IsNullOrWhiteSpace(l)))
+                    onOutputLine(StripAnsiEscapes(line));
+            }
+        }
+
+        if (messageResponse?.Info?.Error is { } error)
+        {
+            var message = $"✖ OpenCode {error.Name ?? "error"}: {error.Data?.Message ?? "no message"}";
+            _logger.Warning("OpenCode turn failed: {Error}", message);
+            onOutputLine?.Invoke(StripAnsiEscapes(message));
+            outputLines.Add(message);
+            return new AgentResult
+            {
+                ExitCode = ExitCodes.GeneralFailure,
+                OutputLines = outputLines,
+                ErrorCategory = ClassifyError(error)
+            };
         }
 
         return new AgentResult
@@ -394,32 +443,36 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         };
     }
 
+    /// <summary>Maps an OpenCode error on the assistant message to a provider-side failure category.</summary>
+    internal static AgentErrorCategory ClassifyError(OpenCodeError error)
+    {
+        if (error.Name == "ProviderAuthError")
+            return AgentErrorCategory.PermanentAuthFailure;
+        return error.Data?.StatusCode switch
+        {
+            401 or 403 => AgentErrorCategory.PermanentAuthFailure,
+            429 => AgentErrorCategory.ProviderRateLimit,
+            500 or 502 or 503 or 529 => AgentErrorCategory.ProviderOverload,
+            _ => AgentErrorCategory.None
+        };
+    }
+
     public async Task KillAsync()
     {
-        // Abort all active workspace sessions (parallel execution may have multiple)
-        var sessionIds = _sessionByWorkspace.Values.Distinct().ToList();
+        // Abort every session with a call in progress (isolated calls included), plus the workspace
+        // sessions and the last one used, in case a call is between requests.
+        var sessions = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var (workspacePath, sessionId) in _sessionByWorkspace)
+            sessions[sessionId] = workspacePath;
+        if (_lastKnownSessionId is { } lastKnown)
+            sessions.TryAdd(lastKnown, null);
+        foreach (var (sessionId, workspacePath) in _activeSessions)
+            sessions[sessionId] = workspacePath;
 
-        // Also include _lastKnownSessionId in case it's not in the workspace cache
-        // (e.g., set via explicit ResumeSessionId)
-        var lastKnown = _lastKnownSessionId;
-        if (lastKnown is not null && !sessionIds.Contains(lastKnown))
-            sessionIds.Add(lastKnown);
-
-        if (sessionIds.Count == 0)
-            return;
-
-        foreach (var sessionId in sessionIds)
+        foreach (var (sessionId, workspacePath) in sessions)
         {
-            try
-            {
-                _logger.Debug("POST /session/{SessionId}/abort", sessionId);
-                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
-                await client.PostAsync($"/session/{sessionId}/abort", null);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to abort OpenCode session {SessionId}", sessionId);
-            }
+            _logger.Debug("POST /session/{SessionId}/abort", sessionId);
+            await AbortBestEffortAsync(sessionId, workspacePath);
         }
     }
 
@@ -428,7 +481,7 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(10));
 
-        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        using var client = CreateDirectoryClient();
         var serverUrl = client.BaseAddress?.ToString() ?? AgentDefaults.OpenCodeBaseUrl;
 
         try
@@ -483,9 +536,13 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>The workspace's main conversation; the last session used when the workspace has none.</remarks>
     public Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        return Task.FromResult(_lastKnownSessionId);
+        return Task.FromResult(_sessionByWorkspace.TryGetValue(Path.GetFullPath(workspacePath), out var sessionId)
+            ? sessionId
+            : _lastKnownSessionId);
     }
 
     public ValueTask DisposeAsync()
@@ -504,16 +561,19 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
     /// </summary>
     private HttpClient CreateDirectoryClient()
     {
-        return _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        if (_baseUrl is not null)
+            client.BaseAddress = _baseUrl;
+        return client;
     }
 
     /// <summary>
-    /// Creates an HttpClient with the x-opencode-directory header set to an explicit path.
-    /// Used by isolated (parallel) calls that must not read shared <see cref="_currentSessionWorkspacePath"/>.
+    /// Creates an HttpClient with the x-opencode-directory header set to an explicit path. OpenCode
+    /// keeps one instance per directory: sessions, events, status and config are all scoped by it.
     /// </summary>
     private HttpClient CreateDirectoryClientForPath(string absoluteWorkspacePath)
     {
-        var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        var client = CreateDirectoryClient();
         client.DefaultRequestHeaders.Add("x-opencode-directory", absoluteWorkspacePath);
         return client;
     }
@@ -525,7 +585,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
-            await client.PostAsync($"/session/{sessionId}/abort", null);
+            using var timeout = new CancellationTokenSource(ControlCallTimeout);
+            await client.PostAsync($"/session/{sessionId}/abort", null, timeout.Token);
         }
         catch (Exception ex)
         {
@@ -545,10 +606,11 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDif
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
-            var response = await client.GetAsync($"/session/{sessionId}", CancellationToken.None);
+            using var timeout = new CancellationTokenSource(ControlCallTimeout);
+            var response = await client.GetAsync($"/session/{sessionId}", timeout.Token);
             if (!response.IsSuccessStatusCode) return (null, null);
 
-            var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
+            var json = await response.Content.ReadAsStringAsync(timeout.Token);
             var session = System.Text.Json.JsonSerializer.Deserialize<SessionDetailResponse>(json, OpenCodeJson.JsonOptions);
             if (session?.Tokens is null) return (null, null);
 

@@ -9,13 +9,26 @@ namespace KiroCliLib.Core;
 /// </summary>
 public class KiroCliOrchestrator : IKiroCliOrchestrator
 {
+    /// <summary>
+    /// What kiro-cli 2.29 prints to stderr (<c>error: ACP load_session failed</c>, exit 1) when
+    /// <c>--resume-id</c> names a session its store cannot load. Matched as the CLI's own error line,
+    /// so a tool's output that merely quotes it does not count.
+    /// </summary>
+    internal const string SessionLoadFailedError = "load_session failed";
+
+    private const string ErrorLinePrefix = "error:";
+
     private readonly ILogger _logger;
     private readonly Func<IProcessWrapper> _processWrapperFactory;
     private readonly Func<IOutputParser> _outputParserFactory;
     private volatile IProcessWrapper? _activeProcess;
+    private volatile bool _lastRunStartedFreshSession;
     private bool _disposed;
 
     public bool IsExecuting => _activeProcess != null;
+
+    /// <inheritdoc />
+    public bool LastRunStartedFreshSession => _lastRunStartedFreshSession;
     public int? ActiveProcessId
     {
         get
@@ -95,67 +108,104 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
 
+        var channel = onOutputLine != null
+            ? System.Threading.Channels.Channel.CreateUnbounded<string>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true })
+            : null;
+
+        try
+        {
+            // Start a background task to drain the channel and invoke the async callback
+            Task? drainTask = null;
+            if (channel != null && onOutputLine != null)
+            {
+                drainTask = Task.Run(async () =>
+                {
+                    await foreach (var line in channel.Reader.ReadAllAsync(cancellationToken))
+                    {
+                        await onOutputLine(line);
+                    }
+                }, cancellationToken);
+            }
+
+            _lastRunStartedFreshSession = false;
+            var (exitCode, sessionNotLoaded) = await RunProcessAsync(
+                prompt, workspaceDirectory, useResume, resumeSessionId, environmentVariables, channel?.Writer, cancellationToken);
+
+            if (sessionNotLoaded)
+            {
+                _lastRunStartedFreshSession = true;
+                // kiro-cli 2.29+ fails a --resume-id it cannot load (e.g. a session from another pod's
+                // store); older versions started a fresh session, which is what the run gets now.
+                _logger.Warning("Kiro session {SessionId} could not be loaded; running the prompt in a fresh session", resumeSessionId);
+                channel?.Writer.TryWrite($"Kiro session {resumeSessionId} could not be loaded; continuing in a fresh session.");
+                (exitCode, _) = await RunProcessAsync(
+                    prompt, workspaceDirectory, useResume: false, resumeSessionId: null, environmentVariables, channel?.Writer, cancellationToken);
+            }
+
+            // Signal no more writes and wait for drain to complete
+            channel?.Writer.TryComplete();
+            if (drainTask != null)
+                await drainTask;
+
+            return exitCode;
+        }
+        // A cancellation is not mapped to an exit code but propagates: callers tell a timeout from a
+        // cancellation by the exception (TimeoutHelper), and ProcessWrapper has already killed the process.
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Error(ex, "Kiro CLI execution failed");
+            return ExitCodes.GeneralFailure;
+        }
+        finally
+        {
+            channel?.Writer.TryComplete();
+            _activeProcess = null;
+        }
+    }
+
+    /// <summary>
+    /// Runs one kiro-cli process. <c>SessionNotLoaded</c> is true when it failed because the
+    /// session named by <paramref name="resumeSessionId"/> could not be loaded.
+    /// </summary>
+    private async Task<(int ExitCode, bool SessionNotLoaded)> RunProcessAsync(
+        string prompt,
+        string workspaceDirectory,
+        bool useResume,
+        string? resumeSessionId,
+        IReadOnlyDictionary<string, string>? environmentVariables,
+        System.Threading.Channels.ChannelWriter<string>? output,
+        CancellationToken cancellationToken)
+    {
         var processWrapper = _processWrapperFactory();
         using (processWrapper as IDisposable)
         {
             _activeProcess = processWrapper;
             var outputParser = _outputParserFactory();
-
-            var channel = onOutputLine != null
-                ? System.Threading.Channels.Channel.CreateUnbounded<string>(new System.Threading.Channels.UnboundedChannelOptions { SingleReader = true, SingleWriter = true })
-                : null;
+            var sessionLoadFailed = false;
 
             processWrapper.OutputReceived += (_, line) =>
             {
                 _logger.Information("Kiro: {Line}", AnsiStripper.Strip(line));
                 outputParser.ProcessLine(line);
-                channel?.Writer.TryWrite(line);
+                output?.TryWrite(line);
             };
-            processWrapper.ErrorReceived += (_, line) => { _logger.Debug("Kiro (stderr): {Line}", AnsiStripper.Strip(line)); outputParser.ProcessLine(line); };
+            processWrapper.ErrorReceived += (_, line) =>
+            {
+                var clean = AnsiStripper.Strip(line);
+                _logger.Debug("Kiro (stderr): {Line}", clean);
+                outputParser.ProcessLine(line);
+                var trimmed = clean.TrimStart();
+                if (trimmed.StartsWith(ErrorLinePrefix, StringComparison.OrdinalIgnoreCase)
+                    && trimmed.Contains(SessionLoadFailedError, StringComparison.OrdinalIgnoreCase))
+                    sessionLoadFailed = true;
+            };
             outputParser.StateChanged += (_, newState) =>
             {
                 _logger.Debug("State changed to: {State}", newState);
             };
 
-            try
-            {
-                // Start a background task to drain the channel and invoke the async callback
-                Task? drainTask = null;
-                if (channel != null && onOutputLine != null)
-                {
-                    drainTask = Task.Run(async () =>
-                    {
-                        await foreach (var line in channel.Reader.ReadAllAsync(cancellationToken))
-                        {
-                            await onOutputLine(line);
-                        }
-                    }, cancellationToken);
-                }
-
-                var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId, environmentVariables);
-
-                // Signal no more writes and wait for drain to complete
-                channel?.Writer.TryComplete();
-                if (drainTask != null)
-                    await drainTask;
-
-                return exitCode;
-            }
-            catch (OperationCanceledException ex)
-            {
-                _logger.Information(ex, "Kiro CLI execution was cancelled");
-                return ExitCodes.Cancelled;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "Kiro CLI execution failed");
-                return ExitCodes.GeneralFailure;
-            }
-            finally
-            {
-                channel?.Writer.TryComplete();
-                _activeProcess = null;
-            }
+            var exitCode = await processWrapper.StartAsync(prompt, workspaceDirectory, useResume, cancellationToken, resumeSessionId, environmentVariables);
+            return (exitCode, resumeSessionId is not null && exitCode != ExitCodes.Success && sessionLoadFailed);
         }
     }
 

@@ -11,6 +11,12 @@ namespace CodingAgent.Infrastructure.UnitTests.Git;
 [Trait("Category", "Integration")]
 public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
 {
+    private static readonly string[] KiroPaths = [".kiro"];
+    private static readonly string[] OpenCodePaths = [".opencode"];
+    private static readonly string[] KiroAndClaudePaths = [".kiro", "CLAUDE.local.md"];
+    private static readonly string[] DefaultBlacklist = [".agent", ".brain"];
+    private static readonly string[] UnrelatedBlacklist = ["node_modules", "dist"];
+
     private readonly string _workspacePath;
 
     public RepositoryGitOperationsCommitBlacklistTests()
@@ -113,6 +119,86 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
     // returned unstaged set and have Commands.Unstage called exactly once.
 
     [Fact]
+    public void CommitAll_EditToAFileTheRepositoryTracksUnderAnInjectedPath_IsCommitted()
+    {
+        // Arrange: the repository tracks its own Kiro steering; the run edits it and the pipeline
+        // adds its own steering file next to it.
+        var steeringDir = Path.Combine(_workspacePath, ".kiro", "steering");
+        Directory.CreateDirectory(steeringDir);
+        File.WriteAllText(Path.Combine(steeringDir, "team.md"), "old rules");
+        using (var repo = new Repository(_workspacePath))
+        {
+            Commands.Stage(repo, ".kiro/steering/team.md");
+            var sig = new Signature("test", "test@test.com", DateTimeOffset.Now);
+            repo.Commit("track team steering", sig, sig);
+        }
+        File.WriteAllText(Path.Combine(steeringDir, "team.md"), "new rules");
+        File.WriteAllText(Path.Combine(steeringDir, "pipeline-repo.md"), "pipeline steering");
+
+        // Act
+        var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
+            blacklistedPaths: null, allowEmpty: false,
+            pipelineInjectedPaths: KiroPaths);
+
+        // Assert: the repository's own file is committed, the pipeline's new file is not
+        unstaged.Should().Equal(".kiro/steering/pipeline-repo.md");
+        using var committed = new Repository(_workspacePath);
+        var tree = committed.Head.Tip.Tree;
+        ((Blob)tree[".kiro/steering/team.md"].Target).GetContentText().Should().Be("new rules");
+        tree[".kiro/steering/pipeline-repo.md"].Should().BeNull();
+    }
+
+    [Fact]
+    public void CommitAll_DefaultBlacklist_CommitsEditsToTrackedOpenCodeConfig_ButNotFilesOpenCodeAdds()
+    {
+        // As in production: the default configured blacklist, and OpenCode's injected path.
+        var agentDir = Path.Combine(_workspacePath, ".opencode", "agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Combine(agentDir, "reviewer.md"), "old agent");
+        using (var repo = new Repository(_workspacePath))
+        {
+            Commands.Stage(repo, ".opencode/agent/reviewer.md");
+            var sig = new Signature("test", "test@test.com", DateTimeOffset.Now);
+            repo.Commit("track opencode agent", sig, sig);
+        }
+        File.WriteAllText(Path.Combine(agentDir, "reviewer.md"), "new agent");
+        File.WriteAllText(Path.Combine(_workspacePath, ".opencode", ".gitignore"), "node_modules");
+
+        var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
+            blacklistedPaths: DefaultBlacklist, allowEmpty: false,
+            pipelineInjectedPaths: OpenCodePaths);
+
+        unstaged.Should().Equal(".opencode/.gitignore");
+        using var committed = new Repository(_workspacePath);
+        ((Blob)committed.Head.Tip.Tree[".opencode/agent/reviewer.md"].Target).GetContentText().Should().Be("new agent");
+    }
+
+    [Fact]
+    public void CommitAll_PipelineSteeringFileTheRepositoryTracks_IsNeverCommitted()
+    {
+        // A repository that once committed the pipeline's steering file must not get its overwrite.
+        var steeringDir = Path.Combine(_workspacePath, ".kiro", "steering");
+        Directory.CreateDirectory(steeringDir);
+        File.WriteAllText(Path.Combine(steeringDir, "pipeline-repo.md"), "old steering");
+        using (var repo = new Repository(_workspacePath))
+        {
+            Commands.Stage(repo, ".kiro/steering/pipeline-repo.md");
+            var sig = new Signature("test", "test@test.com", DateTimeOffset.Now);
+            repo.Commit("accidentally tracked", sig, sig);
+        }
+        File.WriteAllText(Path.Combine(steeringDir, "pipeline-repo.md"), "this project's steering");
+        File.WriteAllText(Path.Combine(_workspacePath, "src", "app.cs"), "// code");
+
+        var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
+            blacklistedPaths: null, allowEmpty: false,
+            pipelineInjectedPaths: KiroPaths);
+
+        unstaged.Should().Equal(".kiro/steering/pipeline-repo.md");
+        using var committed = new Repository(_workspacePath);
+        ((Blob)committed.Head.Tip.Tree[".kiro/steering/pipeline-repo.md"].Target).GetContentText().Should().Be("old steering");
+    }
+
+    [Fact]
     public void CommitAll_NullBlacklist_StillUnstagesKiroDirectory()
     {
         // Arrange: .kiro/steering/ contains pipeline-injected steering files
@@ -123,7 +209,7 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         // Act: pass .kiro as pipeline-injected path (from KiroCliAgentProvider.PipelineInjectedPaths)
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
             blacklistedPaths: null, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".kiro" });
+            pipelineInjectedPaths: KiroPaths);
 
         // Assert
         unstaged.Should().Contain(f => f.StartsWith(".kiro/"));
@@ -135,23 +221,24 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
     }
 
     [Fact]
-    public void CommitAll_NullBlacklist_StillUnstagesAgentsMd()
+    public void CommitAll_NullBlacklist_StillUnstagesOpenCodeDirectory()
     {
-        // Arrange: AGENTS.md is pipeline-injected steering for OpenCode
-        File.WriteAllText(Path.Combine(_workspacePath, "AGENTS.md"), "<!-- BEGIN PIPELINE STEERING -->\nsteering\n<!-- END -->");
+        // Arrange: OpenCode adds a .gitignore to its project config directory
+        Directory.CreateDirectory(Path.Combine(_workspacePath, ".opencode"));
+        File.WriteAllText(Path.Combine(_workspacePath, ".opencode", ".gitignore"), "node_modules");
         File.WriteAllText(Path.Combine(_workspacePath, "src", "app.cs"), "// code");
 
-        // Act: pass AGENTS.md as pipeline-injected path (from OpenCodeAgentProvider.PipelineInjectedPaths)
+        // Act: pass .opencode as pipeline-injected path (from OpenCodeAgentProvider.PipelineInjectedPaths)
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
             blacklistedPaths: null, allowEmpty: false,
-            pipelineInjectedPaths: new[] { "AGENTS.md" });
+            pipelineInjectedPaths: OpenCodePaths);
 
         // Assert
-        unstaged.Should().Contain("AGENTS.md");
+        unstaged.Should().Contain(".opencode/.gitignore");
 
         using var repo = new Repository(_workspacePath);
         var tree = repo.Head.Tip.Tree;
-        tree["AGENTS.md"].Should().BeNull();
+        tree[".opencode"].Should().BeNull();
         tree["src/app.cs"].Should().NotBeNull();
     }
 
@@ -165,26 +252,26 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
         File.WriteAllText(Path.Combine(_workspacePath, ".agent", "mcp.json"), "{}");
         File.WriteAllText(Path.Combine(_workspacePath, ".kiro", "steering", "pipeline-project.md"), "project steering");
         File.WriteAllText(Path.Combine(_workspacePath, ".brain", "knowledge.md"), "brain content");
-        File.WriteAllText(Path.Combine(_workspacePath, "AGENTS.md"), "agent steering");
+        File.WriteAllText(Path.Combine(_workspacePath, "CLAUDE.local.md"), "agent steering");
         File.WriteAllText(Path.Combine(_workspacePath, "src", "main.cs"), "// main");
 
-        // Act: blacklist only contains unrelated paths, but provider injects .kiro + AGENTS.md
+        // Act: blacklist only contains unrelated paths, but provider injects .kiro + CLAUDE.local.md
         var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
-            blacklistedPaths: new[] { "node_modules", "dist" }, allowEmpty: false,
-            pipelineInjectedPaths: new[] { ".kiro", "AGENTS.md" });
+            blacklistedPaths: UnrelatedBlacklist, allowEmpty: false,
+            pipelineInjectedPaths: KiroAndClaudePaths);
 
-        // Assert: all hardcoded paths unstaged (universal: .agent, .brain; provider: .kiro, AGENTS.md)
+        // Assert: all hardcoded paths unstaged (universal: .agent, .brain; provider: .kiro, CLAUDE.local.md)
         unstaged.Should().Contain(f => f.StartsWith(".agent/"));
         unstaged.Should().Contain(f => f.StartsWith(".kiro/"));
         unstaged.Should().Contain(f => f.StartsWith(".brain/"));
-        unstaged.Should().Contain("AGENTS.md");
+        unstaged.Should().Contain("CLAUDE.local.md");
 
         using var repo = new Repository(_workspacePath);
         var tree = repo.Head.Tip.Tree;
         tree[".agent"].Should().BeNull();
         tree[".kiro"].Should().BeNull();
         tree[".brain"].Should().BeNull();
-        tree["AGENTS.md"].Should().BeNull();
+        tree["CLAUDE.local.md"].Should().BeNull();
         tree["src/main.cs"].Should().NotBeNull();
     }
 

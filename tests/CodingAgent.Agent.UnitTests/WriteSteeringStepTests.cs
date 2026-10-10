@@ -140,78 +140,35 @@ public class WriteSteeringStepTests : IDisposable
 
     // ── OpenCode scenarios ──────────────────────────────────────────────
 
+    private string OpenCodeDir => Path.Combine(_tempDir, "opencode-home");
+
     [Fact]
-    public async Task ExecuteAsync_OpenCode_NoExistingFile_WritesMarkersWithContent()
+    public async Task ExecuteAsync_OpenCode_WritesInstructionFilesOutsideTheWorkspace_AndLeavesAgentsMdAlone()
     {
-        var job = CreateJob("project instructions", null);
-        var step = new WriteSteeringStep(job);
-        var context = CreateContext(AgentProviderType.OpenCode);
+        var agentsPath = Path.Combine(_tempDir, "AGENTS.md");
+        File.WriteAllText(agentsPath, "# The repository's own AGENTS.md\n");
+        var step = new WriteSteeringStep(CreateJob("project stuff", "repo stuff"), openCodeDirectory: OpenCodeDir);
 
-        await step.ExecuteAsync(context, CancellationToken.None);
+        await step.ExecuteAsync(CreateContext(AgentProviderType.OpenCode), CancellationToken.None);
 
-        var agentsPath = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        File.Exists(agentsPath).Should().BeTrue();
-        var content = File.ReadAllText(agentsPath);
-        content.Should().Contain("<!-- BEGIN PIPELINE STEERING");
-        content.Should().Contain("<!-- END PIPELINE STEERING -->");
-        content.Should().Contain("project instructions");
+        File.ReadAllText(Path.Combine(OpenCodeDir, "pipeline-project.md")).Should().Contain("# Project Instructions").And.Contain("project stuff");
+        File.ReadAllText(Path.Combine(OpenCodeDir, "pipeline-repo.md")).Should().Contain("# Repository Instructions").And.Contain("repo stuff");
+        File.ReadAllText(agentsPath).Should().Be("# The repository's own AGENTS.md\n", "edits a run makes to it must stay committable");
+        using var config = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(OpenCodeDir, "opencode.json")));
+        config.RootElement.GetProperty("instructions").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal(Path.Combine(OpenCodeDir, "pipeline-*.md"));
     }
 
     [Fact]
-    public async Task ExecuteAsync_OpenCode_ExistingContent_PreservesBelow()
+    public async Task ExecuteAsync_OpenCode_NextJobWithoutSteering_RemovesTheLastJobsFiles()
     {
-        var agentsPath = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        File.WriteAllText(agentsPath, "# Existing content\nDo not lose this.\n");
-
-        var job = CreateJob("new steering", null);
-        var step = new WriteSteeringStep(job);
         var context = CreateContext(AgentProviderType.OpenCode);
+        await new WriteSteeringStep(CreateJob("first run", "repo"), openCodeDirectory: OpenCodeDir).ExecuteAsync(context, CancellationToken.None);
 
-        await step.ExecuteAsync(context, CancellationToken.None);
+        await new WriteSteeringStep(CreateJob(null, null), openCodeDirectory: OpenCodeDir).ExecuteAsync(context, CancellationToken.None);
 
-        var content = File.ReadAllText(agentsPath);
-        content.Should().Contain("new steering");
-        content.Should().Contain("# Existing content");
-        content.Should().Contain("Do not lose this.");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_OpenCode_Idempotent_StripsPreviousBlock()
-    {
-        var agentsPath = Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath);
-        File.WriteAllText(agentsPath, "# Existing repo content\n");
-
-        var job1 = CreateJob("first run", null);
-        var step1 = new WriteSteeringStep(job1);
-        var context = CreateContext(AgentProviderType.OpenCode);
-        await step1.ExecuteAsync(context, CancellationToken.None);
-
-        var job2 = CreateJob("second run", null);
-        var step2 = new WriteSteeringStep(job2);
-        await step2.ExecuteAsync(context, CancellationToken.None);
-
-        var content = File.ReadAllText(agentsPath);
-        content.Should().Contain("second run");
-        content.Should().NotContain("first run");
-        content.Should().Contain("# Existing repo content");
-        // Only one BEGIN marker
-        content.Split("BEGIN PIPELINE STEERING").Length.Should().Be(2);
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_OpenCode_BothContents_IncludesProjectAndRepoSections()
-    {
-        var job = CreateJob("project stuff", "repo stuff");
-        var step = new WriteSteeringStep(job);
-        var context = CreateContext(AgentProviderType.OpenCode);
-
-        await step.ExecuteAsync(context, CancellationToken.None);
-
-        var content = File.ReadAllText(Path.Combine(_tempDir, AgentWorkspacePaths.OpenCodeAgentsFilePath));
-        content.Should().Contain("# Project Instructions");
-        content.Should().Contain("project stuff");
-        content.Should().Contain("# Repository Instructions");
-        content.Should().Contain("repo stuff");
+        File.Exists(Path.Combine(OpenCodeDir, "pipeline-project.md")).Should().BeFalse();
+        File.Exists(Path.Combine(OpenCodeDir, "pipeline-repo.md")).Should().BeFalse();
     }
 
     // ── Error handling ──────────────────────────────────────────────────
@@ -300,7 +257,7 @@ public class WriteSteeringStepTests : IDisposable
         var mockAgent = new Mock<IAgentProvider>();
         mockAgent.Setup(a => a.ProviderType).Returns(providerType);
         mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(
-            providerType == AgentProviderType.KiroCli ? [".kiro"] : ["AGENTS.md"]);
+            providerType == AgentProviderType.KiroCli ? [".kiro"] : [".opencode"]);
 
         return new PipelineStepContext
         {

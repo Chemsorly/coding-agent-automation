@@ -25,15 +25,29 @@ internal sealed record ClaudeCodeSettings(
     string? McpConfigPath);
 
 /// <summary>
+/// When a CLI that keeps running after its answer is stopped. Since CLI 2.1.292, <c>claude -p</c> waits
+/// for background commands the agent left running (a dev server, a watcher) until they end or reach
+/// their own limit (30 minutes by default); before, it stopped them 5 seconds after the result.
+/// </summary>
+/// <param name="ResultExitGrace">How long the CLI may idle after a <c>result</c>, with no turn running,
+/// before it is stopped. Leaves time to save the session for <c>--resume</c>.</param>
+/// <param name="StopTimeout">How long a stopped CLI gets to exit after SIGTERM, and again after a kill.</param>
+internal sealed record ClaudeExitTimings(TimeSpan ResultExitGrace, TimeSpan StopTimeout)
+{
+    public static readonly ClaudeExitTimings Default = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(10));
+}
+
+/// <summary>
 /// Agent provider that runs the Claude Code CLI headless (<c>claude -p --output-format stream-json</c>),
 /// one process per call. The provider does not build prompts; it receives them from the pipeline.
 /// </summary>
 /// <remarks>
 /// <list type="bullet">
 /// <item>The prompt goes in on stdin, so no argument escaping or length limit applies.</item>
-/// <item>Sessions follow OpenCode's rules: a fresh call starts a session and becomes the workspace's
-/// session; <c>UseResume</c> continues it with <c>--resume</c>; <c>ResumeSessionId</c> targets one.</item>
+/// <item>Sessions: the first session started in a workspace is its main conversation (later fresh
+/// sessions are isolated calls); <c>UseResume</c> continues it with <c>--resume</c>; <c>ResumeSessionId</c> targets one.</item>
 /// <item>Exactly one credential reaches the CLI; see <see cref="ClaudeCodeCredentials"/>.</item>
+/// <item>A CLI still running well after its <c>result</c> event is stopped; see <see cref="ClaudeExitTimings"/>.</item>
 /// <item>Steering is not written here: the pipeline puts it in the user rules directory
 /// (<c>~/.claude/rules/</c>), which the CLI loads in every project, outside the workspace.</item>
 /// </list>
@@ -53,10 +67,10 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     private readonly string _mcpConfigPath;
     private readonly IClaudeProcessLauncher _launcher;
     private readonly Func<string, string?> _getEnvironmentVariable;
+    private readonly ClaudeExitTimings _timings;
 
     private readonly ConcurrentDictionary<IClaudeProcess, byte> _activeProcesses = new();
     private readonly ConcurrentDictionary<string, string> _sessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, ClaudeUsageTotals> _totalsBySession = new(StringComparer.Ordinal);
     private volatile string? _lastKnownSessionId;
 
     public ClaudeCodeAgentProvider(
@@ -74,7 +88,8 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         ILogger? logger,
         ClaudeCodeSettings settings,
         IClaudeProcessLauncher? launcher,
-        Func<string, string?>? getEnvironmentVariable)
+        Func<string, string?>? getEnvironmentVariable,
+        ClaudeExitTimings? timings = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentException.ThrowIfNullOrWhiteSpace(settings.ExecutablePath);
@@ -88,6 +103,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             : settings.McpConfigPath;
         _launcher = launcher ?? SystemClaudeProcessLauncher.Instance;
         _getEnvironmentVariable = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        _timings = timings ?? ClaudeExitTimings.Default;
     }
 
     public AgentProviderType ProviderType => AgentProviderType.ClaudeCode;
@@ -164,6 +180,12 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             linkedCt => RunProcessAsync(startInfo, BuildPrompt(request), state, Emit, stderrLines, linkedCt),
             () =>
             {
+                // The answer is complete at a result with no turn after it; only the stop was cut short.
+                if (state.ResultSeen && !state.TurnInProgress)
+                {
+                    _logger.Warning("Claude Code timed out after {Timeout} while it lingered after its result; the result stands", request.Timeout);
+                    return Task.FromResult(ExitCodes.Success);
+                }
                 _logger.Warning("Claude Code execution timed out after {Timeout}", request.Timeout);
                 return Task.FromResult(ExitCodes.Timeout);
             });
@@ -179,7 +201,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         }
 
         RememberSession(state.SessionId, workspacePath, resumeSessionId is null);
-        var details = BuildUsage(state, credential, resumeSessionId is not null, out var usage, out var cost);
+        var details = BuildUsage(state, credential, out var usage, out var cost);
         var errorCategory = exitCode == ExitCodes.Success ? AgentErrorCategory.None : state.ClassifyFailure();
 
         LogInvocation(state, exitCode, stopwatch.Elapsed, usage, cost, details, errorCategory);
@@ -239,7 +261,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
 
     /// <inheritdoc />
     /// <remarks>
-    /// The latest session started by a fresh call, as reported by the CLI. No process is started.
+    /// The workspace's main conversation (the first session started there), as reported by the CLI. No process is started.
     /// </remarks>
     public Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
@@ -263,7 +285,6 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         foreach (var process in _activeProcesses.Keys)
             process.Kill();
         _sessionByWorkspace.Clear();
-        _totalsBySession.Clear();
         _lastKnownSessionId = null;
         return ValueTask.CompletedTask;
     }
@@ -309,11 +330,15 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             : null;
     }
 
+    /// <summary>
+    /// The first session started in a workspace is its main conversation, which <c>UseResume</c>
+    /// continues. Later fresh sessions are isolated calls (reviewers, review agents) and must not
+    /// take its place.
+    /// </summary>
     private void RememberSession(string? sessionId, string workspacePath, bool isFreshSession)
     {
-        if (sessionId is null || !isFreshSession)
+        if (sessionId is null || !isFreshSession || !_sessionByWorkspace.TryAdd(workspacePath, sessionId))
             return;
-        _sessionByWorkspace[workspacePath] = sessionId;
         _lastKnownSessionId = sessionId;
     }
 
@@ -390,14 +415,18 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         CancellationToken ct)
     {
         IClaudeProcess process;
+        var firstResult = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             process = _launcher.Start(
                 startInfo,
                 line =>
                 {
-                    foreach (var readable in ClaudeStreamJsonParser.ProcessLine(line, state))
-                        emit(readable);
+                    var readable = ClaudeStreamJsonParser.ProcessLine(line, state);
+                    if (state.ResultCount > 0)
+                        firstResult.TrySetResult();
+                    foreach (var text in readable)
+                        emit(text);
                 },
                 line =>
                 {
@@ -426,7 +455,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
                 _logger.Warning(ex, "Claude Code CLI closed stdin before the prompt was written");
             }
 
-            return await process.WaitForExitAsync(ct);
+            return await WaitForExitOrStopAfterResultAsync(process, state, firstResult.Task, ct);
         }
         catch (OperationCanceledException)
         {
@@ -441,34 +470,84 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     }
 
     /// <summary>
-    /// Turns the result event's totals into this call's usage. A resumed session reports the whole
-    /// conversation, so the totals seen at the end of the previous call are subtracted.
+    /// Waits for the CLI to exit, or stops it once it has idled <see cref="ClaudeExitTimings.ResultExitGrace"/>
+    /// after a <c>result</c> with no turn running (a background command that finishes starts another
+    /// turn, which ends with its own result). The answer is complete at the last result, so a stopped
+    /// CLI counts as a success; an error result still fails the call.
     /// </summary>
-    private AgentUsageDetails? BuildUsage(
-        ClaudeStreamState state, ClaudeCredential? credential, bool resumed,
-        out TokenUsage? usage, out decimal? cost)
+    private async Task<int> WaitForExitOrStopAfterResultAsync(
+        IClaudeProcess process, ClaudeStreamState state, Task firstResult, CancellationToken ct)
+    {
+        var exit = process.WaitForExitAsync(ct);
+        if (await Task.WhenAny(exit, firstResult) == exit)
+            return await exit;
+
+        while (true)
+        {
+            var wait = state.TurnInProgress
+                ? _timings.ResultExitGrace
+                : _timings.ResultExitGrace - state.SinceLastResult;
+            if (wait <= TimeSpan.Zero)
+                break;
+            if (await Task.WhenAny(exit, Task.Delay(wait, ct)) == exit)
+                return await exit;
+            ct.ThrowIfCancellationRequested();
+        }
+
+        _logger.Warning(
+            "Claude Code CLI still running {GraceSeconds:F0}s after its result, likely waiting for background commands; stopping it",
+            _timings.ResultExitGrace.TotalSeconds);
+        return await StopAfterResultAsync(exit, process, ct);
+    }
+
+    /// <summary>
+    /// Stops a CLI whose answer is in: SIGTERM first, so it stops its background commands and closes
+    /// the session itself, then a kill when it does not exit in time.
+    /// </summary>
+    private async Task<int> StopAfterResultAsync(Task<int> exit, IClaudeProcess process, CancellationToken ct)
+    {
+        if (process.Terminate() && await ExitsWithinStopTimeoutAsync(exit, ct))
+            return ExitCodes.Success;
+
+        process.Kill();
+        await ExitsWithinStopTimeoutAsync(exit, ct);
+        return ExitCodes.Success;
+    }
+
+    private async Task<bool> ExitsWithinStopTimeoutAsync(Task<int> exit, CancellationToken ct)
+    {
+        try
+        {
+            await exit.WaitAsync(_timings.StopTimeout, ct);
+            return true;
+        }
+        catch (TimeoutException)
+        {
+            // A detached child can keep stdout open; the result is already in.
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Turns the result event's totals into this call's usage. They are this call's alone, also on a
+    /// resumed session: <c>claude -p --resume</c> does not carry earlier calls' totals over (checked
+    /// with a real account: a resumed call's <c>total_cost_usd</c> was its own cost).
+    /// </summary>
+    private static AgentUsageDetails? BuildUsage(
+        ClaudeStreamState state, ClaudeCredential? credential, out TokenUsage? usage, out decimal? cost)
     {
         usage = null;
         cost = null;
         var rateLimits = state.RateLimits.Values.ToList();
         var billingMode = credential?.BillingMode ?? AgentBillingModes.Unknown;
 
-        if (state.Totals is not { } totals)
+        if (state.Totals is not { } delta)
         {
             return rateLimits.Count == 0
                 ? null
                 : new AgentUsageDetails { BillingMode = billingMode, RateLimits = rateLimits };
         }
 
-        ClaudeUsageTotals? previous = null;
-        if (state.SessionId is { } sessionId)
-        {
-            if (resumed)
-                _totalsBySession.TryGetValue(sessionId, out previous);
-            _totalsBySession[sessionId] = totals;
-        }
-
-        var delta = totals.Minus(previous);
         usage = new TokenUsage
         {
             InputTokens = delta.InputTokens,

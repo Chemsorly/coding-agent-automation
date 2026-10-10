@@ -104,6 +104,85 @@ public class KiroCliAgentProviderProcessTests
     }
 
     [Fact]
+    public async Task ValidateAsync_NotLoggedIn_FailsOnWhoami()
+    {
+        // `doctor --all --strict` exits 0 while signed out; `whoami` does not.
+        var arguments = new List<string>();
+        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
+            .Callback<ProcessStartInfo>(psi => arguments.Add(psi.Arguments))
+            .Returns(() => StartShellProcess(stdout: "Not logged in", exitCode: 1));
+
+        var act = () => CreateProvider().ValidateAsync(CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*not logged in*");
+        arguments.Should().Equal("whoami");
+    }
+
+    private string _newestSession = "main-1";
+
+    private List<(bool UseResume, string? SessionId)> RecordRunsAndListNewestSession(int exitCode = 0)
+    {
+        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
+            .Returns(() => StartShellProcess(stdout: $$"""[{"cwd":"/w","sessions":[{"sessionId":"{{_newestSession}}","updatedAt":"2026-10-10T15:00:00Z"}]}]"""));
+        var calls = new List<(bool UseResume, string? SessionId)>();
+        _mockOrchestrator
+            .Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                (_, _, useResume, _, _, sessionId, _) => calls.Add((useResume, sessionId)))
+            .ReturnsAsync(exitCode);
+        return calls;
+    }
+
+    private static AgentRequest Continue(string prompt) => new() { Prompt = prompt, WorkspacePath = "/workspace", UseResume = true };
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)] // e.g. an MCP startup failure before the session was touched
+    public async Task ExecuteAsync_UseResume_ContinuesTheTrackedMainSessionById_ThoughANewerSessionIsListed(int exitCode)
+    {
+        var calls = RecordRunsAndListNewestSession(exitCode);
+        var provider = CreateProvider();
+
+        await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);   // starts the main session
+        _newestSession = "reviewer-2"; // an isolated reviewer ran in the workspace since
+        await provider.ExecuteAsync(Continue("refinement"), CancellationToken.None); // continues it by ID
+        await provider.ExecuteAsync(Continue("codegen"), CancellationToken.None);
+
+        calls.Should().Equal((false, null), (false, "main-1"), (false, "main-1"));
+        (await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None)).Should().Be("main-1");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MainSessionThatCouldNotBeLoaded_IsReplacedByTheFreshSessionTheRunFellBackTo()
+    {
+        var calls = RecordRunsAndListNewestSession();
+        var provider = CreateProvider();
+
+        await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);
+        _newestSession = "fresh-2";
+        _mockOrchestrator.Setup(o => o.LastRunStartedFreshSession).Returns(true);
+        await provider.ExecuteAsync(Continue("fix"), CancellationToken.None);
+        _mockOrchestrator.Setup(o => o.LastRunStartedFreshSession).Returns(false);
+        await provider.ExecuteAsync(Continue("summary"), CancellationToken.None);
+
+        calls.Should().Equal((false, null), (false, "main-1"), (false, "fresh-2"));
+    }
+
+    [Fact]
+    public async Task GetHealthStatus_IdleAfterARun_ReportsTheRunsEndAsLastOutput()
+    {
+        RecordRunsAndListNewestSession();
+        var provider = CreateProvider();
+        provider.GetHealthStatus().LastOutputTime.Should().BeNull();
+
+        await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);
+
+        provider.GetHealthStatus().LastOutputTime.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
     public async Task ValidateAsync_NullProcess_ThrowsInvalidOperationException()
     {
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
@@ -159,51 +238,42 @@ public class KiroCliAgentProviderProcessTests
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_CommentLinesSkipped_ReturnsNull()
+    public async Task GetLatestSessionIdAsync_ListsSessionsAsJson_OnTheRunsEngine()
     {
+        ProcessStartInfo? captured = null;
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "# This is a comment\n# Another comment\n"));
+            .Callback<ProcessStartInfo>(psi => captured = psi)
+            .Returns(() => StartShellProcess(stdout: "[]"));
 
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+        await CreateProvider().GetLatestSessionIdAsync("/workspace", CancellationToken.None);
 
-        result.Should().BeNull();
+        captured!.Arguments.Should().Be("chat --agent-engine v2 --list-sessions --format json");
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_SessionHeaderSkipped_ReturnsNull()
+    public async Task GetLatestSessionIdAsync_JsonOnStdout_ReturnsTheNewestSession()
     {
+        // kiro-cli 2.29.0 output for a workspace with two sessions, newest first.
+        const string json =
+            """[{"cwd":"/app/workspaces/w","sessions":[{"sessionId":"5cd7489d-9219-4ae4-a304-f8ff78d689de","source":"v2","title":"t","updatedAt":"2026-10-10T15:06:53.016Z","messageCount":4},{"sessionId":"af7a196c-8906-4c22-ab3f-00cdae373730","source":"v2","title":"t","updatedAt":"2026-10-10T15:06:01.371Z","messageCount":8}],"complete":true}]""";
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "Session ID  Created  Status\n"));
+            .Returns(() => StartShellProcess(stdout: json));
 
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+        var result = await CreateProvider().GetLatestSessionIdAsync("/workspace", CancellationToken.None);
 
-        result.Should().BeNull();
+        result.Should().Be("5cd7489d-9219-4ae4-a304-f8ff78d689de");
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_ShortToken_Skipped()
+    public async Task GetLatestSessionIdAsync_PlainListOnStderr_ReturnsNull()
     {
+        // The display format kiro-cli prints without --format json; it never yields an ID.
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "abc\n"));
+            .Returns(() => StartShellProcess(stderr: "Chat sessions for /w:\nChat SessionId: 5cd7489d-9219-4ae4-a304-f8ff78d689de\n"));
 
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+        var result = await CreateProvider().GetLatestSessionIdAsync("/workspace", CancellationToken.None);
 
         result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetLatestSessionIdAsync_ValidSessionId_ReturnsId()
-    {
-        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "# Sessions\nabcdef12-3456-7890-abcd-ef1234567890 2024-01-01\n"));
-
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
-
-        result.Should().Be("abcdef12-3456-7890-abcd-ef1234567890");
     }
 
     [Fact]
@@ -219,7 +289,7 @@ public class KiroCliAgentProviderProcessTests
         _mockLogger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
             It.IsAny<string>(),
-            It.IsAny<WorkspacePath>()), Times.Once);
+            It.IsAny<string>()), Times.Once);
     }
 
     // ─── OTEL env-var stripping ──────────────────────────────────────────

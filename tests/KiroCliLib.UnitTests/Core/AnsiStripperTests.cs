@@ -63,6 +63,28 @@ public class AnsiStripperTests
         Assert.Equal("Some text", AnsiStripper.Strip(input));
     }
 
+    [Theory]
+    [InlineData("Some text[2K", "Some text")]
+    [InlineData("[2K[1GDownloading", "Downloading")]
+    [InlineData("\x1B[2K[1GDownloading", "Downloading")]
+    [InlineData("[0m[KDone", "Done")]
+    public void Strip_BareCursorAndEraseCodesNextToOtherCodesOrAtTheEnd_RemovesThem(string input, string expected)
+    {
+        Assert.Equal(expected, AnsiStripper.Strip(input));
+    }
+
+    [Theory]
+    [InlineData("See [Kubernetes docs](https://kubernetes.io)")]
+    [InlineData("value = dict[Key]")]
+    [InlineData("[1st place] and [2nd]")]
+    [InlineData("items[0] and arr[10A]")]
+    [InlineData("Dict[K, V] and Map[K]")]
+    [InlineData("a [3D printing] model and [2D array]")]
+    public void Strip_PlainTextWithBrackets_IsUnchanged(string input)
+    {
+        Assert.Equal(input, AnsiStripper.Strip(input));
+    }
+
     [Fact]
     public void Strip_MixedContent_PreservesPlainText()
     {

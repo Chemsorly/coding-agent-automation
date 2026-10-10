@@ -35,8 +35,9 @@ public sealed partial class OpenCodeAgentProvider
         var sessionId = await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
         if (sessionId is not null)
         {
-            // Cache the session for this workspace so future UseResume=true calls reuse it
-            _sessionByWorkspace[workspacePath] = sessionId;
+            // The first session in a workspace is its main conversation, which UseResume=true calls
+            // reuse. Later fresh sessions are isolated calls (reviewers) and must not replace it.
+            _sessionByWorkspace.TryAdd(workspacePath, sessionId);
             _lastKnownSessionId = sessionId;
         }
         return sessionId;
@@ -56,10 +57,12 @@ public sealed partial class OpenCodeAgentProvider
             using var client = CreateDirectoryClientForPath(absolutePath);
             var request = new CreateSessionRequest { Title = title, Path = absolutePath };
 
-            var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(ControlCallTimeout);
+            var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, timeout.Token);
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, ct);
+            var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, timeout.Token);
             if (result is not null)
             {
                 _logger.Debug("Created isolated session {SessionId} for workspace {WorkspacePath}",
@@ -85,10 +88,10 @@ public sealed partial class OpenCodeAgentProvider
     /// summary of all session statuses (including child/subagent sessions). This provides
     /// observability into subagent retries that don't surface on the parent session's SSE stream.
     /// </summary>
-    private Task PollAllSessionStatusesAsync(CancellationToken ct) =>
-        PollAllSessionStatusesAsync(ct, initialDelayMs: 2000);
+    private Task PollAllSessionStatusesAsync(string workspacePath, CancellationToken ct) =>
+        PollAllSessionStatusesAsync(workspacePath, initialDelayMs: 2000, ct);
 
-    private async Task PollAllSessionStatusesAsync(CancellationToken ct, int initialDelayMs)
+    private async Task PollAllSessionStatusesAsync(string? workspacePath, int initialDelayMs, CancellationToken ct)
     {
         // Small initial delay to let the session start
         try { await Task.Delay(initialDelayMs, ct); } catch (OperationCanceledException) { return; }
@@ -97,7 +100,7 @@ public sealed partial class OpenCodeAgentProvider
         {
             try
             {
-                await TryRefreshAllSessionStatusSummaryAsync(ct);
+                await TryRefreshAllSessionStatusSummaryAsync(workspacePath, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -117,20 +120,21 @@ public sealed partial class OpenCodeAgentProvider
     // Test seams — accessible to CodingAgent.Agent.UnitTests via InternalsVisibleTo
 
     /// <summary>Exposes TryRefreshAllSessionStatusSummaryAsync for unit testing.</summary>
-    internal Task TryRefreshAllSessionStatusSummaryAsyncForTest(CancellationToken ct) =>
-        TryRefreshAllSessionStatusSummaryAsync(ct);
+    internal Task TryRefreshAllSessionStatusSummaryAsyncForTest(CancellationToken ct, string? workspacePath = null) =>
+        TryRefreshAllSessionStatusSummaryAsync(workspacePath, ct);
 
     /// <summary>Exposes PollAllSessionStatusesAsync for unit testing with a configurable initial delay.</summary>
-    internal Task PollAllSessionStatusesAsyncForTest(CancellationToken ct, int initialDelayMs = 2000) =>
-        PollAllSessionStatusesAsync(ct, initialDelayMs);
+    internal Task PollAllSessionStatusesAsyncForTest(CancellationToken ct, int initialDelayMs = 2000, string? workspacePath = null) =>
+        PollAllSessionStatusesAsync(workspacePath, initialDelayMs, ct);
 
     /// <summary>Exposes _allSessionsSummary for unit testing.</summary>
     internal string? AllSessionsSummaryForTest => _allSessionsSummary;
 
-    private async Task TryRefreshAllSessionStatusSummaryAsync(CancellationToken ct)
+    private async Task TryRefreshAllSessionStatusSummaryAsync(string? workspacePath, CancellationToken ct)
     {
-        // GET /session/status returns all sessions globally — no directory header needed.
-        using var client = CreateDirectoryClient();
+        // GET /session/status is per directory instance: without the header it reports the server's
+        // own working directory, not the workspace's sessions.
+        using var client = workspacePath is not null ? CreateDirectoryClientForPath(workspacePath) : CreateDirectoryClient();
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 

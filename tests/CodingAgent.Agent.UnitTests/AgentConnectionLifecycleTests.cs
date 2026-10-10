@@ -190,8 +190,6 @@ public class AgentConnectionLifecycleTests
 
         lifecycle._isChatMode.Should().BeTrue("IsChatMode from options must be applied");
         lifecycle._chatSessionId.Should().Be("session-abc");
-        lifecycle._chatModel.Should().Be("claude-3-5-sonnet");
-        lifecycle._chatEffort.Should().Be("medium");
     }
 
     [Fact]

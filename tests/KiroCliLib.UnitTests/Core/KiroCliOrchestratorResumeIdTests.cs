@@ -64,4 +64,113 @@ public class KiroCliOrchestratorResumeIdTests
 
         capturedSessionId.Should().Be("session-xyz");
     }
+
+    // ─── Session that cannot be loaded (kiro-cli 2.29: exit 1, "error: ACP load_session failed") ───
+
+    /// <summary>A process wrapper that prints <paramref name="stderr"/> and exits with <paramref name="exitCode"/>.</summary>
+    private static Mock<IProcessWrapper> Process(int exitCode, string? stderr = null)
+    {
+        var process = new Mock<IProcessWrapper>();
+        process.Setup(p => p.StartAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+                It.IsAny<IReadOnlyDictionary<string, string>?>()))
+            .Callback(() =>
+            {
+                if (stderr is not null)
+                    process.Raise(p => p.ErrorReceived += null, process.Object, stderr);
+            })
+            .ReturnsAsync(exitCode);
+        return process;
+    }
+
+    private static KiroCliOrchestrator Orchestrator(params Mock<IProcessWrapper>[] processes)
+    {
+        var queue = new Queue<IProcessWrapper>(processes.Select(p => p.Object));
+        return new KiroCliOrchestrator(
+            new global::KiroCliLib.Configuration.Configuration(), new Mock<ILogger>().Object, () => queue.Dequeue());
+    }
+
+    [Fact]
+    public async Task ExecutePromptAsync_ResumeIdThatCannotBeLoaded_RunsThePromptInAFreshSession()
+    {
+        var stale = Process(ExitCodes.GeneralFailure, "\u001b[31merror: ACP load_session failed\u001b[0m");
+        var fresh = Process(ExitCodes.Success);
+        var lines = new List<string>();
+
+        var exitCode = await Orchestrator(stale, fresh).ExecutePromptAsync(
+            "prompt", "/ws", useResume: true, CancellationToken.None,
+            onOutputLine: line => { lines.Add(line); return Task.CompletedTask; },
+            resumeSessionId: "stale-id");
+
+        exitCode.Should().Be(ExitCodes.Success);
+        fresh.Verify(p => p.StartAsync(
+            "prompt", "/ws", false,
+            It.IsAny<CancellationToken>(), null,
+            It.IsAny<IReadOnlyDictionary<string, string>?>()), Times.Once);
+        lines.Should().ContainSingle().Which.Should().Contain("stale-id");
+    }
+
+    [Fact]
+    public async Task LastRunStartedFreshSession_IsTrueOnlyAfterAFallback()
+    {
+        var orchestrator = Orchestrator(
+            Process(ExitCodes.GeneralFailure, "error: ACP load_session failed"), Process(ExitCodes.Success),
+            Process(ExitCodes.Success));
+
+        await orchestrator.ExecutePromptAsync("prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "stale-id");
+        orchestrator.LastRunStartedFreshSession.Should().BeTrue();
+
+        await orchestrator.ExecutePromptAsync("prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "good-id");
+        orchestrator.LastRunStartedFreshSession.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecutePromptAsync_ToolOutputQuotingTheLoadError_IsNotRetried()
+    {
+        // e.g. the agent grepped a repository that mentions the error, then the run failed otherwise.
+        var failed = Process(ExitCodes.GeneralFailure, "src/KiroCliOrchestrator.cs:13: error: ACP load_session failed");
+        var unused = Process(ExitCodes.Success);
+
+        var exitCode = await Orchestrator(failed, unused).ExecutePromptAsync(
+            "prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "abc-123");
+
+        exitCode.Should().Be(ExitCodes.GeneralFailure);
+        unused.Verify(p => p.StartAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+            It.IsAny<IReadOnlyDictionary<string, string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecutePromptAsync_ResumeIdFailingForAnotherReason_IsNotRetried()
+    {
+        var failed = Process(ExitCodes.GeneralFailure, "error: model refused the request");
+        var unused = Process(ExitCodes.Success);
+
+        var exitCode = await Orchestrator(failed, unused).ExecutePromptAsync(
+            "prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "abc-123");
+
+        exitCode.Should().Be(ExitCodes.GeneralFailure);
+        unused.Verify(p => p.StartAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+            It.IsAny<IReadOnlyDictionary<string, string>?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExecutePromptAsync_LoadFailureWithoutAResumeId_IsNotRetried()
+    {
+        var failed = Process(ExitCodes.GeneralFailure, "error: ACP load_session failed");
+        var unused = Process(ExitCodes.Success);
+
+        var exitCode = await Orchestrator(failed, unused).ExecutePromptAsync(
+            "prompt", "/ws", useResume: true, CancellationToken.None);
+
+        exitCode.Should().Be(ExitCodes.GeneralFailure);
+        unused.Verify(p => p.StartAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+            It.IsAny<IReadOnlyDictionary<string, string>?>()), Times.Never);
+    }
 }

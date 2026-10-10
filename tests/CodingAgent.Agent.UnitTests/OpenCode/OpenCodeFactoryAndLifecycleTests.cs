@@ -315,7 +315,6 @@ public class OpenCodeFactoryAndLifecycleTests
     [Theory]
     [InlineData("not-a-url")]
     [InlineData("ftp://invalid-scheme.com")]
-    [InlineData("")]
     public void Factory_InvalidBaseUrl_ThrowsArgumentException(string invalidUrl)
     {
         // Arrange

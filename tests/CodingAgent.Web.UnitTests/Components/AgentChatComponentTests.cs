@@ -406,7 +406,7 @@ public class AgentChatMcpConfigPathTests : BunitContext
 
         var msg = await LaunchAndCapturePromptMessageAsync(agentConfig);
 
-        Assert.Equal("/home/ubuntu/.opencode/mcp.json", msg.McpConfigPath);
+        Assert.Equal("/home/ubuntu/.opencode/opencode.json", msg.McpConfigPath);
     }
 
     [Fact]

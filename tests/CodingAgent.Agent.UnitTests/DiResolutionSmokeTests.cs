@@ -325,7 +325,7 @@ public class DiResolutionSmokeTests
             var client = factory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
 
             Assert.NotNull(client.BaseAddress);
-            Assert.Equal(TimeSpan.FromMinutes(60), client.Timeout);
+            Assert.Equal(Timeout.InfiniteTimeSpan, client.Timeout); // each call is bounded by its AgentTimeout instead
             Assert.Null(client.DefaultRequestHeaders.Authorization);
         }
         finally

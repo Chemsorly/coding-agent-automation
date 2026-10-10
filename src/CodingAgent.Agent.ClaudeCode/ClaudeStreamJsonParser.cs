@@ -5,7 +5,7 @@ using KiroCliLib.Core;
 
 namespace CodingAgent.Agent.ClaudeCode;
 
-/// <summary>Usage of one model as a Claude Code <c>result</c> event reports it (cumulative per session).</summary>
+/// <summary>Usage of one model as a Claude Code <c>result</c> event reports it, for that call alone.</summary>
 internal sealed record ClaudeModelTotals
 {
     public long InputTokens { get; init; }
@@ -21,8 +21,8 @@ internal sealed record ClaudeModelTotals
 }
 
 /// <summary>
-/// The usage figures of a Claude Code <c>result</c> event. A resumed session reports the whole
-/// conversation's totals, earlier calls included, so the provider subtracts what it saw before.
+/// The usage figures of a Claude Code <c>result</c> event: this call's alone, also on a resumed
+/// session (<c>claude -p --resume</c> does not carry earlier calls' totals over).
 /// </summary>
 internal sealed record ClaudeUsageTotals
 {
@@ -39,63 +39,49 @@ internal sealed record ClaudeUsageTotals
     public int Turns { get; init; }
     public long ApiDurationMs { get; init; }
     public IReadOnlyDictionary<string, ClaudeModelTotals> Models { get; init; } = new Dictionary<string, ClaudeModelTotals>();
-
-    /// <summary>
-    /// Returns this call's share: <c>this - previous</c> per field. A field smaller than before means
-    /// the CLI reported that field for this call only, so its current value is kept as-is.
-    /// </summary>
-    public ClaudeUsageTotals Minus(ClaudeUsageTotals? previous)
-    {
-        if (previous is null)
-            return this;
-
-        return new ClaudeUsageTotals
-        {
-            InputTokens = Delta(InputTokens, previous.InputTokens),
-            OutputTokens = Delta(OutputTokens, previous.OutputTokens),
-            ThinkingTokens = Delta(ThinkingTokens, previous.ThinkingTokens),
-            CacheReadTokens = Delta(CacheReadTokens, previous.CacheReadTokens),
-            CacheWriteTokens = Delta(CacheWriteTokens, previous.CacheWriteTokens),
-            WebSearchRequests = (int)Delta(WebSearchRequests, previous.WebSearchRequests),
-            CostUsd = Delta(CostUsd, previous.CostUsd),
-            Turns = (int)Delta(Turns, previous.Turns),
-            ApiDurationMs = Delta(ApiDurationMs, previous.ApiDurationMs),
-            Models = Models.ToDictionary(
-                kvp => kvp.Key,
-                kvp => previous.Models.TryGetValue(kvp.Key, out var before) ? Minus(kvp.Value, before) : kvp.Value)
-        };
-    }
-
-    private static ClaudeModelTotals Minus(ClaudeModelTotals current, ClaudeModelTotals previous) => new()
-    {
-        InputTokens = Delta(current.InputTokens, previous.InputTokens),
-        OutputTokens = Delta(current.OutputTokens, previous.OutputTokens),
-        ThinkingTokens = Delta(current.ThinkingTokens, previous.ThinkingTokens),
-        CacheReadTokens = Delta(current.CacheReadTokens, previous.CacheReadTokens),
-        CacheWriteTokens = Delta(current.CacheWriteTokens, previous.CacheWriteTokens),
-        WebSearchRequests = (int)Delta(current.WebSearchRequests, previous.WebSearchRequests),
-        CostUsd = Delta(current.CostUsd, previous.CostUsd)
-    };
-
-    private static long Delta(long current, long previous) => current >= previous ? current - previous : current;
-
-    private static decimal? Delta(decimal? current, decimal? previous)
-    {
-        if (current is null || previous is null || current < previous)
-            return current;
-        return current - previous;
-    }
 }
 
 /// <summary>
 /// What the stream of one Claude Code invocation told us. Written by <see cref="ClaudeStreamJsonParser"/>
-/// on the process's stdout callback; read after the process exits.
+/// on the process's stdout callback; read after the process exits, except <see cref="TurnInProgress"/>
+/// and <see cref="ResultCount"/>, which the provider reads while the CLI runs.
 /// </summary>
 internal sealed class ClaudeStreamState
 {
+    /// <summary>Rate-limit window the CLI reports for extra usage beyond the subscription.</summary>
+    internal const string OverageWindow = "overage";
+
+    private volatile bool _turnInProgress;
+    private int _resultCount;
+    private long _lastResultTicks;
+
     public string? SessionId { get; set; }
     public string? Model { get; set; }
     public bool ResultSeen { get; set; }
+
+    /// <summary>
+    /// True from a turn's first event until its <c>result</c>. A <c>claude -p</c> run can start another
+    /// turn after its result, e.g. when a background command it started finishes.
+    /// </summary>
+    public bool TurnInProgress
+    {
+        get => _turnInProgress;
+        set => _turnInProgress = value;
+    }
+
+    /// <summary>How many <c>result</c> events the stream has carried.</summary>
+    public int ResultCount => Volatile.Read(ref _resultCount);
+
+    /// <summary>Time since the last <c>result</c> event; meaningful once <see cref="ResultCount"/> is above zero.</summary>
+    public TimeSpan SinceLastResult =>
+        DateTime.UtcNow - new DateTime(Interlocked.Read(ref _lastResultTicks), DateTimeKind.Utc);
+
+    /// <summary>Records a result; called before the turn is marked finished, so a reader never sees a stale time.</summary>
+    internal void CountResult()
+    {
+        Interlocked.Exchange(ref _lastResultTicks, DateTime.UtcNow.Ticks);
+        Interlocked.Increment(ref _resultCount);
+    }
     public bool ResultIsError { get; set; }
     public string? ResultSubtype { get; set; }
     public string? ResultText { get; set; }
@@ -121,8 +107,10 @@ internal sealed class ClaudeStreamState
             || status is 401 or 403)
             return AgentErrorCategory.PermanentAuthFailure;
 
+        // The overage window reads "rejected" on any account without extra usage, even while the
+        // subscription window allows requests, so only the subscription windows count here.
         if (LastErrorCategory is "rate_limit" || status is 429
-            || RateLimits.Values.Any(r => r.Status == "rejected"))
+            || RateLimits.Any(r => r.Key != OverageWindow && r.Value.Status == "rejected"))
             return AgentErrorCategory.ProviderRateLimit;
 
         if (LastErrorCategory is "overloaded" or "server_error" || status is 500 or 502 or 503 or 529)
@@ -183,6 +171,7 @@ internal static class ClaudeStreamJsonParser
         switch (GetString(root, "subtype"))
         {
             case "init":
+                state.TurnInProgress = true;
                 state.SessionId = GetString(root, "session_id") ?? state.SessionId;
                 state.Model = GetString(root, "model") ?? state.Model;
                 return [];
@@ -203,17 +192,20 @@ internal static class ClaudeStreamJsonParser
 
     private static List<string> ProcessAssistant(JsonElement root, ClaudeStreamState state)
     {
+        state.TurnInProgress = true;
         state.SessionId ??= GetString(root, "session_id");
-        if (GetString(root, "error") is { } error)
-            state.LastErrorCategory = error;
+
+        // Messages from subagents carry the ID of the tool call that started them.
+        var isSubagent = GetString(root, "parent_tool_use_id") is not null;
+        if (!isSubagent)
+            TrackMainConversationError(root, state);
 
         if (!root.TryGetProperty("message", out var message)
             || !message.TryGetProperty("content", out var content)
             || content.ValueKind != JsonValueKind.Array)
             return [];
 
-        // Messages from subagents carry the ID of the tool call that started them.
-        var indent = GetString(root, "parent_tool_use_id") is null ? "" : "  ";
+        var indent = isSubagent ? "  " : "";
         var lines = new List<string>();
         foreach (var block in content.EnumerateArray())
         {
@@ -234,9 +226,26 @@ internal static class ClaudeStreamJsonParser
         return lines;
     }
 
+    /// <summary>
+    /// Only the main conversation's API errors describe the call; a main message without one means any
+    /// earlier retried error was recovered from.
+    /// </summary>
+    private static void TrackMainConversationError(JsonElement root, ClaudeStreamState state)
+    {
+        if (GetString(root, "error") is { } error)
+        {
+            state.LastErrorCategory = error;
+            return;
+        }
+        state.LastErrorCategory = null;
+        state.LastErrorStatus = null;
+    }
+
     private static IReadOnlyList<string> ProcessResult(JsonElement root, ClaudeStreamState state)
     {
         state.ResultSeen = true;
+        state.CountResult();
+        state.TurnInProgress = false;
         state.SessionId = GetString(root, "session_id") ?? state.SessionId;
         state.ResultIsError = root.TryGetProperty("is_error", out var isError) && isError.ValueKind == JsonValueKind.True;
         state.ResultSubtype = GetString(root, "subtype");
@@ -262,29 +271,41 @@ internal static class ClaudeStreamJsonParser
 
         var lines = new List<string>();
 
+        // The CLI reports each window's use under unifiedWindows, e.g.
+        // {"five_hour":{"utilization":0.73,"resetsAt":…},"seven_day":{…}}, not next to the status.
+        var windows = info.TryGetProperty("unifiedWindows", out var unified) && unified.ValueKind == JsonValueKind.Object
+            ? unified.EnumerateObject().Where(w => w.Value.ValueKind == JsonValueKind.Object).ToDictionary(w => w.Name, w => w.Value)
+            : [];
+
         var status = GetString(info, "status");
         if (status is not null)
         {
+            var window = GetString(info, "rateLimitType", "rate_limit_type") ?? "unknown";
+            var reported = windows.GetValueOrDefault(window);
             var observation = new AgentRateLimitObservation
             {
                 Provider = ProviderTag,
-                Window = GetString(info, "rateLimitType", "rate_limit_type") ?? "unknown",
+                Window = window,
                 Status = status,
-                Utilization = GetDouble(info, "utilization"),
-                ResetsAt = GetUnixTime(info, "resetsAt", "resets_at")
+                Utilization = GetDouble(info, "utilization") ?? GetWindowUtilization(reported),
+                ResetsAt = GetUnixTime(info, "resetsAt", "resets_at") ?? GetWindowResetsAt(reported)
             };
             state.RateLimits[observation.Window] = observation;
             if (status != "allowed")
                 lines.Add(FormatRateLimit(observation));
+
+            // While requests are allowed no window is over its limit, so the others are allowed too.
+            if (status == "allowed")
+                RecordOtherAllowedWindows(windows, window, state);
         }
 
         var overageStatus = GetString(info, "overageStatus", "overage_status");
         if (overageStatus is not null)
         {
-            state.RateLimits["overage"] = new AgentRateLimitObservation
+            state.RateLimits[ClaudeStreamState.OverageWindow] = new AgentRateLimitObservation
             {
                 Provider = ProviderTag,
-                Window = "overage",
+                Window = ClaudeStreamState.OverageWindow,
                 Status = overageStatus,
                 ResetsAt = GetUnixTime(info, "overageResetsAt", "overage_resets_at")
             };
@@ -292,6 +313,30 @@ internal static class ClaudeStreamJsonParser
 
         return lines;
     }
+
+    private static void RecordOtherAllowedWindows(
+        Dictionary<string, JsonElement> windows, string reportedWindow, ClaudeStreamState state)
+    {
+        foreach (var (name, usage) in windows)
+        {
+            if (name == reportedWindow)
+                continue;
+            state.RateLimits[name] = new AgentRateLimitObservation
+            {
+                Provider = ProviderTag,
+                Window = name,
+                Status = "allowed",
+                Utilization = GetWindowUtilization(usage),
+                ResetsAt = GetWindowResetsAt(usage)
+            };
+        }
+    }
+
+    private static double? GetWindowUtilization(JsonElement window) =>
+        window.ValueKind == JsonValueKind.Object ? GetDouble(window, "utilization") : null;
+
+    private static DateTimeOffset? GetWindowResetsAt(JsonElement window) =>
+        window.ValueKind == JsonValueKind.Object ? GetUnixTime(window, "resetsAt", "resets_at") : null;
 
     private static string FormatRateLimit(AgentRateLimitObservation observation)
     {

@@ -44,13 +44,21 @@ internal static class AgentHostRegistration
         services.AddSingleton(logger);
 
         // ── KiroCliLib ──
-        var kiroConfig = new Configuration
+        // A chat pod's runs take the chat's model and effort from here (AGENT_CHAT_MODEL, AGENT_CHAT_EFFORT);
+        // pipeline pods have neither and get them per provider from AgentProviderFactory.
+        services.AddSingleton(sp =>
         {
-            KiroCliPath = AgentDefaults.KiroCliPath,
-            UseWsl = false, // Agent runs natively in Linux container
-            WorkspaceDirectory = "/app/workspaces"
-        };
-        services.AddSingleton(kiroConfig);
+            var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
+            return new Configuration
+            {
+                KiroCliPath = AgentDefaults.KiroCliPath,
+                UseWsl = false, // Agent runs natively in Linux container
+                WorkspaceDirectory = "/app/workspaces",
+                Model = runtimeOpts.ChatModel,
+                Effort = CodingAgent.Agent.KiroCli.KiroCliAgentProvider.ToKiroEffort(
+                    AgentEffortLevelExtensions.ParseEffort(runtimeOpts.ChatEffort))
+            };
+        });
         services.AddSingleton<IKiroCliOrchestrator>(sp =>
         {
             var cfg = sp.GetRequiredService<Configuration>();
@@ -88,8 +96,10 @@ internal static class AgentHostRegistration
             var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
             var baseUrl = runtimeOpts.OpenCodeBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
             client.BaseAddress = new Uri(baseUrl);
-            // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
-            client.Timeout = TimeSpan.FromMinutes(60);
+            // OpenCode's message API blocks until the agent finishes, which may take as long as the
+            // request's AgentTimeout (up to 24 h). That timeout (TimeoutHelper) bounds each call and
+            // aborts the session; a fixed client timeout would cut long turns short without an abort.
+            client.Timeout = Timeout.InfiniteTimeSpan;
 
             var password = runtimeOpts.OpenCodeServerPassword;
             if (!string.IsNullOrEmpty(password))

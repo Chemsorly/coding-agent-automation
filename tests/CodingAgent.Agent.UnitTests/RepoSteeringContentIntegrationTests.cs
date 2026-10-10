@@ -203,7 +203,7 @@ public class RepoSteeringContentIntegrationTests : IDisposable
         var mockAgent = new Mock<IAgentProvider>();
         mockAgent.Setup(a => a.ProviderType).Returns(providerType);
         mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(
-            providerType == AgentProviderType.KiroCli ? [".kiro"] : ["AGENTS.md"]);
+            providerType == AgentProviderType.KiroCli ? [".kiro"] : [".opencode"]);
 
         var run = new PipelineRun
         {

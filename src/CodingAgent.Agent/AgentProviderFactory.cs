@@ -132,9 +132,21 @@ public sealed class AgentProviderFactory : IProviderFactory
     private KiroCliAgentProvider CreateKiroCliAgentProvider(ProviderConfig config)
     {
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, AgentDefaults.KiroCliPath);
+        var executablePath = config.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath);
+        if (string.IsNullOrWhiteSpace(executablePath))
+            executablePath = AgentDefaults.KiroCliPath; // the UI saves "" when the field is cleared
+        var agentName = config.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName);
         var effort = AgentEffortLevelExtensions.ParseEffort(config.Settings.GetValueOrDefault(ProviderSettingKeys.Effort));
-        return new KiroCliAgentProvider(_orchestrator, Serilog.Log.Logger, model, executablePath, effort);
+
+        // The injected orchestrator runs the default CLI path with no model, effort or agent flags. A
+        // provider that sets any of them gets its own orchestrator, so every run, shared or isolated,
+        // carries them.
+        var runConfig = KiroCliAgentProvider.CreateRunConfiguration(executablePath, model, agentName, effort);
+        var orchestrator = runConfig.Model is null && runConfig.Effort is null && runConfig.AgentName is null
+                           && executablePath == AgentDefaults.KiroCliPath
+            ? _orchestrator
+            : new KiroCliOrchestrator(runConfig, Serilog.Log.Logger);
+        return new KiroCliAgentProvider(orchestrator, Serilog.Log.Logger, model, executablePath, effort, agentName);
     }
 
     /// <summary>
@@ -158,7 +170,11 @@ public sealed class AgentProviderFactory : IProviderFactory
 
     private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)
     {
-        var baseUrl = config.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl);
+        // A blank Base URL (the UI saves "" when the field is cleared) keeps the client's address.
+        var configuredBaseUrl = config.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl);
+        if (string.IsNullOrWhiteSpace(configuredBaseUrl))
+            configuredBaseUrl = null;
+        var baseUrl = configuredBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
 
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "http" && uri.Scheme != "https"))
@@ -178,7 +194,8 @@ public sealed class AgentProviderFactory : IProviderFactory
         }
 
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model);
+        // A configured Base URL overrides the client's address (OPENCODE_BASE_URL or the default).
+        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model, configuredBaseUrl);
     }
 
     private GitHubActionsPipelineProvider CreateGitHubPipelineProvider(ProviderConfig config)
