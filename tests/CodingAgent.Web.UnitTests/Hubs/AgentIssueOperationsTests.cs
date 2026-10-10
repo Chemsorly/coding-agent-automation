@@ -208,8 +208,9 @@ public sealed class AgentIssueOperationsTests
         run.Feedback = null;
 
         var ops = CreateOps();
-        await ops.PostIssueFeedbackCommentAsync(run);
+        var delivered = await ops.PostIssueFeedbackCommentAsync(run);
 
+        delivered.Should().BeTrue("there is nothing to deliver");
         _facade.Verify(f => f.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -311,6 +312,122 @@ public sealed class AgentIssueOperationsTests
         var act = () => CreateOps().PostIssueFeedbackCommentAsync(run);
         await act.Should().NotThrowAsync(); // outer catch swallows it
     }
+
+    // ── PostIssueFeedbackCommentAsync — delivery outcome ───────────────────
+    // AgentJobLifecycleService marks the durable outbox row Completed only when the comment was
+    // posted, so a failed or cancelled post must not look like a successful one.
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_ProviderThrows_ReturnsFalse_AndDoesNotLogPosted()
+    {
+        var run = MakeRun();
+        run.Feedback = MakeIssueFeedback();
+        SetupIssueProvider()
+            .Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API rate limit"));
+
+        var delivered = await CreateOps().PostIssueFeedbackCommentAsync(run);
+
+        delivered.Should().BeFalse();
+        VerifyPostedLog(Times.Never());
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_TimeoutWithoutCancellation_ReturnsFalse()
+    {
+        // An HTTP timeout surfaces as TaskCanceledException while the caller's token is still live:
+        // that is a failed post, not a shutdown.
+        var run = MakeRun();
+        run.Feedback = MakeIssueFeedback();
+        SetupIssueProvider()
+            .Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TaskCanceledException("HttpClient.Timeout elapsed"));
+
+        var delivered = await CreateOps().PostIssueFeedbackCommentAsync(run, CancellationToken.None);
+
+        delivered.Should().BeFalse();
+        VerifyPostedLog(Times.Never());
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_NullIssueConfig_ReturnsFalse()
+    {
+        var run = MakeRun();
+        run.Feedback = MakeIssueFeedback();
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var delivered = await CreateOps().PostIssueFeedbackCommentAsync(run);
+
+        delivered.Should().BeFalse();
+        VerifyPostedLog(Times.Never());
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_PostedWithoutUrl_ReturnsTrue_AndLogsPosted()
+    {
+        // GitLab returns no URL when it cannot build one; the comment is still posted.
+        var run = MakeRun(prNumber: "88");
+        run.Feedback = MakeIssueFeedback();
+        SetupIssueProvider()
+            .Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+
+        var delivered = await CreateOps().PostIssueFeedbackCommentAsync(run);
+
+        delivered.Should().BeTrue();
+        VerifyPostedLog(Times.Once());
+        // No URL → nothing to link from the PR body
+        _facade.Verify(f => f.GetProviderConfigByIdAsync("repo-cfg-1", ProviderKind.Repository, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackCommentAsync_CancelledDuringPost_PropagatesCancellation()
+    {
+        var run = MakeRun();
+        run.Feedback = MakeIssueFeedback();
+        using var stopping = new CancellationTokenSource();
+        SetupIssueProvider()
+            .Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<IssueIdentifier, string, CancellationToken>((_, _, ct) =>
+            {
+                stopping.Cancel();
+                return Task.FromCanceled<string?>(ct);
+            });
+
+        var act = () => CreateOps().PostIssueFeedbackCommentAsync(run, stopping.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>(
+            "the caller must see the cancellation so it leaves the outbox row for the relay");
+        VerifyPostedLog(Times.Never());
+    }
+
+    private static RunFeedback MakeIssueFeedback() => new()
+    {
+        Outcome = FeedbackOutcome.Failure,
+        CollectedAtUtc = DateTime.UtcNow,
+        Harness = new HarnessFeedback(),
+        Issue = new IssueFeedback { Description = "feedback" }
+    };
+
+    /// <summary>Resolves "issue-cfg-1" to a GitHub issue provider and returns the provider mock.</summary>
+    private Mock<IIssueProvider> SetupIssueProvider()
+    {
+        var config = new ProviderConfig { Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" };
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        provider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _facade.Setup(f => f.CreateIssueProvider(config)).Returns(provider.Object);
+        return provider;
+    }
+
+    private void VerifyPostedLog(Times times) =>
+        _logger.Verify(l => l.Information(
+            It.Is<string>(s => s.StartsWith("Posted issue feedback comment")),
+            It.IsAny<It.IsAnyType>(),
+            It.IsAny<It.IsAnyType>()), times);
 
     // ── AppendFeedbackLinkToPrBodyAsync — idempotency guard (local body) ───
 
@@ -642,8 +759,8 @@ public sealed class AgentIssueOperationsTests
         _facade.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(mockRepoProvider.Object);
 
         var ops = CreateOps();
-        var act = async () => await ops.PostIssueFeedbackCommentAsync(run);
+        var delivered = await ops.PostIssueFeedbackCommentAsync(run);
 
-        await act.Should().NotThrowAsync("append failure must be swallowed — non-fatal operation");
+        delivered.Should().BeTrue("the comment was posted, so a failed PR-body append must not make the relay post it again");
     }
 }

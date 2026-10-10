@@ -967,4 +967,139 @@ public sealed class AgentJobLifecycleServiceCompletionTests
             Times.Once,
             "label swap must proceed even when the outbox enqueue throws");
     }
+
+    // ── Feedback comment outbox — inline post outcome ─────────────────────────
+    // These tests wire the real AgentIssueOperations over a mocked issue provider, so the provider
+    // outcome reaches the outbox decision the same way it does in production. The outbox row may only
+    // be marked Completed when the inline post delivered the comment; otherwise the relay must deliver it.
+
+    [Fact]
+    public async Task Regular_InlineFeedbackPostFails_LeavesOutboxRowPendingForRelay()
+    {
+        var (payload, provider) = ArrangeRunWithIssueFeedback();
+        provider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API rate limit"));
+
+        var svc = CreateServiceWithRealIssueOps(CancellationToken.None);
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        provider.Verify(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        VerifyOutboxRowLeftPending();
+    }
+
+    [Fact]
+    public async Task Regular_ShutdownDuringInlineFeedbackPost_LeavesOutboxRowPendingForRelay()
+    {
+        var (payload, provider) = ArrangeRunWithIssueFeedback();
+        using var stopping = new CancellationTokenSource();
+        provider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns<IssueIdentifier, string, CancellationToken>((_, _, ct) =>
+            {
+                stopping.Cancel(); // ApplicationStopping fires while the comment is in flight
+                return Task.FromCanceled<string?>(ct);
+            });
+
+        var svc = CreateServiceWithRealIssueOps(stopping.Token);
+        await svc.Invoking(s => s.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None))
+            .Should().NotThrowAsync("a shutdown during bookkeeping is handled inside the lifecycle service");
+
+        provider.Verify(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        VerifyOutboxRowLeftPending();
+    }
+
+    [Fact]
+    public async Task Regular_IssueProviderConfigMissing_LeavesOutboxRowPendingForRelay()
+    {
+        var (payload, provider) = ArrangeRunWithIssueFeedback();
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var svc = CreateServiceWithRealIssueOps(CancellationToken.None);
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        provider.Verify(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        VerifyOutboxRowLeftPending();
+    }
+
+    [Fact]
+    public async Task Regular_InlineFeedbackPostedWithoutUrl_MarksOutboxRowCompleted()
+    {
+        // A provider may post the comment but return no URL (GitLab without a project path).
+        // That is still a delivered comment: the relay must not post it a second time.
+        var (payload, provider) = ArrangeRunWithIssueFeedback();
+        provider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string?)null);
+        FeedbackCommentOutboxEntry? enqueued = null;
+        _outbox.Setup(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(), It.IsAny<CancellationToken>()))
+            .Callback<FeedbackCommentOutboxEntry, CancellationToken>((e, _) => enqueued = e)
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateServiceWithRealIssueOps(CancellationToken.None);
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        enqueued.Should().NotBeNull("the run carries issue feedback, so an outbox row must be enqueued");
+        _outbox.Verify(o => o.MarkCompletedAsync(enqueued!.Id, CancellationToken.None), Times.Once);
+    }
+
+    private AgentJobLifecycleService CreateServiceWithRealIssueOps(CancellationToken applicationStopping)
+    {
+        _appLifetime.SetupGet(l => l.ApplicationStopping).Returns(applicationStopping);
+        return new AgentJobLifecycleService(
+            new AgentJobLifecycleServiceDependencies(
+                _facade.Object,
+                _lifecycleManager.Object,
+                _labelService.Object,
+                new AgentIssueOperations(_facade.Object, _labelService.Object, _logger.Object),
+                _changeNotifier.Object,
+                _appLifetime.Object,
+                _outbox.Object,
+                _logger.Object));
+    }
+
+    /// <summary>
+    /// Arranges a live run that completes with issue feedback, and resolves its issue provider
+    /// config to the returned provider mock (ValidateAsync and DisposeAsync succeed).
+    /// </summary>
+    private (JobCompletionPayload Payload, Mock<IIssueProvider> Provider) ArrangeRunWithIssueFeedback()
+    {
+        var run = MakeRun();
+        var feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback(),
+            Issue = new IssueFeedback { Description = "The acceptance criteria are missing" }
+        };
+        // JobCompletionMapper.Apply copies payload.Feedback onto the run.
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            Feedback = feedback
+        };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded,
+                It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        var config = new ProviderConfig { Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" };
+        _facade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(config);
+        var provider = new Mock<IIssueProvider>();
+        provider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        provider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        _facade.Setup(f => f.CreateIssueProvider(config)).Returns(provider.Object);
+
+        return (payload, provider);
+    }
+
+    private void VerifyOutboxRowLeftPending()
+    {
+        _outbox.Verify(o => o.EnqueueAsync(It.IsAny<FeedbackCommentOutboxEntry>(), CancellationToken.None), Times.Once,
+            "the run carries issue feedback, so an outbox row must be enqueued");
+        _outbox.Verify(o => o.MarkCompletedAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never,
+            "the comment was not posted inline, so the row must stay Pending for FeedbackCommentRelayService");
+    }
 }
