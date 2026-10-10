@@ -23,7 +23,7 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("Your goal is to keep the knowledge base concise, accurate, and free of contradictions.");
         sb.AppendLine();
 
-        // Recency context
+        // Recency context — conditional content, so not using AppendSection
         sb.AppendLine("## Context");
         sb.AppendLine();
         if (lastConsolidationUtc.HasValue)
@@ -40,128 +40,136 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
 
         // Phase 1: Orient
-        sb.AppendLine("## Phase 1: Orient");
-        sb.AppendLine();
-        sb.AppendLine("Scan all files in the `.brain/` directory recursively. Build a mental inventory of:");
-        sb.AppendLine("- All knowledge files and their topics");
-        sb.AppendLine("- The directory structure and organization");
-        sb.AppendLine("- File sizes and last-modified indicators");
-        sb.AppendLine("- Any README or index files that describe the structure");
-        sb.AppendLine();
-        sb.AppendLine("Do NOT make changes during this phase. Only observe and catalog.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Phase 1: Orient", s =>
+        {
+            s.AppendLine("Scan all files in the `.brain/` directory recursively. Build a mental inventory of:");
+            s.AppendLine("- All knowledge files and their topics");
+            s.AppendLine("- The directory structure and organization");
+            s.AppendLine("- File sizes and last-modified indicators");
+            s.AppendLine("- Any README or index files that describe the structure");
+            s.AppendLine();
+            s.AppendLine("Do NOT make changes during this phase. Only observe and catalog.");
+        });
 
         // Phase 2: Gather Signal
-        sb.AppendLine("## Phase 2: Gather Signal");
-        sb.AppendLine();
-        sb.AppendLine("Read recent session logs and run summaries to identify:");
-        sb.AppendLine("- New lessons learned that may duplicate existing entries");
-        sb.AppendLine("- Technology decisions that have been superseded");
-        sb.AppendLine("- Relative date references (e.g., \"yesterday\", \"last week\") that should be absolute");
-        sb.AppendLine("- Entries that reference removed or renamed components");
-        sb.AppendLine("- Contradictions between different knowledge files");
-        sb.AppendLine("- **Citation data:** Which entries were referenced in session logs and how (helpful, not applicable, outdated)");
-        sb.AppendLine();
-        sb.AppendLine("### Citation Aggregation");
-        sb.AppendLine();
-        sb.AppendLine("Session logs contain a `## Brain Entries Referenced` section listing which knowledge entries");
-        sb.AppendLine("were consulted and their usefulness (`used, helpful` | `read, not applicable` | `used, outdated`).");
-        sb.AppendLine("Aggregate this data across all session logs since the last consolidation:");
-        sb.AppendLine("- Count how many sessions cite each entry as **helpful**");
-        sb.AppendLine("- Note entries cited as **outdated** by any session (candidates for correction)");
-        sb.AppendLine("- Identify entries in `general/`, `technology/`, and `projects/` that are **never cited** in any session log");
-        sb.AppendLine();
-        sb.AppendLine("Use this citation data to inform decisions in Phase 3 (Consolidate) and Phase 4 (Prune).");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Phase 2: Gather Signal", s =>
+        {
+            s.AppendLine("Read recent session logs and run summaries to identify:");
+            s.AppendLine("- New lessons learned that may duplicate existing entries");
+            s.AppendLine("- Technology decisions that have been superseded");
+            s.AppendLine("- Relative date references (e.g., \"yesterday\", \"last week\") that should be absolute");
+            s.AppendLine("- Entries that reference removed or renamed components");
+            s.AppendLine("- Contradictions between different knowledge files");
+            s.AppendLine("- **Citation data:** Which entries were referenced in session logs and how (helpful, not applicable, outdated)");
+            s.AppendLine();
+            s.AppendLine("### Citation Aggregation");
+            s.AppendLine();
+            s.AppendLine("Session logs contain a `## Brain Entries Referenced` section listing which knowledge entries");
+            s.AppendLine("were consulted and their usefulness (`used, helpful` | `read, not applicable` | `used, outdated`).");
+            s.AppendLine("Aggregate this data across all session logs since the last consolidation:");
+            s.AppendLine("- Count how many sessions cite each entry as **helpful**");
+            s.AppendLine("- Note entries cited as **outdated** by any session (candidates for correction)");
+            s.AppendLine("- Identify entries in `general/`, `technology/`, and `projects/` that are **never cited** in any session log");
+            s.AppendLine();
+            s.AppendLine("Use this citation data to inform decisions in Phase 3 (Consolidate) and Phase 4 (Prune).");
+        });
 
         // Phase 2.5: Research & Verify
-        sb.AppendLine("## Phase 2.5: Research & Verify");
-        sb.AppendLine();
-        sb.AppendLine("For entries that reference specific tools, libraries, versions, or external services:");
-        sb.AppendLine("- **Verify currency:** Check whether referenced library versions are still the latest (e.g., is the noted NuGet package version still current?)");
-        sb.AppendLine("- **Check for better alternatives:** If a workaround or pattern was documented because a tool lacked a feature, verify whether that feature has since been added");
-        sb.AppendLine("- **Validate links and references:** If entries reference external documentation URLs or API endpoints, verify they are still valid");
-        sb.AppendLine("- **Update outdated information:** If you find newer/better approaches to documented problems, update the entry with the current best practice and note the change");
-        sb.AppendLine();
-        sb.AppendLine("Use web search to verify information when uncertain. Only update entries where you have high confidence the information has changed — do not speculate.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Phase 2.5: Research & Verify", s =>
+        {
+            s.AppendLine("For entries that reference specific tools, libraries, versions, or external services:");
+            s.AppendLine("- **Verify currency:** Check whether referenced library versions are still the latest (e.g., is the noted NuGet package version still current?)");
+            s.AppendLine("- **Check for better alternatives:** If a workaround or pattern was documented because a tool lacked a feature, verify whether that feature has since been added");
+            s.AppendLine("- **Validate links and references:** If entries reference external documentation URLs or API endpoints, verify they are still valid");
+            s.AppendLine("- **Update outdated information:** If you find newer/better approaches to documented problems, update the entry with the current best practice and note the change");
+            s.AppendLine();
+            s.AppendLine("Use web search to verify information when uncertain. Only update entries where you have high confidence the information has changed — do not speculate.");
+        });
 
         // Phase 3: Consolidate
-        sb.AppendLine("## Phase 3: Consolidate");
-        sb.AppendLine();
-        sb.AppendLine("Apply the following transformations:");
-        sb.AppendLine("- **Merge duplicates:** Combine entries that describe the same concept into a single, authoritative entry");
-        sb.AppendLine("- **Resolve contradictions:** When two entries conflict, keep the more recent or more specific one. Add a note about what was superseded if relevant");
-        sb.AppendLine("- **Convert relative dates:** Replace relative time references with absolute dates (e.g., \"yesterday\" → \"2026-01-15\")");
-        sb.AppendLine("- **Update references:** Fix references to renamed or moved components");
-        sb.AppendLine("- **Improve organization:** Move misplaced entries to their correct section or file");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Phase 3: Consolidate", s =>
+        {
+            s.AppendLine("Apply the following transformations:");
+            s.AppendLine("- **Merge duplicates:** Combine entries that describe the same concept into a single, authoritative entry");
+            s.AppendLine("- **Resolve contradictions:** When two entries conflict, keep the more recent or more specific one. Add a note about what was superseded if relevant");
+            s.AppendLine("- **Convert relative dates:** Replace relative time references with absolute dates (e.g., \"yesterday\" → \"2026-01-15\")");
+            s.AppendLine("- **Update references:** Fix references to renamed or moved components");
+            s.AppendLine("- **Improve organization:** Move misplaced entries to their correct section or file");
+        });
 
         // Phase 4: Prune
-        sb.AppendLine("## Phase 4: Prune");
-        sb.AppendLine();
-        sb.AppendLine("Remove content that no longer provides value:");
-        sb.AppendLine("- Stale entries about components that no longer exist");
-        sb.AppendLine("- Session logs older than 30 days that have already been distilled into lessons");
-        sb.AppendLine("- Redundant entries that were merged in Phase 3");
-        sb.AppendLine("- Empty or placeholder files");
-        sb.AppendLine();
-        sb.AppendLine("Use citation data from Phase 2 to inform pruning decisions:");
-        sb.AppendLine("- **High-value (keep):** Entries cited as helpful in 3+ sessions — these are proven useful");
-        sb.AppendLine("- **Outdated (correct or remove):** Entries cited as outdated by any session — verify and either update or mark ⚠️ OUTDATED");
-        sb.AppendLine("- **Uncited + stale (prune candidates):** Entries never cited in any session log AND older than their verification window");
-        sb.AppendLine("- **Recently written (keep):** Entries written since the last consolidation should be kept regardless of citation count — they haven't had time to be cited yet");
-        sb.AppendLine();
-        sb.AppendLine("When pruning an entry, check whether it has only `[experience]` sources and was never verified.");
-        sb.AppendLine("Entries with `[docs]` sources are more likely to be correct even if uncited — prefer re-verification over pruning.");
-        sb.AppendLine();
-        sb.AppendLine("Keep the index files (README.md) concise and up-to-date with the current structure.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Phase 4: Prune", s =>
+        {
+            s.AppendLine("Remove content that no longer provides value:");
+            s.AppendLine("- Stale entries about components that no longer exist");
+            s.AppendLine("- Session logs older than 30 days that have already been distilled into lessons");
+            s.AppendLine("- Redundant entries that were merged in Phase 3");
+            s.AppendLine("- Empty or placeholder files");
+            s.AppendLine();
+            s.AppendLine("Use citation data from Phase 2 to inform pruning decisions:");
+            s.AppendLine("- **High-value (keep):** Entries cited as helpful in 3+ sessions — these are proven useful");
+            s.AppendLine("- **Outdated (correct or remove):** Entries cited as outdated by any session — verify and either update or mark ⚠️ OUTDATED");
+            s.AppendLine("- **Uncited + stale (prune candidates):** Entries never cited in any session log AND older than their verification window");
+            s.AppendLine("- **Recently written (keep):** Entries written since the last consolidation should be kept regardless of citation count — they haven't had time to be cited yet");
+            s.AppendLine();
+            s.AppendLine("When pruning an entry, check whether it has only `[experience]` sources and was never verified.");
+            s.AppendLine("Entries with `[docs]` sources are more likely to be correct even if uncited — prefer re-verification over pruning.");
+            s.AppendLine();
+            s.AppendLine("Keep the index files (README.md) concise and up-to-date with the current structure.");
+        });
 
         // Phase 5: Project SKILL.md generation
-        sb.AppendLine("## Phase 5: Generate Project SKILL.md");
-        sb.AppendLine();
-        sb.AppendLine("For each project directory under `.brain/projects/`, regenerate a `SKILL.md` file.");
-        sb.AppendLine("This file is a distilled, single-document summary that agents receive as pre-loaded context");
-        sb.AppendLine("via subagent retrieval — it should be the most useful file in the project folder.");
-        sb.AppendLine();
-        sb.AppendLine("**Regenerate from scratch each time** (do not incrementally edit the existing SKILL.md).");
-        sb.AppendLine("Cap content at ~1500 words. Structure it as:");
-        sb.AppendLine();
-        sb.AppendLine("```markdown");
-        sb.AppendLine("# Project: {project-name}");
-        sb.AppendLine();
-        sb.AppendLine("## Architecture");
-        sb.AppendLine("{Tech stack, key project structure, main components and their roles}");
-        sb.AppendLine();
-        sb.AppendLine("## Conventions");
-        sb.AppendLine("{Coding standards, naming patterns, preferred libraries, serialization choices}");
-        sb.AppendLine();
-        sb.AppendLine("## Known Pitfalls");
-        sb.AppendLine("{Common mistakes from lessons-learned, gotchas that cause build/test failures}");
-        sb.AppendLine();
-        sb.AppendLine("## Testing Patterns");
-        sb.AppendLine("{How tests are structured, commands to run, quarantine rules, CI quirks}");
-        sb.AppendLine();
-        sb.AppendLine("## Key Decisions");
-        sb.AppendLine("{Important architectural decisions and their rationale}");
-        sb.AppendLine("```");
-        sb.AppendLine();
-        sb.AppendLine("Source content from the project's brain entries, technology files, general lessons,");
-        sb.AppendLine("and session logs. Only include information that is current and verified.");
-        sb.AppendLine("If a project folder has very little accumulated knowledge, produce a shorter SKILL.md");
-        sb.AppendLine("with just the sections that have content — do not pad with generic advice.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Phase 5: Generate Project SKILL.md", s =>
+        {
+            s.AppendLine("For each project directory under `.brain/projects/`, regenerate a `SKILL.md` file.");
+            s.AppendLine("This file is a distilled, single-document summary that agents receive as pre-loaded context");
+            s.AppendLine("via subagent retrieval — it should be the most useful file in the project folder.");
+            s.AppendLine();
+            s.AppendLine("**Regenerate from scratch each time** (do not incrementally edit the existing SKILL.md).");
+            s.AppendLine("Cap content at ~1500 words. Structure it as:");
+            s.AppendLine();
+            s.AppendLine("```markdown");
+            s.AppendLine("# Project: {project-name}");
+            s.AppendLine();
+            s.AppendLine("## Architecture");
+            s.AppendLine("{Tech stack, key project structure, main components and their roles}");
+            s.AppendLine();
+            s.AppendLine("## Conventions");
+            s.AppendLine("{Coding standards, naming patterns, preferred libraries, serialization choices}");
+            s.AppendLine();
+            s.AppendLine("## Known Pitfalls");
+            s.AppendLine("{Common mistakes from lessons-learned, gotchas that cause build/test failures}");
+            s.AppendLine();
+            s.AppendLine("## Testing Patterns");
+            s.AppendLine("{How tests are structured, commands to run, quarantine rules, CI quirks}");
+            s.AppendLine();
+            s.AppendLine("## Key Decisions");
+            s.AppendLine("{Important architectural decisions and their rationale}");
+            s.AppendLine("```");
+            s.AppendLine();
+            s.AppendLine("Source content from the project's brain entries, technology files, general lessons,");
+            s.AppendLine("and session logs. Only include information that is current and verified.");
+            s.AppendLine("If a project folder has very little accumulated knowledge, produce a shorter SKILL.md");
+            s.AppendLine("with just the sections that have content — do not pad with generic advice.");
+        });
 
         // Output expectations
-        sb.AppendLine("## Output");
-        sb.AppendLine();
-        sb.AppendLine("Make all changes directly to the files. After completion, provide a brief summary of what was done:");
-        sb.AppendLine("- Number of files modified");
-        sb.AppendLine("- Number of entries merged");
-        sb.AppendLine("- Number of contradictions resolved");
-        sb.AppendLine("- Number of entries pruned");
-        sb.AppendLine("- Number of SKILL.md files generated/updated");
+        // NOTE (issue #3534): This is the final section of BuildBrainConsolidationPrompt. AppendSection appends a trailing
+        // blank line that the original inline block did not emit before return. The new snapshot
+        // Snapshot_BuildBrainConsolidationPrompt_NullTimestamp locks in the +\n+\n ending from scratch (no pre-refactor
+        // baseline exists for this method), so it does not prove AC3 ("unchanged output") for the null-timestamp path.
+        // The non-null timestamp path (lastConsolidationUtc.HasValue) has no full-prompt snapshot at all — a spacing
+        // regression there would go undetected. Add a deterministic snapshot with a fixed DateTime value.
+        // (Review finding: correctness agent, ConsolidationPromptBuilder.cs)
+        PromptBuilder.AppendSection(sb, "## Output", s =>
+        {
+            s.AppendLine("Make all changes directly to the files. After completion, provide a brief summary of what was done:");
+            s.AppendLine("- Number of files modified");
+            s.AppendLine("- Number of entries merged");
+            s.AppendLine("- Number of contradictions resolved");
+            s.AppendLine("- Number of entries pruned");
+            s.AppendLine("- Number of SKILL.md files generated/updated");
+        });
 
         return sb.ToString();
     }
@@ -221,35 +229,35 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
 
         // Context
-        sb.AppendLine("## Feedback Context");
-        sb.AppendLine();
-        sb.AppendLine($"- **Total runs with feedback:** {feedbackCount}");
-        sb.AppendLine($"- **Overall success rate:** {successRate:F1}%");
-        sb.AppendLine();
-        sb.AppendLine("The feedback data file (`feedback-data.json`) in this workspace contains the raw RunFeedback entries from pipeline runs.");
-        sb.AppendLine("Each entry includes harness feedback (pipeline/tool issues) and optionally issue feedback (issue/repo quality problems).");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Feedback Context", s =>
+        {
+            s.AppendLine($"- **Total runs with feedback:** {feedbackCount}");
+            s.AppendLine($"- **Overall success rate:** {successRate:F1}%");
+            s.AppendLine();
+            s.AppendLine("The feedback data file (`feedback-data.json`) in this workspace contains the raw RunFeedback entries from pipeline runs.");
+            s.AppendLine("Each entry includes harness feedback (pipeline/tool issues) and optionally issue feedback (issue/repo quality problems).");
+        });
 
         // Instructions
-        sb.AppendLine("## Analysis Instructions");
-        sb.AppendLine();
-        sb.AppendLine("1. Read the feedback data file completely");
-        sb.AppendLine("2. Identify recurring patterns across multiple runs — look for repeated categories, similar stuck reasons, and common missing capabilities");
-        sb.AppendLine("3. Rank patterns by **frequency** (how many runs mention it) and **impact** (how much it affects success rate)");
-        sb.AppendLine("4. Produce the **top 3-5 improvement suggestions** that would have the highest positive impact");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Analysis Instructions", s =>
+        {
+            s.AppendLine("1. Read the feedback data file completely");
+            s.AppendLine("2. Identify recurring patterns across multiple runs — look for repeated categories, similar stuck reasons, and common missing capabilities");
+            s.AppendLine("3. Rank patterns by **frequency** (how many runs mention it) and **impact** (how much it affects success rate)");
+            s.AppendLine("4. Produce the **top 3-5 improvement suggestions** that would have the highest positive impact");
+        });
 
         // Quality requirements
-        sb.AppendLine("## Suggestion Quality Requirements");
-        sb.AppendLine();
-        sb.AppendLine("Each suggestion MUST be:");
-        sb.AppendLine("- **Concrete and actionable** — specify exactly what to change (e.g., \"Add file X to the initial context provided to the agent\" not \"Provide more context\")");
-        sb.AppendLine("- **Grounded in evidence** — reference at least 3 specific feedback entries (by their category or stuckReason text) that motivate the suggestion");
-        sb.AppendLine("- **Scoped to one change** — each suggestion addresses one improvement, not a bundle of changes");
-        sb.AppendLine();
-        sb.AppendLine("Do NOT produce abstract recommendations like \"improve error handling\" or \"add more tests\".");
-        sb.AppendLine("Every suggestion must reference specific feedback patterns and propose a specific change.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Suggestion Quality Requirements", s =>
+        {
+            s.AppendLine("Each suggestion MUST be:");
+            s.AppendLine("- **Concrete and actionable** — specify exactly what to change (e.g., \"Add file X to the initial context provided to the agent\" not \"Provide more context\")");
+            s.AppendLine("- **Grounded in evidence** — reference at least 3 specific feedback entries (by their category or stuckReason text) that motivate the suggestion");
+            s.AppendLine("- **Scoped to one change** — each suggestion addresses one improvement, not a bundle of changes");
+            s.AppendLine();
+            s.AppendLine("Do NOT produce abstract recommendations like \"improve error handling\" or \"add more tests\".");
+            s.AppendLine("Every suggestion must reference specific feedback patterns and propose a specific change.");
+        });
 
         // Output format
         PromptBuilder.AppendOutputFormatHeading(sb);

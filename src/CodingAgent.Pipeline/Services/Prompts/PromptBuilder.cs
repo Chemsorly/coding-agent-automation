@@ -596,6 +596,43 @@ public static partial class PromptBuilder
         => sb.AppendLine("## Output Format");
 
     /// <summary>
+    /// Appends a named section — heading, blank line, body content, trailing blank line —
+    /// using the uniform pattern that appears throughout every prompt builder.
+    /// <para>
+    /// This eliminates the structural boilerplate of:
+    /// <code>
+    ///     sb.AppendLine("## Section Name");
+    ///     sb.AppendLine();
+    ///     // … body AppendLine calls …
+    ///     sb.AppendLine();
+    /// </code>
+    /// reducing each section to a single call site and making Sonar's token-based
+    /// duplication detector see only one instance of the heading+blank pattern.
+    /// </para>
+    /// </summary>
+    /// <param name="sb">The <see cref="StringBuilder"/> receiving the section.</param>
+    /// <param name="heading">Section heading, e.g. <c>"## Exploration Strategy"</c>.</param>
+    /// <param name="appendBody">
+    /// Action that appends the body content. The action must NOT append a leading or
+    /// trailing blank line — <see cref="AppendSection"/> provides both automatically.
+    /// </param>
+    // NOTE (issue #3534): The doc-comment contract above ("The action must NOT append a trailing blank line") has a
+    // known intentional violation in FeedbackPromptBuilder: the ## Response Format sections use s.Append(JsonSchemaExample)
+    // where JsonSchemaExample already ends with \n, so AppendSection's trailing sb.AppendLine() produces a double
+    // newline (\n\n) after the closing fence — which is the correct output. This is intentional and tested by
+    // snapshot, but the contract as written is broken by design. If AppendSection is ever refactored to normalise
+    // the trailing newline (e.g. trimming), those call sites would silently drop a blank line without a compile error.
+    // Consider amending the doc-comment to document this exception, or introducing an overload that skips the
+    // trailing blank line for call sites that need precise control. (Review finding: DotNetSpecialist agent)
+    internal static void AppendSection(StringBuilder sb, string heading, Action<StringBuilder> appendBody)
+    {
+        sb.AppendLine(heading);
+        sb.AppendLine();
+        appendBody(sb);
+        sb.AppendLine();
+    }
+
+    /// <summary>
     /// Appends structured output format instructions to the review prompt.
     /// These instructions guide the review agent to output findings in a parseable format
     /// with file:line references for inline comment placement.
