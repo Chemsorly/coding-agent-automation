@@ -154,6 +154,10 @@
                     {
                         <span class="triage-hint">Loading…</span>
                     }
+                    else if (_preview.Executor is null)
+                    {
+                        <div class="triage-warnbox" role="alert" data-testid="triage-preview-problem">@_preview.Problem</div>
+                    }
                     else
                     {
                         @if (_preview.Repositories.Count > 0)
