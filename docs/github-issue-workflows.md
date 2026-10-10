@@ -20,6 +20,8 @@ The pipeline uses these `agent:*` labels (created automatically on first run):
 | `agent:epic` | 🟣 Purple | Epic queued for decomposition analysis |
 | `agent:epic-review` | 🟡 Yellow | Decomposition plan posted, awaiting human approval |
 | `agent:epic-approved` | 🟢 Green | Plan approved, queued for sub-issue creation |
+| `agent:triage` | 🔵 Teal | Problem report queued for a triage run |
+| `agent:triage-review` | 🟡 Yellow | Root cause analysis posted; the issue drafts wait for review in the app |
 | `agent:generated` | 🔵 Light blue | Issue was created by the pipeline (a decomposition sub-issue or a refactoring issue); stays on the issue next to its status label |
 
 Only one status label (every `agent:*` label except `agent:generated`) should be present on an issue at a time, except during the brief swap window; `agent:generated` stays next to it. The pipeline swaps labels by first adding the new label, then removing the other status labels. This add-first ordering ensures the issue is never left without a status label if the operation is interrupted mid-swap. During the brief swap window, two status labels may coexist on the issue.
@@ -104,6 +106,18 @@ When a **project** has an `EpicIssueProviderId` configured, epics in that tracke
 
 See [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics) and [Projects — Multi-Repo](projects.md#use-case-multi-repo-cross-repo-decomposition) for configuration details.
 
+## Flow 8: Triage
+
+1. **User** adds `agent:triage` to an issue describing a problem (what happened, what was expected)
+2. **Pipeline** picks it up in closed-loop mode when a template polling that tracker has `TriageEnabled`, or when the tracker is the project's epic tracker and a template of the project has `TriageEnabled`
+3. **Pipeline** swaps the label to `agent:in-progress`
+4. **Pipeline** investigates with every repository of the project, its MCP servers, the open issues and earlier triages, reviews the analysis adversarially, and posts (or updates) one RCA comment on the issue
+5. **Pipeline** swaps the label to `agent:triage-review`, whatever the verdict
+6. **User** reviews the RCA and the issue drafts on the app's Triage page, edits drafts, and creates the ones they want — or dismisses the triage, or asks for another attempt
+7. **App** creates the issues, posts a summary comment and swaps the label to `agent:done` (dismissed: a short comment and `agent:wont-do`)
+
+To ask for another attempt from the tracker, post a comment and replace `agent:triage-review` with `agent:triage`; the next attempt reads the newest 50 comments. A failed dispatch returns the issue to `agent:triage`. Operators can also start a triage without an issue on the Triage page. See [Triage](triage.md).
+
 ## Issue Dependencies
 
 An `agent:next` issue whose body says `Blocked by`, `Depends on`, `Requires` or `After`, followed by `#N` or a full issue URL on `https://github.com` or `https://gitlab.com`, waits until every referenced issue is closed. The check runs again on every poll cycle, and the label does not change while the issue waits. `#N` means an issue in the same tracker; a recognized URL is checked in the configured tracker it belongs to, and a recognized URL that matches no configured tracker keeps the issue waiting. URLs on other hosts (GitHub Enterprise, self-hosted GitLab) and GitLab URLs with nested subgroups are not recognized and do not block dispatch.
@@ -118,3 +132,4 @@ When the pipeline loop is active, it polls for `agent:next` issues automatically
 - Configurable poll interval, max runs per cycle, and backoff on failures
 - When `DecompositionEnabled` is true on a template, the loop also polls for `agent:epic` and `agent:epic-approved` issues and dispatches them for decomposition
 - When a project has an `EpicIssueProviderId` configured, the loop also polls that provider for epics and queues them with the project's first decomposition-enabled template, oldest first, in the same round-robin (see [Epic Decomposition — Epic Scope](epic-decomposition.md#epic-scope-repo-epics-and-project-epics))
+- When `TriageEnabled` is true on a template, the loop also polls its tracker for `agent:triage` issues; a project's epic tracker is polled for them too, run by the project's first triage-enabled template. Triage is dispatched after decomposition and before implementation, with no concurrency cap of its own (see [Triage](triage.md))

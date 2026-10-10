@@ -102,7 +102,7 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 
 | Tag | Values | Description |
 |-----|--------|-------------|
-| `run_type` | `implementation`, `review`, `decomposition`, `decompositionanalysis`, `consolidation` | Lowercase run type, from `PipelineRunEntity.RunType` (falls back to `WorkItemEntity.TaskType`) |
+| `run_type` | `implementation`, `review`, `decomposition`, `decompositionanalysis`, `consolidation`, `triage` | Lowercase run type, from `PipelineRunEntity.RunType` (falls back to `WorkItemEntity.TaskType`) |
 | `outcome` | `cancelled`, `conflict_restart`, `needs_refinement`, `wont_do`, `pr_created`, `draft_pr`, `succeeded`, `timeout`, `failed` | Terminal run outcome — see [Outcome mapping](#outcome-mapping) |
 | `failure_reason` | `none`, `timeout`, `infrastructure_failure`, `agent_error`, `token_refresh_failure`, `exit_code_failure`, `quality_gate_exhausted`, `gate_rejected` | Snake-case `FailureReason`; `none` for every non-failure outcome |
 | `pipeline.project_name` | project display name | From the run's `PipelineRuns` row, or else the WorkItem's project. `unknown` only when neither resolves |
@@ -150,13 +150,13 @@ Recorded by the API when an agent reports a step, a quality gate result, a pipel
 | `pr_description` | `pr_description` |
 | `reflection` | `reflection` |
 | `decomposition`, `decomposition_*` | `decomposition` |
-| anything else, empty, null (incl. `unknown` from older agents) | `other` |
+| anything else, empty, null (incl. `unknown` from older agents, and the triage phases `triage`, `triage_review`, `triage_refinement`, which `run_type=triage` already separates) | `other` |
 
 #### Counter pre-initialization
 
 A Prometheus series that starts at 1 shows no `increase()`, so counters with closed tag sets are seeded with `Add(0)` at startup. `MetricPreInitialization.Run` builds the host's `MeterProvider` first — measurements made before a provider listens to a meter are dropped, so seeding straight after `builder.Build()` records nothing — then emits the zero series and flushes them.
 
-- **API** (`Program.EmitPreInitCounters`): `pipeline.run.outcomes` (5 run types × 15 outcome/failure_reason combinations; `pipeline.project_name` is left out because it is unbounded), `pipeline.run.sub_issues`, `pipeline.run.brain_updates`, `pipeline.run.quality_gate.results`, `pipeline.run.ci.not_started_retriggers`, `pipeline.run.agent_stalls` (run type × phase × kind), the four per-phase usage counters (run type × phase × provider; `pipeline.run.agent_sessions` is seeded with `model="unknown"` only, because real model names are unbounded), `pipeline.run.token_usage`, `pipeline.run.billing_cost_usd`, `pipeline.run.agent_turns`, `pipeline.run.web_search_requests`, `pipeline.run.rate_limit_events` (`provider=claude`), and `workdistribution.dispatch.attempts`.
+- **API** (`Program.EmitPreInitCounters`): `pipeline.run.outcomes` (6 run types × 15 outcome/failure_reason combinations; `pipeline.project_name` is left out because it is unbounded), `pipeline.run.sub_issues`, `pipeline.run.brain_updates`, `pipeline.run.quality_gate.results`, `pipeline.run.ci.not_started_retriggers`, `pipeline.run.agent_stalls` (run type × phase × kind), the four per-phase usage counters (run type × phase × provider; `pipeline.run.agent_sessions` is seeded with `model="unknown"` only, because real model names are unbounded), `pipeline.run.token_usage`, `pipeline.run.billing_cost_usd`, `pipeline.run.agent_turns`, `pipeline.run.web_search_requests`, `pipeline.run.rate_limit_events` (`provider=claude`), and `workdistribution.dispatch.attempts`.
 - **API, Scheduler, Web** (`GitHubTelemetry.PreInitialize`): `github.api.requests` (operation × outcome) and `pipeline.pull_requests.closed`.
 
 Histograms and gauges are not pre-initialized.

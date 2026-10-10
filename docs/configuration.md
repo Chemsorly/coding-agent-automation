@@ -240,6 +240,7 @@ Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-cod
 | ImplementationEnabled | No | Whether this template processes issues for implementation (default: true) |
 | ReviewEnabled | No | Whether this template processes PRs for code review (default: true) |
 | DecompositionEnabled | No | Whether this template processes epics for decomposition (default: false) |
+| TriageEnabled | No | Whether the loop triages `agent:triage` issues of this template's tracker; the project's first triage-enabled template also runs those of the epic tracker (default: false). Operator triages from the Triage page don't need it. See [Triage](triage.md) |
 | HousekeepingEnabled | No | Whether this template manages agent:done PRs for branch updates and stale cleanup (default: false) |
 | BrainReadOnly | No | When `true`, forces brain read-only mode for this template regardless of global and project-level settings: its runs do not write to the brain, and brain consolidation does not run from it. **One-directional override** — can only be set to `true`; a template cannot re-enable brain writes if the project has disabled them. Default: `false`. |
 
