@@ -160,20 +160,20 @@ public partial class GitLabRepositoryProvider
     // ─── Merge Request CRUD ──────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public async Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    public async Task<PullRequestState> GetPullRequestStateAsync(int prNumber, CancellationToken ct)
     {
         var mr = await ExecuteWithResilienceAsync(
             client =>
             {
                 var mrClient = client.GetMergeRequest(ProjectId);
-                // TODO [WARNING] (DotNetSpecialist): Task.Run(() => mrClient[pullRequestNumber], ct) wraps a
+                // TODO [WARNING] (DotNetSpecialist): Task.Run(() => mrClient[prNumber], ct) wraps a
                 // synchronous indexer in a thread-pool task. This is consistent with the pre-existing pattern
                 // used throughout this provider, but the CancellationToken is not respected for the synchronous
                 // portion — the indexer runs to completion regardless of cancellation. If the underlying GitLab
                 // client call blocks on a network socket, the thread-pool thread is pinned for the duration,
                 // which can cause thread-pool exhaustion under load. This is a pre-existing pattern and advisory
                 // for this provider; the new method introduces it on the CI-poll hot path (called every iteration).
-                return Task.Run(() => mrClient[pullRequestNumber], ct);
+                return Task.Run(() => mrClient[prNumber], ct);
             },
             "GetPullRequestState", ct);
 
@@ -220,7 +220,7 @@ public partial class GitLabRepositoryProvider
     }
 
     /// <inheritdoc />
-    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool? markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int prNumber, string body, bool? markReady, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(body);
 
@@ -231,7 +231,7 @@ public partial class GitLabRepositoryProvider
                 client =>
                 {
                     var mrClient = client.GetMergeRequest(ProjectId);
-                    return Task.Run(() => mrClient[pullRequestNumber], ct);
+                    return Task.Run(() => mrClient[prNumber], ct);
                 },
                 "UpdateMergeRequest.Get", ct);
 
@@ -256,28 +256,28 @@ public partial class GitLabRepositoryProvider
                 client =>
                 {
                     var mrClient = client.GetMergeRequest(ProjectId);
-                    return mrClient.Update(pullRequestNumber, update);
+                    return mrClient.Update(prNumber, update);
                 },
                 "UpdateMergeRequest.Update", ct);
         }
         catch (GitLabException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
             throw new InvalidOperationException(
-                $"Merge request !{pullRequestNumber} not found in project {ProjectId}.", ex);
+                $"Merge request !{prNumber} not found in project {ProjectId}.", ex);
         }
     }
 
     /// <inheritdoc />
-    public async Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
+    public async Task ClosePullRequestAsync(int prNumber, CancellationToken ct)
     {
         await ExecuteWriteWithResilienceAsync(
             client =>
             {
                 var mrClient = client.GetMergeRequest(ProjectId);
-                return mrClient.Update(pullRequestNumber, new MergeRequestUpdate { NewState = "close" });
+                return mrClient.Update(prNumber, new MergeRequestUpdate { NewState = "close" });
             },
             "CloseMergeRequest", ct);
-        Log.Information("Closed MR !{MrIid} in project {ProjectId}", pullRequestNumber, ProjectId);
+        Log.Information("Closed MR !{MrIid} in project {ProjectId}", prNumber, ProjectId);
     }
 
     // ─── Agent MR Discovery ──────────────────────────────────────────────────────
