@@ -323,20 +323,32 @@ internal static class ClaudeStreamJsonParser
 
         var lines = new List<string>();
 
+        // The CLI reports each window's use under unifiedWindows, e.g.
+        // {"five_hour":{"utilization":0.73,"resetsAt":…},"seven_day":{…}}, not next to the status.
+        var windows = info.TryGetProperty("unifiedWindows", out var unified) && unified.ValueKind == JsonValueKind.Object
+            ? unified.EnumerateObject().Where(w => w.Value.ValueKind == JsonValueKind.Object).ToDictionary(w => w.Name, w => w.Value)
+            : [];
+
         var status = GetString(info, "status");
         if (status is not null)
         {
+            var window = GetString(info, "rateLimitType", "rate_limit_type") ?? "unknown";
+            var reported = windows.GetValueOrDefault(window);
             var observation = new AgentRateLimitObservation
             {
                 Provider = ProviderTag,
-                Window = GetString(info, "rateLimitType", "rate_limit_type") ?? "unknown",
+                Window = window,
                 Status = status,
-                Utilization = GetDouble(info, "utilization"),
-                ResetsAt = GetUnixTime(info, "resetsAt", "resets_at")
+                Utilization = GetDouble(info, "utilization") ?? GetWindowUtilization(reported),
+                ResetsAt = GetUnixTime(info, "resetsAt", "resets_at") ?? GetWindowResetsAt(reported)
             };
             state.RateLimits[observation.Window] = observation;
             if (status != "allowed")
                 lines.Add(FormatRateLimit(observation));
+
+            // While requests are allowed no window is over its limit, so the others are allowed too.
+            if (status == "allowed")
+                RecordOtherAllowedWindows(windows, window, state);
         }
 
         var overageStatus = GetString(info, "overageStatus", "overage_status");
@@ -353,6 +365,30 @@ internal static class ClaudeStreamJsonParser
 
         return lines;
     }
+
+    private static void RecordOtherAllowedWindows(
+        Dictionary<string, JsonElement> windows, string reportedWindow, ClaudeStreamState state)
+    {
+        foreach (var (name, usage) in windows)
+        {
+            if (name == reportedWindow)
+                continue;
+            state.RateLimits[name] = new AgentRateLimitObservation
+            {
+                Provider = ProviderTag,
+                Window = name,
+                Status = "allowed",
+                Utilization = GetWindowUtilization(usage),
+                ResetsAt = GetWindowResetsAt(usage)
+            };
+        }
+    }
+
+    private static double? GetWindowUtilization(JsonElement window) =>
+        window.ValueKind == JsonValueKind.Object ? GetDouble(window, "utilization") : null;
+
+    private static DateTimeOffset? GetWindowResetsAt(JsonElement window) =>
+        window.ValueKind == JsonValueKind.Object ? GetUnixTime(window, "resetsAt", "resets_at") : null;
 
     private static string FormatRateLimit(AgentRateLimitObservation observation)
     {

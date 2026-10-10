@@ -183,6 +183,39 @@ public class ClaudeStreamJsonParserTests
         _state.RateLimits["overage"].Status.Should().Be("rejected");
     }
 
+    /// <summary>A real event from a subscription account without extra usage (Claude Code 2.1.268).</summary>
+    internal const string RealRateLimitEvent =
+        """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1791669600,"rateLimitType":"five_hour","overageStatus":"rejected","overageDisabledReason":"org_level_disabled","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.73,"resetsAt":1791669600},"seven_day":{"utilization":0.46,"resetsAt":1792069200}}},"uuid":"c07f9eb2-a43e-4e2e-9fa0-6debf6fba10c","session_id":"4d5a10ea-9735-4e0c-a351-b38316e58280"}""";
+
+    [Fact]
+    public void ProcessLine_RealRateLimitEvent_ReadsEachWindowsUseFromUnifiedWindows()
+    {
+        var lines = ClaudeStreamJsonParser.ProcessLine(RealRateLimitEvent, _state);
+
+        lines.Should().BeEmpty();
+        _state.RateLimits["five_hour"].Should().BeEquivalentTo(new
+        {
+            Status = "allowed", Utilization = 0.73, ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1791669600)
+        });
+        _state.RateLimits["seven_day"].Should().BeEquivalentTo(new
+        {
+            Status = "allowed", Utilization = 0.46, ResetsAt = DateTimeOffset.FromUnixTimeSeconds(1792069200)
+        });
+        _state.RateLimits["overage"].Status.Should().Be("rejected");
+    }
+
+    [Fact]
+    public void ProcessLine_RateLimitEventNotAllowed_LeavesTheOtherWindowsUnreported()
+    {
+        // Only the reported window's status is known once requests are no longer simply allowed.
+        ClaudeStreamJsonParser.ProcessLine(
+            """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.91},"seven_day":{"utilization":0.5}}}}""",
+            _state);
+
+        _state.RateLimits["five_hour"].Utilization.Should().Be(0.91);
+        _state.RateLimits.Should().NotContainKey("seven_day");
+    }
+
     [Fact]
     public void ProcessLine_RateLimitEvent_SnakeCaseAndMillisecondTimestamp_AreAccepted()
     {

@@ -418,10 +418,11 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     [Fact]
     public async Task ExecuteAsync_RejectedOverageOnly_DoesNotMakeAFailureARateLimit()
     {
-        // Accounts without extra usage report overageStatus "rejected" while the window is allowed.
+        // Accounts without extra usage report overageStatus "rejected" while the window is allowed,
+        // as in this real event.
         _launcher.Enqueue(
             Init("s1"),
-            """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","overageStatus":"rejected"}}""",
+            ClaudeStreamJsonParserTests.RealRateLimitEvent,
             Result("s1", 1, 1, 0, 0.01m, 1, isError: true, apiErrorStatus: 400));
 
         var result = await CreateProvider().ExecuteAsync(Request(), CancellationToken.None);
