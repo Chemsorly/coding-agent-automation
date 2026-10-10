@@ -455,8 +455,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // Graceful shutdown or connection abort — bookkeeping aborted cleanly.
             // OrphanedLabelRecoveryService will correct any stuck agent:in-progress label
             // on its next sweep (default interval: ~30 min).
-            // FeedbackCommentRelayService will deliver the feedback comment on its next sweep —
-            // the outbox row was enqueued with CancellationToken.None before cts was created.
+            // FeedbackCommentRelayService will deliver the feedback comment once the row is older than
+            // its fast-path reservation — the outbox row was enqueued with CancellationToken.None
+            // before cts was created.
             _logger.Information( // NOSONAR S6667 — expected cancellation; the message says so
                 "PostCompletionBookkeepingAsync cancelled for job {JobId} — OrphanedLabelRecoveryService will handle label cleanup, FeedbackCommentRelayService will deliver the feedback comment",
                 jobId.Value);

@@ -381,6 +381,12 @@ public class GitLabIssueProviderTests
         await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
     }
 
+    // TODO: Add invalid-argument tests that call ListClosedIssuesAsync directly with invalid page/pageSize
+    // values (matching the InlineData cases above). The existing Pagination_RejectsInvalidParameters theory
+    // only exercises ListOpenIssuesAsync; a regression removing the SharedPrOperations.ValidatePaginationArgs
+    // call from ListClosedIssuesAsync would not be caught. (Review finding [WARNING] — TestQualityReviewer,
+    // issue #3523)
+
     #endregion
 
     #region Property 9: Comment field mapping preserves data
