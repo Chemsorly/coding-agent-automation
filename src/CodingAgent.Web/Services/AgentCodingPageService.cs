@@ -221,8 +221,10 @@ public class AgentCodingPageService
         // A new template is enabled, so it must meet the binding rules the API enforces on save.
         var candidate = new PipelineJobTemplate
         {
-            Id = string.Empty, Name = form.Name.Trim(),
-            IssueProviderId = form.IssueProviderId, RepoProviderId = form.RepoProviderId,
+            Id = string.Empty,
+            Name = form.Name.Trim(),
+            IssueProviderId = form.IssueProviderId,
+            RepoProviderId = form.RepoProviderId,
             Enabled = true
         };
         var projectId = string.IsNullOrEmpty(form.ProjectId) ? WellKnownIds.DefaultProjectId : form.ProjectId;
@@ -235,12 +237,16 @@ public class AgentCodingPageService
         if (await DeniedAsync(AccessRole.Admin) is { } denied) return (false, denied, null);
         var newTemplate = new PipelineJobTemplate
         {
-            Id = Guid.NewGuid().ToString(), Name = form.Name.Trim(),
-            IssueProviderId = form.IssueProviderId, RepoProviderId = form.RepoProviderId,
+            Id = Guid.NewGuid().ToString(),
+            Name = form.Name.Trim(),
+            IssueProviderId = form.IssueProviderId,
+            RepoProviderId = form.RepoProviderId,
             BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? null : form.BrainProviderId,
             PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? null : form.PipelineProviderId,
-            BrainReadOnly = form.BrainReadOnly, ImplementationEnabled = form.ImplementationEnabled,
-            ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled,
+            BrainReadOnly = form.BrainReadOnly,
+            ImplementationEnabled = form.ImplementationEnabled,
+            ReviewEnabled = form.ReviewEnabled,
+            DecompositionEnabled = form.DecompositionEnabled,
             HousekeepingEnabled = form.HousekeepingEnabled,
             HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
             HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
