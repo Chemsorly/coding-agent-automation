@@ -113,9 +113,9 @@ else
 
 KiroCliLib uses the `--resume` / `--resume-id` flags to maintain conversation history across multiple prompts without keeping a persistent process:
 
-1. **First prompt**: Invokes `kiro-cli chat --no-interactive --trust-all-tools "@.agent/prompt-input-<id>.md"` — starts a new session.
-2. **Subsequent prompts (session-targeted)**: Invokes `kiro-cli chat --no-interactive --resume-id <sessionId> --trust-all-tools "@.agent/prompt-input-<id>.md"` — continues a specific named session (primary path when `resumeSessionId` is provided to `ExecutePromptAsync`).
-3. **Subsequent prompts (stateless resume)**: Invokes `kiro-cli chat --no-interactive --resume --trust-all-tools "@.agent/prompt-input-<id>.md"` — resumes the most recent session in the workspace (used when `useResume: true` but no `resumeSessionId` is provided).
+1. **First prompt**: Invokes `kiro-cli chat --agent-engine v2 --no-interactive --trust-all-tools "@.agent/prompt-input-<id>.md"` — starts a new session.
+2. **Subsequent prompts (session-targeted)**: Invokes `kiro-cli chat --agent-engine v2 --no-interactive --resume-id <sessionId> --trust-all-tools "@.agent/prompt-input-<id>.md"` — continues a specific named session (primary path when `resumeSessionId` is provided to `ExecutePromptAsync`).
+3. **Subsequent prompts (stateless resume)**: Invokes `kiro-cli chat --agent-engine v2 --no-interactive --resume --trust-all-tools "@.agent/prompt-input-<id>.md"` — resumes the most recent session in the workspace (used when `useResume: true` but no `resumeSessionId` is provided).
 
 The prompt is written to that file first; Kiro's `@path` syntax expands it inline.
 
@@ -168,7 +168,7 @@ ExecutePromptAsync(prompt, workspace, useResume, ct)
   └─ ProcessWrapper.StartAsync(prompt, workspace, useResume, ct)
         ├─ Write prompt to .agent/prompt-input-<8 hex>.md (unique per call, deleted afterwards)
         ├─ Strip OTEL_*/trace-context/pipeline credential variables, add environmentVariables
-        ├─ Start process: kiro-cli chat --no-interactive [--resume | --resume-id <id>] --trust-all-tools "@.agent/prompt-input-<8 hex>.md"
+        ├─ Start process: kiro-cli chat --agent-engine v2 --no-interactive [--resume | --resume-id <id>] --trust-all-tools "@.agent/prompt-input-<8 hex>.md"
         ├─ OutputReceived → OutputParser.ProcessLine → StateChanged
         └─ WaitForExitAsync
 ```

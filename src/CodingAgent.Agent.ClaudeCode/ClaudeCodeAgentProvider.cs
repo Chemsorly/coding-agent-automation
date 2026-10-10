@@ -34,6 +34,7 @@ internal sealed record ClaudeCodeSettings(
 /// <item>Sessions follow OpenCode's rules: a fresh call starts a session and becomes the workspace's
 /// session; <c>UseResume</c> continues it with <c>--resume</c>; <c>ResumeSessionId</c> targets one.</item>
 /// <item>Exactly one credential reaches the CLI; see <see cref="ClaudeCodeCredentials"/>.</item>
+/// <item>A CLI still running well after its <c>result</c> event is stopped; see <see cref="DefaultResultExitGrace"/>.</item>
 /// <item>Steering is not written here: the pipeline puts it in the user rules directory
 /// (<c>~/.claude/rules/</c>), which the CLI loads in every project, outside the workspace.</item>
 /// </list>
@@ -45,6 +46,17 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     private const string ImagesNote = "Images attached to this task (open them with the Read tool):";
     private static readonly TimeSpan ValidateTimeout = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// How long the CLI may keep running after its <c>result</c> event before it is stopped. Since CLI
+    /// 2.1.292, <c>claude -p</c> waits for background commands the agent left running (a dev server, a
+    /// watcher) until they end or reach their own limit (30 minutes by default); before, it stopped them
+    /// 5 seconds after the result. The grace leaves the CLI time to save the session for <c>--resume</c>.
+    /// </summary>
+    internal static readonly TimeSpan DefaultResultExitGrace = TimeSpan.FromSeconds(30);
+
+    /// <summary>How long to wait for a CLI stopped after its result to exit and deliver its last lines.</summary>
+    private static readonly TimeSpan StoppedExitTimeout = TimeSpan.FromSeconds(5);
+
     private readonly ILogger _logger;
     private readonly string? _model;
     private readonly AgentEffortLevel _effort;
@@ -53,6 +65,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     private readonly string _mcpConfigPath;
     private readonly IClaudeProcessLauncher _launcher;
     private readonly Func<string, string?> _getEnvironmentVariable;
+    private readonly TimeSpan _resultExitGrace;
 
     private readonly ConcurrentDictionary<IClaudeProcess, byte> _activeProcesses = new();
     private readonly ConcurrentDictionary<string, string> _sessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
@@ -74,7 +87,8 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         ILogger? logger,
         ClaudeCodeSettings settings,
         IClaudeProcessLauncher? launcher,
-        Func<string, string?>? getEnvironmentVariable)
+        Func<string, string?>? getEnvironmentVariable,
+        TimeSpan? resultExitGrace = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentException.ThrowIfNullOrWhiteSpace(settings.ExecutablePath);
@@ -88,6 +102,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             : settings.McpConfigPath;
         _launcher = launcher ?? SystemClaudeProcessLauncher.Instance;
         _getEnvironmentVariable = getEnvironmentVariable ?? Environment.GetEnvironmentVariable;
+        _resultExitGrace = resultExitGrace ?? DefaultResultExitGrace;
     }
 
     public AgentProviderType ProviderType => AgentProviderType.ClaudeCode;
@@ -390,6 +405,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         CancellationToken ct)
     {
         IClaudeProcess process;
+        var resultSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             process = _launcher.Start(
@@ -398,6 +414,8 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
                 {
                     foreach (var readable in ClaudeStreamJsonParser.ProcessLine(line, state))
                         emit(readable);
+                    if (state.ResultSeen)
+                        resultSeen.TrySetResult();
                 },
                 line =>
                 {
@@ -426,7 +444,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
                 _logger.Warning(ex, "Claude Code CLI closed stdin before the prompt was written");
             }
 
-            return await process.WaitForExitAsync(ct);
+            return await WaitForExitOrStopAfterResultAsync(process, resultSeen.Task, ct);
         }
         catch (OperationCanceledException)
         {
@@ -438,6 +456,36 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             _activeProcesses.TryRemove(process, out _);
             process.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Waits for the CLI to exit, or stops it when it is still running <see cref="_resultExitGrace"/>
+    /// after its <c>result</c> event (see <see cref="DefaultResultExitGrace"/>). The answer is complete at
+    /// the result, so a stopped CLI counts as a success; an error result still fails the call.
+    /// </summary>
+    private async Task<int> WaitForExitOrStopAfterResultAsync(IClaudeProcess process, Task resultSeen, CancellationToken ct)
+    {
+        var exit = process.WaitForExitAsync(ct);
+        if (await Task.WhenAny(exit, resultSeen) == exit)
+            return await exit;
+
+        if (await Task.WhenAny(exit, Task.Delay(_resultExitGrace, ct)) == exit)
+            return await exit;
+
+        ct.ThrowIfCancellationRequested();
+        _logger.Warning(
+            "Claude Code CLI still running {GraceSeconds:F0}s after its result, likely waiting for background commands; stopping it",
+            _resultExitGrace.TotalSeconds);
+        process.Kill();
+        try
+        {
+            await exit.WaitAsync(StoppedExitTimeout, ct);
+        }
+        catch (TimeoutException)
+        {
+            // A detached child can keep stdout open; the result is already in.
+        }
+        return ExitCodes.Success;
     }
 
     /// <summary>

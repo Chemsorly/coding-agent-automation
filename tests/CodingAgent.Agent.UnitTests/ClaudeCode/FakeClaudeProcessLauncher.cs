@@ -4,11 +4,14 @@ using CodingAgent.Agent.ClaudeCode;
 namespace CodingAgent.Agent.UnitTests.ClaudeCode;
 
 /// <summary>Scripted output of one fake Claude Code CLI run.</summary>
+/// <param name="Hang">Prints nothing and runs until killed.</param>
+/// <param name="KeepRunningAfterOutput">Prints its output, then runs until killed (a CLI waiting for background commands).</param>
 internal sealed record FakeClaudeRun(
     IReadOnlyList<string> Stdout,
     int ExitCode = 0,
     IReadOnlyList<string>? Stderr = null,
-    bool Hang = false);
+    bool Hang = false,
+    bool KeepRunningAfterOutput = false);
 
 /// <summary>
 /// <see cref="IClaudeProcessLauncher"/> that records what would be started and plays back
@@ -60,7 +63,7 @@ internal sealed class FakeClaudeProcess(
     public Task Running => _started.Task;
 
     public int? ProcessId => 4242;
-    public bool IsRunning => !Killed && run.Hang;
+    public bool IsRunning => !Killed && (run.Hang || run.KeepRunningAfterOutput);
     public DateTime LastOutputTime { get; } = DateTime.UtcNow;
 
     public Task WriteStdinAndCloseAsync(string text, CancellationToken ct)
@@ -74,22 +77,35 @@ internal sealed class FakeClaudeProcess(
         _started.TrySetResult();
         if (run.Hang)
         {
-            using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _killed.Token);
-            try
-            {
-                await Task.Delay(Timeout.Infinite, waitCts.Token);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                return KilledExitCode;
-            }
+            await WaitUntilKilledAsync(ct);
+            return KilledExitCode;
         }
 
         foreach (var line in run.Stdout)
             onStdoutLine(line);
         foreach (var line in run.Stderr ?? [])
             onStderrLine(line);
+
+        if (run.KeepRunningAfterOutput)
+        {
+            await WaitUntilKilledAsync(ct);
+            return KilledExitCode;
+        }
         return run.ExitCode;
+    }
+
+    /// <summary>Returns once the process is killed; throws when <paramref name="ct"/> is cancelled first.</summary>
+    private async Task WaitUntilKilledAsync(CancellationToken ct)
+    {
+        using var waitCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _killed.Token);
+        try
+        {
+            await Task.Delay(Timeout.Infinite, waitCts.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // Killed.
+        }
     }
 
     public void Kill()

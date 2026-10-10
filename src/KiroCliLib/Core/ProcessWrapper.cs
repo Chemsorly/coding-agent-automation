@@ -25,6 +25,14 @@ public class ProcessWrapper : IProcessWrapper
     // internal visibility allows ProcessWrapperConstantsTests to pin the value against accidental drift.
     internal const string AgentMetadataDirectory = ".agent";
 
+    /// <summary>
+    /// Pins Kiro's V2 agent engine, which the CLI's own help calls "the pre-3.0 default". Kiro CLI 3.0
+    /// makes V3 the default, and V3 runs non-interactive sessions differently (Hooks, knowledge and
+    /// code intelligence on by default, waits for workflows, other session resume rules). Moving to V3
+    /// should be a deliberate change, not a side effect of a version bump.
+    /// </summary>
+    public const string AgentEngineArgument = "--agent-engine v2";
+
     private readonly Configuration.Configuration _config;
     private readonly ILogger _logger;
     private readonly bool _useWsl;
@@ -95,8 +103,8 @@ public class ProcessWrapper : IProcessWrapper
         var inlinePrompt = $"@{AgentMetadataDirectory}/prompt-input-{promptId}.md";
         var resumeFlag = BuildResumeFlag(resumeSessionId, useResume);
         var kiroArgs = resumeFlag is not null
-            ? $"chat --no-interactive {resumeFlag} --trust-all-tools \"{inlinePrompt}\""
-            : $"chat --no-interactive --trust-all-tools \"{inlinePrompt}\"";
+            ? $"chat {AgentEngineArgument} --no-interactive {resumeFlag} --trust-all-tools \"{inlinePrompt}\""
+            : $"chat {AgentEngineArgument} --no-interactive --trust-all-tools \"{inlinePrompt}\"";
 
         var startInfo = new ProcessStartInfo
         {

@@ -209,7 +209,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = _executablePath,
-                Arguments = "chat --list-sessions",
+                // Same engine as the runs, so the list holds the sessions they created.
+                Arguments = $"chat {ProcessWrapper.AgentEngineArgument} --list-sessions",
                 WorkingDirectory = workspacePath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

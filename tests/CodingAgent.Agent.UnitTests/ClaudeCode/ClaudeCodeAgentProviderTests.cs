@@ -35,10 +35,11 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     private ClaudeCodeAgentProvider CreateProvider(
         string? authMode = ClaudeCodeAuthModes.Auto,
         string? model = "claude-opus-5-5",
-        AgentEffortLevel effort = AgentEffortLevel.High) =>
+        AgentEffortLevel effort = AgentEffortLevel.High,
+        TimeSpan? resultExitGrace = null) =>
         new(new Mock<Serilog.ILogger>().Object,
             new ClaudeCodeSettings(model, "/opt/claude", effort, authMode, _mcpConfigPath),
-            _launcher, name => _env.GetValueOrDefault(name));
+            _launcher, name => _env.GetValueOrDefault(name), resultExitGrace);
 
     private AgentRequest Request(string prompt = "do it", bool useResume = false, string? resumeSessionId = null) => new()
     {
@@ -420,6 +421,37 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         _launcher.Processes[0].Killed.Should().BeTrue();
     }
 
+    [Theory]
+    [InlineData(false, ExitCodes.Success)]
+    [InlineData(true, ExitCodes.GeneralFailure)]
+    public async Task ExecuteAsync_CliStillRunningAfterItsResult_IsStopped_AndTheResultDecides(bool isError, int expectedExitCode)
+    {
+        // CLI 2.1.292+ keeps running after its result while background commands are still alive.
+        _launcher.Enqueue(new FakeClaudeRun(
+            [Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1, isError: isError)], KeepRunningAfterOutput: true));
+
+        var result = await CreateProvider(resultExitGrace: TimeSpan.FromMilliseconds(50))
+            .ExecuteAsync(Request(), CancellationToken.None);
+
+        result.ExitCode.Should().Be(expectedExitCode);
+        result.Usage.Should().NotBeNull();
+        _launcher.Processes[0].Killed.Should().BeTrue();
+        _launcher.Processes[0].Disposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CliStillRunningWithoutAResult_IsNotStoppedEarly()
+    {
+        _launcher.Enqueue(new FakeClaudeRun([Init("s1"), Text("working")], KeepRunningAfterOutput: true));
+        var request = new AgentRequest { Prompt = "p", WorkspacePath = _workspace, Timeout = TimeSpan.FromMilliseconds(300) };
+
+        var result = await CreateProvider(resultExitGrace: TimeSpan.FromMilliseconds(10))
+            .ExecuteAsync(request, CancellationToken.None);
+
+        result.ExitCode.Should().Be(ExitCodes.Timeout);
+        _launcher.Processes[0].Killed.Should().BeTrue();
+    }
+
     [Fact]
     public async Task ExecuteAsync_CliCannotStart_ReturnsGeneralFailure()
     {
@@ -463,7 +495,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     [Fact]
     public async Task ValidateAsync_RunsVersionCheck()
     {
-        _launcher.Enqueue("2.1.286 (Claude Code)");
+        _launcher.Enqueue("2.1.296 (Claude Code)");
 
         await CreateProvider().ValidateAsync(CancellationToken.None);
 
