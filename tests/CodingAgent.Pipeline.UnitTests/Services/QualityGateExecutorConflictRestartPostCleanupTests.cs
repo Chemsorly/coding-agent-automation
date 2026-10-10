@@ -63,7 +63,7 @@ public class QualityGateExecutorConflictRestartPostCleanupTests
 
         // CI never starts (Pending, no jobs) → not-started path is taken, conflict check fires
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // Commit/push stubs needed by AppendExternalCiIfNeededAsync

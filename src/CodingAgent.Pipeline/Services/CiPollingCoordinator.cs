@@ -801,7 +801,7 @@ internal sealed class CiPollingCoordinator
     /// </param>
     private async Task<bool> WaitForCiRunsToAppearAsync(
         IPipelineProvider provider,
-        string branchName,
+        BranchName branchName,
         string? commitSha,
         TimeSpan timeout,
         TimeSpan pollInterval,

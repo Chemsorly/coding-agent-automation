@@ -39,14 +39,14 @@ public class TodoWarningBaselineTests
     // NOTE (issue #3243): The pre-change baseline figure was inconsistent between sources: the issue
     // description stated 309, but the arithmetic (288 + 13 WorkItemDispatchEndpoints conversions
     // + 9 QualityGateExecutor.RetryLoop conversions = 310) was consistent with 310.
-    // NOTE: Re-pinned from 288 to 277 after the Sonar blocker/critical/major cleanup (PR #3360),
-    // which resolved or removed TODO [WARNING] comments while refactoring. Verified locally:
-    // grep -rE "TODO \[WARNING\]|TODO: \[WARNING\]" src --include="*.cs" | wc -l = 277
+    // NOTE: Re-pinned from 277 to 273 after the BranchName type-adoption PR (#3535), which
+    // converted 6 TODO [WARNING] comments in provider files to NOTE (issue #3535) format.
+    // grep -rE "TODO \[WARNING\]|TODO: \[WARNING\]" src --include="*.cs" | wc -l = 273
     // NOTE (issue #3243): The CI merge-commit count may be lower (e.g. 285) when other PRs that
     // also reduce TODO [WARNING] land on main between branch creation and merge. That is progress
     // and does not need to block this PR. The guard enforces the upper bound only (no new TODOs
     // above the baseline). Re-pin the baseline downward after each merge that reduces the count.
-    private const int BaselineCount = 277;
+    private const int BaselineCount = 273;
 
     // ── Repo-root resolution (identical to SonarGateBugConditionTests) ────────
     // NOTE (issue #3243): GetRepoRoot() is called during static property initialization.

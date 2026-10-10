@@ -257,12 +257,13 @@ public sealed class AgentHubMethodTests
             Models = [],
         };
 
+        // Moq default for Task-returning methods returns Task.CompletedTask — no explicit setup needed.
         var hub = CreateHub();
         await hub.ReportFetchModelsResult(response);
 
-        // Verify that CompleteModelFetchRequest was delegated to IHubConsolidationOperations
+        // Verify that CompleteModelFetchRequestAsync was delegated to IHubConsolidationOperations
         // (actual completion logic is tested in HubConsolidationOperations unit tests)
-        _mockConsolidationOps.Verify(c => c.CompleteModelFetchRequest(response), Times.Once);
+        _mockConsolidationOps.Verify(c => c.CompleteModelFetchRequestAsync(response), Times.Once);
     }
 
     [Fact]
