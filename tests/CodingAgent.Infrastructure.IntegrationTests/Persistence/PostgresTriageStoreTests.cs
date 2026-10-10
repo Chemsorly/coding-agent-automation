@@ -394,9 +394,16 @@ public sealed class TriagePostgresFixture : IAsyncLifetime
 
     public PipelineDbContext CreateDbContext() => Factory.CreateDbContext();
 
+    /// <summary>
+    /// Configured like the API's factory, retrying execution strategy included: that strategy refuses
+    /// transactions it does not run itself, which a factory without it would hide.
+    /// </summary>
     private sealed class ContextFactory(string connectionString) : IDbContextFactory<PipelineDbContext>
     {
         public PipelineDbContext CreateDbContext() =>
-            new(new DbContextOptionsBuilder<PipelineDbContext>().UseNpgsql(connectionString).Options);
+            new(new DbContextOptionsBuilder<PipelineDbContext>()
+                .UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(
+                    maxRetryCount: 3, maxRetryDelay: TimeSpan.FromSeconds(5), errorCodesToAdd: null))
+                .Options);
     }
 }

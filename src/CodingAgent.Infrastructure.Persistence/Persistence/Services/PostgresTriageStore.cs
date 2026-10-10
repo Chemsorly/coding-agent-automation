@@ -82,8 +82,17 @@ public sealed class PostgresTriageStore : ITriageStore
 
         if (!string.IsNullOrWhiteSpace(query.Search))
         {
-            var pattern = "%" + EscapeLike(query.Search.Trim()) + "%";
-            triages = triages.Where(t => EF.Functions.ILike(t.Title, pattern, "\\"));
+            if (db.Database.IsNpgsql())
+            {
+                var pattern = "%" + EscapeLike(query.Search.Trim()) + "%";
+                triages = triages.Where(t => EF.Functions.ILike(t.Title, pattern, "\\"));
+            }
+            else
+            {
+                // The InMemory test database has no ILIKE
+                var search = query.Search.Trim().ToLowerInvariant();
+                triages = triages.Where(t => t.Title.ToLower().Contains(search));
+            }
         }
 
         // The list facts are small; the tab is decided by the resolved status, so it filters in memory.
@@ -167,24 +176,24 @@ public sealed class PostgresTriageStore : ITriageStore
 
         for (var attempt = 1; ; attempt++)
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            var entity = await LockAsync(db, id, ct);
-            if (entity is null)
-                return null;
-
-            var current = TriageEntityMapper.ToRecord(entity);
-            var changed = mutate(current);
-            if (changed is null)
-                return current;
-
-            changed = changed with { UpdatedAt = _time.GetUtcNow() };
-            TriageEntityMapper.CopyInto(changed, entity);
             try
             {
-                await db.SaveChangesAsync(ct);
-                await tx.CommitAsync(ct);
-                return changed;
+                return await InTransactionAsync<TriageRecord?>(async (db, token) =>
+                {
+                    var entity = await LockAsync(db, id, token);
+                    if (entity is null)
+                        return null;
+
+                    var current = TriageEntityMapper.ToRecord(entity);
+                    var changed = mutate(current);
+                    if (changed is null)
+                        return current;
+
+                    changed = changed with { UpdatedAt = _time.GetUtcNow() };
+                    TriageEntityMapper.CopyInto(changed, entity);
+                    await db.SaveChangesAsync(token);
+                    return changed;
+                }, ct);
             }
             catch (DbUpdateConcurrencyException) when (attempt < MaxUpdateAttempts)
             {
@@ -194,12 +203,34 @@ public sealed class PostgresTriageStore : ITriageStore
     }
 
     /// <summary>
+    /// Runs <paramref name="body"/> on a fresh context inside a transaction, as one unit of the context's execution
+    /// strategy: the API's retrying Npgsql strategy refuses transactions it does not run itself, and a transient
+    /// failure retries the whole unit, so <paramref name="body"/> must start from what it reads.
+    /// </summary>
+    private async Task<T> InTransactionAsync<T>(Func<PipelineDbContext, CancellationToken, Task<T>> body, CancellationToken ct)
+    {
+        await using var strategyContext = await _dbFactory.CreateDbContextAsync(ct);
+        var strategy = strategyContext.Database.CreateExecutionStrategy();
+        return await strategy.ExecuteAsync(async token =>
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(token);
+            await using var tx = await db.Database.BeginTransactionAsync(token);
+            var result = await body(db, token);
+            await tx.CommitAsync(token);
+            return result;
+        }, ct);
+    }
+
+    /// <summary>
     /// Reads the row with <c>FOR UPDATE</c>, so concurrent writers of one triage wait for each other instead of
     /// failing their version check. Must run inside a transaction. The query is not composed further, so the
-    /// locking clause stays at the top level.
+    /// locking clause stays at the top level. The InMemory test database has no row locks and reads the row plainly.
     /// </summary>
     private static async Task<TriageEntity?> LockAsync(PipelineDbContext db, Guid id, CancellationToken ct)
     {
+        if (!db.Database.IsNpgsql())
+            return await db.Triages.FirstOrDefaultAsync(t => t.Id == id, ct);
+
         var rows = await db.Triages
             .FromSqlInterpolated($"SELECT *, xmin FROM \"Triages\" WHERE \"Id\" = {id} FOR UPDATE")
             .ToListAsync(ct);
@@ -208,6 +239,9 @@ public sealed class PostgresTriageStore : ITriageStore
 
     private static async Task<TriageEntity?> LockByKeyAsync(PipelineDbContext db, string provider, string identifier, CancellationToken ct)
     {
+        if (!db.Database.IsNpgsql())
+            return await db.Triages.FirstOrDefaultAsync(t => t.KeyProviderConfigId == provider && t.KeyIdentifier == identifier, ct);
+
         var rows = await db.Triages
             .FromSqlInterpolated($"SELECT *, xmin FROM \"Triages\" WHERE \"KeyProviderConfigId\" = {provider} AND \"KeyIdentifier\" = {identifier} FOR UPDATE")
             .ToListAsync(ct);
@@ -221,53 +255,49 @@ public sealed class PostgresTriageStore : ITriageStore
 
         for (var attempt = 1; ; attempt++)
         {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
-            var entity = await LockByKeyAsync(db, report.KeyProviderConfigId, report.KeyIdentifier, ct);
-
-            var now = _time.GetUtcNow();
-            TriageRecord current;
-            if (entity is not null)
-            {
-                current = TriageEntityMapper.ToRecord(entity);
-            }
-            else if (report.Source == TriageSource.Issue)
-            {
-                // A tracker issue's first result creates its triage
-                current = new TriageRecord
-                {
-                    Id = Guid.NewGuid(),
-                    ProjectId = report.ProjectId,
-                    Source = TriageSource.Issue,
-                    IssueProviderConfigId = report.KeyProviderConfigId,
-                    IssueIdentifier = report.KeyIdentifier,
-                    IssueUrl = report.IssueUrl,
-                    Title = string.IsNullOrWhiteSpace(report.IssueTitle) ? $"#{report.KeyIdentifier}" : report.IssueTitle,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                };
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"No triage exists for {report.KeyIdentifier}; an operator triage is created before its first run");
-            }
-
-            var updated = ApplyResult(current, report, now);
-            if (entity is null)
-            {
-                db.Triages.Add(TriageEntityMapper.ToEntity(updated));
-            }
-            else
-            {
-                TriageEntityMapper.CopyInto(updated, entity);
-            }
-
             try
             {
-                await db.SaveChangesAsync(ct);
-                await tx.CommitAsync(ct);
-                return updated;
+                return await InTransactionAsync(async (db, token) =>
+                {
+                    var entity = await LockByKeyAsync(db, report.KeyProviderConfigId, report.KeyIdentifier, token);
+
+                    var now = _time.GetUtcNow();
+                    TriageRecord current;
+                    if (entity is not null)
+                    {
+                        current = TriageEntityMapper.ToRecord(entity);
+                    }
+                    else if (report.Source == TriageSource.Issue)
+                    {
+                        // A tracker issue's first result creates its triage
+                        current = new TriageRecord
+                        {
+                            Id = Guid.NewGuid(),
+                            ProjectId = report.ProjectId,
+                            Source = TriageSource.Issue,
+                            IssueProviderConfigId = report.KeyProviderConfigId,
+                            IssueIdentifier = report.KeyIdentifier,
+                            IssueUrl = report.IssueUrl,
+                            Title = string.IsNullOrWhiteSpace(report.IssueTitle) ? $"#{report.KeyIdentifier}" : report.IssueTitle,
+                            CreatedAt = now,
+                            UpdatedAt = now,
+                        };
+                    }
+                    else
+                    {
+                        throw new InvalidOperationException(
+                            $"No triage exists for {report.KeyIdentifier}; an operator triage is created before its first run");
+                    }
+
+                    var updated = ApplyResult(current, report, now);
+                    if (entity is null)
+                        db.Triages.Add(TriageEntityMapper.ToEntity(updated));
+                    else
+                        TriageEntityMapper.CopyInto(updated, entity);
+
+                    await db.SaveChangesAsync(token);
+                    return updated;
+                }, ct);
             }
             catch (DbUpdateException) when (attempt < MaxUpdateAttempts)
             {

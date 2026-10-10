@@ -915,4 +915,6 @@ textarea.triage-input.is-md { font-family: var(--font-mono); font-size: 12.5px; 
 @media (max-width: 640px) {
     .triage-row2 { grid-template-columns: minmax(0, 1fr); }
     .triage-search { min-width: 0; width: 100%; }
+    /* On a phone the sticky bar would cover a third of the screen */
+    .triage-actionbar { position: static; box-shadow: none; }
 }
