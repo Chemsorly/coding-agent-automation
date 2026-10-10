@@ -2012,6 +2012,142 @@ public class PullRequestFinalizationServiceTests
         capturedBody.Should().NotContain("⚠️ Dropped changes not re-applied");
     }
 
+    // ── AppendDroppedIdentifiersSection: early-return paths (issue #3532) ───
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenFileAbsent_AndIdentifiersDropped_UpdatesPrBodyWithDroppedSection()
+    {
+        // AC #1: This test FAILS before the fix (helper not called on the file-not-found early-return path)
+        // and PASSES after the fix (helper called before return; in the file-not-found catch block).
+        using var tmpDir = new TempDirectory();
+        // Create the .agent/ directory but do NOT create pr-description.md — causes FileNotFoundException.
+        Directory.CreateDirectory(Path.Combine(tmpDir.Path, ".agent"));
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "existing body";
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["src/Foo.cs"] = ["DroppedMethod"]
+        };
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        string? capturedBody = null;
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            42,
+            It.Is<string>(b => b.Contains("⚠️ Dropped changes not re-applied")
+                             && b.Contains("DroppedMethod")
+                             && b.Contains("src/Foo.cs")),
+            null,
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        capturedBody.Should().Contain("⚠️ Dropped changes not re-applied");
+        capturedBody.Should().Contain("DroppedMethod");
+        capturedBody.Should().Contain("src/Foo.cs");
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenDescriptionEmpty_AndIdentifiersDropped_UpdatesPrBodyWithDroppedSection()
+    {
+        // AC #2 (path #2): empty/whitespace pr-description.md + dropped identifiers + numeric PR number
+        // → UpdatePullRequestAsync must be called with a body containing the dropped-changes section.
+        using var tmpDir = new TempDirectory();
+        var agentDir = Path.Combine(tmpDir.Path, ".agent");
+        Directory.CreateDirectory(agentDir);
+        // Write whitespace-only content — StripBlockquotePrefix trims to empty string.
+        File.WriteAllText(Path.Combine(agentDir, "pr-description.md"), "   \n  ");
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "99";
+        run.PullRequestBody = "existing body";
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["src/Bar.cs"] = ["DroppedClass"]
+        };
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        string? capturedBody = null;
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool?, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            99,
+            It.Is<string>(b => b.Contains("⚠️ Dropped changes not re-applied")
+                             && b.Contains("DroppedClass")),
+            null,
+            It.IsAny<CancellationToken>()),
+            Times.Once);
+        capturedBody.Should().Contain("⚠️ Dropped changes not re-applied");
+        capturedBody.Should().Contain("DroppedClass");
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenPrNumberNonNumeric_AndIdentifiersDropped_DoesNotCallUpdatePr()
+    {
+        // AC #2 (path #3): non-numeric PR number + dropped identifiers → no API call is made
+        // (the helper guards int.TryParse internally; without a numeric PR number, UpdatePullRequestAsync
+        // cannot be called). This is the correct behavior per AC #2: "applies when numeric PR is available".
+        //
+        // The .agent/pr-description.md must exist with non-empty, non-whitespace content so that
+        // the file-not-found path (#1) and empty-description path (#2) are both bypassed and execution
+        // reaches the int.TryParse guard at path #3.
+        using var tmpDir = new TempDirectory();
+        var agentDir = Path.Combine(tmpDir.Path, ".agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Combine(agentDir, "pr-description.md"), "Some description content");
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "not-a-number";
+        run.PullRequestBody = "existing body";
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["src/Baz.cs"] = ["DroppedInterface"]
+        };
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        // No numeric PR number → helper no-ops at int.TryParse guard (path #3) → UpdatePullRequestAsync never called
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        // PullRequestBody must remain unchanged (no update was made)
+        run.PullRequestBody.Should().Be("existing body");
+    }
+
     // ── Helper: TempDirectory ────────────────────────────────────────────────
 
     // TODO: The draft PR path added in PullRequestFinalizationService.RunFullPrCreationAsync
