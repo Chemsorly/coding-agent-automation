@@ -19,36 +19,32 @@ public sealed class AgentChatPage
         _baseUrl = baseUrl;
     }
 
-    /// <summary>Navigates to the /agent-chat page and waits for the template selector to render.</summary>
+    /// <summary>Navigates to the /agent-chat page and waits for the profile selector to render.</summary>
     public async Task NavigateAsync()
     {
         await _page.GotoCockpitPageAsync($"{_baseUrl}/agent-chat");
-        // #template-select is prerendered: a selection made before the circuit attaches @bind's
+        // #profile-select is prerendered: a selection made before the circuit attaches @bind's
         // change handler is dropped, and the interactive render resets the select to "", which
         // leaves the Launch button disabled for good.
-        await _page.WaitForInteractiveAsync("#template-select", 15_000);
+        await _page.WaitForInteractiveAsync("#profile-select", 15_000);
     }
 
-    /// <summary>Selects an agent type by its labels value in the template dropdown.</summary>
-    public async Task SelectTemplateAsync(string labelsValue)
+    /// <summary>Selects an agent profile by its id in the profile dropdown.</summary>
+    public async Task SelectProfileAsync(string profileId)
     {
-        await _page.SelectOptionAsync("#template-select", labelsValue);
+        await _page.SelectOptionAsync("#profile-select", profileId);
     }
 
     /// <summary>Clicks the "Launch Chat Pod" button.</summary>
     public async Task LaunchChatPodAsync()
     {
         // Wait for the button to be enabled before clicking. The button is enabled only when
-        // _selectedTemplateLabels is set in Blazor, which requires the @onchange from
-        // SelectTemplateAsync to round-trip through the Blazor Server WebSocket circuit.
-        // Without this wait, clicking immediately after SelectTemplateAsync can land on a
+        // _selectedProfileId is set in Blazor, which requires the @onchange from
+        // SelectProfileAsync to round-trip through the Blazor Server WebSocket circuit.
+        // Without this wait, clicking immediately after SelectProfileAsync can land on a
         // still-disabled button because the circuit hasn't processed the change event yet.
-        //
-        // 30 s instead of 10 s: OnTemplateSelected() is an async method that calls
-        // ConfigStore.LoadAgentProfilesAsync + GetProviderConfigByIdAsync before it calls
-        // StateHasChanged. Under CI load those async calls can take several seconds, pushing
-        // the total roundtrip well beyond the original 10 s budget and producing a flaky
-        // TimeoutException at this wait (as seen in shard 3/3 failures).
+        // The 30 s budget dates from when selecting also loaded profiles and provider configs;
+        // it is kept as headroom for CI load.
         var button = _page.Locator(".btn-start-chat");
         await button.WaitForAsync(new() { State = WaitForSelectorState.Visible, Timeout = 30_000 });
         await _page.WaitForFunctionAsync(
@@ -159,17 +155,17 @@ public sealed class AgentChatPage
     }
 
     /// <summary>
-    /// Waits until the page returns to the launch state (template selector is visible).
+    /// Waits until the page returns to the launch state (profile selector is visible).
     /// Useful after End Chat to confirm the page reset.
     /// </summary>
     public async Task WaitForLaunchStateAsync(int timeoutMs = 10_000)
     {
-        await _page.WaitForSelectorAsync("#template-select", new() { Timeout = timeoutMs });
+        await _page.WaitForSelectorAsync("#profile-select", new() { Timeout = timeoutMs });
     }
 
     /// <summary>
     /// Returns true when the Launch Chat Pod button is visible but disabled
-    /// (no template selected or launch in progress).
+    /// (no profile selected or launch in progress).
     /// </summary>
     public async Task<bool> IsLaunchButtonDisabledAsync()
     {

@@ -15,7 +15,7 @@ namespace CodingAgent.Web.E2ETests.Tests;
 ///
 /// Scenarios covered:
 /// <list type="number">
-///   <item>Full round trip: select template → Launch → header shows agent id + model → prompt →
+///   <item>Full round trip: select profile → Launch → header shows agent id + model → prompt →
 ///   agent responds → transcript updated.</item>
 ///   <item>End chat: click ✕ End Chat → CancelChat delivered to agent → page returns to launch
 ///   state.</item>
@@ -35,6 +35,42 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private const string ChatProfileId = "chat-profile-rt";
+
+    /// <summary>
+    /// Seeds the agent profile the chat page offers (its labels name the <c>kiro,dotnet</c> job
+    /// template) and its agent provider config. Call before <see cref="AgentChatPage.NavigateAsync"/>:
+    /// the page loads profiles when it initialises.
+    /// </summary>
+    // TODO [WARNING]: these entities are saved with CancellationToken.None and may not be cleaned
+    // up by Fixture.ResetAll() between tests (depends on whether InMemoryConfigurationStore.ResetAll
+    // clears profiles and provider configs). A subsequent test that expects zero profiles or resolves
+    // "kiro,dotnet" may find these stale entities. Verify ResetAll covers them, or explicitly delete
+    // after the test.
+    private async Task SeedChatProfileAsync()
+    {
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = ChatProfileId,
+            DisplayName = "Chat Round Trip Profile",
+            MatchLabels = new[] { "kiro", "dotnet" },
+            AgentProviderConfigId = "agent-chat-rt",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = "agent-chat-rt",
+            DisplayName = "Chat Agent Round Trip",
+            ProviderType = "kiro",
+            Kind = ProviderKind.Agent,
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.Model] = "claude-sonnet-test"
+            }
+        }, CancellationToken.None);
+    }
 
     /// <summary>
     /// Extracts the <c>caa/chat-session-id</c> label from a K8s job. Throws if missing.
@@ -97,48 +133,24 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     // ── Scenario 1: Full round trip ───────────────────────────────────────────
 
     /// <summary>
-    /// Scenario 1: Select agent template → Launch → fake agent connects →
+    /// Scenario 1: Select agent profile → Launch → fake agent connects →
     /// header shows agent id and resolved model → type a prompt → agent replies →
     /// reply appears in transcript.
     /// </summary>
     [Fact]
     public async Task AgentChat_RoundTrip_PromptAndResponseRendered()
     {
-        // ── Arrange: seed a minimal agent profile so the model name resolves ───
-        // TODO [WARNING]: these entities are saved with CancellationToken.None and may not be cleaned
-        // up by Fixture.ResetAll() between tests (depends on whether InMemoryConfigurationStore.ResetAll
-        // clears profiles and provider configs). A subsequent test that expects zero profiles or resolves
-        // "kiro,dotnet" may find these stale entities. Verify ResetAll covers them, or explicitly delete
-        // after the test.
-        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
-        {
-            Id = "chat-profile-rt",
-            DisplayName = "Chat Round Trip Profile",
-            MatchLabels = new[] { "kiro", "dotnet" },
-            AgentProviderConfigId = "agent-chat-rt",
-            Enabled = true
-        }, CancellationToken.None);
-
-        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
-        {
-            Id = "agent-chat-rt",
-            DisplayName = "Chat Agent Round Trip",
-            ProviderType = "kiro",
-            Kind = ProviderKind.Agent,
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.Model] = "claude-sonnet-test"
-            }
-        }, CancellationToken.None);
+        // ── Arrange: seed the agent profile; its provider config supplies the model ───
+        await SeedChatProfileAsync();
 
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();
 
-        // ── Act: select template and click Launch; intercept the created job ──
+        // ── Act: select the profile and click Launch; intercept the created job ──
         var job = await WaitForFirstChatJobAsync(
             async () =>
             {
-                await chatPage.SelectTemplateAsync("kiro,dotnet");
+                await chatPage.SelectProfileAsync(ChatProfileId);
                 await chatPage.LaunchChatPodAsync();
             },
             TimeSpan.FromSeconds(35));
@@ -214,13 +226,15 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     [Fact]
     public async Task AgentChat_EndChat_AgentReceivesCancelAndPageResets()
     {
+        await SeedChatProfileAsync();
+
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();
 
         var job = await WaitForFirstChatJobAsync(
             async () =>
             {
-                await chatPage.SelectTemplateAsync("kiro,dotnet");
+                await chatPage.SelectProfileAsync(ChatProfileId);
                 await chatPage.LaunchChatPodAsync();
             },
             TimeSpan.FromSeconds(35));
@@ -284,7 +298,7 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     /// <para>
     /// This test drives the full UI → dispatcher → error-display path:
     /// <list type="bullet">
-    ///   <item>Select template and click Launch → job is created by the DI dispatcher.</item>
+    ///   <item>Select the profile and click Launch → job is created by the DI dispatcher.</item>
     ///   <item>No agent connects, so the dispatcher's connect-timeout fires.</item>
     ///   <item><see cref="AgentChatPage.WaitForLaunchErrorAsync"/> confirms the error banner
     ///   appears in the browser.</item>
@@ -299,15 +313,17 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     [Fact]
     public async Task AgentChat_PodNeverConnects_PageShowsErrorAndJobCleanedup()
     {
+        await SeedChatProfileAsync();
+
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();
 
-        // ── Act: select template and click Launch; intercept the created job ──
+        // ── Act: select the profile and click Launch; intercept the created job ──
         // We subscribe to ChatJobCreated so we know which job to watch for deletion.
         var job = await WaitForFirstChatJobAsync(
             async () =>
             {
-                await chatPage.SelectTemplateAsync("kiro,dotnet");
+                await chatPage.SelectProfileAsync(ChatProfileId);
                 await chatPage.LaunchChatPodAsync();
             },
             TimeSpan.FromSeconds(35));
@@ -356,13 +372,15 @@ public sealed class AgentChatUiRoundTripTests : E2ETestBase
     [Fact]
     public async Task AgentChat_PageClosed_ComponentDisposeTerminatesChat()
     {
+        await SeedChatProfileAsync();
+
         var chatPage = new AgentChatPage(Page, BaseUrl);
         await chatPage.NavigateAsync();
 
         var job = await WaitForFirstChatJobAsync(
             async () =>
             {
-                await chatPage.SelectTemplateAsync("kiro,dotnet");
+                await chatPage.SelectProfileAsync(ChatProfileId);
                 await chatPage.LaunchChatPodAsync();
             },
             TimeSpan.FromSeconds(35));
