@@ -364,7 +364,9 @@ public class PreparingForPullRequestPropertyTests
         mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
-                Identifier = "42", Title = "Test Issue", Description = "Test description",
+                Identifier = "42",
+                Title = "Test Issue",
+                Description = "Test description",
                 Labels = Array.Empty<string>()
             });
         mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

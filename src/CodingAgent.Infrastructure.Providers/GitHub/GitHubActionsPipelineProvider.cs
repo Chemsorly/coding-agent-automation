@@ -216,9 +216,9 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         foreach (var run in runs)
         {
             var state = ClassifyRun(run);
-            if (state == PipelineRunState.Running)       hasRunning = true;
-            else if (state == PipelineRunState.Pending)  hasPending = true;
-            else if (state == PipelineRunState.Failed)   hasFailed = true;
+            if (state == PipelineRunState.Running) hasRunning = true;
+            else if (state == PipelineRunState.Pending) hasPending = true;
+            else if (state == PipelineRunState.Failed) hasFailed = true;
             else if (state == PipelineRunState.Cancelled) hasCancelled = true;
         }
 
@@ -245,7 +245,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 
         if (run.Status.Value == WorkflowRunStatus.Completed)
         {
-            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)  return PipelineRunState.Failed;
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure) return PipelineRunState.Failed;
             if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled) return PipelineRunState.Cancelled;
         }
 
