@@ -63,6 +63,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _registry.GetByAgentId(agentId);
 
     /// <inheritdoc />
+    public Task<AgentEntry?> GetByAgentIdAsync(AgentId agentId, CancellationToken ct = default)
+        => _registry.GetByAgentIdAsync(agentId, ct);
+
+    /// <inheritdoc />
     public AgentEntry? GetByConnectionId(string connectionId)
         => _registry.GetByConnectionId(connectionId);
 

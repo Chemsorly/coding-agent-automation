@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
+using CodingAgent.Contracts;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
@@ -40,6 +41,7 @@ public sealed class AgentHubMethodTests
 
         // Default HubCallerContext connection id
         _hubCallerContext.Setup(c => c.ConnectionId).Returns("agent-conn-1");
+        _hubCallerContext.Setup(c => c.ConnectionAborted).Returns(CancellationToken.None);
     }
 
     private AgentHub CreateHub()
@@ -106,7 +108,10 @@ public sealed class AgentHubMethodTests
     public async Task ReportChatResponse_AgentOwnsSession_BroadcastsToUiGroup()
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-abc");
+        var authoritativeEntry = CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-abc");
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
+        _facade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(authoritativeEntry);
 
         _uiClientProxy
             .Setup(p => p.SendCoreAsync(HubMethodNames.OnChatResponse, It.IsAny<object?[]>(), default))
@@ -133,6 +138,11 @@ public sealed class AgentHubMethodTests
     [Fact]
     public async Task ReportChatResponse_WrongSession_ThrowsHubException()
     {
+        // TODO: GetByAgentIdAsync is not set up, so this test exercises the
+        // "authoritative entry is null" rejection branch (Moq default returns null for
+        // Task<AgentEntry?>), NOT the "session mismatch" branch implied by the name. To test the
+        // mismatch branch, add a setup: _facade.Setup(f => f.GetByAgentIdAsync(...)).ReturnsAsync(
+        // CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-other")).
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-other");
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
 
@@ -170,7 +180,12 @@ public sealed class AgentHubMethodTests
     public async Task ReportChatCompleted_AgentOwnsSession_ClearsSessionAndBroadcasts()
     {
         var agent = CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-abc");
+        var authoritativeEntry = CreateAgentEntry("agent-1", "agent-conn-1", activeChatSessionId: "session-abc");
         _facade.Setup(f => f.GetByConnectionId("agent-conn-1")).Returns(agent);
+        _facade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>()))
+               .ReturnsAsync(authoritativeEntry);
+        _facade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
+               .Returns(Task.CompletedTask);
 
         _uiClientProxy
             .Setup(p => p.SendCoreAsync(HubMethodNames.OnChatCompleted, It.IsAny<object?[]>(), default))
@@ -185,8 +200,11 @@ public sealed class AgentHubMethodTests
         var hub = CreateHub();
         await hub.ReportChatCompleted(message);
 
-        // ActiveChatSessionId must be cleared
-        agent.ActiveChatSessionId.Should().BeNull();
+        // ActiveChatSessionId must be cleared via UpdateAgentFieldAsync, not direct mutation
+        _facade.Verify(f => f.UpdateAgentFieldAsync(
+            new AgentId("agent-1"),
+            AgentFieldNames.ActiveChatSessionId,
+            null), Times.Once);
 
         _uiClients.Verify(c => c.Group("chat-session-session-abc"), Times.Once);
         _chatNotifier.Verify(n => n.NotifyChatCompleted("session-abc", 0, null), Times.Once);

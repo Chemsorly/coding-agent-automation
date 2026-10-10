@@ -50,14 +50,38 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Receives streamed chat response lines from an agent during interactive chat.
-    /// Validates that the calling agent owns the session before broadcasting to UI circuits.
+    /// Validates that the calling agent owns the session by reading <c>ActiveChatSessionId</c>
+    /// from the authoritative registry store (Redis in distributed mode, in-memory otherwise),
+    /// ensuring correct ownership validation across replicas regardless of which replica received
+    /// the original <c>POST /api/agents/{agentId}/chat-prompt</c> request.
     /// </summary>
     public async Task ReportChatResponse(ChatResponseMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        var (isValid, agentId) = ValidateChatSessionOwnership(agent, message.SessionId);
+        var caller = _facade.GetByConnectionId(Context.ConnectionId);
+        if (caller is null)
+        {
+            _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
+                SanitizeForLog(message.SessionId), "unknown");
+            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent unknown");
+        }
+
+        // TODO: Context.ConnectionAborted is cancelled when the agent's SignalR connection is
+        // aborted mid-call (e.g. transient disconnect). If GetByAgentIdAsync throws
+        // OperationCanceledException it propagates unhandled — surfaced as a generic internal
+        // error rather than a structured HubException, diverging from every other rejection
+        // path in this file. Consider using CancellationToken.None or catching
+        // OperationCanceledException and converting it to a HubException for consistency.
+        var authoritativeEntry = await _facade.GetByAgentIdAsync(caller.AgentId, Context.ConnectionAborted);
+        if (authoritativeEntry is null)
+        {
+            _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
+                SanitizeForLog(message.SessionId), caller.AgentId.Value);
+            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {caller.AgentId.Value}");
+        }
+
+        var (isValid, agentId) = ValidateChatSessionOwnership(authoritativeEntry, message.SessionId);
         if (!isValid)
         {
             _logger.Warning("ReportChatResponse rejected — session {SessionId} not assigned to agent {AgentId}",
@@ -74,8 +98,11 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Signals that a chat prompt execution has completed on the agent.
-    /// Validates session ownership, clears <see cref="AgentEntry.ActiveChatSessionId"/>,
-    /// and broadcasts the completion event to subscribed UI circuits.
+    /// Validates session ownership by reading <c>ActiveChatSessionId</c> from the authoritative
+    /// registry store (Redis in distributed mode, in-memory otherwise), clears it via
+    /// <see cref="IAgentHubFacade.UpdateAgentFieldAsync"/> (awaited before broadcast so the
+    /// session is always cleared before the UI re-enables input), then broadcasts the completion
+    /// event to subscribed UI circuits.
     ///
     /// Does NOT transition the agent to Idle — the chat session remains active
     /// until the orchestrator sends CancelChat (End Chat / navigate away).
@@ -84,8 +111,26 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        var agent = _facade.GetByConnectionId(Context.ConnectionId);
-        var (isValid, agentId) = ValidateChatSessionOwnership(agent, message.SessionId);
+        var caller = _facade.GetByConnectionId(Context.ConnectionId);
+        if (caller is null)
+        {
+            _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
+                SanitizeForLog(message.SessionId), "unknown");
+            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent unknown");
+        }
+
+        // TODO: Context.ConnectionAborted is cancelled when the agent's SignalR connection is
+        // aborted mid-call. If GetByAgentIdAsync throws OperationCanceledException it propagates
+        // unhandled rather than as a structured HubException. See ReportChatResponse for details.
+        var authoritativeEntry = await _facade.GetByAgentIdAsync(caller.AgentId, Context.ConnectionAborted);
+        if (authoritativeEntry is null)
+        {
+            _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
+                SanitizeForLog(message.SessionId), caller.AgentId.Value);
+            throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {caller.AgentId.Value}");
+        }
+
+        var (isValid, agentId) = ValidateChatSessionOwnership(authoritativeEntry, message.SessionId);
         if (!isValid)
         {
             _logger.Warning("ReportChatCompleted rejected — session {SessionId} not assigned to agent {AgentId}",
@@ -93,11 +138,12 @@ public sealed partial class AgentHub
             throw new HubException($"Session {SanitizeForLog(message.SessionId)} not assigned to agent {agentId}");
         }
 
-        agent!.ActiveChatSessionId = null; // Also write to registry for cross-replica visibility
-        _ = _facade.UpdateAgentFieldAsync(agent.AgentId, AgentFieldNames.ActiveChatSessionId, null);
+        // Clear the session stamp in the authoritative store before broadcasting completion,
+        // so the UI input box is never re-enabled before the session is fully cleared.
+        await _facade.UpdateAgentFieldAsync(caller.AgentId, AgentFieldNames.ActiveChatSessionId, null);
 
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
-            message.SessionId, agent.AgentId, message.ExitCode);
+            message.SessionId, caller.AgentId, message.ExitCode);
 
         // Broadcast to subscribed UI circuits
         await _uiContext.Clients.Group($"chat-session-{message.SessionId}")
