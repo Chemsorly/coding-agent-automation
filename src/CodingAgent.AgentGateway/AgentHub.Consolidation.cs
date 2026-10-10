@@ -11,11 +11,10 @@ public sealed partial class AgentHub
     /// <summary>
     /// Receives the result of a FetchModels request from an agent.
     /// </summary>
-    public Task ReportFetchModelsResult(FetchModelsResponse response)
+    public async Task ReportFetchModelsResult(FetchModelsResponse response)
     {
         ArgumentNullException.ThrowIfNull(response);
-        _consolidationOps.CompleteModelFetchRequest(response);
-        return Task.CompletedTask;
+        await _consolidationOps.CompleteModelFetchRequestAsync(response);
     }
 
     // ── Consolidation ───────────────────────────────────────────────────
