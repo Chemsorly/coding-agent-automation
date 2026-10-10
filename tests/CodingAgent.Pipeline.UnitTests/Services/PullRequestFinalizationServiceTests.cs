@@ -2148,6 +2148,71 @@ public class PullRequestFinalizationServiceTests
         run.PullRequestBody.Should().Be("existing body");
     }
 
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenUpdatePrThrows_SwallowsExceptionAndCompletes()
+    {
+        // Covers the catch block in TryAppendDroppedIdentifiersSectionAsync (non-OCE exception from
+        // UpdatePullRequestAsync must be swallowed and logged; method must return without throwing).
+        using var tmpDir = new TempDirectory();
+        // No .agent/pr-description.md → file-not-found path fires → TryAppendDroppedIdentifiersSectionAsync is called.
+        Directory.CreateDirectory(Path.Combine(tmpDir.Path, ".agent"));
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "77";
+        run.PullRequestBody = "original body";
+        run.NotReappliedIdentifiersByFile = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["src/Throw.cs"] = ["ThrowMethod"]
+        };
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("simulated transient failure"));
+
+        // Must not throw — helper swallows non-OCE exceptions and logs a warning.
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        // PR body is unchanged because the update failed and was swallowed.
+        run.PullRequestBody.Should().Be("original body");
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_WhenAgentThrows_SwallowsExceptionAndCompletes()
+    {
+        // Covers the outer catch block in GeneratePrDescriptionAsync (non-OCE exception from
+        // agentProvider.ExecuteAsync must be swallowed; method must return without throwing).
+        using var tmpDir = new TempDirectory();
+
+        var run = CreateRun();
+        run.WorkspacePath = tmpDir.Path;
+        run.PullRequestNumber = "55";
+        run.PullRequestBody = "original body";
+
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ThrowsAsync(new InvalidOperationException("agent exploded"));
+
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        // Must not throw — outer catch swallows non-OCE exceptions.
+        await _sut.GeneratePrDescriptionAsync(
+            run, agentProvider.Object, repoProvider.Object,
+            new PipelineConfiguration(), _ => { }, CancellationToken.None);
+
+        // PR body is unchanged — exception was swallowed before any update.
+        run.PullRequestBody.Should().Be("original body");
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(
+            It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     // ── Helper: TempDirectory ────────────────────────────────────────────────
 
     // TODO: The draft PR path added in PullRequestFinalizationService.RunFullPrCreationAsync
