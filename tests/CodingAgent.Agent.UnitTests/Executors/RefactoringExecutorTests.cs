@@ -1162,14 +1162,14 @@ public class RefactoringExecutorTests : IDisposable
 
     private static RefactoringProposal Proposal(
         string title, IReadOnlyList<string>? dependsOn = null, IReadOnlyList<string>? prerequisites = null) => new()
-    {
-        Title = title,
-        AffectedFiles = ["x"],
-        Description = "d",
-        Rationale = "r",
-        DependsOn = dependsOn,
-        Prerequisites = prerequisites
-    };
+        {
+            Title = title,
+            AffectedFiles = ["x"],
+            Description = "d",
+            Rationale = "r",
+            DependsOn = dependsOn,
+            Prerequisites = prerequisites
+        };
 
     [Fact]
     public void TopologicalSortProposals_IndependentProposals_KeepsTheirOrder()
@@ -1995,7 +1995,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [new IssueSummary { Identifier = "10", Title = "Scan A", Labels = ["agent:generated"], Description = scanFooter }],
-                Page = 1, PageSize = 100, HasMore = true
+                Page = 1,
+                PageSize = 100,
+                HasMore = true
             });
         _mockIssueProvider
             .Setup(x => x.ListClosedIssuesAsync(2, 100,
@@ -2004,7 +2006,9 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = [new IssueSummary { Identifier = "11", Title = "Scan B", Labels = ["agent:generated"], Description = scanFooter }],
-                Page = 2, PageSize = 100, HasMore = false
+                Page = 2,
+                PageSize = 100,
+                HasMore = false
             });
 
         var result = await executor.CollectScanIssueReferencesAsync(
@@ -2043,7 +2047,9 @@ public class RefactoringExecutorTests : IDisposable
                     new IssueSummary { Identifier = "20", Title = "Scan issue", Labels = ["agent:generated"], Description = scanFooter },
                     new IssueSummary { Identifier = "21", Title = "Non-scan issue", Labels = ["agent:generated"], Description = "Some other description." }
                 ],
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         var result = await executor.CollectScanIssueReferencesAsync(
@@ -2167,7 +2173,9 @@ public class RefactoringExecutorTests : IDisposable
                         Description = $"Some description. {scanFooter}"
                     }
                 ],
-                Page = 1, PageSize = 100, HasMore = false
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
             });
 
         _mockAgentProvider
