@@ -45,15 +45,15 @@ public sealed class AgentHubOnDisconnectedTests
         string connectionId,
         IReadOnlyList<string>? labels = null,
         string? activeJobId = null) => new()
-    {
-        AgentId = agentId,
-        ConnectionId = connectionId,
-        Hostname = "host",
-        Labels = labels ?? Array.Empty<string>(),
-        Status = AgentStatus.Idle,
-        ActiveJobId = activeJobId,
-        RegisteredAt = DateTimeOffset.UtcNow
-    };
+        {
+            AgentId = agentId,
+            ConnectionId = connectionId,
+            Hostname = "host",
+            Labels = labels ?? Array.Empty<string>(),
+            Status = AgentStatus.Idle,
+            ActiveJobId = activeJobId,
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
 
     // ── Fix 1: chat agent deregistered on disconnect ──────────────────────────
 
