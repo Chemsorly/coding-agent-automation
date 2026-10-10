@@ -606,13 +606,13 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task IsIssueDistributedAsync_DelegatesToIssueDrawerService()
     {
-        _mockIssueDrawerService.Setup(s => s.IsIssueDistributedAsync("42", "ip-1"))
+        _mockIssueDrawerService.Setup(s => s.IsIssueDistributedAsync((IssueIdentifier)"42", (ProviderConfigId)"ip-1"))
             .ReturnsAsync(true);
 
         var result = await _service.IsIssueDistributedAsync("42", "ip-1");
 
         Assert.True(result);
-        _mockIssueDrawerService.Verify(s => s.IsIssueDistributedAsync("42", "ip-1"), Times.Once);
+        _mockIssueDrawerService.Verify(s => s.IsIssueDistributedAsync((IssueIdentifier)"42", (ProviderConfigId)"ip-1"), Times.Once);
     }
 
     [Fact]
@@ -629,6 +629,9 @@ public class AgentCodingPageServiceTests
     [Fact]
     public void IsIssueActive_DelegatesToIssueDrawerService()
     {
+        // TODO: Use (ProviderConfigId)"ip-1" for the second argument in the mock setup (instead of a raw string literal)
+        // to make the ProviderConfigId type enforcement explicit and consistent with the IsIssueDistributedAsync test below.
+        // The implicit conversion from string currently masks the type boundary in this test.
         _mockIssueDrawerService.Setup(s => s.IsIssueActive((IssueIdentifier)"42", "ip-1"))
             .Returns(true);
 

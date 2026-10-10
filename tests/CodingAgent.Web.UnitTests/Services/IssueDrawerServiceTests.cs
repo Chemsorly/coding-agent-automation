@@ -348,10 +348,14 @@ public class IssueDrawerServiceTests
     [Fact]
     public async Task IsIssueDistributedAsync_DelegatesToWorkDistributor()
     {
+        // TODO: Use (IssueIdentifier)"42" and (ProviderConfigId)"ip-1" in the mock setup and Verify calls
+        // to match the strongly-typed pattern used elsewhere in this test suite and make the type
+        // safety enforcement visible. Raw string literals compile via implicit conversions but do not
+        // verify that IssueDrawerService actually forwards the correctly-typed values to the distributor.
         _mockWorkDistributor.Setup(w => w.IsIssueDistributedAsync("42", "ip-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
-        var result = await _service.IsIssueDistributedAsync("42", "ip-1");
+        var result = await _service.IsIssueDistributedAsync((IssueIdentifier)"42", (ProviderConfigId)"ip-1");
 
         Assert.True(result);
         _mockWorkDistributor.Verify(w => w.IsIssueDistributedAsync("42", "ip-1", It.IsAny<CancellationToken>()), Times.Once);
