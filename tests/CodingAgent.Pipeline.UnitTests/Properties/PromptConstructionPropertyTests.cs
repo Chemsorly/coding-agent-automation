@@ -464,6 +464,17 @@ public class PromptConstructionPropertyTests
         prompt.Should().NotContain("## Review Findings");
     }
 
+    /// <summary>
+    /// BuildFixPrompt includes the non-configurable gate integrity rule.
+    /// </summary>
+    [Fact]
+    public void BuildFixPrompt_IncludesGateIntegrityRule()
+    {
+        var prompt = PromptBuilder.BuildFixPrompt("Fix the issues.");
+
+        prompt.Should().Contain(PipelineConstants.GateIntegrityRule);
+    }
+
     // --- QualityGatesOutputDirectory constant tests ---
 
     [Fact]

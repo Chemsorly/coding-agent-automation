@@ -939,14 +939,27 @@ public class RefactoringExecutorTests : IDisposable
         body.Should().Contain("- [ ] &lt;script>xss&lt;/script>");
     }
 
+    // ─── Autolink escaping in prerequisites (issue #1450) ───────────────────────
+
+    private static RefactoringProposal Proposal(
+        string title, IReadOnlyList<string>? prerequisites = null) => new()
+        {
+            Title = title,
+            AffectedFiles = ["x"],
+            Description = "d",
+            Rationale = "r",
+            Prerequisites = prerequisites
+        };
+
     [Fact]
-    public async Task ExecuteAsync_DependentProposal_InjectedBodyContainsDependsOnLine()
+    public async Task ExecuteAsync_ProposalWithDependsOnInJson_CreatesInFileOrderWithNoDependsOnLines()
     {
-        // Arrange
+        // Requirement 6: when the proposals JSON contains a "dependsOn" field (from an older agent
+        // run), the field is silently ignored (System.Text.Json drops unknown properties by default),
+        // proposals are created in file order, and neither issue body contains a "Depends on" line.
         var executor = CreateExecutor();
         var job = CreateJob();
 
-        // Proposal A has no dependencies; proposal B depends on A by exact title match
         var proposalsJson = """
             [
                 {
@@ -977,144 +990,7 @@ public class RefactoringExecutorTests : IDisposable
             .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
 
-        // Capture bodies for each call and return distinct identifiers per call.
-        // callIndex is incremented exclusively in the Callback (which Moq fires before the
-        // ReturnsAsync factory), so the factory reads identifiers[callIndex - 1] after the
-        // increment. This avoids relying on the internal Callback-before-Returns ordering of
-        // the increment side-effect in the factory lambda.
-        var capturedBodies = new List<string>();
-        var callIndex = 0;
-        var identifiers = new[] { "10", "11" };
-        _mockIssueProvider
-            .Setup(x => x.CreateIssueAsync(
-                It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, body, _, _) =>
-            {
-                capturedBodies.Add(body);
-                callIndex++;
-            })
-            // TODO: The clamped guard (callIndex - 1 < identifiers.Length ? ... : identifiers.Length - 1)
-            // silently returns the last identifier on any unexpected extra call instead of throwing.
-            // This masks a production regression where CreateIssueAsync is called more times than expected.
-            // Replace the guard with an unclamped identifiers[callIndex - 1] (or an explicit throw) so
-            // that an over-call surfaces as a test failure rather than returning a duplicate identifier.
-            .ReturnsAsync(() => new CreatedIssueResult
-            {
-                Identifier = identifiers[callIndex - 1 < identifiers.Length ? callIndex - 1 : identifiers.Length - 1],
-                Url = "https://github.com/test/repo/issues/x"
-            });
-
-        // Act
-        var result = await executor.ExecuteAsync(
-            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
-
-        // Assert
-        result.Success.Should().BeTrue();
-        result.CreatedIssues.Should().HaveCount(2);
-
-        // Proposal B's body (second call) must contain "Depends on #10"
-        capturedBodies.Should().HaveCount(2);
-        // TODO: Tighten this assertion to capturedBodies[1].Should().StartWith("Depends on #10") to
-        // pin the prepend contract (production code does $"{depSection}\n\n{body}"). The current
-        // Contain check passes even if the dependency line is appended or embedded rather than prepended.
-        capturedBodies[1].Should().Contain("Depends on #10");
-        // Proposal A's body (first call) must NOT contain any dependency line
-        capturedBodies[0].Should().NotContain("Depends on #");
-        // TODO: Add a captured-title assertion to verify ordering: the first CreateIssueAsync call
-        // was for the prerequisite proposal ("Extract shared validation logic") and the second for
-        // the dependent ("Simplify callers of validation"). Without this, if proposal processing
-        // order changes incorrectly but the resolver still resolves the reference, the test may
-        // pass for the wrong reason or fail with a misleading message.
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_DependsOnUnresolvableTitle_OmitsDependsOnLine()
-    {
-        // Arrange
-        var executor = CreateExecutor();
-        var job = CreateJob();
-
-        // Proposal B references a title that doesn't exist in the batch
-        var proposalsJson = """
-            [
-                {
-                    "title": "Simplify callers of validation",
-                    "affectedFiles": ["src/Handler.cs"],
-                    "description": "Use the extracted validator.",
-                    "rationale": "Follows from extraction.",
-                    "dependsOn": ["Nonexistent proposal title"]
-                }
-            ]
-            """;
-
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
-            .Callback<WorkspacePath, CancellationToken>((path, _) =>
-            {
-                RefactoringTestWorkspace.WriteProposals(path, proposalsJson);
-            })
-            .Returns(Task.CompletedTask);
-
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
-
-        string? capturedBody = null;
-        _mockIssueProvider
-            .Setup(x => x.CreateIssueAsync(
-                It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, body, _, _) => capturedBody = body)
-            .ReturnsAsync(new CreatedIssueResult { Identifier = "20", Url = "https://github.com/test/repo/issues/20" });
-
-        // Act
-        var result = await executor.ExecuteAsync(
-            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
-
-        // Assert — unresolvable title should be silently omitted, not cause failure
-        result.Success.Should().BeTrue();
-        result.CreatedIssues.Should().HaveCount(1);
-        capturedBody.Should().NotBeNull();
-        capturedBody!.Should().NotContain("Depends on #");
-    }
-
-    [Fact]
-    public async Task ExecuteAsync_ProposalDependsOnALaterProposal_CreatesTheDependencyFirst()
-    {
-        // Proposal A lists B, which comes later in the batch. Proposals are created in dependency
-        // order (issue #1450), so B exists when A's dependency line is resolved.
-        var executor = CreateExecutor();
-        var job = CreateJob();
-
-        var proposalsJson = """
-            [
-                {
-                    "title": "Extract class from service",
-                    "affectedFiles": ["src/Service.cs"],
-                    "description": "Extract the dispatch run creator.",
-                    "rationale": "Too many responsibilities.",
-                    "dependsOn": ["Remove dead code cluster"]
-                },
-                {
-                    "title": "Remove dead code cluster",
-                    "affectedFiles": ["src/Service.cs"],
-                    "description": "Delete unused methods.",
-                    "rationale": "285 lines of dead code."
-                }
-            ]
-            """;
-
-        _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
-            .Callback<WorkspacePath, CancellationToken>((path, _) => RefactoringTestWorkspace.WriteProposals(path, proposalsJson))
-            .Returns(Task.CompletedTask);
-
-        _mockAgentProvider
-            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
-            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Analysis complete."] });
-
-        var createdTitles = new List<string>();
+        var capturedTitles = new List<string>();
         var capturedBodies = new List<string>();
         _mockIssueProvider
             .Setup(x => x.CreateIssueAsync(
@@ -1122,90 +998,32 @@ public class RefactoringExecutorTests : IDisposable
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((title, body, _, _) =>
             {
-                createdTitles.Add(title);
+                capturedTitles.Add(title);
                 capturedBodies.Add(body);
             })
-            .ReturnsAsync(() => new CreatedIssueResult
-            {
-                Identifier = (1000 + capturedBodies.Count).ToString(CultureInfo.InvariantCulture),
-                Url = $"https://github.com/test/repo/issues/{1000 + capturedBodies.Count}"
-            });
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "1", Url = "https://github.com/test/repo/issues/1" });
 
+        // Act
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
+        // Assert — both issues are created in file order, neither body has a "Depends on" line
         result.Success.Should().BeTrue();
-        createdTitles.Should().Equal("Remove dead code cluster", "Extract class from service");
-        capturedBodies[0].Should().NotContain("Depends on #");
-        capturedBodies[1].Should().StartWith("Depends on #1001");
+        result.CreatedIssues.Should().HaveCount(2);
+        // TODO: capturedTitles captures the raw title argument passed to CreateIssueAsync, which is
+        // the sanitized title (SanitizeTitle is called before CreateIssueAsync). If SanitizeTitle
+        // ever transforms these titles (e.g. truncation), this assertion will fail with a misleading
+        // message unrelated to the ordering contract being verified. Use SanitizeTitle-aware expected
+        // values if the titles become more complex.
+        capturedTitles.Should().Equal("Extract shared validation logic", "Simplify callers of validation");
+        // TODO: capturedBodies is populated by a separate mock callback, not derived from CreatedIssues.
+        // The HaveCount(2) on CreatedIssues above does not guard capturedBodies. If CreateIssueAsync
+        // is called fewer than 2 times, the index access below throws ArgumentOutOfRangeException
+        // instead of a meaningful FluentAssertions failure. Add capturedBodies.Should().HaveCount(2)
+        // here to produce a clear message when the callback count diverges from CreatedIssues.
+        capturedBodies[0].Should().NotContain("Depends on");
+        capturedBodies[1].Should().NotContain("Depends on");
     }
-
-    // ─── Topological sort of proposals (issue #1450) ────────────────────────────
-
-    private static RefactoringProposal Proposal(
-        string title, IReadOnlyList<string>? dependsOn = null, IReadOnlyList<string>? prerequisites = null) => new()
-    {
-        Title = title,
-        AffectedFiles = ["x"],
-        Description = "d",
-        Rationale = "r",
-        DependsOn = dependsOn,
-        Prerequisites = prerequisites
-    };
-
-    [Fact]
-    public void TopologicalSortProposals_IndependentProposals_KeepsTheirOrder()
-    {
-        var sorted = RefactoringExecutor.TopologicalSortProposals([Proposal("A"), Proposal("B"), Proposal("C")]);
-
-        sorted.Select(p => p.Title).Should().Equal("A", "B", "C");
-    }
-
-    [Fact]
-    public void TopologicalSortProposals_DependentProposal_MovesAfterItsDependency()
-    {
-        var sorted = RefactoringExecutor.TopologicalSortProposals(
-            [Proposal("B depends on A", ["A is independent"]), Proposal("A is independent")]);
-
-        sorted.Select(p => p.Title).Should().Equal("A is independent", "B depends on A");
-    }
-
-    [Fact]
-    public void TopologicalSortProposals_Cycle_KeepsTheOriginalOrder()
-    {
-        var sorted = RefactoringExecutor.TopologicalSortProposals([Proposal("A", ["B"]), Proposal("B", ["A"])]);
-
-        sorted.Select(p => p.Title).Should().Equal("A", "B");
-    }
-
-    [Fact]
-    public void TopologicalSortProposals_DependencyOutsideTheBatch_IsIgnored()
-    {
-        var sorted = RefactoringExecutor.TopologicalSortProposals(
-            [Proposal("A", ["External issue not in batch"]), Proposal("B")]);
-
-        sorted.Select(p => p.Title).Should().Equal("A", "B");
-    }
-
-    [Fact]
-    public void TopologicalSortProposals_DependencyTitleWithOtherCaseAndSpaces_MovesAfterItsDependency()
-    {
-        var sorted = RefactoringExecutor.TopologicalSortProposals(
-            [Proposal("B", ["  a  "]), Proposal("A")]);
-
-        sorted.Select(p => p.Title).Should().Equal("A", "B");
-    }
-
-    [Fact]
-    public void TopologicalSortProposals_SelfReference_IsIgnored()
-    {
-        var sorted = RefactoringExecutor.TopologicalSortProposals(
-            [Proposal("Y", ["X"]), Proposal("X", [" x "])]);
-
-        sorted.Select(p => p.Title).Should().Equal("X", "Y");
-    }
-
-    // ─── Autolink escaping in prerequisites (issue #1450) ───────────────────────
 
     [Fact]
     public void FormatIssueBody_PrerequisiteWithHashNumber_EscapesTheAutolink()
@@ -1239,12 +1057,6 @@ public class RefactoringExecutorTests : IDisposable
 
         body.Should().Contain("- Add characterization tests for X before refactoring");
     }
-
-    // TODO: Add a test covering the case where the first proposal fails to be created (mock throws)
-    // and a later proposal lists its title in DependsOn. Because the catch block swallows per-proposal
-    // exceptions and Register is only called after success, the failed title is never registered and
-    // the dependent proposal silently receives no dependency line. A test would document this
-    // behavior and prevent a future change from accidentally registering titles for failed creations.
 
     // ── Issue #2681: exception-swallowing / misleading permissions hint ───────────────────────
 
@@ -1886,5 +1698,130 @@ public class RefactoringExecutorTests : IDisposable
         var summary = RefactoringExecutor.FormatRefactoringSummary([], proposalCount: 0, droppedCount: 2);
 
         summary.Should().Be("No refactoring opportunities identified (2 proposal(s) dropped by validation)");
+    }
+
+    // ── Before You Start section (issue #3541) ────────────────────────────────────────────────
+
+    // TODO: Add a test that asserts the footer (GeneratedIssueFooter / "automatically generated" line) is still the
+    // body's last line when the ## Before You Start section is present. The issue explicitly requires "the footer is
+    // still the body's last line", but no test currently covers that invariant for bodies that contain the new section.
+    // See review finding #9 (Correctness) and TestQualityReviewer finding at line 1966.
+
+    [Fact]
+    public void FormatIssueBody_WithScopeQueryAndEvidenceAndCommitSha_RendersBeforeYouStartSection()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = "git grep -n 'catch (Exception ex)' -- src",
+            Evidence = "src/A.cs:L10\ncatch (Exception ex) { }"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "50e1ff446xyz012");
+
+        // Section is present and before ## Suggested Approach
+        var beforeYouStart = body.IndexOf("## Before You Start", StringComparison.Ordinal);
+        var suggestedApproach = body.IndexOf("## Suggested Approach", StringComparison.Ordinal);
+        beforeYouStart.Should().BeGreaterThanOrEqualTo(0);
+        suggestedApproach.Should().BeGreaterThan(beforeYouStart);
+
+        // 12-char SHA truncation
+        // TODO: Add a test case with a commitSha shorter than 12 characters to explicitly verify that Math.Min(12,
+        // commitSha.Length) produces the full string rather than truncating. The current input "50e1ff446xyz012"
+        // (15 chars) validates the happy-path truncation, but a short SHA (e.g. "abc") is untested.
+        // See TestQualityReviewer finding at line 1907.
+        body.Should().Contain("`50e1ff446xyz`");
+
+        // Both bullets present
+        body.Should().Contain("Run the search under **Scope**.");
+        body.Should().Contain("Look for the code quoted under **Evidence**.");
+
+        // wont_do instruction
+        body.Should().Contain("`wont_do`");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithEvidenceButNoScopeQuery_RendersBeforeYouStartWithOnlyEvidenceBullet()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = null,
+            Evidence = "src/A.cs:L10\ncatch (Exception ex) { }"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+
+        body.Should().Contain("## Before You Start");
+        body.Should().Contain("Look for the code quoted under **Evidence**.");
+        body.Should().NotContain("Run the search under **Scope**.");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithScopeQueryButNoEvidence_RendersBeforeYouStartWithOnlyScopeBullet()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = "git grep -n 'pattern' -- src",
+            Evidence = null
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+
+        body.Should().Contain("## Before You Start");
+        body.Should().Contain("Run the search under **Scope**.");
+        body.Should().NotContain("Look for the code quoted under **Evidence**.");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNeitherScopeQueryNorEvidence_OmitsBeforeYouStartSection()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = null,
+            Evidence = null
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+
+        body.Should().NotContain("## Before You Start");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullCommitSha_RendersEarlierCommitWording()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = "git grep -n 'pattern' -- src",
+            Evidence = "src/A.cs:L10\nsome code"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, commitSha: null);
+
+        body.Should().Contain("## Before You Start");
+        body.Should().Contain("written against an earlier commit");
+        // TODO: The NotContain assertion below passes both when the null branch correctly uses "an earlier commit"
+        // and if the section were omitted entirely. The positive Contain assertion above is the real guard; this
+        // negative assertion gives a false sense of completeness. Consider replacing or supplementing it with a
+        // stricter assertion (e.g. asserting the full intro sentence). See TestQualityReviewer finding at line 1940.
+        body.Should().NotContain("written against commit `");
     }
 }
