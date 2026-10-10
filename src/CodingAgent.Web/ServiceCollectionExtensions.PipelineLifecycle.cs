@@ -19,8 +19,7 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger,
-            sp.GetService<IAgentCancellationSender>()));
+            Log.Logger));
 
         services.AddSingleton<IBrainSyncService>(sp => new BrainSyncService(
             sp.GetRequiredService<IBrainUpdateService>(), Log.Logger));

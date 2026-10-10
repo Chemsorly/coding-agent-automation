@@ -1026,6 +1026,47 @@ public partial class LayerBoundaryTests
             "Complete T8 to remove these references.");
     }
 
+    // ── Issue #3448: Web host must not send through AgentHub ──────────────
+    // Only the API maps AgentHub. Web sending through it either silently drops (no Redis)
+    // or cross-pollinates agent connections registered in the API process. This source-scan
+    // guard ensures the removed dead wiring never creeps back in.
+
+    [Fact]
+    public void WebHost_ShouldNot_SendThroughAgentHub()
+    {
+        var srcDir = Path.Combine(RepoRoot, "src", "CodingAgent.Web");
+        var violations = new List<string>();
+
+        // TODO: The path-segment filter uses a substring match (e.g. $"{sep}bin{sep}"), which would
+        // incorrectly exclude directories named 'bindings' or 'objects'. This is the same pre-existing
+        // pattern used throughout this file. If it ever causes false negatives, replace with a
+        // split-on-separator approach: f.Split(Path.DirectorySeparatorChar) doesn't contain "obj"/"bin".
+        foreach (var file in Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(srcDir, "*.razor", SearchOption.AllDirectories))
+            .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")
+                     && !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}")))
+        {
+            var content = File.ReadAllText(file);
+            // TODO: This guard does not check for "ModelFetchService", which is one of the four
+            // identifiers the acceptance-criteria grep requires to be absent from src/CodingAgent.Web
+            // (see issue #3448, AC1). A future developer could re-add ModelFetchService to a Web
+            // source file without this test catching it. Extend the condition below to include
+            // content.Contains("ModelFetchService", StringComparison.Ordinal) when the issue that
+            // defines the full surface (currently AC1 of #3448) is next touched.
+            if (content.Contains("IHubContext<AgentHub", StringComparison.Ordinal) ||
+                content.Contains("SignalRAgentCommunication", StringComparison.Ordinal) ||
+                content.Contains("IAgentCancellationSender", StringComparison.Ordinal))
+            {
+                violations.Add(Path.GetRelativePath(srcDir, file));
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            $"CodingAgent.Web must not send through AgentHub. Only the API maps AgentHub, " +
+            $"so agent sends belong in the API process. Files with forbidden references: " +
+            $"{string.Join(", ", violations)}.");
+    }
+
     // ── Issue #2862: SignalR + MessagePack registration must not be duplicated ─────
     // After consolidation into CodingAgent.AgentGateway (AddAgentSignalRServices), neither
     // host registration file may contain the MessagePack protocol setup or the

@@ -9,6 +9,10 @@ using CodingAgent.Orchestration.Registry;
 using CodingAgent.Pipeline;
 using CodingAgent.Pipeline.Interfaces;
 using CodingAgent.Pipeline.Models;
+// TODO: Only NotificationService from this namespace is used here; ModelFetchService (the other
+// consumer) was removed in #3448. If a future Roslyn analyser run treats unused-using as an error,
+// verify whether NotificationService has been moved out of CodingAgent.Web.Services and remove
+// this using if it becomes truly dead.
 using CodingAgent.Web.Services;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -32,10 +36,6 @@ public class SettingsPageComponentTests : BunitContext
         Services.AddSingleton(new CodingAgent.Infrastructure.GitHub.GitHubValidationService());
         Services.AddSingleton(new CodingAgent.Infrastructure.GitLab.GitLabValidationService());
         Services.AddSingleton(_mockProviderFactory.Object);
-        Services.AddSingleton(new ModelFetchService(
-            new AgentRegistryService(Serilog.Log.Logger),
-            new Mock<IAgentCommunication>().Object,
-            Serilog.Log.Logger));
         Services.AddScoped<NotificationService>();
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
         Services.AddSingleton<JobTemplateStore>(JobTemplateStore.CreateEmpty());

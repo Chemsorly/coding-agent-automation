@@ -512,3 +512,333 @@ public class QualityGateExecutorCiGateBuilderTests
         return (executor, context, mockPipelineProvider, mockCallbacks);
     }
 }
+
+/// <summary>
+/// Characterization tests for the three terminal Build* report methods in
+/// <see cref="QualityGateExecutor"/>: <c>BuildConflictRestartReport</c>,
+/// <c>BuildPrMergedReport</c>, and <c>BuildPrClosedReport</c>.
+///
+/// These tests lock in the exact <c>ExternalCi.Passed</c> flag and <c>ExternalCi.Details</c>
+/// string for each terminal path, and verify that <c>Compilation</c> and <c>Tests</c> from
+/// the input report are passed through unchanged. Added as a prerequisite for the
+/// extract-method refactor in issue #3521 so any accidental change to the Passed flag or
+/// Details strings is caught immediately.
+///
+/// Each test triggers a terminal branch via <c>AppendExternalCiIfNeededAsync</c> (the
+/// Build* methods are private static and cannot be called directly).
+/// </summary>
+public class QualityGateExecutorTerminalReportTests
+{
+    // ── Shared input report with distinct Compilation/Tests values ───────────────────────────
+
+    /// <summary>
+    /// Input report with distinctive non-default values so passthrough assertions are meaningful.
+    /// </summary>
+    private static readonly QualityGateReport InputReport = new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "build-ok-sentinel" },
+        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "test-ok-sentinel" }
+    };
+
+    // ── ConflictRestart: ExternalCi shape ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BuildConflictRestartReport must set ExternalCi.Passed = false and the exact Details string.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCiIfNeeded_WhenConflictRestart_ExternalCiIsFalseWithCorrectDetails()
+    {
+        var (executor, context) = BuildConflictRestartFixture("42");
+
+        var result = await executor.AppendExternalCiIfNeededAsync(
+            context, InputReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse("conflict restart must mark the gate as failed");
+        result.ExternalCi.GateName.Should().Be("External CI");
+        result.ExternalCi.Details.Should().Be(
+            "Conflict restart — PR conflicted with main; re-dispatched as agent:next",
+            "exact Details string must be preserved by any refactor");
+    }
+
+    /// <summary>
+    /// BuildConflictRestartReport must pass Compilation and Tests through from the input report unchanged.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCiIfNeeded_WhenConflictRestart_PreservesCompilationAndTests()
+    {
+        var (executor, context) = BuildConflictRestartFixture("42");
+
+        var result = await executor.AppendExternalCiIfNeededAsync(
+            context, InputReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.Compilation.Should().BeSameAs(InputReport.Compilation,
+            "Compilation must be the same object reference passed through from the input report");
+        result.Tests.Should().BeSameAs(InputReport.Tests,
+            "Tests must be the same object reference passed through from the input report");
+    }
+
+    // ── PrMerged: ExternalCi shape ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BuildPrMergedReport must set ExternalCi.Passed = true and the exact Details string.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCiIfNeeded_WhenPrMerged_ExternalCiIsTrueWithCorrectDetails()
+    {
+        var (executor, context) = BuildPrMergedFixture("42");
+
+        var result = await executor.AppendExternalCiIfNeededAsync(
+            context, InputReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeTrue("PR-merged path must mark the gate as passed");
+        result.ExternalCi.GateName.Should().Be("External CI");
+        result.ExternalCi.Details.Should().Be(
+            "PR was merged — run ended Succeeded",
+            "exact Details string must be preserved by any refactor");
+    }
+
+    /// <summary>
+    /// BuildPrMergedReport must pass Compilation and Tests through from the input report unchanged.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCiIfNeeded_WhenPrMerged_PreservesCompilationAndTests()
+    {
+        var (executor, context) = BuildPrMergedFixture("42");
+
+        var result = await executor.AppendExternalCiIfNeededAsync(
+            context, InputReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.Compilation.Should().BeSameAs(InputReport.Compilation,
+            "Compilation must be the same object reference passed through from the input report");
+        result.Tests.Should().BeSameAs(InputReport.Tests,
+            "Tests must be the same object reference passed through from the input report");
+    }
+
+    // ── PrClosed: ExternalCi shape ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// BuildPrClosedReport must set ExternalCi.Passed = false and the exact Details string.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCiIfNeeded_WhenPrClosed_ExternalCiIsFalseWithCorrectDetails()
+    {
+        var (executor, context) = BuildPrClosedFixture("42");
+
+        var result = await executor.AppendExternalCiIfNeededAsync(
+            context, InputReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.ExternalCi.Should().NotBeNull();
+        result.ExternalCi!.Passed.Should().BeFalse("PR-closed path must mark the gate as failed");
+        result.ExternalCi.GateName.Should().Be("External CI");
+        result.ExternalCi.Details.Should().Be(
+            "PR was closed without merging — run ended Cancelled",
+            "exact Details string must be preserved by any refactor");
+    }
+
+    /// <summary>
+    /// BuildPrClosedReport must pass Compilation and Tests through from the input report unchanged.
+    /// </summary>
+    [Fact]
+    public async Task AppendExternalCiIfNeeded_WhenPrClosed_PreservesCompilationAndTests()
+    {
+        var (executor, context) = BuildPrClosedFixture("42");
+
+        var result = await executor.AppendExternalCiIfNeededAsync(
+            context, InputReport, allowEmptyCommit: false, CancellationToken.None);
+
+        result.Compilation.Should().BeSameAs(InputReport.Compilation,
+            "Compilation must be the same object reference passed through from the input report");
+        result.Tests.Should().BeSameAs(InputReport.Tests,
+            "Tests must be the same object reference passed through from the input report");
+    }
+
+    // ── Fixtures ──────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Builds a fixture that triggers <c>BuildConflictRestartReport</c>: CI never starts
+    /// (GetRunStatusAsync returns Pending) and <c>IsPullRequestBehindBaseAsync</c> returns
+    /// <c>Conflicted</c> on the first poll attempt. Pattern mirrors
+    /// <c>QualityGateExecutorConflictRestartPollTests</c>.
+    /// </summary>
+    private static (QualityGateExecutor executor, QualityGateContext context)
+        BuildConflictRestartFixture(string prNumber)
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockCallbacks = new Mock<IPipelineCallbacks>();
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+
+        SetupCommonRepoMocks(mockRepoProvider);
+        mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockCallbacks.Setup(c => c.TransitionTo(It.IsAny<PipelineStep>()));
+
+        // CI never starts
+        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR is conflicted — triggers BuildConflictRestartReport
+        var prNum = int.Parse(prNumber);
+        mockRepoProvider.Setup(r => r.IsPullRequestBehindBaseAsync(prNum, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PrMergeabilityStatus.Conflicted);
+
+        var executor = new QualityGateExecutor(
+            new Mock<IQualityGateValidator>().Object,
+            new PullRequestOrchestrator(mockLogger.Object),
+            new CiLogWriter(mockLogger.Object),
+            new FeedbackService(mockLogger.Object),
+            mockLogger.Object);
+
+        var context = BuildContext(prNumber, mockCallbacks, mockRepoProvider, mockPipelineProvider);
+        return (executor, context);
+    }
+
+    /// <summary>
+    /// Builds a fixture that triggers <c>BuildPrMergedReport</c>: CI never starts
+    /// (GetRunStatusAsync returns Pending) and <c>GetPullRequestStateAsync</c> returns
+    /// <c>Merged</c>. Pattern mirrors <c>CiPollingCoordinatorTests.PrMergedMidLoop_*</c>.
+    /// </summary>
+    private static (QualityGateExecutor executor, QualityGateContext context)
+        BuildPrMergedFixture(string prNumber)
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockCallbacks = new Mock<IPipelineCallbacks>();
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+
+        SetupCommonRepoMocks(mockRepoProvider);
+        mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // CI never starts
+        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR is merged — triggers BuildPrMergedReport
+        var prNum = int.Parse(prNumber);
+        mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(prNum, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Merged);
+
+        var executor = new QualityGateExecutor(
+            new Mock<IQualityGateValidator>().Object,
+            new PullRequestOrchestrator(mockLogger.Object),
+            new CiLogWriter(mockLogger.Object),
+            new FeedbackService(mockLogger.Object),
+            mockLogger.Object);
+
+        var context = BuildContext(prNumber, mockCallbacks, mockRepoProvider, mockPipelineProvider);
+        return (executor, context);
+    }
+
+    /// <summary>
+    /// Builds a fixture that triggers <c>BuildPrClosedReport</c>: CI never starts
+    /// (GetRunStatusAsync returns Pending) and <c>GetPullRequestStateAsync</c> returns
+    /// <c>Closed</c>. Pattern mirrors <c>CiPollingCoordinatorTests.PrClosedMidLoop_*</c>.
+    /// </summary>
+    private static (QualityGateExecutor executor, QualityGateContext context)
+        BuildPrClosedFixture(string prNumber)
+    {
+        var mockLogger = new Mock<Serilog.ILogger>();
+        var mockCallbacks = new Mock<IPipelineCallbacks>();
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        var mockPipelineProvider = new Mock<IPipelineProvider>();
+
+        SetupCommonRepoMocks(mockRepoProvider);
+        mockCallbacks.Setup(c => c.CreateDraftPrIfNotExists(
+                It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // CI never starts
+        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
+
+        // PR is closed — triggers BuildPrClosedReport
+        var prNum = int.Parse(prNumber);
+        mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(prNum, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(PullRequestState.Closed);
+
+        var executor = new QualityGateExecutor(
+            new Mock<IQualityGateValidator>().Object,
+            new PullRequestOrchestrator(mockLogger.Object),
+            new CiLogWriter(mockLogger.Object),
+            new FeedbackService(mockLogger.Object),
+            mockLogger.Object);
+
+        var context = BuildContext(prNumber, mockCallbacks, mockRepoProvider, mockPipelineProvider);
+        return (executor, context);
+    }
+
+    /// <summary>
+    /// Sets up the mock repository provider with the minimum stubs required for
+    /// <c>AppendExternalCiIfNeededAsync</c> to reach the CI polling loop.
+    /// </summary>
+    private static void SetupCommonRepoMocks(Mock<IRepositoryProvider> mockRepoProvider)
+    {
+        // TODO: Only the 5-parameter CommitAllAsync overload is stubbed here. The 6-parameter
+        // allowEmpty overload (used in PollCiWithNotStartedRetryAsync for empty re-trigger commits)
+        // is not stubbed. This is safe today because all fixtures set CiNotStartedMaxRetries = 0,
+        // which prevents the retry loop from firing. If that config default ever changes, Moq will
+        // return null for the unmatched overload, causing a NullReferenceException instead of a
+        // clear test failure. Consider adding a stub for the 6-parameter overload here to make
+        // the fixture robust to future config changes.
+        mockRepoProvider.Setup(r => r.CommitAllAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        mockRepoProvider.Setup(r => r.PushBranchAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<BranchName>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(r => r.GetHeadCommitShaAsync(
+                It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("sha-terminal-test");
+    }
+
+    private static QualityGateContext BuildContext(
+        string prNumber,
+        Mock<IPipelineCallbacks> mockCallbacks,
+        Mock<IRepositoryProvider> mockRepoProvider,
+        Mock<IPipelineProvider> mockPipelineProvider)
+    {
+        var run = new PipelineRun
+        {
+            RunId = "terminal-report-test",
+            IssueIdentifier = "3521",
+            IssueTitle = "Terminal report characterization test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            WorkspacePath = Path.Combine(Path.GetTempPath(), $"qg-terminal-{Guid.NewGuid():N}"),
+            BranchName = "feature/auto-3521-terminal-test",
+            PullRequestNumber = prNumber
+        };
+
+        return new QualityGateContext
+        {
+            Run = run,
+            Config = new PipelineConfiguration
+            {
+                AgentTimeout = TimeSpan.FromMinutes(10),
+                MaxRetries = 0,
+                MaxInfrastructureRetries = 0,
+                CiNotStartedTimeout = TimeSpan.FromMilliseconds(1),
+                CiNotStartedMaxRetries = 0,
+                ExternalCiPollInterval = TimeSpan.FromMilliseconds(5),
+                ExternalCiTimeout = TimeSpan.FromMinutes(5),
+                StallPollInterval = TimeSpan.FromMilliseconds(50),
+                StallWarningInterval = TimeSpan.FromHours(1)
+            },
+            AgentProvider = new Mock<IAgentProvider>().Object,
+            IssueOps = new Mock<IAgentIssueOperations>().Object,
+            Callbacks = mockCallbacks.Object,
+            RepoProvider = mockRepoProvider.Object,
+            PipelineProvider = mockPipelineProvider.Object,
+            QualityGateConfigs = new List<QualityGateConfiguration>()
+        };
+    }
+}
