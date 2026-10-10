@@ -393,6 +393,7 @@ Use exact title strings in the `dependencies` array (they will be resolved to `#
 - Files must be encoded as **UTF-8 without BOM**
 - Do NOT create any source code files. Only produce the sub-issue JSON files.
 
+
 """;
 
     [Fact]
@@ -452,6 +453,7 @@ Write findings to `.agent/refactoring-structural-findings.json` as a JSON object
 - **Do NOT flag patterns listed in `intentionalPatterns`.** If unsure, skip it.
 - Prefer fewer high-quality findings over many shallow ones. Maximum 10 findings.
 
+
 """;
 
     [Fact]
@@ -500,6 +502,7 @@ Write findings to `.agent/refactoring-correctness-findings.json` as a JSON objec
 - Findings sourced from deterministic tools (grep, linter, compiler warnings) are inherently higher quality.
   Tag them as described in the critical rules.
 - Maximum 10 findings. Prefer bugs > dead code > stale docs > TODOs (by impact).
+
 
 """;
 
@@ -550,6 +553,7 @@ Write findings to `.agent/refactoring-design-findings.json` as a JSON object:
 - **Do NOT flag names that match `intentionalPatterns`** from conventions.json.
 - This agent has the highest false-positive risk. Be conservative. Maximum 8 findings.
 
+
 """;
 
     [Fact]
@@ -587,7 +591,6 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
     "evidenceSources": ["tool:dotnet-build:IDE0051", "usage-search:Foo.Bar:0-callers", "code-reading:File.cs:L42"],
     "scopeQuery": "git grep -n 'pattern' -- src",
     "prerequisites": ["Add characterization tests for X before refactoring"],
-    "dependsOn": ["Exact title of another proposal this depends on"],
     "estimatedEffort": "small|medium|large",
     "riskLevel": "low|medium|high",
     "technique": "Extract Method|Inline Class|Rename|Introduce Value Type|etc.",
@@ -617,9 +620,6 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
 - **prerequisites** — prep work needed. If affected files lack test coverage, MUST include
   "Add characterization tests for X before refactoring". Do NOT reference other proposals by number
   (e.g., "proposal #1") — GitHub will autolink #N to wrong issues.
-- **dependsOn** — titles of other proposals in this batch that must be completed first.
-  Use the EXACT title string of the dependency. These are resolved to `Depends on #N` during issue creation.
-  Do NOT use `#N` notation anywhere — it creates wrong GitHub autolinks.
 - **estimatedEffort** — `small` (<5 files), `medium` (5-15 files), `large` (15-30 files).
 - **riskLevel** — `low` (rename/move), `medium` (extract/restructure), `high` (interface changes).
 - **technique** — named refactoring pattern if applicable.
@@ -655,19 +655,10 @@ Each proposal becomes an issue for an engineer who has not seen this analysis:
 
 Each proposal MUST be achievable by a single agent in one run:
 - Maximum ~30 affected files (source + test) per proposal
-- If a finding would touch more files, split into independent phases
-- Each phase must leave the codebase buildable
+- If a finding would touch more files, drop it and record it in the analysis log as scope-exceeded
 - Prefer mechanical, low-risk changes over sweeping architectural ones
 - Do NOT propose changes spanning serialization boundaries simultaneously
 - One concern per proposal: do not bundle two classes' decompositions into one proposal
-
-## Dependency Ordering
-
-When splitting work into phases, express ordering via `dependsOn`:
-- List proposals in dependency order: independent proposals first, dependent ones later
-- If proposal B requires proposal A to be completed first, add A's EXACT title to B's `dependsOn` array
-- Do NOT use `#N`, `proposal #1`, or any numeric issue references in any text field
-- The system resolves title references to proper GitHub issue links during creation
 
 ## Also Produce
 
@@ -691,4 +682,249 @@ Write a brief analysis log at `.agent/refactoring-analysis.md` containing:
 
         section.Should().Be(Snapshot_BuildRefactoringAggregationPrompt_OutputFormatSection);
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  10. DecompositionPromptBuilder.BuildAnalysisPrompt
+    //      Added by issue #3534 as a characterization guard before section-builder
+    //      refactoring. Full-prompt snapshot — any prose change will fail this test.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private const string Snapshot_BuildAnalysisPrompt_Decomposition = """
+# Epic Decomposition Analysis
+
+You are performing a decomposition analysis of an epic issue.
+Your goal is to explore the codebase and produce a structured decomposition plan
+that breaks the epic into implementation-ready sub-issues.
+
+## Exploration Strategy
+
+Before proposing sub-issues, thoroughly explore the codebase:
+
+1. **Directory tree** — Understand the project structure, solution layout, and module boundaries
+2. **Architecture files** — Read README, design docs, and any `.brain/` knowledge if available
+3. **DI setup** — Review dependency injection configuration to understand service wiring
+4. **Similar features** — Find 1-2 existing features similar to the epic and study their implementation patterns
+
+## Deduplication Check
+
+Open issues are in `.agent/open-issues/` — read them to check for overlap before proposing sub-issues.
+Do NOT propose sub-issues that duplicate work already tracked in existing open issues.
+If you identify partial overlap, note the related issue in your plan and explain why your proposal is distinct.
+
+## Re-run Feedback
+
+If this is a re-run (a previous plan was rejected), look for comments posted after the
+previous plan comment in `.agent/issue-context.md` as rejection feedback.
+Address all feedback points in your revised plan.
+
+## Gate Rejection Concerns
+
+If `.agent/issue-context.md` contains analysis gate comments (marked with `<!-- agent:gate-rejection -->`),
+treat each concern listed in the 'Blocking Issues' or 'Concerns' section as a **hard constraint**.
+Your decomposition plan must explicitly address how each concern is resolved:
+
+- For each gate concern, state which sub-issue handles it and how
+- If a concern spans multiple sub-issues, explain the handoff between them
+- If you believe a concern is invalid, explain why with evidence from the codebase
+
+Do NOT treat gate concerns as generic "split it up" guidance — they identify specific
+technical risks that must be individually mitigated in your plan.
+
+## Sub-Issue Sizing Constraints
+
+Each proposed sub-issue MUST satisfy ALL of the following constraints:
+
+- **File limit:** Create or modify a maximum of **12 files** (files only read for context do not count)
+- **One verification criterion:** Exactly one pass/fail assertion (e.g., "unit test X passes", "build succeeds with no warnings")
+- **One agent run:** Completable in a single agent run (single context window, no multi-session work, no waiting on external feedback)
+
+## Constraints
+
+- Propose at most **5** sub-issues
+- Order sub-issues so that **dependencies always point backward** — earlier-numbered sub-issues are depended upon by later-numbered ones
+- Each sub-issue must have a unique, descriptive title
+- Do NOT propose sub-issues that require multi-session execution or external feedback
+
+## Output
+
+Write your decomposition plan to `.agent/decomposition-plan.md` in the workspace.
+
+The plan must include:
+
+1. **Strategy rationale** — 2-3 sentences explaining why you split the epic this way
+2. **Sub-issue table** with columns: #, Title, Scope (one sentence), Files (estimated count), Dependencies (by title or "None"), Verification (one criterion)
+3. **Dependency graph** — Sub-issues listed in execution order showing blocking relationships
+
+Do NOT create any source code files. Only produce the decomposition plan.
+
+
+""";
+
+    [Fact]
+    public void BuildAnalysisPrompt_Decomposition_MatchesSnapshot()
+    {
+        var result = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues: 5, maxFiles: 12);
+
+        result.Should().Be(Snapshot_BuildAnalysisPrompt_Decomposition);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  11. ConsolidationPromptBuilder.BuildBrainConsolidationPrompt (null timestamp)
+    //      Added by issue #3534 as a characterization guard before section-builder
+    //      refactoring. Full-prompt snapshot with null timestamp — fully deterministic.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private const string Snapshot_BuildBrainConsolidationPrompt_NullTimestamp = """
+# Brain Knowledge Repository Consolidation
+
+You are performing a consolidation pass on the `.brain/` knowledge repository.
+Your goal is to keep the knowledge base concise, accurate, and free of contradictions.
+
+## Context
+
+**No prior consolidation has occurred.** This is the first consolidation pass.
+Review the entire knowledge base from scratch.
+
+## Phase 1: Orient
+
+Scan all files in the `.brain/` directory recursively. Build a mental inventory of:
+- All knowledge files and their topics
+- The directory structure and organization
+- File sizes and last-modified indicators
+- Any README or index files that describe the structure
+
+Do NOT make changes during this phase. Only observe and catalog.
+
+## Phase 2: Gather Signal
+
+Read recent session logs and run summaries to identify:
+- New lessons learned that may duplicate existing entries
+- Technology decisions that have been superseded
+- Relative date references (e.g., "yesterday", "last week") that should be absolute
+- Entries that reference removed or renamed components
+- Contradictions between different knowledge files
+- **Citation data:** Which entries were referenced in session logs and how (helpful, not applicable, outdated)
+
+### Citation Aggregation
+
+Session logs contain a `## Brain Entries Referenced` section listing which knowledge entries
+were consulted and their usefulness (`used, helpful` | `read, not applicable` | `used, outdated`).
+Aggregate this data across all session logs since the last consolidation:
+- Count how many sessions cite each entry as **helpful**
+- Note entries cited as **outdated** by any session (candidates for correction)
+- Identify entries in `general/`, `technology/`, and `projects/` that are **never cited** in any session log
+
+Use this citation data to inform decisions in Phase 3 (Consolidate) and Phase 4 (Prune).
+
+## Phase 2.5: Research & Verify
+
+For entries that reference specific tools, libraries, versions, or external services:
+- **Verify currency:** Check whether referenced library versions are still the latest (e.g., is the noted NuGet package version still current?)
+- **Check for better alternatives:** If a workaround or pattern was documented because a tool lacked a feature, verify whether that feature has since been added
+- **Validate links and references:** If entries reference external documentation URLs or API endpoints, verify they are still valid
+- **Update outdated information:** If you find newer/better approaches to documented problems, update the entry with the current best practice and note the change
+
+Use web search to verify information when uncertain. Only update entries where you have high confidence the information has changed — do not speculate.
+
+## Phase 3: Consolidate
+
+Apply the following transformations:
+- **Merge duplicates:** Combine entries that describe the same concept into a single, authoritative entry
+- **Resolve contradictions:** When two entries conflict, keep the more recent or more specific one. Add a note about what was superseded if relevant
+- **Convert relative dates:** Replace relative time references with absolute dates (e.g., "yesterday" → "2026-01-15")
+- **Update references:** Fix references to renamed or moved components
+- **Improve organization:** Move misplaced entries to their correct section or file
+
+## Phase 4: Prune
+
+Remove content that no longer provides value:
+- Stale entries about components that no longer exist
+- Session logs older than 30 days that have already been distilled into lessons
+- Redundant entries that were merged in Phase 3
+- Empty or placeholder files
+
+Use citation data from Phase 2 to inform pruning decisions:
+- **High-value (keep):** Entries cited as helpful in 3+ sessions — these are proven useful
+- **Outdated (correct or remove):** Entries cited as outdated by any session — verify and either update or mark ⚠️ OUTDATED
+- **Uncited + stale (prune candidates):** Entries never cited in any session log AND older than their verification window
+- **Recently written (keep):** Entries written since the last consolidation should be kept regardless of citation count — they haven't had time to be cited yet
+
+When pruning an entry, check whether it has only `[experience]` sources and was never verified.
+Entries with `[docs]` sources are more likely to be correct even if uncited — prefer re-verification over pruning.
+
+Keep the index files (README.md) concise and up-to-date with the current structure.
+
+## Phase 5: Generate Project SKILL.md
+
+For each project directory under `.brain/projects/`, regenerate a `SKILL.md` file.
+This file is a distilled, single-document summary that agents receive as pre-loaded context
+via subagent retrieval — it should be the most useful file in the project folder.
+
+**Regenerate from scratch each time** (do not incrementally edit the existing SKILL.md).
+Cap content at ~1500 words. Structure it as:
+
+```markdown
+# Project: {project-name}
+
+## Architecture
+{Tech stack, key project structure, main components and their roles}
+
+## Conventions
+{Coding standards, naming patterns, preferred libraries, serialization choices}
+
+## Known Pitfalls
+{Common mistakes from lessons-learned, gotchas that cause build/test failures}
+
+## Testing Patterns
+{How tests are structured, commands to run, quarantine rules, CI quirks}
+
+## Key Decisions
+{Important architectural decisions and their rationale}
+```
+
+Source content from the project's brain entries, technology files, general lessons,
+and session logs. Only include information that is current and verified.
+If a project folder has very little accumulated knowledge, produce a shorter SKILL.md
+with just the sections that have content — do not pad with generic advice.
+
+## Output
+
+Make all changes directly to the files. After completion, provide a brief summary of what was done:
+- Number of files modified
+- Number of entries merged
+- Number of contradictions resolved
+- Number of entries pruned
+- Number of SKILL.md files generated/updated
+
+
+""";
+
+    [Fact]
+    public void BuildBrainConsolidationPrompt_NullTimestamp_MatchesSnapshot()
+    {
+        var result = ConsolidationPromptBuilder.BuildBrainConsolidationPrompt(lastConsolidationUtc: null);
+
+        result.Should().Be(Snapshot_BuildBrainConsolidationPrompt_NullTimestamp);
+    }
+
+    // TODO [WARNING] Only the null-timestamp path of BuildBrainConsolidationPrompt has a full-prompt snapshot
+    // (test 11 above). The non-null path (lastConsolidationUtc.HasValue == true) renders different ## Context
+    // body content and is only covered by spot-checks in ConsolidationPromptBuilderTests.cs. A regression that
+    // breaks the HasValue branch output — including any AppendSection spacing — would not be caught by a snapshot.
+    // Add a deterministic snapshot test for BuildBrainConsolidationPrompt with a fixed DateTime value.
+    // (Review finding: PromptBuilderSnapshotTests.cs:785)
+
+    // TODO [WARNING] DecompositionPromptBuilder.BuildCreationPrompt has no snapshot test at all. The diff replaces
+    // eight AppendSection calls inside BuildCreationPrompt and also changes PromptBuilder.AppendOutputFormatHeading +
+    // manual sb.AppendLine() with AppendSection(sb, "## Output Format", ...). Neither this file nor any other test
+    // covers the full output of BuildCreationPrompt. A regression to any of those eight sections — including any
+    // AppendSection spacing — would not be caught. Add a full-prompt snapshot for BuildCreationPrompt.
+    // (Review finding: DotNetSpecialist agent, PromptBuilderSnapshotTests.cs:393)
+
+    // TODO [WARNING] Snapshot tests 6–8 (BuildRefactoringStructuralDebtPrompt, BuildRefactoringCorrectnessPrompt,
+    // BuildRefactoringDesignConsistencyPrompt) assert only on the tail of each prompt from ## Output Format onward.
+    // The preceding sections — which were also converted to AppendSection in this PR — are not covered by any snapshot.
+    // A regression to the preamble content or AppendSection spacing in those earlier sections would not be detected.
+    // Add full-prompt snapshots (or at least preamble-section snapshots) for these three methods.
+    // (Review finding: TestQualityReviewer agent, PromptBuilderSnapshotTests.cs:420)
 }

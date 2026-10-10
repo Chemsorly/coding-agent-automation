@@ -23,7 +23,7 @@ public interface IPullRequestProvider : IAsyncDisposable
     /// </para>
     /// Default throws <see cref="NotSupportedException"/>.
     /// </summary>
-    Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool? markReady, CancellationToken ct)
+    Task UpdatePullRequestAsync(int prNumber, string body, bool? markReady, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support UpdatePullRequestAsync.");
 
@@ -31,7 +31,7 @@ public interface IPullRequestProvider : IAsyncDisposable
     /// Fetches the current body of a pull request. Returns null if unsupported.
     /// Used to avoid stale-state overwrites when appending to PR bodies.
     /// </summary>
-    Task<string?> GetPullRequestBodyAsync(int pullRequestNumber, CancellationToken ct)
+    Task<string?> GetPullRequestBodyAsync(int prNumber, CancellationToken ct)
         => Task.FromResult<string?>(null);
 
     /// <summary>
@@ -43,7 +43,7 @@ public interface IPullRequestProvider : IAsyncDisposable
         => Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
 
     /// <summary>Closes an open pull request/merge request by number. Default is a no-op.</summary>
-    Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
+    Task ClosePullRequestAsync(int prNumber, CancellationToken ct)
         => Task.CompletedTask;
 
     /// <summary>
@@ -54,7 +54,7 @@ public interface IPullRequestProvider : IAsyncDisposable
     /// never block a run — the polling loop treats an unknown state as "still open".
     /// </para>
     /// </summary>
-    Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    Task<PullRequestState> GetPullRequestStateAsync(int prNumber, CancellationToken ct)
         => Task.FromResult(PullRequestState.Open);
 
     /// <summary>

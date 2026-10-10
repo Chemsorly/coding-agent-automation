@@ -322,11 +322,7 @@ public sealed class PullRequestFinalizationService
                 // (decisions.md: the PR narrative never comes from the agent's stdout).
                 _logger.Warning("Pipeline {RunId} PR description file not found at {Path}, keeping the generated PR body", // NOSONAR S6667 — expected missing file; the message says so
                     run.RunId, filePath);
-                // TODO: On this early-return path the dropped-identifier section (AppendDroppedIdentifiersSection)
-                // is never appended to the PR body, so if the agent produced no pr-description.md the
-                // "⚠️ Dropped changes not re-applied" warning is silently omitted from the non-draft PR,
-                // violating AC #1. Call AppendDroppedIdentifiersSection + UpdatePullRequestAsync here
-                // (mirroring the draft path in RunFullPrCreationAsync) before returning.
+                await TryAppendDroppedIdentifiersSectionAsync(run, repoProvider, ct);
                 return;
             }
 
@@ -334,9 +330,7 @@ public sealed class PullRequestFinalizationService
             if (string.IsNullOrWhiteSpace(description))
             {
                 _logger.Warning("Pipeline {RunId} PR description generation returned empty output", run.RunId);
-                // TODO: Same gap as the file-not-found path above — dropped-identifier section is not
-                // appended when the description is empty/whitespace, leaving it absent from the PR body
-                // on the non-draft path. Fix together with the file-not-found path.
+                await TryAppendDroppedIdentifiersSectionAsync(run, repoProvider, ct);
                 return;
             }
 
@@ -344,8 +338,7 @@ public sealed class PullRequestFinalizationService
             if (!int.TryParse(run.PullRequestNumber, out var prNumber))
             {
                 _logger.Warning("Pipeline {RunId} PR description skipped — PullRequestNumber '{PrNumber}' is not a valid integer", run.RunId, run.PullRequestNumber);
-                // TODO: Same gap — dropped-identifier section is not appended when PullRequestNumber is
-                // non-numeric. Fix together with the file-not-found and empty-description paths above.
+                await TryAppendDroppedIdentifiersSectionAsync(run, repoProvider, ct);
                 return;
             }
             var currentBody = run.PullRequestBody;
@@ -522,5 +515,42 @@ public sealed class PullRequestFinalizationService
         section.Append("These may have been intentionally dropped (if outside the issue scope) or accidentally omitted.");
 
         return body + section.ToString();
+    }
+
+    /// <summary>
+    /// Appends the "Dropped changes not re-applied" section to the PR body and calls
+    /// <see cref="IRepositoryProvider.UpdatePullRequestAsync"/> when
+    /// <see cref="PipelineRun.NotReappliedIdentifiersByFile"/> is non-empty and
+    /// <see cref="PipelineRun.PullRequestNumber"/> parses to a valid integer.
+    /// No-op when there are no dropped identifiers or the PR number is non-numeric.
+    /// Uses <see cref="PipelineRun.PullRequestBody"/> as the base body (correct for early-return
+    /// paths where no agent description has been prepended yet).
+    /// Non-OCE exceptions are caught and logged as warnings — pipeline execution continues.
+    /// </summary>
+    private async Task TryAppendDroppedIdentifiersSectionAsync(
+        PipelineRun run, IRepositoryProvider repoProvider, CancellationToken ct)
+    {
+        if (run.NotReappliedIdentifiersByFile.Count == 0)
+            return;
+        if (!int.TryParse(run.PullRequestNumber, out var prNumber))
+            return;
+        try
+        {
+            var updatedBody = AppendDroppedIdentifiersSection(run.PullRequestBody ?? "", run);
+            await repoProvider.UpdatePullRequestAsync(prNumber, updatedBody, null, ct);
+            run.PullRequestBody = updatedBody;
+            _logger.Information("Pipeline {RunId} appended not-re-applied section to PR body", run.RunId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // TODO: This catch suppresses all non-OCE exceptions from UpdatePullRequestAsync, including
+            // transient network errors. A failed update (e.g. on the file-not-found early-return path)
+            // is only logged as a warning; the orchestrator is not notified and the dropped-identifier
+            // section will be permanently absent from that run's PR body. Consistent with the pre-existing
+            // draft-path behavior but means no retry is possible. Consider surfacing the failure if
+            // retry logic is added to the outer pipeline in future.
+            _logger.Warning(ex,
+                "Pipeline {RunId} failed to append not-re-applied section to PR body, continuing", run.RunId);
+        }
     }
 }

@@ -125,10 +125,10 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
-    public async Task<PullRequestState> GetPullRequestStateAsync(int pullRequestNumber, CancellationToken ct)
+    public async Task<PullRequestState> GetPullRequestStateAsync(int prNumber, CancellationToken ct)
     {
         var pr = await ExecuteWithResilienceAsync(
-            client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+            client => client.PullRequest.Get(Owner, Repo, prNumber),
             "GetPullRequestState", ct);
 
         // GitHub uses state="closed" for both merged and closed-without-merge.
@@ -258,14 +258,14 @@ public partial class GitHubRepositoryProvider
         return results.ToList();
     }
 
-    public async Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool? markReady, CancellationToken ct)
+    public async Task UpdatePullRequestAsync(int prNumber, string body, bool? markReady, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(body);
 
         try
         {
             await ExecuteWithResilienceAsync(
-                client => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
+                client => client.PullRequest.Update(Owner, Repo, prNumber,
                     new PullRequestUpdate { Body = body }),
                 "UpdatePullRequest", ct);
 
@@ -277,7 +277,7 @@ public partial class GitHubRepositoryProvider
                 try
                 {
                     var pr = await ExecuteWithResilienceAsync(
-                        client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                        client => client.PullRequest.Get(Owner, Repo, prNumber),
                         "GetPullRequestForDraftCheck", ct);
 
                     if (pr.Draft)
@@ -295,12 +295,12 @@ public partial class GitHubRepositoryProvider
                             variables = new { pullRequestId = pr.NodeId }
                         });
                         await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
-                        Log.Information("Marked PR #{PrNumber} as ready for review", pullRequestNumber);
+                        Log.Information("Marked PR #{PrNumber} as ready for review", prNumber);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    Log.Warning(ex, "Failed to mark PR #{PrNumber} as ready for review (non-fatal)", pullRequestNumber);
+                    Log.Warning(ex, "Failed to mark PR #{PrNumber} as ready for review (non-fatal)", prNumber);
                 }
             }
             else if (markReady == false)
@@ -315,7 +315,7 @@ public partial class GitHubRepositoryProvider
                     // Consider returning the PR object from the preceding PATCH (if the Octokit client exposes it)
                     // to avoid the extra round-trip and make the two failure modes distinguishable.
                     var pr = await ExecuteWithResilienceAsync(
-                        client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                        client => client.PullRequest.Get(Owner, Repo, prNumber),
                         "GetPullRequestForDraftConversion", ct);
 
                     if (!pr.Draft)
@@ -335,46 +335,46 @@ public partial class GitHubRepositoryProvider
                         // TODO: CancellationToken is not propagated to IConnection.Post — the Octokit overload used
                         // here has no CT parameter. Track for a future Octokit upgrade that adds CT support.
                         await client.Connection.Post<object>(DeriveGraphQlUri(), graphqlBody, "application/json", "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
-                        Log.Information("Converted PR #{PrNumber} to draft", pullRequestNumber);
+                        Log.Information("Converted PR #{PrNumber} to draft", prNumber);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    Log.Warning(ex, "Failed to convert PR #{PrNumber} to draft (non-fatal)", pullRequestNumber);
+                    Log.Warning(ex, "Failed to convert PR #{PrNumber} to draft (non-fatal)", prNumber);
                 }
             }
         }
         catch (Octokit.NotFoundException ex)
         {
             throw new InvalidOperationException(
-                $"Pull request #{pullRequestNumber} not found in {Owner}/{Repo}.", ex);
+                $"Pull request #{prNumber} not found in {Owner}/{Repo}.", ex);
         }
     }
 
-    public async Task<string?> GetPullRequestBodyAsync(int pullRequestNumber, CancellationToken ct)
+    public async Task<string?> GetPullRequestBodyAsync(int prNumber, CancellationToken ct)
     {
         try
         {
             var pr = await ExecuteWithResilienceAsync(
-                client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                client => client.PullRequest.Get(Owner, Repo, prNumber),
                 "GetPullRequestBody", ct);
             return pr?.Body;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Log.Debug(ex, "Failed to fetch PR #{PrNumber} body, falling back to in-memory state", pullRequestNumber);
+            Log.Debug(ex, "Failed to fetch PR #{PrNumber} body, falling back to in-memory state", prNumber);
             return null;
         }
     }
 
     /// <inheritdoc />
-    public async Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
+    public async Task ClosePullRequestAsync(int prNumber, CancellationToken ct)
     {
         await ExecuteWithResilienceAsync(
-            client => client.PullRequest.Update(Owner, Repo, pullRequestNumber,
+            client => client.PullRequest.Update(Owner, Repo, prNumber,
                 new PullRequestUpdate { State = ItemState.Closed }),
             "ClosePullRequest", ct);
-        Log.Information("Closed PR #{PrNumber} in {Owner}/{Repo}", pullRequestNumber, Owner, Repo);
+        Log.Information("Closed PR #{PrNumber} in {Owner}/{Repo}", prNumber, Owner, Repo);
     }
 
     /// <inheritdoc />

@@ -44,12 +44,6 @@ public sealed class RefactoringProposal
     public IReadOnlyList<string>? EvidenceSources { get; init; }
 
     /// <summary>
-    /// Title-based references to other proposals in the same batch that this proposal depends on.
-    /// Resolved to "Depends on #N" lines during sequential issue creation via <see cref="CodingAgent.Pipeline.Services.DependencyResolver"/>.
-    /// </summary>
-    public IReadOnlyList<string>? DependsOn { get; init; }
-
-    /// <summary>
     /// Proposal-specific acceptance criteria validated by the review agent.
     /// Each entry becomes a checkbox in the GitHub issue body.
     /// Must be verifiable from the PR diff — no subjective or unmeasurable claims.
