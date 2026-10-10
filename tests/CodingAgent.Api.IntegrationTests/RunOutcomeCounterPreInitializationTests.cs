@@ -18,7 +18,7 @@ namespace CodingAgent.Api.IntegrationTests;
 public sealed class RunOutcomeCounterPreInitializationTests
 {
     private static readonly string[] RunTypes =
-        ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
+        ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation", "triage"];
 
     private static readonly string[] NonFailureOutcomes =
         ["cancelled", "conflict_restart", "needs_refinement", "wont_do", "pr_created", "draft_pr", "succeeded"];
@@ -28,7 +28,7 @@ public sealed class RunOutcomeCounterPreInitializationTests
          "exit_code_failure", "quality_gate_exhausted", "gate_rejected"];
 
     [Fact]
-    public void PreInitialization_RunOutcomes_Produces75Series()
+    public void PreInitialization_RunOutcomes_Produces90Series()
     {
         // TODO: [WARNING] This test verifies only the arithmetic of statically defined test-local arrays,
         // not anything emitted by the production pre-initialization code in Program.EmitPreInitCounters.
@@ -39,9 +39,9 @@ public sealed class RunOutcomeCounterPreInitializationTests
         // emitted by Program.EmitPreInitCounters via a MeterListener and assert
         // on the observed count.
 
-        // 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed) = 5 × 15 = 75 series
-        var expectedCount = 5 * (7 + 1 + 7);
-        expectedCount.Should().Be(75);
+        // 6 run_types × (7 non-failure outcomes + 1 timeout + 7 failed) = 6 × 15 = 90 series
+        var expectedCount = 6 * (7 + 1 + 7);
+        expectedCount.Should().Be(90);
 
         var allExpected = new List<(string RunType, string Outcome, string FailureReason)>();
         foreach (var runType in RunTypes)
@@ -53,9 +53,9 @@ public sealed class RunOutcomeCounterPreInitializationTests
                 allExpected.Add((runType, "failed", failureReason));
         }
 
-        allExpected.Should().HaveCount(75,
-            "exactly 75 pre-initialized series for pipeline.run.outcomes");
-        allExpected.Should().OnlyHaveUniqueItems("all 75 combinations must be distinct");
+        allExpected.Should().HaveCount(90,
+            "exactly 90 pre-initialized series for pipeline.run.outcomes");
+        allExpected.Should().OnlyHaveUniqueItems("all 90 combinations must be distinct");
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class RunOutcomeCounterPreInitializationTests
     [Fact]
     public void PreInitialization_EmitsAdd0_ForAllRunOutcomesCombinations()
     {
-        // Verify Add(0) is emitted for all 75 combinations by calling the real production
+        // Verify Add(0) is emitted for all 90 combinations by calling the real production
         // pre-initialization helper (Program.EmitPreInitCounters), observed via a MeterListener.
         // This test directly exercises the production code path, so a regression in
         // Program.EmitPreInitCounters (e.g. missing a run_type or outcome) will cause this test
@@ -125,9 +125,9 @@ public sealed class RunOutcomeCounterPreInitializationTests
         // Call the production pre-initialization helper (not an inline copy).
         Program.EmitPreInitCounters();
 
-        // All 75 combinations must have been observed
-        observed.Should().HaveCountGreaterThanOrEqualTo(75,
-            "all 75 pre-initialized combinations must have been observed by MeterListener");
+        // All 90 combinations must have been observed
+        observed.Should().HaveCountGreaterThanOrEqualTo(90,
+            "all 90 pre-initialized combinations must have been observed by MeterListener");
 
         // Check specific combinations
         foreach (var runType in RunTypes)

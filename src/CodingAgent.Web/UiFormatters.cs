@@ -78,6 +78,8 @@ public static class UiFormatters
         AgentLabels.Epic => "label-agent-epic",
         AgentLabels.EpicApproved => "label-agent-epic-approved",
         AgentLabels.EpicReview => "label-agent-epic-review",
+        AgentLabels.Triage => "label-agent-triage",
+        AgentLabels.TriageReview => "label-agent-triage-review",
         _ => ""
     };
 
@@ -87,6 +89,7 @@ public static class UiFormatters
         PipelineRunType.DecompositionAnalysis => "Decomposition (Analysis)",
         PipelineRunType.Decomposition => "Decomposition",
         PipelineRunType.Consolidation => "Consolidation",
+        PipelineRunType.Triage => "Triage",
         _ => "Implementation"
     };
 }

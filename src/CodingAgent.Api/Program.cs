@@ -176,8 +176,8 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>pipeline.run.outcomes:</strong> 75 series —
-    /// 5 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
+    /// <strong>pipeline.run.outcomes:</strong> 90 series —
+    /// 6 run_types × (7 non-failure outcomes + 1 timeout + 7 failed × 7 failure_reasons).
     /// <c>pipeline.project_name</c> is intentionally excluded (unbounded cardinality, Requirement 7).
     /// </para>
     /// <para>
@@ -185,12 +185,12 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// failure_reason="none" when failureReason is null — which happens when a request carries
     /// Status=Failed with no parseable request.FailureReason and no payload FailureCategory. The first
     /// such event after a deploy is invisible to increase() until a second identical series event arrives.
-    /// Fix: add (run_type, "failed", "none") per runType (5 additional series, total 80, under the ~100 limit).
+    /// Fix: add (run_type, "failed", "none") per runType (6 additional series, total 96, under the ~100 limit).
     /// </para>
     /// </remarks>
     internal static void EmitPreInitCounters()
     {
-        string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation"];
+        string[] runTypes = ["implementation", "review", "decomposition", "decompositionanalysis", "consolidation", "triage"];
 
         EmitRunOutcomePreInitCounters(runTypes);
 
@@ -207,7 +207,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
 
         EmitQualityGateResultPreInitCounters(runTypes);
 
-        // pipeline.run.ci.not_started_retriggers: 5 run_types (issue #2979)
+        // pipeline.run.ci.not_started_retriggers: one series per run_type (issue #2979)
         foreach (var runType in runTypes)
             PipelineTelemetry.RunCiNotStartedRetriggers.Add(0,
                 new KeyValuePair<string, object?>(RunTypeKey, runType));
@@ -217,7 +217,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
         EmitUsageDetailPreInitCounters(runTypes);
     }
 
-    /// <summary>pipeline.run.outcomes: 75 series (3-tag; pipeline.project_name excluded per Req 7).</summary>
+    /// <summary>pipeline.run.outcomes: 90 series (3-tag; pipeline.project_name excluded per Req 7).</summary>
     private static void EmitRunOutcomePreInitCounters(string[] runTypes)
     {
         const string FailureReasonKey = "failure_reason";
@@ -313,7 +313,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     /// </summary>
     private static void EmitRunPhasePreInitCounters(string[] runTypes)
     {
-        // 5 run_types × 10 phases × 4 providers = 200 series per metric, 4 metrics.
+        // 6 run_types × 10 phases × 4 providers = 240 series per metric, 4 metrics.
         // model is excluded from pre-initialization (unbounded cardinality per Req 7 additional comment).
         // TODO: run_type="unknown" can be emitted at runtime when ResolveRunContextAsync cannot resolve
         // the WorkItem (e.g. missing DB row, null dbFactory). That series is not pre-initialized here,
@@ -351,7 +351,7 @@ public partial class Program // NOSONAR S1118 — required for WebApplicationFac
     }
 
     /// <summary>
-    /// Pre-initializes the phase-less usage detail counters: 5 run_types × 4 providers × 5 token types
+    /// Pre-initializes the phase-less usage detail counters: 6 run_types × 4 providers × 5 token types
     /// (token_usage), × 3 billing modes (billing_cost_usd), turns and web searches per run_type × provider,
     /// and rate-limit readings per window × status for the claude provider (the only one that reports them).
     /// </summary>

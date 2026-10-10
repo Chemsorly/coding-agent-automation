@@ -190,6 +190,9 @@ public class AgentCodingPageService
     public Task<(bool Success, string? Error)> ToggleDecompositionEnabledAsync(PipelineJobTemplate template, bool enabled)
         => TogglePropertyAsync(template, (t, e) => t with { DecompositionEnabled = e }, enabled);
 
+    public Task<(bool Success, string? Error)> ToggleTriageEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { TriageEnabled = e }, enabled);
+
     public Task<(bool Success, string? Error)> ToggleHousekeepingEnabledAsync(PipelineJobTemplate template, bool enabled)
         => TogglePropertyAsync(template, (t, e) => t with { HousekeepingEnabled = e }, enabled);
 
@@ -247,6 +250,7 @@ public class AgentCodingPageService
             ImplementationEnabled = form.ImplementationEnabled,
             ReviewEnabled = form.ReviewEnabled,
             DecompositionEnabled = form.DecompositionEnabled,
+            TriageEnabled = form.TriageEnabled,
             HousekeepingEnabled = form.HousekeepingEnabled,
             HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
             HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,
@@ -302,6 +306,7 @@ public class AgentCodingPageService
         ImplementationEnabled = form.ImplementationEnabled,
         ReviewEnabled = form.ReviewEnabled,
         DecompositionEnabled = form.DecompositionEnabled,
+        TriageEnabled = form.TriageEnabled,
         HousekeepingEnabled = form.HousekeepingEnabled,
         HousekeepingConcurrencyLimit = form.HousekeepingConcurrencyLimit,
         HousekeepingBranchCleanupEnabled = form.HousekeepingBranchCleanupEnabled,

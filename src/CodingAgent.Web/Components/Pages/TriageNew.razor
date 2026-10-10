@@ -1,0 +1,435 @@
+@page "/triage/new"
+@attribute [Authorize(Policy = AccessPolicies.AnyOperator)]
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Services
+@inject IPipelineApiTriageClient Triages
+@inject IPipelineApiConfigClient ConfigClient
+@inject CockpitState State
+@inject CurrentAccess Access
+@inject IAccessGuard Guard
+@inject NavigationManager Nav
+
+@*
+    New triage — the operator form (spec 050, mock B2). Creates the triage and its Pending WorkItem in one
+    API call, then opens the triage page. The side panel shows what the agent will use and similar recent
+    triages of the project. Nothing is posted to a tracker until someone creates issues from the result.
+*@
+
+<PageTitle>New triage - Coding Agent</PageTitle>
+
+<div class="cockpit-page" data-testid="triage-new-page">
+    <a href="triage" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Triage</a>
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>New triage</h1>
+            <span class="cockpit-page-sub">Tell the agent what went wrong. The more precise the time and place, the better it can search logs and metrics.</span>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty">Loading…</div></div>
+    }
+    else if (_projects.Count == 0)
+    {
+        <div class="cockpit-card"><div class="cockpit-empty" data-testid="triage-new-no-project">You can start triages only in projects where you are an operator.</div></div>
+    }
+    else
+    {
+        <div class="triage-layout">
+            <form class="cockpit-card triage-main" style="gap: 0;" @onsubmit="StartAsync" @onsubmit:preventDefault="true">
+                <div class="triage-form">
+                    <div class="triage-field">
+                        <label class="triage-label" for="triage-project">Project</label>
+                        <select id="triage-project" class="triage-input" value="@_projectId" @onchange="OnProjectChangedAsync" data-testid="triage-project">
+                            @foreach (var p in _projects)
+                            {
+                                <option value="@p.Id">@p.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="triage-field">
+                        <label class="triage-label" for="triage-title">Title</label>
+                        <input id="triage-title" class="triage-input" type="text" maxlength="200" @bind="_title" @bind:after="LoadSimilarAsync"
+                               placeholder="Checkout returns 502 after the 14:00 deploy" data-testid="triage-title" />
+                    </div>
+                    <div class="triage-field">
+                        <label class="triage-label" for="triage-happened">What happened</label>
+                        <textarea id="triage-happened" class="triage-input" @bind="_whatHappened" data-testid="triage-happened"
+                                  placeholder="What you saw, how often, and for whom"></textarea>
+                    </div>
+                    <div class="triage-field">
+                        <label class="triage-label" for="triage-expected">What did you expect</label>
+                        <textarea id="triage-expected" class="triage-input" style="min-height: 64px;" @bind="_expected" data-testid="triage-expected"></textarea>
+                    </div>
+
+                    <div class="triage-sec">
+                        <div class="triage-field">
+                            <span class="triage-label">When</span>
+                            <div class="triage-chips" role="group" aria-label="When presets">
+                                @foreach (var preset in WhenPresets)
+                                {
+                                    <button type="button" class="triage-chipbtn @(_when == preset.Key ? "is-on" : "")" aria-pressed="@(_when == preset.Key ? "true" : "false")"
+                                            @onclick="() => SetWhen(preset.Key)">@preset.Label</button>
+                                }
+                            </div>
+                            @if (_when == "custom")
+                            {
+                                <div class="triage-row2">
+                                    <div class="triage-field">
+                                        <label class="triage-hint" for="triage-from">First seen</label>
+                                        <input id="triage-from" class="triage-input" type="datetime-local" @bind="_from" />
+                                    </div>
+                                    <div class="triage-field">
+                                        <label class="triage-hint" for="triage-until">Until <span class="triage-opt">empty = still happening</span></label>
+                                        <input id="triage-until" class="triage-input" type="datetime-local" @bind="_until" />
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                        <div class="triage-row2">
+                            <div class="triage-field">
+                                <label class="triage-label" for="triage-env">Environment <span class="triage-opt">optional</span></label>
+                                <input id="triage-env" class="triage-input" type="text" list="triage-env-options" @bind="_environment" placeholder="production" />
+                                <datalist id="triage-env-options"><option value="production"></option><option value="staging"></option><option value="development"></option></datalist>
+                            </div>
+                            <div class="triage-field">
+                                <label class="triage-label" for="triage-where">Where <span class="triage-opt">optional</span></label>
+                                <input id="triage-where" class="triage-input" type="text" @bind="_where" placeholder="Service, endpoint, page or host" />
+                            </div>
+                        </div>
+                        <div class="triage-row2">
+                            <div class="triage-field">
+                                <label class="triage-label" for="triage-start">Start looking in <span class="triage-opt">optional</span></label>
+                                <select id="triage-start" class="triage-input" value="@(_startInTemplateId ?? "")" @onchange="OnStartInChanged" data-testid="triage-start">
+                                    <option value="">Not sure</option>
+                                    @foreach (var t in EnabledTemplates)
+                                    {
+                                        <option value="@t.Id">@t.Name</option>
+                                    }
+                                </select>
+                                <span class="triage-hint">A hint only. The agent reads every repository of the project.</span>
+                            </div>
+                            <div class="triage-field">
+                                <label class="triage-label" for="triage-version">Version <span class="triage-opt">optional</span></label>
+                                <input id="triage-version" class="triage-input triage-mono" type="text" @bind="_version" placeholder="Image tag or commit" />
+                                <span class="triage-hint">What was running. Empty = the agent looks it up, else uses the default branch.</span>
+                            </div>
+                        </div>
+                        <div class="triage-field">
+                            <label class="triage-label" for="triage-links">Links and IDs <span class="triage-opt">optional</span></label>
+                            <textarea id="triage-links" class="triage-input triage-mono" style="min-height: 70px;" @bind="_links"></textarea>
+                            <span class="triage-hint">Trace or request IDs, dashboards, a failed run, a support ticket.</span>
+                        </div>
+                        <div class="triage-field">
+                            <label class="triage-label" for="triage-tried">Already tried <span class="triage-opt">optional</span></label>
+                            <textarea id="triage-tried" class="triage-input" style="min-height: 64px;" @bind="_alreadyTried"></textarea>
+                        </div>
+                    </div>
+
+                    @if (_error is not null)
+                    {
+                        <div class="triage-errorbox" role="alert" data-testid="triage-new-error">@_error</div>
+                    }
+                </div>
+                <div class="triage-footer">
+                    <span class="triage-hint">Runs as a Triage run in project @ProjectName. Nothing is posted anywhere until you create issues.</span>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <a class="triage-btn" href="triage">Cancel</a>
+                        <button type="submit" class="triage-btn is-primary" disabled="@(!CanStart)" data-testid="triage-start-button">
+                            @(_starting ? "Starting…" : "Start triage")
+                        </button>
+                    </div>
+                </div>
+            </form>
+
+            <aside class="triage-side" aria-label="What the agent will use">
+                <div class="cockpit-card cockpit-card-pad" style="display: flex; flex-direction: column; gap: 14px;" data-testid="triage-preview">
+                    <h2 style="margin: 0; font-size: 15px;">The agent will use</h2>
+                    @if (_preview is null)
+                    {
+                        <span class="triage-hint">Loading…</span>
+                    }
+                    else
+                    {
+                        @if (_preview.Repositories.Count > 0)
+                        {
+                            <div>
+                                <h3 class="triage-h3">Repositories · read-only</h3>
+                                <ul class="triage-list">
+                                    @foreach (var r in _preview.Repositories)
+                                    {
+                                        <li><span class="triage-mono">@r.Name</span><span class="triage-muted">@(r.IsExecutor ? "runs the job" : "read-only")</span></li>
+                                    }
+                                </ul>
+                            </div>
+                        }
+                        <div>
+                            <h3 class="triage-h3">Tools (MCP servers)</h3>
+                            @if (_preview.McpServers.Count == 0)
+                            {
+                                <span class="triage-hint">None. The agent can only read code and issues.</span>
+                            }
+                            else
+                            {
+                                <ul class="triage-list">
+                                    @foreach (var s in _preview.McpServers)
+                                    {
+                                        <li><span>@s.Name</span><span class="triage-muted">@s.Origin</span></li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                        <div>
+                            <h3 class="triage-h3">Context</h3>
+                            <ul class="triage-list">
+                                <li><span>Open issues, @_preview.TrackerCount tracker@(_preview.TrackerCount == 1 ? "" : "s")</span><span class="triage-muted">≤ @_preview.MaxOpenIssuesPerTracker each</span></li>
+                                <li><span>Triage history</span><span class="triage-muted">@(_historyCount?.ToString() ?? "…") · @(_retentionDays) days</span></li>
+                                <li><span>Brain</span><span class="triage-muted">@(_preview.HasBrain ? "read-only" : "none")</span></li>
+                                <li><span>Project steering</span><span class="triage-muted">@(_preview.HasProjectSteering ? "yes" : "none")</span></li>
+                            </ul>
+                        </div>
+                        <span class="triage-hint">Time limit: @((int)_preview.TimeLimit.TotalMinutes) min (agent timeout).</span>
+                        @if (_preview.Problem is { } problem)
+                        {
+                            <div class="triage-warnbox" role="alert" data-testid="triage-preview-problem">@problem</div>
+                        }
+                    }
+                </div>
+
+                @if (_similar.Count > 0)
+                {
+                    <div class="cockpit-card cockpit-card-pad" style="display: flex; flex-direction: column; gap: 10px;" data-testid="triage-similar">
+                        <h2 style="margin: 0; font-size: 15px;">Similar recent triages</h2>
+                        @foreach (var s in _similar)
+                        {
+                            <a href="triage/@s.Id" style="display: flex; flex-direction: column; gap: 2px; text-decoration: none; color: inherit;">
+                                <span style="font-weight: 700;">@s.Title</span>
+                                <span class="triage-hint">
+                                    <span class="triage-pill is-@TriageDisplay.StatusTone(s.Status)">@TriageDisplay.StatusLabel(s.Status)</span>
+                                    · @TriageDisplay.Ago(s.CreatedAt, DateTimeOffset.UtcNow)
+                                </span>
+                            </a>
+                        }
+                        <span class="triage-hint">Matched on title words. Open one before starting a new triage.</span>
+                    </div>
+                }
+            </aside>
+        </div>
+    }
+</div>
+
+@code {
+    private static readonly (string Key, string Label)[] WhenPresets =
+        [("hour", "Last hour"), ("today", "Today"), ("week", "Last 7 days"), ("custom", "Custom")];
+
+    private readonly CancellationTokenSource _cts = new();
+    private List<PipelineProject> _projects = [];
+    private IReadOnlyList<PipelineJobTemplate> _templates = [];
+    private IReadOnlyList<ProviderConfig> _repoConfigs = [];
+    private IReadOnlyList<AgentProfile> _profiles = [];
+    private PipelineConfiguration? _config;
+    private TriagePreview? _preview;
+    private IReadOnlyList<TriageListItem> _similar = [];
+    private int? _historyCount;
+    private int _retentionDays = PipelineConstants.DefaultTriageRetentionDays;
+    private bool _loading = true;
+    private bool _starting;
+    private string? _error;
+
+    private string _projectId = "";
+    private string? _title;
+    private string? _whatHappened;
+    private string? _expected;
+    private string _when = "today";
+    private DateTime? _from;
+    private DateTime? _until;
+    private string? _environment;
+    private string? _where;
+    private string? _startInTemplateId;
+    private string? _version;
+    private string? _links;
+    private string? _alreadyTried;
+
+    private IEnumerable<PipelineJobTemplate> EnabledTemplates =>
+        TemplateOrder.ByName(_templates.Where(t => t.Enabled), t => t.Name, t => t.Id);
+
+    private string ProjectName => _projects.FirstOrDefault(p => p.Id == _projectId)?.Name ?? "";
+
+    private bool CanStart =>
+        !_starting
+        && _preview is { Problem: null }
+        && !string.IsNullOrWhiteSpace(_title)
+        && !string.IsNullOrWhiteSpace(_whatHappened)
+        && !string.IsNullOrWhiteSpace(_expected);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var projects = ConfigClient.GetProjectsAsync(_cts.Token);
+            var repoConfigs = ConfigClient.GetProviderConfigsAsync(ProviderKind.Repository, _cts.Token);
+            var profiles = ConfigClient.GetAgentProfilesAsync(_cts.Token);
+            var config = ConfigClient.GetPipelineConfigAsync(_cts.Token);
+            await Task.WhenAll(projects, repoConfigs, profiles, config);
+
+            // Spec 049: only projects the user may start work in
+            _projects = projects.Result.Where(p => p.Enabled && Access.CanOperate(p.Id))
+                .OrderBy(p => p.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            _repoConfigs = repoConfigs.Result;
+            _profiles = profiles.Result;
+            _config = config.Result;
+            _retentionDays = _config.TriageRetentionDays;
+
+            _projectId = _projects.Any(p => p.Id == State.SelectedProjectId)
+                ? State.SelectedProjectId
+                : _projects.FirstOrDefault()?.Id ?? "";
+            if (_projectId.Length > 0)
+                await LoadProjectAsync();
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load the project settings: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task OnProjectChangedAsync(ChangeEventArgs e)
+    {
+        var id = e.Value as string ?? "";
+        if (!_projects.Any(p => p.Id == id)) return;
+        _projectId = id;
+        _startInTemplateId = null;
+        await LoadProjectAsync();
+    }
+
+    private async Task LoadProjectAsync()
+    {
+        _preview = null;
+        _historyCount = null;
+        try
+        {
+            _templates = await ConfigClient.GetTemplatesForProjectAsync(_projectId, _cts.Token);
+            BuildPreview();
+            var history = await Triages.ListAsync(new TriageListQuery { ProjectId = _projectId, PageSize = 1 }, _cts.Token);
+            _historyCount = history.Total;
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "TriageNew: failed to load the project's templates or history");
+            _preview ??= new TriagePreview { Problem = "The project's repositories could not be loaded." };
+        }
+        await LoadSimilarAsync();
+    }
+
+    private void OnStartInChanged(ChangeEventArgs e)
+    {
+        var id = e.Value as string;
+        _startInTemplateId = string.IsNullOrEmpty(id) ? null : id;
+        BuildPreview();
+    }
+
+    private void BuildPreview()
+    {
+        var project = _projects.FirstOrDefault(p => p.Id == _projectId);
+        if (project is null || _config is null) return;
+        _preview = TriagePreviewBuilder.Build(project, _templates, _startInTemplateId, _repoConfigs, _profiles, _config);
+    }
+
+    private async Task LoadSimilarAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_title) || _projectId.Length == 0)
+        {
+            _similar = [];
+            return;
+        }
+        try
+        {
+            _similar = await Triages.FindSimilarAsync(_projectId, _title.Trim(), _cts.Token);
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "TriageNew: failed to look up similar triages");
+            _similar = [];
+        }
+    }
+
+    private void SetWhen(string key)
+    {
+        _when = key;
+        if (key == "custom" && _from is null)
+            _from = DateTime.Now.AddHours(-1);
+    }
+
+    /// <summary>The "when" range in UTC; presets end now (still happening).</summary>
+    private (DateTimeOffset? From, DateTimeOffset? Until) WhenRange()
+    {
+        var now = DateTimeOffset.UtcNow;
+        return _when switch
+        {
+            "hour" => (now.AddHours(-1), null),
+            "today" => (new DateTimeOffset(DateTime.Today).ToUniversalTime(), null),
+            "week" => (now.AddDays(-7), null),
+            _ => (_from is { } f ? new DateTimeOffset(f).ToUniversalTime() : null,
+                  _until is { } u ? new DateTimeOffset(u).ToUniversalTime() : null)
+        };
+    }
+
+    private async Task StartAsync()
+    {
+        if (!CanStart) return;
+        _starting = true;
+        _error = null;
+        try
+        {
+            await Guard.DemandAsync(AccessRole.Operator, _projectId, "StartTriage");
+            var (from, until) = WhenRange();
+            var detail = await Triages.CreateAsync(new CreateTriageRequest
+            {
+                ProjectId = _projectId,
+                RequestedBy = Access.Username ?? "unknown",
+                Request = new TriageRequest
+                {
+                    Title = _title!.Trim(),
+                    WhatHappened = _whatHappened!.Trim(),
+                    Expected = _expected!.Trim(),
+                    From = from,
+                    Until = until,
+                    Environment = Blank(_environment),
+                    Where = Blank(_where),
+                    StartInTemplateId = _startInTemplateId,
+                    Version = Blank(_version),
+                    Links = Blank(_links),
+                    AlreadyTried = Blank(_alreadyTried),
+                },
+            }, _cts.Token);
+            Nav.NavigateTo($"triage/{detail.Record.Id}");
+        }
+        catch (AccessDeniedException) { _error = AccessDeniedException.UserMessage; }
+        catch (TriageApiException ex) { _error = ex.Message; }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { _error = $"Failed to start the triage: {ex.Message}"; }
+        finally
+        {
+            _starting = false;
+        }
+    }
+
+    private static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

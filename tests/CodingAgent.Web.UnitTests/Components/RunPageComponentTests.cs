@@ -64,6 +64,7 @@ public class RunPageComponentTests : BunitContext
 
         Services.AddSingleton(mockHub.Object);
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<IConfigurationStore>());

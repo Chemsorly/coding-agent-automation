@@ -1,0 +1,694 @@
+@page "/triage/{Id:guid}"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline.Services
+@using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Services
+@inject IPipelineApiTriageClient Triages
+@inject IPipelineApiConfigClient ConfigClient
+@inject CurrentAccess Access
+@inject IAccessGuard Guard
+
+@*
+    Triage page (spec 050, mocks B4 result, B6 needs input; B3 is the run page, linked from here).
+    Viewing needs readonly on the triage's project, acting needs operator; both are checked against the
+    project stored on the triage, never a route value. Issues are created here, in the API, from the
+    drafts as people reviewed and edited them — for both flows.
+*@
+
+<PageTitle>Triage - Coding Agent</PageTitle>
+
+<div class="cockpit-page" data-testid="triage-detail" data-initialized="@(!_loading ? "true" : "false")">
+    <a href="triage" class="cockpit-back"><Icon Name="chevrons-left" Size="14" /> Triage</a>
+
+    @if (_loading)
+    {
+        <div class="cockpit-empty">Loading triage…</div>
+    }
+    else if (_detail is null)
+    {
+        <div class="cockpit-empty" data-testid="triage-not-found">@(_error ?? "Triage not found.")</div>
+    }
+    else
+    {
+        var record = _detail.Record;
+        var status = _detail.Status;
+        var result = record.LatestResult;
+        var resultAttempt = record.LatestResultAttempt;
+        var lastAttempt = record.Attempts.Count > 0 ? record.Attempts[^1] : null;
+        var runId = _detail.ActiveWorkItemId ?? lastAttempt?.WorkItemId;
+
+        @if (IsRunning)
+        {
+            <AutoRefresh IntervalSeconds="10" OnTick="RefreshQuietAsync" />
+        }
+
+        <div class="triage-head">
+            <div style="min-width: 0;">
+                <div class="triage-pills">
+                    <span class="triage-pill is-type"><Icon Name="stethoscope" Size="13" /> Triage</span>
+                    <span class="triage-pill is-@TriageDisplay.StatusTone(status)" data-testid="triage-status"><span class="dot"></span>@TriageDisplay.StatusLabel(status)</span>
+                    @if (record.Attempts.Count > 0)
+                    {
+                        <span class="cockpit-chip" style="margin: 0;">Attempt @record.Attempts.Count</span>
+                    }
+                    <span class="cockpit-chip" style="margin: 0;">@TriageDisplay.SourceText(record.Source, record.RequestedBy, record.IssueIdentifier)</span>
+                </div>
+                <h1 style="overflow-wrap: anywhere;">@record.Title</h1>
+            </div>
+            <div class="cockpit-links-rail">
+                @if (runId is not null)
+                {
+                    <a href="runs/@runId" class="cockpit-link-chip" data-testid="triage-run-link"><Icon Name="scroll-text" Size="14" /> Run page ↗</a>
+                }
+                @if (TriageDisplay.SafeLink(record.IssueUrl) is { } issueUrl)
+                {
+                    <a href="@issueUrl" target="_blank" rel="noopener noreferrer" class="cockpit-link-chip"><Icon Name="clipboard-list" Size="14" /> Issue #@record.IssueIdentifier ↗</a>
+                }
+                @if (!IsRunning && _retentionDays is { } days)
+                {
+                    <span class="cockpit-link-chip" style="cursor: default;" title="Triages are deleted @days days after their last change">Expires in @Math.Max(0, (int)Math.Ceiling((record.UpdatedAt.AddDays(days) - DateTimeOffset.UtcNow).TotalDays)) days</span>
+                }
+            </div>
+        </div>
+
+        @if (_notice is not null)
+        {
+            <div class="triage-warnbox" role="status" data-testid="triage-notice">@_notice</div>
+        }
+        @if (_error is not null)
+        {
+            <div class="triage-errorbox" role="alert" data-testid="triage-error">@_error</div>
+        }
+
+        @if (IsRunning)
+        {
+            <div class="cockpit-card cockpit-card-pad" data-testid="triage-running" style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between;">
+                <div>
+                    <div style="font-weight: 700;">@(status == TriageStatus.New ? "Waiting for an agent" : $"Attempt {record.Attempts.Count} is investigating")</div>
+                    <div class="triage-hint">The steps and the live output are on the run page. This page updates when the result arrives.</div>
+                </div>
+                @if (runId is not null)
+                {
+                    <a href="runs/@runId" class="triage-btn">Follow it on the run page ↗</a>
+                }
+            </div>
+        }
+        else if (lastAttempt is { Result: null } failed)
+        {
+            <div class="triage-errorbox" role="alert" data-testid="triage-failed">
+                <strong>Attempt @record.Attempts.Count @(failed.Outcome == TriageAttemptOutcome.Cancelled ? "was cancelled" : "ended without a result")</strong>@(FailureReason(failed) is { } reason ? $": {reason}" : ".")
+                @if (resultAttempt is not null)
+                {
+                    <span> Below is the result of attempt @(AttemptNumber(record, resultAttempt)).</span>
+                }
+            </div>
+        }
+
+        @if (status == TriageStatus.Dismissed)
+        {
+            <div class="triage-warnbox" data-testid="triage-dismissed">
+                Dismissed by @(record.DismissedBy ?? "someone")@(string.IsNullOrWhiteSpace(record.DismissReason) ? "." : $": “{record.DismissReason}”") It can still be re-run.
+            </div>
+        }
+
+        <div class="triage-layout">
+            <div class="triage-main">
+                @if (result is not null)
+                {
+                    <TriageReport Result="result">
+                        <AfterVerdict>
+                            @if (status == TriageStatus.NeedsInput && CanAct)
+                            {
+                                <section class="cockpit-card" aria-label="Questions from the agent" data-testid="triage-questions" style="border-color: var(--warning-border);">
+                                    <div class="cockpit-card-header"><h2>The agent needs from you</h2><span class="triage-hint">Your answers go into the next attempt</span></div>
+                                    @for (var i = 0; i < result.Questions.Count; i++)
+                                    {
+                                        var index = i;
+                                        var q = result.Questions[i];
+                                        <div class="triage-question">
+                                            <span class="qi">@(i + 1)</span>
+                                            <div class="qb">
+                                                <label class="triage-label" for="triage-answer-@i" style="overflow-wrap: anywhere;">@q.Question</label>
+                                                @if (!string.IsNullOrWhiteSpace(q.Why))
+                                                {
+                                                    <span class="triage-hint" style="overflow-wrap: anywhere;">@q.Why</span>
+                                                }
+                                                <textarea id="triage-answer-@i" class="triage-input" placeholder="Your answer" style="min-height: 64px;"
+                                                          value="@Answer(index)" @onchange="e => SetAnswer(index, e.Value as string)"></textarea>
+                                            </div>
+                                        </div>
+                                    }
+                                    <div class="triage-question">
+                                        <span class="qi">+</span>
+                                        <div class="qb">
+                                            <label class="triage-label" for="triage-answer-else">Anything else</label>
+                                            <textarea id="triage-answer-else" class="triage-input" style="min-height: 64px;" placeholder="Corrections, links, things you already ruled out" @bind="_feedback"></textarea>
+                                        </div>
+                                    </div>
+                                    <div class="triage-panel" style="flex-direction: row; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                                        <span class="triage-hint">Starts attempt @(record.Attempts.Count + 1) with this result and your answers.</span>
+                                        <button type="button" class="triage-btn is-primary" disabled="@(_busy || !HasAnswers)" @onclick="RerunWithAnswersAsync" data-testid="triage-rerun-answers">Re-run with answers</button>
+                                    </div>
+                                </section>
+                            }
+                        </AfterVerdict>
+                    </TriageReport>
+                }
+                else if (!IsRunning)
+                {
+                    <div class="cockpit-card"><div class="cockpit-empty">No attempt has reported a result yet.</div></div>
+                }
+
+                @if (record.Drafts.Count > 0)
+                {
+                    <section class="cockpit-card" aria-label="Proposed issues" data-testid="triage-drafts">
+                        <div class="cockpit-card-header">
+                            <h2>Proposed issues</h2>
+                            <span class="triage-hint">Created exactly as shown. Pick, edit, or change the repository.</span>
+                        </div>
+                        @for (var i = 0; i < record.Drafts.Count; i++)
+                        {
+                            var draft = record.Drafts[i];
+                            var d = draft.Current;
+                            var created = record.CreatedIssues.FirstOrDefault(c => c.DraftId == d.Id);
+                            var selectable = CanAct && created is null;
+                            <div class="triage-draft @(created is null && !_selected.Contains(d.Id) ? "is-off" : "")" data-testid="triage-draft">
+                                @if (selectable)
+                                {
+                                    <input type="checkbox" checked="@_selected.Contains(d.Id)" aria-label="@($"Create draft {i + 1}")"
+                                           @onchange="e => ToggleDraft(d.Id, e.Value is true)" data-testid="triage-draft-select" />
+                                }
+                                <div class="triage-draft-body">
+                                    <div class="triage-draft-top">
+                                        <span class="triage-pill is-@TriageDisplay.KindTone(d.Kind)">@TriageDisplay.KindLabel(d.Kind)</span>
+                                        <span class="cockpit-chip triage-mono" style="margin: 0;">@d.TargetRepository</span>
+                                        @if (!string.IsNullOrWhiteSpace(d.Size))
+                                        {
+                                            <span class="cockpit-chip" style="margin: 0;">@d.Size</span>
+                                        }
+                                        @if (draft.Edited)
+                                        {
+                                            <span class="cockpit-chip" style="margin: 0;">edited by @draft.EditedBy</span>
+                                        }
+                                    </div>
+                                    <div class="triage-draft-title">@d.Title</div>
+                                    <div class="triage-draft-text">@d.Body</div>
+                                    @if (!string.IsNullOrWhiteSpace(d.Warning))
+                                    {
+                                        <div class="triage-hint" style="color: var(--warning);">⚠ @d.Warning</div>
+                                    }
+                                    <div class="triage-draft-meta">
+                                        @if (created is not null)
+                                        {
+                                            @if (TriageDisplay.SafeLink(created.Url) is { } createdUrl)
+                                            {
+                                                <a href="@createdUrl" target="_blank" rel="noopener noreferrer" data-testid="triage-created-link">Created #@created.Identifier ↗</a>
+                                            }
+                                            else
+                                            {
+                                                <span>Created #@created.Identifier</span>
+                                            }
+                                            <span>by @(created.CreatedBy ?? "someone") @TriageDisplay.Ago(created.CreatedAt, DateTimeOffset.UtcNow)</span>
+                                        }
+                                        else if (CanAct)
+                                        {
+                                            <button type="button" class="triage-btn is-quiet" style="min-height: 32px; padding: 0 8px;" @onclick="() => OpenEditor(draft)" data-testid="triage-draft-edit">Edit draft</button>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </section>
+                }
+            </div>
+
+            <aside class="triage-side" aria-label="Request and attempts">
+                @if (record.Request is { } request)
+                {
+                    <section class="cockpit-card cockpit-card-pad" style="display: flex; flex-direction: column; gap: 10px;" data-testid="triage-request">
+                        <h2 style="margin: 0; font-size: 15px;">Request</h2>
+                        <div><h3 class="triage-h3">What happened</h3><p class="triage-text">@request.WhatHappened</p></div>
+                        <div><h3 class="triage-h3">Expected</h3><p class="triage-text">@request.Expected</p></div>
+                        @if (WhenWhere(request) is { } whenWhere)
+                        {
+                            <div><h3 class="triage-h3">When · where</h3><p class="triage-text">@whenWhere</p></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(request.Version) || StartInName(request) is not null)
+                        {
+                            <div><h3 class="triage-h3">Version · start in</h3><p class="triage-text">@string.Join(" · ", new[] { request.Version, StartInName(request) }.Where(s => !string.IsNullOrWhiteSpace(s)))</p></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(request.Links))
+                        {
+                            <div><h3 class="triage-h3">Links and IDs</h3><p class="triage-text triage-mono">@request.Links</p></div>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(request.AlreadyTried))
+                        {
+                            <div><h3 class="triage-h3">Already tried</h3><p class="triage-text">@request.AlreadyTried</p></div>
+                        }
+                    </section>
+                }
+                else
+                {
+                    <section class="cockpit-card cockpit-card-pad" style="display: flex; flex-direction: column; gap: 8px;" data-testid="triage-issue-source">
+                        <h2 style="margin: 0; font-size: 15px;">Tracker issue</h2>
+                        <p class="triage-text">
+                            Triaged because of the <span class="sidebar-label label-agent-triage">agent:triage</span> label on
+                            @if (TriageDisplay.SafeLink(record.IssueUrl) is { } link)
+                            {
+                                <a href="@link" target="_blank" rel="noopener noreferrer">issue #@record.IssueIdentifier ↗</a>
+                            }
+                            else
+                            {
+                                <span>issue #@record.IssueIdentifier</span>
+                            }.
+                        </p>
+                        <span class="triage-hint">Each result is also posted as a comment on the issue. Creating issues or dismissing here updates the issue too.</span>
+                    </section>
+                }
+
+                <section class="cockpit-card cockpit-card-pad" data-testid="triage-attempts">
+                    <h2 style="margin: 0 0 4px; font-size: 15px;">Attempts</h2>
+                    @if (record.Attempts.Count == 0)
+                    {
+                        <span class="triage-hint">None yet.</span>
+                    }
+                    <ol class="triage-attempts">
+                        @for (var i = record.Attempts.Count - 1; i >= 0; i--)
+                        {
+                            var attempt = record.Attempts[i];
+                            var runInfo = _detail.AttemptRuns.GetValueOrDefault(attempt.WorkItemId);
+                            <li>
+                                <div style="display: flex; justify-content: space-between; gap: 8px; align-items: center;">
+                                    <a href="runs/@attempt.WorkItemId" style="font-weight: 700;">Attempt @(i + 1)</a>
+                                    @if (attempt.Result is { } r)
+                                    {
+                                        <span class="triage-pill is-@TriageDisplay.VerdictTone(r.Verdict)">@TriageDisplay.VerdictLabel(r.Verdict)</span>
+                                    }
+                                    else if (attempt.WorkItemId == _detail.ActiveWorkItemId)
+                                    {
+                                        <span class="triage-pill is-run">Running</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="triage-pill is-@(attempt.Outcome == TriageAttemptOutcome.Cancelled ? "mute" : "err")">@(attempt.Outcome == TriageAttemptOutcome.Cancelled ? "Cancelled" : "No result")</span>
+                                    }
+                                </div>
+                                <span class="triage-hint">
+                                    @attempt.StartedAt.ToLocalTime().ToString("MMM d HH:mm")
+                                    @if (attempt.CompletedAt is { } done)
+                                    {
+                                        <text> · @TriageDisplay.Duration(attempt.StartedAt, done)</text>
+                                    }
+                                    @if (runInfo?.TotalTokens is > 0)
+                                    {
+                                        <text> · @CostFormatter.FormatTokens(runInfo.TotalTokens.Value) tokens</text>
+                                    }
+                                </span>
+                                @if (attempt.Result is { } summaryResult && attempt != resultAttempt)
+                                {
+                                    <span class="triage-text" style="font-size: 13px;">“@Short(summaryResult.Summary, 160)”</span>
+                                }
+                                @if (attempt.Feedback is { } feedback)
+                                {
+                                    <div class="triage-feedback"><strong>@(feedback.Author ?? "Someone") before this attempt:</strong> @FeedbackText(feedback)</div>
+                                }
+                            </li>
+                        }
+                    </ol>
+                </section>
+
+                @if (result is not null && result.Investigated.Count > 0)
+                {
+                    <section class="cockpit-card cockpit-card-pad" data-testid="triage-checks-by-source">
+                        <h2 style="margin: 0 0 4px; font-size: 15px;">Checks by source</h2>
+                        @foreach (var (source, count) in TriageDisplay.ChecksBySource(result.Investigated))
+                        {
+                            <div class="triage-kv"><span>@source</span><span class="triage-mono">@count check@(count == 1 ? "" : "s")</span></div>
+                        }
+                    </section>
+                }
+            </aside>
+        </div>
+
+        @if (CanAct)
+        {
+            <div class="triage-actionbar" role="region" aria-label="Actions" data-testid="triage-actions">
+                <div class="triage-actionbar-group">
+                    @if (SelectableDrafts.Count > 0)
+                    {
+                        <strong>@SelectedCount of @SelectableDrafts.Count drafts selected</strong>
+                        <label style="display: inline-flex; gap: 8px; align-items: center; font-size: 13.5px;">
+                            <input type="checkbox" class="triage-check" style="margin: 0;" @bind="_queue" data-testid="triage-queue" />
+                            Queue for implementation <span class="sidebar-label label-agent-next">agent:next</span>
+                        </label>
+                    }
+                    else
+                    {
+                        <span class="triage-hint">@(record.Drafts.Count == 0 ? "No issue drafts in this result." : "All drafts are created.")</span>
+                    }
+                </div>
+                <div class="triage-actionbar-group">
+                    @if (status != TriageStatus.Dismissed)
+                    {
+                        <button type="button" class="triage-btn is-quiet" disabled="@_busy" @onclick="() => TogglePanel(Panel.Dismiss)" data-testid="triage-dismiss-open">Dismiss</button>
+                    }
+                    <button type="button" class="triage-btn" disabled="@_busy" @onclick="() => TogglePanel(Panel.Rerun)" data-testid="triage-rerun-open">Re-run with feedback</button>
+                    @if (SelectableDrafts.Count > 0)
+                    {
+                        <button type="button" class="triage-btn is-primary" disabled="@(_busy || SelectedCount == 0)" @onclick="CreateIssuesAsync" data-testid="triage-create">
+                            @(_busy && _panel == Panel.None ? "Creating…" : $"Create {SelectedCount} issue{(SelectedCount == 1 ? "" : "s")}")
+                        </button>
+                    }
+                </div>
+                @if (_panel == Panel.Rerun)
+                {
+                    <div class="triage-panel" style="flex-basis: 100%; padding: 12px 0 0;">
+                        <label class="triage-label" for="triage-feedback">Feedback for the next attempt</label>
+                        <textarea id="triage-feedback" class="triage-input" @bind="_feedback" @bind:event="oninput" placeholder="What the agent got wrong, where to look instead, what you already know" data-testid="triage-feedback"></textarea>
+                        <div class="triage-actionbar-group" style="justify-content: flex-end;">
+                            <button type="button" class="triage-btn is-quiet" @onclick="() => TogglePanel(Panel.None)">Cancel</button>
+                            <button type="button" class="triage-btn is-primary" disabled="@(_busy || string.IsNullOrWhiteSpace(_feedback))" @onclick="RerunWithFeedbackAsync" data-testid="triage-rerun">Start attempt @(record.Attempts.Count + 1)</button>
+                        </div>
+                    </div>
+                }
+                @if (_panel == Panel.Dismiss)
+                {
+                    <div class="triage-panel" style="flex-basis: 100%; padding: 12px 0 0;">
+                        <label class="triage-label" for="triage-dismiss-reason">Reason <span class="triage-opt">optional</span></label>
+                        <input id="triage-dismiss-reason" class="triage-input" type="text" maxlength="500" @bind="_dismissReason" placeholder="Known, tracked elsewhere" data-testid="triage-dismiss-reason" />
+                        <div class="triage-actionbar-group" style="justify-content: flex-end;">
+                            <button type="button" class="triage-btn is-quiet" @onclick="() => TogglePanel(Panel.None)">Cancel</button>
+                            <button type="button" class="triage-btn is-danger" disabled="@_busy" @onclick="DismissAsync" data-testid="triage-dismiss">Dismiss triage</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+
+        <TriageDraftEditor Draft="_editing" Context="@EditorContext" Repositories="_repositories" Busy="_editBusy" Error="@_editError"
+                           OnSave="SaveDraftAsync" OnReset="ResetDraftAsync" OnClose="CloseEditor" />
+    }
+</div>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private enum Panel { None, Rerun, Dismiss }
+
+    private readonly CancellationTokenSource _cts = new();
+    private TriageDetail? _detail;
+    private bool _loading = true;
+    private string? _error;
+    private string? _notice;
+    private bool _busy;
+    private Panel _panel;
+    private int? _retentionDays;
+    private IReadOnlyList<PipelineJobTemplate> _templates = [];
+    private IReadOnlyList<string> _repositories = [];
+
+    private readonly HashSet<string> _selected = new(StringComparer.Ordinal);
+    private string? _selectionFor;
+    private bool _queue;
+    private string? _feedback;
+    private string? _dismissReason;
+    private readonly Dictionary<int, string> _answers = new();
+
+    private TriageEditableDraft? _editing;
+    private bool _editBusy;
+    private string? _editError;
+
+    private bool IsRunning => _detail?.Status is TriageStatus.Investigating or TriageStatus.New;
+
+    /// <summary>Operator on the triage's stored project, and no attempt running.</summary>
+    private bool CanAct => _detail is not null && !IsRunning && Access.CanOperate(_detail.Record.ProjectId);
+
+    private IReadOnlyList<TriageEditableDraft> SelectableDrafts => _detail is null
+        ? []
+        : _detail.Record.Drafts.Where(d => _detail.Record.CreatedIssues.All(c => c.DraftId != d.Current.Id)).ToList();
+
+    private int SelectedCount => SelectableDrafts.Count(d => _selected.Contains(d.Current.Id));
+
+    private bool HasAnswers => _answers.Values.Any(a => !string.IsNullOrWhiteSpace(a)) || !string.IsNullOrWhiteSpace(_feedback);
+
+    private string? EditorContext => _editing is null || _detail is null
+        ? null
+        : $"{_detail.Record.Title} · draft {_detail.Record.Drafts.ToList().FindIndex(d => d.Current.Id == _editing.Current.Id) + 1} of {_detail.Record.Drafts.Count}";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        await LoadAsync();
+        _loading = false;
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            var detail = await Triages.GetAsync(Id, _cts.Token);
+            // Spec 049: a triage of a project the user cannot read looks exactly like a missing one
+            _detail = detail is not null && Access.CanRead(detail.Record.ProjectId) ? detail : null;
+            if (_detail is null) return;
+            ResetSelection();
+
+            if (_retentionDays is null)
+            {
+                try { _retentionDays = (await ConfigClient.GetPipelineConfigAsync(_cts.Token)).TriageRetentionDays; }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: failed to load the retention setting"); }
+            }
+            try
+            {
+                _templates = await ConfigClient.GetTemplatesForProjectAsync(_detail.Record.ProjectId, _cts.Token);
+                _repositories = TemplateOrder.ByName(_templates.Where(t => t.Enabled), t => t.Name, t => t.Id).Select(t => t.Name).ToList();
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: failed to load the project's repositories"); }
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            _detail = null;
+            _error = $"Failed to load the triage: {ex.Message}";
+        }
+    }
+
+    /// <summary>Polls while an attempt runs; keeps the page as it is on a transient error.</summary>
+    private async Task RefreshQuietAsync()
+    {
+        try
+        {
+            var detail = await Triages.GetAsync(Id, _cts.Token);
+            if (detail is not null && Access.CanRead(detail.Record.ProjectId))
+            {
+                _detail = detail;
+                ResetSelection();
+            }
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { Serilog.Log.Debug(ex, "TriageDetail: refresh failed"); }
+    }
+
+    /// <summary>Selects every uncreated draft when a new set of drafts arrives; keeps the selection otherwise.</summary>
+    private void ResetSelection()
+    {
+        var key = _detail?.Record.DraftsFromWorkItemId;
+        if (key == _selectionFor) return;
+        _selectionFor = key;
+        _selected.Clear();
+        foreach (var d in SelectableDrafts)
+            _selected.Add(d.Current.Id);
+        _answers.Clear();
+    }
+
+    private void ToggleDraft(string draftId, bool on)
+    {
+        if (on) _selected.Add(draftId); else _selected.Remove(draftId);
+    }
+
+    private void TogglePanel(Panel panel)
+    {
+        _panel = _panel == panel ? Panel.None : panel;
+        _error = null;
+    }
+
+    private string Answer(int index) => _answers.GetValueOrDefault(index, "");
+
+    private void SetAnswer(int index, string? value) => _answers[index] = value ?? "";
+
+    private async Task<bool> DemandOperatorAsync(string action)
+    {
+        try
+        {
+            await Guard.DemandAsync(AccessRole.Operator, _detail!.Record.ProjectId, action);
+            return true;
+        }
+        catch (AccessDeniedException)
+        {
+            _error = AccessDeniedException.UserMessage;
+            return false;
+        }
+    }
+
+    /// <summary>Runs an API action with the busy flag, the role check and the user-facing error handling.</summary>
+    private async Task RunAsync(string action, Func<Task> body)
+    {
+        if (_detail is null || _busy) return;
+        _busy = true;
+        _error = null;
+        _notice = null;
+        try
+        {
+            if (await DemandOperatorAsync(action))
+                await body();
+        }
+        catch (TriageApiException ex) { _error = ex.Message; }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { _error = $"The request failed: {ex.Message}"; }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private Task CreateIssuesAsync() => RunAsync("CreateTriageIssues", async () =>
+    {
+        var ids = SelectableDrafts.Where(d => _selected.Contains(d.Current.Id)).Select(d => d.Current.Id).ToList();
+        if (ids.Count == 0) return;
+        var created = await Triages.CreateIssuesAsync(Id, new CreateTriageIssuesRequest
+        {
+            DraftIds = ids,
+            Queue = _queue,
+            CreatedBy = Access.Username ?? "unknown",
+        }, _cts.Token);
+        _notice = created.Errors.Count == 0
+            ? $"Created {created.Created.Count} issue{(created.Created.Count == 1 ? "" : "s")}."
+            : $"Created {created.Created.Count} issue{(created.Created.Count == 1 ? "" : "s")}; {created.Errors.Count} failed: "
+                + string.Join("; ", created.Errors.Select(e => e.Message));
+        await RefreshQuietAsync();
+    });
+
+    private Task RerunWithFeedbackAsync() => RunAsync("RerunTriage", async () =>
+    {
+        _detail = await Triages.RerunAsync(Id, new RerunTriageRequest
+        {
+            Feedback = _feedback?.Trim(),
+            Author = Access.Username ?? "unknown",
+        }, _cts.Token);
+        _feedback = null;
+        _panel = Panel.None;
+    });
+
+    private Task RerunWithAnswersAsync() => RunAsync("RerunTriage", async () =>
+    {
+        var questions = _detail!.Record.LatestResult?.Questions ?? [];
+        var answers = questions
+            .Select((q, i) => new TriageAnswer { Question = q.Question, Answer = _answers.GetValueOrDefault(i, "").Trim() })
+            .Where(a => a.Answer.Length > 0)
+            .ToList();
+        _detail = await Triages.RerunAsync(Id, new RerunTriageRequest
+        {
+            Answers = answers,
+            Feedback = string.IsNullOrWhiteSpace(_feedback) ? null : _feedback.Trim(),
+            Author = Access.Username ?? "unknown",
+        }, _cts.Token);
+        _feedback = null;
+        _answers.Clear();
+    });
+
+    private Task DismissAsync() => RunAsync("DismissTriage", async () =>
+    {
+        _detail = await Triages.DismissAsync(Id, new DismissTriageRequest
+        {
+            Reason = string.IsNullOrWhiteSpace(_dismissReason) ? null : _dismissReason.Trim(),
+            By = Access.Username ?? "unknown",
+        }, _cts.Token);
+        _dismissReason = null;
+        _panel = Panel.None;
+    });
+
+    private void OpenEditor(TriageEditableDraft draft)
+    {
+        _editing = draft;
+        _editError = null;
+    }
+
+    private void CloseEditor()
+    {
+        if (_editBusy) return;
+        _editing = null;
+        _editError = null;
+    }
+
+    private async Task SaveDraftAsync(TriageDraft draft) => await EditAsync("EditTriageDraft", () => Triages.UpdateDraftAsync(Id, draft.Id, new UpdateTriageDraftRequest
+    {
+        Kind = draft.Kind,
+        TargetRepository = draft.TargetRepository,
+        Title = draft.Title,
+        Body = draft.Body,
+        EditedBy = Access.Username ?? "unknown",
+    }, _cts.Token));
+
+    private async Task ResetDraftAsync(string draftId) => await EditAsync("ResetTriageDraft", () => Triages.ResetDraftAsync(Id, draftId, _cts.Token));
+
+    private async Task EditAsync(string action, Func<Task<TriageDetail>> call)
+    {
+        if (_detail is null || _editBusy) return;
+        _editBusy = true;
+        _editError = null;
+        try
+        {
+            await Guard.DemandAsync(AccessRole.Operator, _detail.Record.ProjectId, action);
+            var draftId = _editing?.Current.Id;
+            _detail = await call();
+            _editing = action == "ResetTriageDraft"
+                ? _detail.Record.Drafts.FirstOrDefault(d => d.Current.Id == draftId)
+                : null;
+        }
+        catch (AccessDeniedException) { _editError = AccessDeniedException.UserMessage; }
+        catch (TriageApiException ex) { _editError = ex.Message; }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { _editError = $"Saving failed: {ex.Message}"; }
+        finally
+        {
+            _editBusy = false;
+        }
+    }
+
+    private static int AttemptNumber(TriageRecord record, TriageAttempt attempt) =>
+        record.Attempts.ToList().IndexOf(attempt) + 1;
+
+    private string? FailureReason(TriageAttempt attempt) =>
+        attempt.FailureReason ?? _detail?.AttemptRuns.GetValueOrDefault(attempt.WorkItemId)?.FailureReason;
+
+    private string? StartInName(TriageRequest request) =>
+        request.StartInTemplateId is { } id ? _templates.FirstOrDefault(t => t.Id == id)?.Name : null;
+
+    private static string? WhenWhere(TriageRequest request)
+    {
+        var parts = new[] { TriageDisplay.WhenText(request), request.Environment, request.Where }
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToList();
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
+    }
+
+    private static string FeedbackText(TriageFeedback feedback)
+    {
+        var parts = feedback.Answers.Select(a => $"{a.Question} → {a.Answer}").ToList();
+        if (!string.IsNullOrWhiteSpace(feedback.Text))
+            parts.Add(feedback.Text);
+        return string.Join("\n", parts);
+    }
+
+    private static string Short(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

@@ -1,0 +1,121 @@
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Web.Services
+
+@*
+    TriageDraftEditor — edit one issue draft of a triage (spec 050, mock B5): kind, target repository
+    (the project's enabled repositories), title and Markdown body. The page saves through the API, which
+    validates the repository again; "Reset" restores the agent's version. The issue is created exactly as
+    saved here.
+*@
+
+<DispatchDrawerFrame IsOpen="@(Draft is not null)" Title="Edit issue draft" OnClose="OnClose">
+    @if (Draft is not null)
+    {
+        <div class="triage-drawer-body" data-testid="triage-draft-editor">
+            <span class="triage-hint">@Context</span>
+            <div class="triage-field">
+                <span class="triage-label">Kind</span>
+                <div class="cockpit-segmented" role="group" aria-label="Kind">
+                    @foreach (var kind in Kinds)
+                    {
+                        <button type="button" class="cockpit-seg-btn @(_kind == kind ? "is-active" : "")" aria-pressed="@(_kind == kind ? "true" : "false")"
+                                @onclick="() => _kind = kind">@TriageDisplay.KindLabel(kind)</button>
+                    }
+                </div>
+            </div>
+            <div class="triage-field">
+                <label class="triage-label" for="triage-draft-repo">Repository</label>
+                <select id="triage-draft-repo" class="triage-input" @bind="_repository" data-testid="triage-draft-repo">
+                    @if (!Repositories.Contains(_repository, StringComparer.OrdinalIgnoreCase))
+                    {
+                        <option value="@_repository">@_repository (not in the project)</option>
+                    }
+                    @foreach (var name in Repositories)
+                    {
+                        <option value="@name">@name</option>
+                    }
+                </select>
+                <span class="triage-hint">The issue is created in this repository's tracker.</span>
+            </div>
+            <div class="triage-field">
+                <label class="triage-label" for="triage-draft-title">Title</label>
+                <input id="triage-draft-title" class="triage-input" type="text" maxlength="256" @bind="_title" data-testid="triage-draft-title" />
+            </div>
+            <div class="triage-field">
+                <label class="triage-label" for="triage-draft-body">Body <span class="triage-opt">Markdown · created exactly as written</span></label>
+                <textarea id="triage-draft-body" class="triage-input is-md" maxlength="@TriageConstants.MaxDraftBodyChars" @bind="_body" data-testid="triage-draft-body"></textarea>
+            </div>
+            <div class="triage-hint">
+                Labels on create: <span class="sidebar-label">agent:generated</span>, plus <span class="sidebar-label label-agent-next">agent:next</span> when you queue the issues for implementation.
+            </div>
+            @if (Draft.Edited)
+            {
+                <div class="triage-hint">Edited by @Draft.EditedBy@(Draft.EditedAt is { } at ? $" {TriageDisplay.Ago(at, DateTimeOffset.UtcNow)}" : "").</div>
+            }
+            @if (!string.IsNullOrEmpty(Error))
+            {
+                <div class="triage-errorbox" role="alert">@Error</div>
+            }
+        </div>
+        <div class="triage-drawer-foot">
+            <button type="button" class="triage-btn is-quiet" disabled="@(!Draft.Edited || Busy)" @onclick="ResetAsync" data-testid="triage-draft-reset">Reset to the agent's version</button>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button type="button" class="triage-btn" disabled="@Busy" @onclick="OnClose">Cancel</button>
+                <button type="button" class="triage-btn is-primary" disabled="@(!CanSave)" @onclick="SaveAsync" data-testid="triage-draft-save">@(Busy ? "Saving…" : "Save draft")</button>
+            </div>
+        </div>
+    }
+</DispatchDrawerFrame>
+
+@code {
+    private static readonly TriageDraftKind[] Kinds = [TriageDraftKind.RootFix, TriageDraftKind.Mitigation, TriageDraftKind.Prevention];
+
+    /// <summary>The draft being edited; null closes the drawer.</summary>
+    [Parameter] public TriageEditableDraft? Draft { get; set; }
+
+    /// <summary>"Title · draft 1 of 3", shown above the form.</summary>
+    [Parameter] public string? Context { get; set; }
+
+    /// <summary>The project's enabled repositories (template names).</summary>
+    [Parameter] public IReadOnlyList<string> Repositories { get; set; } = [];
+
+    [Parameter] public bool Busy { get; set; }
+    [Parameter] public string? Error { get; set; }
+    [Parameter] public EventCallback<TriageDraft> OnSave { get; set; }
+    [Parameter] public EventCallback<string> OnReset { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string? _draftKey;
+    private TriageDraftKind _kind;
+    private string _repository = "";
+    private string _title = "";
+    private string _body = "";
+
+    private bool CanSave => !Busy && !string.IsNullOrWhiteSpace(_title) && !string.IsNullOrWhiteSpace(_body)
+        && !string.IsNullOrWhiteSpace(_repository);
+
+    protected override void OnParametersSet()
+    {
+        // Load the fields when another draft (or another version of it) arrives, not on every render
+        var key = Draft is null ? null : $"{Draft.Current.Id}|{Draft.EditedAt?.UtcTicks}|{Draft.Current.Title.GetHashCode()}";
+        if (key == _draftKey) return;
+        _draftKey = key;
+        if (Draft is null) return;
+        _kind = Draft.Current.Kind;
+        _repository = Draft.Current.TargetRepository;
+        _title = Draft.Current.Title;
+        _body = Draft.Current.Body;
+    }
+
+    private Task SaveAsync() => !CanSave
+        ? Task.CompletedTask
+        : OnSave.InvokeAsync(Draft!.Current with
+        {
+            Kind = _kind,
+            TargetRepository = _repository.Trim(),
+            Title = _title.Trim(),
+            Body = _body,
+        });
+
+    private Task ResetAsync() => Draft is null ? Task.CompletedTask : OnReset.InvokeAsync(Draft.Current.Id);
+}
