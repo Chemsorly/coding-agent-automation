@@ -250,14 +250,14 @@ public class PreparingForPullRequestPropertyTests
         {
             var mockPipelineProvider = new Mock<IPipelineProvider>();
             mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                    It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PipelineRunStatus
                 {
                     State = PipelineRunState.Running,
                     Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
                 });
             mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                    It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                    It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new PipelineRunStatus
                 {
                     State = PipelineRunState.Passed,

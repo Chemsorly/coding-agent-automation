@@ -83,7 +83,7 @@ public class CiPollingCoordinatorTests
 
         // GetRunStatusAsync always returns Pending (CI never starts)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Pending,
@@ -106,7 +106,7 @@ public class CiPollingCoordinatorTests
         // WaitForCompletionAsync must NOT have been called — deterministic failure path
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "must not call WaitForCompletionAsync when CI never started");
 
@@ -138,7 +138,7 @@ public class CiPollingCoordinatorTests
 
         // GetRunStatusAsync always returns Pending (CI never starts)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Pending,
@@ -175,8 +175,8 @@ public class CiPollingCoordinatorTests
         // SHA-specific check always returns Pending (no runs for our SHA yet)
         // Branch-wide check returns Running (CI running on a prior SHA)
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, string? sha, CancellationToken _) =>
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BranchName _, string? sha, CancellationToken _) =>
                 sha == null
                     ? new PipelineRunStatus
                     {
@@ -186,7 +186,7 @@ public class CiPollingCoordinatorTests
                     : new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -200,9 +200,13 @@ public class CiPollingCoordinatorTests
         result.ExternalCi!.Passed.Should().BeTrue("CI was running and then passed");
 
         // WaitForCompletionAsync must be called with null SHA (branch-wide wait)
+        // TODO [WARNING] (TestQualityReviewer): This is the only Verify call in the test suite that pins
+        // the exact BranchName value for a provider method. All other Verify calls use It.IsAny<BranchName>(),
+        // which would not catch accidental transposition of the branch and SHA arguments. Consider adding
+        // specific-value Verify calls to GetRunStatusAsync and DeleteBranchAsync tests as well.
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
-                run.BranchName!, null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                (BranchName)run.BranchName!, null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "must wait on null-SHA (branch-wide) when CI already running on a prior SHA");
 
@@ -233,7 +237,7 @@ public class CiPollingCoordinatorTests
 
         // GetRunStatusAsync returns non-Pending so WaitForCiRunsToAppearAsync passes through
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -252,7 +256,7 @@ public class CiPollingCoordinatorTests
             }]
         };
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(infraFailure);
 
         // Empty commits for infra retries
@@ -276,7 +280,7 @@ public class CiPollingCoordinatorTests
         // matching) and asserting failure details that can only come from the infra-retry classification.
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Exactly(1 + maxInfraRetries),
             $"must call WaitForCompletionAsync exactly {1 + maxInfraRetries} times (1 initial + {maxInfraRetries} retries)");
 
@@ -335,7 +339,7 @@ public class CiPollingCoordinatorTests
 
         // GetRunStatusAsync returns Running so WaitForCiRunsToAppearAsync passes through
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -344,7 +348,7 @@ public class CiPollingCoordinatorTests
 
         // All CI calls pass
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -451,8 +455,8 @@ public class CiPollingCoordinatorTests
         // after exactly one poll and the second GetRunStatusAsync call is unambiguously the last-check guard.
         var callCount = 0;
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string _, string? sha, CancellationToken _) =>
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((BranchName _, string? sha, CancellationToken _) =>
             {
                 var call = Interlocked.Increment(ref callCount);
                 // First call from WaitForCiRunsToAppearAsync → Pending (CI not started)
@@ -468,7 +472,7 @@ public class CiPollingCoordinatorTests
             });
 
         _mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -610,7 +614,7 @@ public class CiPollingCoordinatorTests
 
         // CI never starts
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR state: returns Merged on first call
@@ -645,7 +649,7 @@ public class CiPollingCoordinatorTests
         var context = BuildContext(run, ciNotStartedMaxRetries: 2);
 
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         _mockRepoProvider.Setup(r => r.GetPullRequestStateAsync(43, It.IsAny<CancellationToken>()))
@@ -670,7 +674,7 @@ public class CiPollingCoordinatorTests
         var context = BuildContext(run, ciNotStartedMaxRetries: 1);
 
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR is still open
@@ -713,7 +717,7 @@ public class CiPollingCoordinatorTests
         var context = BuildContext(run, ciNotStartedMaxRetries: 1);
 
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR state returns Merged to confirm the call was made with number 42
@@ -754,7 +758,7 @@ public class CiPollingCoordinatorTests
         var context = BuildContext(run, ciNotStartedMaxRetries: 1);
 
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // Simulate a transient provider error
@@ -792,7 +796,7 @@ public class CiPollingCoordinatorTests
         var context = BuildContext(run, ciNotStartedMaxRetries: maxRetries);
 
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         var result = await _executor.AppendExternalCiIfNeededAsync(
@@ -836,7 +840,7 @@ public class CiPollingCoordinatorTests
 
         // CI never starts.
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // Agent returns a valid result for any call (e.g. the feedback-collection call).
@@ -944,7 +948,7 @@ public class CiPollingCoordinatorTests
         var callCount = 0;
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(() =>
             {
                 var call = Interlocked.Increment(ref callCount);
@@ -967,7 +971,7 @@ public class CiPollingCoordinatorTests
 
         _mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -988,7 +992,7 @@ public class CiPollingCoordinatorTests
         // WaitForCompletionAsync must have been called (meaning a second run appeared).
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Once,
             "WaitForCompletionAsync must be called once the post-mark-ready run appears");
     }
@@ -1015,7 +1019,7 @@ public class CiPollingCoordinatorTests
         // Branch-wide GetRunStatusAsync (sha = null): Passed, but started BEFORE notBefore
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Pending,
@@ -1024,7 +1028,7 @@ public class CiPollingCoordinatorTests
             });
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -1046,7 +1050,7 @@ public class CiPollingCoordinatorTests
         // WaitForCompletionAsync must NOT have been called with the stale branch-wide result
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "must not wait for completion of a pre-notBefore branch-wide run");
         // TODO [WARNING] (TestQualityReviewer #3114): The It.IsNotNull<string?>() matcher for the
@@ -1075,13 +1079,13 @@ public class CiPollingCoordinatorTests
         // SHA-specific: always Pending
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsNotNull<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [], StartedAt = null });
 
         // Branch-wide: Passed, started AFTER notBefore — should be accepted
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), null, It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), null, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -1101,7 +1105,7 @@ public class CiPollingCoordinatorTests
         // WaitForCompletionAsync with branch (null sha) must NOT be called — early-return skips it
         _mockPipelineProvider.Verify(
             p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
+                It.IsAny<BranchName>(), null, It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()),
             Times.Never,
             "branch-wide Passed run (after notBefore) must skip WaitForCompletionAsync via early-return");
         // TODO [WARNING] (TestQualityReviewer #3114): The Times.Never assertion above only verifies
@@ -1128,7 +1132,7 @@ public class CiPollingCoordinatorTests
         // GetRunStatusAsync: Running with null StartedAt — should be accepted (fail-open)
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
@@ -1138,7 +1142,7 @@ public class CiPollingCoordinatorTests
 
         _mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -1170,7 +1174,7 @@ public class CiPollingCoordinatorTests
         // Run started in the past — would be filtered if notBefore were set, but notBefore is null
         _mockPipelineProvider
             .Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -1180,7 +1184,7 @@ public class CiPollingCoordinatorTests
 
         _mockPipelineProvider
             .Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -1253,7 +1257,7 @@ public class CiPollingCoordinatorTests
 
         // CI never starts on any SHA.
         _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Pending, Jobs = [] });
 
         // PR state: Open → Open → Merged (detected on the third call).
