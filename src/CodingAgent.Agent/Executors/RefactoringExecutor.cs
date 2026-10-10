@@ -75,14 +75,17 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                     await TryCloneBrainRepoAsync(brainProvider, workspacePath, job.JobId, ct);
             });
 
-            // 2. Hotspot analysis
+            // 2b. Query open issues for deduplication context (must run before hotspot analysis to avoid
+            //     calling ListOpenIssuesAsync twice — CollectScanIssueReferencesAsync reuses the result)
+            var (issueContext, openIssueTitles, openIssues) = await TryBuildIssueContextAsync(issueProvider, job.JobId, ct);
+
+            // 2. Hotspot analysis — leave out commits that implement scan issues
+            var scanIssueReferences = await CollectScanIssueReferencesAsync(
+                issueProvider, openIssues, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
             await RunWithTracingAsync("RefactoringDetection.HotspotAnalysis", job.JobId, async _ =>
             {
-                await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
+                await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, scanIssueReferences, ct);
             });
-
-            // 2b. Query open issues for deduplication context
-            var (issueContext, openIssueTitles) = await TryBuildIssueContextAsync(issueProvider, job.JobId, ct);
 
             // 2c. Query past proposal outcomes for feedback context
             var (outcomeContext, closedIssueTitles) = await TryBuildOutcomeContextAsync(issueProvider, job.PipelineConfiguration, job.JobId, ct);
@@ -137,7 +140,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// or age: a proposal must not duplicate any of them. Also returns their titles, so issue creation can
     /// reject a proposal that duplicates one.
     /// </summary>
-    private async Task<(string? Context, IReadOnlyList<string> Titles)> TryBuildIssueContextAsync(
+    private async Task<(string? Context, IReadOnlyList<string> Titles, IReadOnlyList<IssueSummary> OpenIssues)> TryBuildIssueContextAsync(
         IIssueProvider issueProvider, string jobId, CancellationToken ct)
     {
         try
@@ -149,13 +152,62 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             if (!string.IsNullOrEmpty(context))
                 Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
                     openIssues.Count, jobId);
-            return (context, openIssues.Select(i => i.Title).ToList());
+            return (context, openIssues.Select(i => i.Title).ToList(), openIssues);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", jobId);
-            return (null, []);
+            return (null, [], []);
         }
+    }
+
+    /// <summary>
+    /// Returns the set of issue references (e.g. <c>#3284</c>) for all scan issues — open and recently
+    /// closed — so that <see cref="WriteHotspotAnalysisAsync"/> can exclude commits that implement them.
+    /// <para>
+    /// Open scan issues are taken from <paramref name="openIssues"/> (already fetched by
+    /// <see cref="TryBuildIssueContextAsync"/>). Closed ones are queried in pages while
+    /// <c>HasMore = true</c>, up to 10 pages. On any non-cancellation exception the method
+    /// logs a warning and returns the references collected so far — the hotspot analysis must still run.
+    /// </para>
+    /// </summary>
+    // TODO [WARNING]: Return type is HashSet<string> (mutable). Consider returning IReadOnlySet<string>
+    // to prevent callers from accidentally mutating the collection between creation and consumption.
+    // Currently safe because WriteHotspotAnalysisAsync only reads it, but a future caller could mutate it.
+    internal async Task<HashSet<string>> CollectScanIssueReferencesAsync(
+        IIssueProvider issueProvider,
+        IReadOnlyList<IssueSummary> openIssues,
+        TimeSpan lookback,
+        CancellationToken ct)
+    {
+        var references = new HashSet<string>(StringComparer.Ordinal);
+
+        // Open scan issues
+        foreach (var issue in openIssues.Where(IsScanIssue))
+            references.Add(issueProvider.FormatIssueReference(issue.Identifier));
+
+        // Closed scan issues within the lookback window
+        try
+        {
+            var since = DateTime.UtcNow - lookback;
+            for (var page = 1; page <= 10; page++)
+            {
+                var result = await issueProvider.ListClosedIssuesAsync(
+                    page, pageSize: 100, labels: new[] { AgentLabels.Generated }, since: since, ct);
+
+                foreach (var issue in result.Items.Where(IsScanIssue))
+                    references.Add(issueProvider.FormatIssueReference(issue.Identifier));
+
+                if (!result.HasMore)
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to query closed scan issues for hotspot exclusions, continuing with {Count} reference(s) collected so far", references.Count);
+        }
+
+        return references;
     }
 
     /// <summary>
@@ -497,15 +549,33 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// Runs git log to identify frequently-changed files and writes a hotspot summary.
     /// Gracefully degrades on any failure — logs a warning and continues without the file.
     /// </summary>
-    private async Task WriteHotspotAnalysisAsync(string workspacePath, TimeSpan lookback, CancellationToken ct)
+    private async Task WriteHotspotAnalysisAsync(string workspacePath, TimeSpan lookback, HashSet<string> scanIssueReferences, CancellationToken ct)
     {
         try
         {
             var sinceDate = DateTime.UtcNow.Subtract(lookback).ToString("yyyy-MM-dd");
-            var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"COMMIT_DATE:%ai\"", ct);
+            var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"COMMIT_DATE:%ai%nCOMMIT_SUBJECT:%s\"", ct);
+
+            var excludedCount = 0;
+            // TODO [WARNING]: excludedCount is a mutable local captured by the lambda. This is safe in the
+            // current single-threaded call path (ParseHotspotOutput is synchronous and called once), but
+            // would require synchronisation if the predicate were ever invoked concurrently or cached.
+            Func<string, bool> isExcludedCommit = subject =>
+            {
+                foreach (var reference in scanIssueReferences)
+                {
+                    if (subject.Contains("(" + reference + ")", StringComparison.Ordinal))
+                    {
+                        excludedCount++;
+                        return true;
+                    }
+                }
+                return false;
+            };
 
             // Files deleted since are not refactoring targets any more
-            var hotspots = ParseHotspotOutput(output, lookback, fileExists: f => File.Exists(Path.Combine(workspacePath, f)));
+            var hotspots = ParseHotspotOutput(output, lookback, fileExists: f => File.Exists(Path.Combine(workspacePath, f)),
+                isExcludedCommit: scanIssueReferences.Count > 0 ? isExcludedCommit : null);
             if (hotspots is null)
             {
                 Logger.Information("No git history found within lookback window for hotspot analysis");
@@ -516,6 +586,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
             Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
             await File.WriteAllTextAsync(outputPath, hotspots, ct);
 
+            Logger.Information("Hotspot analysis left out {ExcludedCommitCount} commits of refactoring scan issues", excludedCount);
             Logger.Information("Wrote hotspot analysis to {Path}", outputPath);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -545,10 +616,14 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
     /// Each change is weighted by recency: factor = 1/(1 + days_since/30).
     /// Leaves out files that fail <see cref="IsHotspotCandidate"/> and, when <paramref name="fileExists"/>
     /// is given, files that no longer exist.
+    /// When <paramref name="isExcludedCommit"/> is given, skips all file lines for any commit whose subject
+    /// the predicate returns true for. A <c>COMMIT_SUBJECT:</c> line is never counted as a file entry,
+    /// even when the predicate is null.
     /// Returns null if no files found. Exposed as internal static for testability.
     /// </summary>
     internal static string? ParseHotspotOutput(
-        string gitLogOutput, TimeSpan lookback, DateTime? referenceTime = null, Func<string, bool>? fileExists = null)
+        string gitLogOutput, TimeSpan lookback, DateTime? referenceTime = null, Func<string, bool>? fileExists = null,
+        Func<string, bool>? isExcludedCommit = null)
     {
         var now = referenceTime ?? DateTime.UtcNow;
         var entries = new List<(string File, double RecencyFactor, double DaysSince)>();
@@ -556,6 +631,7 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
         // In practice, git --format always emits the date line before file names per commit.
         DateTime currentCommitDate = now;
         bool dateParseFailedForCurrentCommit = false;
+        bool skipCurrentCommit = false;
 
         foreach (var line in gitLogOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -576,8 +652,24 @@ public sealed partial class RefactoringExecutor : ConsolidationExecutorBase
                     // Graceful degradation: neutral weight (0.5 → equivalent to 30 days old)
                     dateParseFailedForCurrentCommit = true;
                 }
+                skipCurrentCommit = false;
                 continue;
             }
+
+            if (trimmed.StartsWith("COMMIT_SUBJECT:"))
+            {
+                // TODO [WARNING]: skipCurrentCommit is set here assuming COMMIT_DATE: always precedes
+                // COMMIT_SUBJECT: per commit (which git --format guarantees). If the output ever starts
+                // with a COMMIT_SUBJECT: before any COMMIT_DATE: (e.g. corrupted or unexpected format),
+                // file lines that follow would be incorrectly skipped when the predicate returns true.
+                // This matches the pre-existing COMMIT_DATE-first assumption documented above.
+                var subject = trimmed[15..];
+                skipCurrentCommit = isExcludedCommit?.Invoke(subject) == true;
+                continue;
+            }
+
+            if (skipCurrentCommit)
+                continue;
 
             double daysSince;
             double recencyFactor;
