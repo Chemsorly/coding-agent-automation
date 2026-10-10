@@ -211,6 +211,7 @@ Implement carefully.
 - If referenced code is missing, search for it. Adapt — never fabricate.
 
 Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations — it automatically stages and commits ALL new and modified files (including untracked files). Read-only git commands (git log, git diff, git status, git show) are fine.
+Fix the cause, not the check. Do NOT add or widen exclusions, suppressions or ignore rules in static-analysis, coverage, lint or CI configuration (for example `sonar.*.exclusions`, `NOSONAR`, `#pragma warning disable`, `[SuppressMessage]`, `eslint-disable`, coverage excludes or CI workflow files). Do NOT skip, disable or delete tests. Do NOT change the expected value of an existing test to match new output unless the issue asks for the behaviour change that test covers. These rules do not apply to a change the issue explicitly asks for. If a check cannot pass without breaking one of these rules, leave it failing and say why; the pipeline then keeps the PR as a draft for a person to decide.
 The analysis for this issue is at `.agent/analysis.md` — read it before implementing.
 
 # Issue #1: Test Issue
@@ -591,7 +592,6 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
     "evidenceSources": ["tool:dotnet-build:IDE0051", "usage-search:Foo.Bar:0-callers", "code-reading:File.cs:L42"],
     "scopeQuery": "git grep -n 'pattern' -- src",
     "prerequisites": ["Add characterization tests for X before refactoring"],
-    "dependsOn": ["Exact title of another proposal this depends on"],
     "estimatedEffort": "small|medium|large",
     "riskLevel": "low|medium|high",
     "technique": "Extract Method|Inline Class|Rename|Introduce Value Type|etc.",
@@ -621,9 +621,6 @@ Produce the final proposals at `.agent/refactoring-proposals.json` as a JSON arr
 - **prerequisites** — prep work needed. If affected files lack test coverage, MUST include
   "Add characterization tests for X before refactoring". Do NOT reference other proposals by number
   (e.g., "proposal #1") — GitHub will autolink #N to wrong issues.
-- **dependsOn** — titles of other proposals in this batch that must be completed first.
-  Use the EXACT title string of the dependency. These are resolved to `Depends on #N` during issue creation.
-  Do NOT use `#N` notation anywhere — it creates wrong GitHub autolinks.
 - **estimatedEffort** — `small` (<5 files), `medium` (5-15 files), `large` (15-30 files).
 - **riskLevel** — `low` (rename/move), `medium` (extract/restructure), `high` (interface changes).
 - **technique** — named refactoring pattern if applicable.
@@ -659,19 +656,10 @@ Each proposal becomes an issue for an engineer who has not seen this analysis:
 
 Each proposal MUST be achievable by a single agent in one run:
 - Maximum ~30 affected files (source + test) per proposal
-- If a finding would touch more files, split into independent phases
-- Each phase must leave the codebase buildable
+- If a finding would touch more files, drop it and record it in the analysis log as scope-exceeded
 - Prefer mechanical, low-risk changes over sweeping architectural ones
 - Do NOT propose changes spanning serialization boundaries simultaneously
 - One concern per proposal: do not bundle two classes' decompositions into one proposal
-
-## Dependency Ordering
-
-When splitting work into phases, express ordering via `dependsOn`:
-- List proposals in dependency order: independent proposals first, dependent ones later
-- If proposal B requires proposal A to be completed first, add A's EXACT title to B's `dependsOn` array
-- Do NOT use `#N`, `proposal #1`, or any numeric issue references in any text field
-- The system resolves title references to proper GitHub issue links during creation
 
 ## Also Produce
 

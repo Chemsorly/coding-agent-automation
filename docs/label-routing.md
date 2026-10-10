@@ -29,7 +29,9 @@ Agent labels:              ["kiro", "dotnet", "dotnet10"]
 | **QGC Resolution** | Matched profile's MatchLabels | QGC MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which quality gates to run |
 | **Reviewer Resolution** | Matched profile's MatchLabels | Reviewer MatchLabels ∩ profile labels ≠ ∅ (ANY match); empty MatchLabels always applies | Determine which review agents to run |
 
-Consolidation runs and chat sessions resolve the profile from the agent's labels instead (Profile MatchLabels ⊆ agent labels).
+Consolidation runs resolve the profile from the agent's labels instead (Profile MatchLabels ⊆ agent labels).
+
+Chat sessions start from a profile: Agent Chat lists the enabled profiles whose labels name a job template, and the chosen profile supplies the provider config (model, effort, auth mode), the MCP servers and the template. A job template without a profile is not offered, and a profile whose provider config no longer exists cannot be launched.
 
 ## Agent Images
 
@@ -67,7 +69,7 @@ Agent Profiles map label sets to agent provider configs (model, effort, CLI path
 | Kiro Python 3.12 Agent | `kiro, python, python312` | Uses Opus model |
 | Kiro Java 21 Agent | `kiro, java, java21` | Uses Opus model |
 
-Resolution: the profile must contain every label of the repository; among those, the profile with the most labels wins, then the higher Priority, then the Id. A profile with empty MatchLabels matches only a repository with no required labels; it is a catch-all only for consolidation runs and chat sessions, which match by agent labels.
+Resolution: the profile must contain every label of the repository; among those, the profile with the most labels wins, then the higher Priority, then the Id. A profile with empty MatchLabels matches only a repository with no required labels; it is a catch-all only for consolidation runs, which match by agent labels. Agent Chat does not offer it: a chat pod needs labels to pick its job template.
 
 ## Quality Gate Configurations
 
