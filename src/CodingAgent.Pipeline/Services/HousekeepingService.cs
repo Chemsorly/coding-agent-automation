@@ -124,6 +124,26 @@ public sealed class HousekeepingService : IHousekeepingService
             return isMerged.Value ? "merged" : "closed_unmerged";
         };
 
+    /// <summary>
+    /// When <c>true</c>, <see cref="EvictInFlightSlots"/> skips the
+    /// <c>_recordedPrOutcomes</c> cleanup on the absent-PR eviction path.
+    ///
+    /// <b>Test-only seam.</b> In production this is always <c>false</c>.
+    /// Setting it to <c>true</c> allows tests to observe whether
+    /// <see cref="RecordPrOutcomesAsync"/> populated <c>_recordedPrOutcomes</c> before
+    /// or after the outcome seam call — the distinction that the
+    /// transient-exception retry fix (dedup guard reorder) introduces.
+    /// Without this seam the absent-path eviction in Step 3 always clears the dedup entry
+    /// in the same <c>ExecuteAsync</c> call, making the bug unobservable through the
+    /// public API.
+    /// </summary>
+    // TODO: Consider restricting this seam to the test assembly via [assembly: InternalsVisibleTo]
+    // or adding [EditorBrowsable(EditorBrowsableState.Never)] to reduce accidental-use risk.
+    // Any internal caller that sets this to true in production will silently disable recordedForRepo
+    // eviction for the singleton's lifetime, causing the dedup set to grow unbounded and suppressing
+    // metrics for all subsequently re-opened PRs. (DotNetSpecialist review finding.)
+    internal bool SkipRecordedOutcomesEvictionCleanup { get; set; }
+
     public HousekeepingService(
         IRunActivityQuery runService,
         IStaleBranchCleaner staleBranchCleaner,
@@ -448,7 +468,13 @@ public sealed class HousekeepingService : IHousekeepingService
         foreach (var prNumber in inFlight)
         {
             if (currentPrNumbers.Contains(prNumber)) continue;   // still present — not evicted yet
-            if (!recordedForRepo.Add(prNumber)) continue;          // already recorded in a previous cycle
+            // TODO: The Contains + Add below is a check-then-act on a non-thread-safe HashSet<int>.
+            // If ExecuteAsync were ever called concurrently for the same repoProviderId, two threads
+            // could both pass Contains, both call Add, and the metric would fire twice. This is a
+            // pre-existing structural issue (inner HashSet is not thread-safe); safe today because
+            // ExecuteAsync is called sequentially. A future refactor should replace the inner
+            // HashSet with a thread-safe equivalent or add locking. (DotNetSpecialist review finding.)
+            if (recordedForRepo.Contains(prNumber)) continue;     // already recorded in a previous cycle
 
             string? outcome;
             try
@@ -458,16 +484,20 @@ public sealed class HousekeepingService : IHousekeepingService
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 // Non-fatal: log and skip this PR for this cycle.
-                // It won't be retried (already added to recordedForRepo) to avoid repeated API calls.
-                // TODO: This permanently suppresses the metric for this PR even on transient failures
-                // (network blip, temporary rate-limit on GetPullRequestMergedState). If a more robust
-                // approach is needed, consider NOT adding to recordedForRepo until outcome is successfully
-                // determined, so a transient failure retries on the next cycle.
+                // Deliberately NOT adding to recordedForRepo here so the next sweep retries —
+                // transient failures (network blip, temporary rate-limit) should not permanently
+                // suppress the metric.
                 _logger.Warning(ex,
                     "HousekeepingService: failed to determine outcome for PR #{PrNumber} in repo {RepoId} — skipping metric",
                     prNumber, repoProviderId);
                 continue;
             }
+
+            // Record dedup entry for both null and non-null outcomes (but not for exceptions above).
+            // - Non-null: metric fires below, dedup prevents re-emission on subsequent sweeps.
+            // - Null: outcome is permanently unknown (provider cannot determine merged state);
+            //   dedup prevents infinite re-polling on every sweep.
+            recordedForRepo.Add(prNumber);
 
             if (outcome is null) continue; // outcome unknown — skip metric
 
@@ -511,7 +541,8 @@ public sealed class HousekeepingService : IHousekeepingService
                 _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _);  // PR merged/closed — clear cooldown state
                 _prCreatedAtCache.TryRemove((repoProviderId, prNumber), out _); // bound the cache — evict alongside _lastTriggeredAt
                 if (_recordedPrOutcomes.TryGetValue(repoProviderId, out var recordedForRepo))
-                    recordedForRepo.Remove(prNumber); // bound the deduplication set — evict alongside _lastTriggeredAt
+                    if (!SkipRecordedOutcomesEvictionCleanup)
+                        recordedForRepo.Remove(prNumber); // bound the deduplication set — evict alongside _lastTriggeredAt
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
