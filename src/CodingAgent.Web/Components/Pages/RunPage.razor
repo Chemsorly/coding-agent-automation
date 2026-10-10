@@ -322,6 +322,8 @@
     private PipelineStep? _liveStep;
     private readonly List<string> _liveOutput = new();
     private IDisposable? _outputSub, _stepSub, _completedSub, _snapshotSub, _chatEntrySub;
+    // Held so it can be detached from HubConnection.Reconnected in DisposeAsync.
+    private Func<string?, Task>? _reconnectedHandler;
     private ElementReference _logRef;
     private bool _scrollOnRender;
 
@@ -436,6 +438,36 @@
             if (HubConnection.State == HubConnectionState.Disconnected)
                 await HubConnection.StartAsync(_cts.Token);
             await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, _cts.Token);
+
+            // Re-join the run group after every hub reconnect so output lines and step
+            // transitions keep arriving. The handler clears _liveOutput first so the
+            // server-pushed backlog (last 500 lines from Redis) replaces rather than
+            // appends to what was already on screen, preventing duplicates.
+            // CancellationToken.None is intentional: _cts may already be cancelled/disposed
+            // by the time this background-thread event fires. DisposeAsync detaches the
+            // handler as its very first step to minimise the window, but CancellationToken.None
+            // provides defence-in-depth consistent with how UnsubscribeFromRun is called in DisposeAsync.
+            // TODO: After _liveOutput.Clear() there is no StateHasChanged() call before the
+            // re-subscribe round-trip. If the run is idle (no new output and the server backlog
+            // push is empty or delayed), the DOM continues to show the pre-reconnect lines until
+            // the next unrelated hub event triggers a re-render. Fix: call StateHasChanged()
+            // after _liveOutput.Clear() so the screen immediately reflects the cleared state.
+            // TODO: The async lambda is invoked fire-and-forget by the SignalR event infrastructure.
+            // Any exception thrown inside InvokeAsync (e.g. ObjectDisposedException if the renderer
+            // is already torn down in the TOCTOU gap before DisposeAsync completes the detach) is
+            // swallowed silently. Wrap the inner lambda body in try/catch(Exception) catching at
+            // minimum ObjectDisposedException and OperationCanceledException to avoid unobserved
+            // task exceptions.
+            _reconnectedHandler = async _ =>
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (!_isLive) return;
+                    _liveOutput.Clear();
+                    await HubConnection.InvokeAsync(HubMethodNames.SubscribeToRun, RunId, CancellationToken.None); // intentional: see comment above
+                });
+            };
+            HubConnection.Reconnected += _reconnectedHandler;
 
             // Signal that the hub subscription is established — the data-hub-subscribed attribute
             // on the live output card flips to "true", which E2E tests use as a deterministic
@@ -794,6 +826,14 @@
 
     public async ValueTask DisposeAsync()
     {
+        // Detach the reconnect handler first — before _cts.CancelAsync() — so a background-thread
+        // Reconnected event cannot fire after the CancellationTokenSource is disposed.
+        if (_reconnectedHandler is not null)
+        {
+            HubConnection.Reconnected -= _reconnectedHandler;
+            _reconnectedHandler = null;
+        }
+
         if (_subscribed)
         {
             try

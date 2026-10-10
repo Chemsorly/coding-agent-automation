@@ -1128,7 +1128,7 @@ public class HousekeepingServiceTests
         await ExecAsync(svc, providerMock, issues, [], branchCleanup: true, intervalMinutes: 0);
 
         // No direct provider calls for branch deletion — cleanup is fully delegated
-        providerMock.Verify(p => p.DeleteBranchAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        providerMock.Verify(p => p.DeleteBranchAsync(It.IsAny<BranchName>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── HasAutoMerge priority (3-tier sort) ───────────────────────────────────

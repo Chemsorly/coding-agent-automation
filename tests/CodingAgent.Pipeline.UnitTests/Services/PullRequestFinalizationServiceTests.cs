@@ -287,6 +287,83 @@ public class PullRequestFinalizationServiceTests
     }
 
     [Fact]
+    public async Task RunPostPrSequenceAsync_GateConfigChanged_LeavesDraftAndAppendsWarning()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs", "SonarQube.Analysis.xml"]));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        run.PullRequestBody = "Original body";
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var emitted = new List<string>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, emitted.Add), CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42,
+            It.Is<string>(b => b.StartsWith("Original body") && b.Contains("- `SonarQube.Analysis.xml`")),
+            false, It.IsAny<CancellationToken>()), Times.Once);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Never);
+        run.PrMarkedReadyAt.Should().BeNull();
+        run.PullRequestBody.Should().Contain("## ⚠️ Quality-gate configuration changed");
+        emitted.Should().Contain(l => l.Contains("left as draft for review") && l.Contains("SonarQube.Analysis.xml"));
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_NoGateConfigChanged_MarksReady()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _) => Task.FromResult<IReadOnlyList<string>>(["src/Foo.cs"]));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), false, It.IsAny<CancellationToken>()), Times.Never);
+        run.PrMarkedReadyAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RunPostPrSequenceAsync_ChangedFilesLookupThrows_MarksReady()
+    {
+        var sut = new PullRequestFinalizationService(_logger.Object,
+            getChangedFiles: (_, _) => throw new TimeoutException("git diff timed out"));
+        var run = CreateRun();
+        run.PullRequestNumber = "42";
+        var repoProvider = new Mock<IRepositoryProvider>();
+
+        await sut.RunPostPrSequenceAsync(CreatePostPrRequest(run, repoProvider.Object, _ => { }), CancellationToken.None);
+
+        repoProvider.Verify(r => r.UpdatePullRequestAsync(42, It.IsAny<string>(), true, It.IsAny<CancellationToken>()), Times.Once);
+        run.PrMarkedReadyAt.Should().NotBeNull();
+    }
+
+    private PostPrSequenceRequest CreatePostPrRequest(PipelineRun run, IRepositoryProvider repoProvider, Action<string> emitOutputLine)
+    {
+        var agentProvider = new Mock<IAgentProvider>();
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = [] });
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
+
+        return new PostPrSequenceRequest
+        {
+            Run = run,
+            IsDraft = false,
+            AgentProvider = agentProvider.Object,
+            RepoProvider = repoProvider,
+            Config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) },
+            BrainSync = new Mock<IBrainSyncService>().Object,
+            BrainProvider = new Mock<IRepositoryProvider>().Object,
+            FeedbackService = new FeedbackService(_logger.Object),
+            HistoryService = historyService.Object,
+            EmitOutputLine = emitOutputLine,
+            TransitionCallback = _ => Task.CompletedTask
+        };
+    }
+
+    [Fact]
     public async Task RunPostPrSequenceAsync_WhenDraft_SkipsAllSteps()
     {
         var run = CreateRun();
