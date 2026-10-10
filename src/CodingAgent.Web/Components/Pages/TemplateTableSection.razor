@@ -62,7 +62,10 @@
                             <col style="width: 160px;" />  @* Features *@
                             <col style="width: 80px;" />   @* Enabled *@
                             <col style="width: 100px;" />  @* Status *@
-                            <col style="width: 120px;" />  @* Actions *@
+                            @if (CanEdit)
+                            {
+                                <col style="width: 120px;" />  @* Actions *@
+                            }
                         </colgroup>
                         <thead>
                             <tr>
@@ -74,7 +77,7 @@
                                 <th title="Active features — click to configure">Features</th>
                                 <th>Enabled</th>
                                 <th>Status</th>
-                                @if (!IsLoopActive)
+                                @if (CanEdit)
                                 {
                                     <th>Actions</th>
                                 }
@@ -167,11 +170,7 @@
                                             <span class="monitoring-muted">—</span>
                                         }
                                     </td>
-                                    @if (!IsLoopActive && !CanEdit)
-                                    {
-                                    <td></td>
-                                    }
-                                    else if (!IsLoopActive)
+                                    @if (CanEdit)
                                     {
                                     <td>
                                         <div style="display: flex; gap: 4px; align-items: center;">
@@ -290,7 +289,7 @@
             LabelPreview="@(!string.IsNullOrEmpty(AddForm.RepoProviderId) ? GetLabelPreview(AddForm.RepoProviderId) : new LabelPreviewResult())"
             OnSave="OnAddTemplate" OnCancel="OnCancelAdd" />
     }
-    else if (CanEdit && !IsLoopActive)
+    else if (CanEdit)
     {
         <button class="btn-add" style="margin-top: 12px;" @onclick="() => OnShowAddForm.InvokeAsync()">+ Add Template</button>
     }

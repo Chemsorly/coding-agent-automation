@@ -219,7 +219,7 @@ Per-template controls (on `PipelineJobTemplate`):
 
 Pipeline Job Templates define which provider combination to use when polling for issues. Each template links an issue provider, repository provider, and optional brain/CI providers. Multiple templates enable round-robin polling across repositories.
 
-Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels. **Edit** changes a template in place; it keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project.
+Templates are managed on the **Pipelines** page (route `/pipelines`; `/agent-coding` still works as an alias). When creating or viewing a template, the UI shows a preview of which label-mapped resources (quality gates, reviewers, agent profiles) will be assigned based on the repository's labels. **Edit** changes a template in place; it keeps its id, and with it its run and consolidation history. A template keeps its issue tracker and repository: to use another one, add a new template. **Move to…** changes its project. Templates can be added, edited, moved and removed while the loop runs; the loop applies the change from its next cycle.
 
 | Field | Required | Description |
 |-------|----------|-------------|
