@@ -143,6 +143,56 @@ public class RepositoryGitOperationsCommitBlacklistTests : IDisposable
     }
 
     [Fact]
+    public void CommitAll_DefaultBlacklist_CommitsEditsToTrackedOpenCodeConfig_ButNotFilesOpenCodeAdds()
+    {
+        // As in production: the default configured blacklist, and OpenCode's injected path.
+        var agentDir = Path.Combine(_workspacePath, ".opencode", "agent");
+        Directory.CreateDirectory(agentDir);
+        File.WriteAllText(Path.Combine(agentDir, "reviewer.md"), "old agent");
+        using (var repo = new Repository(_workspacePath))
+        {
+            Commands.Stage(repo, ".opencode/agent/reviewer.md");
+            var sig = new Signature("test", "test@test.com", DateTimeOffset.Now);
+            repo.Commit("track opencode agent", sig, sig);
+        }
+        File.WriteAllText(Path.Combine(agentDir, "reviewer.md"), "new agent");
+        File.WriteAllText(Path.Combine(_workspacePath, ".opencode", ".gitignore"), "node_modules");
+
+        var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
+            blacklistedPaths: new[] { ".agent", ".brain" }, allowEmpty: false,
+            pipelineInjectedPaths: new[] { ".opencode" });
+
+        unstaged.Should().Equal(".opencode/.gitignore");
+        using var committed = new Repository(_workspacePath);
+        ((Blob)committed.Head.Tip.Tree[".opencode/agent/reviewer.md"].Target).GetContentText().Should().Be("new agent");
+    }
+
+    [Fact]
+    public void CommitAll_PipelineSteeringFileTheRepositoryTracks_IsNeverCommitted()
+    {
+        // A repository that once committed the pipeline's steering file must not get its overwrite.
+        var steeringDir = Path.Combine(_workspacePath, ".kiro", "steering");
+        Directory.CreateDirectory(steeringDir);
+        File.WriteAllText(Path.Combine(steeringDir, "pipeline-repo.md"), "old steering");
+        using (var repo = new Repository(_workspacePath))
+        {
+            Commands.Stage(repo, ".kiro/steering/pipeline-repo.md");
+            var sig = new Signature("test", "test@test.com", DateTimeOffset.Now);
+            repo.Commit("accidentally tracked", sig, sig);
+        }
+        File.WriteAllText(Path.Combine(steeringDir, "pipeline-repo.md"), "this project's steering");
+        File.WriteAllText(Path.Combine(_workspacePath, "src", "app.cs"), "// code");
+
+        var unstaged = RepositoryGitOperations.CommitAll(_workspacePath, "test commit",
+            blacklistedPaths: null, allowEmpty: false,
+            pipelineInjectedPaths: new[] { ".kiro" });
+
+        unstaged.Should().Equal(".kiro/steering/pipeline-repo.md");
+        using var committed = new Repository(_workspacePath);
+        ((Blob)committed.Head.Tip.Tree[".kiro/steering/pipeline-repo.md"].Target).GetContentText().Should().Be("old steering");
+    }
+
+    [Fact]
     public void CommitAll_NullBlacklist_StillUnstagesKiroDirectory()
     {
         // Arrange: .kiro/steering/ contains pipeline-injected steering files

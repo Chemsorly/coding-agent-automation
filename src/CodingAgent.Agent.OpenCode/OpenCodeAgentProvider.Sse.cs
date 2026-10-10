@@ -236,13 +236,15 @@ public sealed partial class OpenCodeAgentProvider
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(ControlCallTimeout);
             using var response = body is null
-                ? await client.PostAsync(path, null, ct)
-                : await client.PostAsJsonAsync(path, body, OpenCodeJson.JsonOptions, ct);
+                ? await client.PostAsync(path, null, timeout.Token)
+                : await client.PostAsJsonAsync(path, body, OpenCodeJson.JsonOptions, timeout.Token);
             if (!response.IsSuccessStatusCode)
                 _logger.Debug("Auto-answer {Path} returned HTTP {Status}", path, (int)response.StatusCode);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             _logger.Warning(ex, "Failed to answer OpenCode request {RequestId}", requestId);
         }

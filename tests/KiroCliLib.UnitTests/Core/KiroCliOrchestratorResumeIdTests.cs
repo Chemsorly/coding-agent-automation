@@ -112,6 +112,37 @@ public class KiroCliOrchestratorResumeIdTests
     }
 
     [Fact]
+    public async Task LastRunStartedFreshSession_IsTrueOnlyAfterAFallback()
+    {
+        var orchestrator = Orchestrator(
+            Process(ExitCodes.GeneralFailure, "error: ACP load_session failed"), Process(ExitCodes.Success),
+            Process(ExitCodes.Success));
+
+        await orchestrator.ExecutePromptAsync("prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "stale-id");
+        orchestrator.LastRunStartedFreshSession.Should().BeTrue();
+
+        await orchestrator.ExecutePromptAsync("prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "good-id");
+        orchestrator.LastRunStartedFreshSession.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ExecutePromptAsync_ToolOutputQuotingTheLoadError_IsNotRetried()
+    {
+        // e.g. the agent grepped a repository that mentions the error, then the run failed otherwise.
+        var failed = Process(ExitCodes.GeneralFailure, "src/KiroCliOrchestrator.cs:13: error: ACP load_session failed");
+        var unused = Process(ExitCodes.Success);
+
+        var exitCode = await Orchestrator(failed, unused).ExecutePromptAsync(
+            "prompt", "/ws", useResume: true, CancellationToken.None, resumeSessionId: "abc-123");
+
+        exitCode.Should().Be(ExitCodes.GeneralFailure);
+        unused.Verify(p => p.StartAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+            It.IsAny<CancellationToken>(), It.IsAny<string?>(),
+            It.IsAny<IReadOnlyDictionary<string, string>?>()), Times.Never);
+    }
+
+    [Fact]
     public async Task ExecutePromptAsync_ResumeIdFailingForAnotherReason_IsNotRetried()
     {
         var failed = Process(ExitCodes.GeneralFailure, "error: model refused the request");

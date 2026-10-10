@@ -90,5 +90,43 @@ public class ClaudeCodeMcpConfigTests : IDisposable
         remote.GetProperty("url").GetString().Should().Be("https://mcp.example.com/mcp");
         remote.GetProperty("headers").GetProperty("Authorization").GetString().Should().Be("Bearer x");
         mcp.GetProperty("off").GetProperty("enabled").GetBoolean().Should().BeFalse();
+        // No one answers the question tool: a rejected question must not end the turn as if done.
+        doc.RootElement.GetProperty("experimental").GetProperty("continue_loop_on_deny").GetBoolean().Should().BeTrue();
+    }
+
+    [Fact]
+    public void RemoveStaleConfig_OpenCode_DropsTheEarlierJobsServers_AndKeepsTheSteering()
+    {
+        var path = Path.Combine(_tempDir, "opencode.json");
+        Directory.CreateDirectory(_tempDir);
+        // JSONC, as OpenCode accepts it: a comment and a trailing comma.
+        File.WriteAllText(path, """
+            {
+              // written by an earlier job
+              "instructions": ["/home/u/.opencode/pipeline-*.md"],
+              "mcp": { "projectA": { "type": "remote", "url": "https://a", "headers": { "Authorization": "Bearer a" } } },
+            }
+            """);
+
+        McpConfigWriter.RemoveStaleConfig(path, AgentProviderType.OpenCode);
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(path));
+        doc.RootElement.TryGetProperty("mcp", out _).Should().BeFalse();
+        doc.RootElement.GetProperty("instructions").EnumerateArray().Select(e => e.GetString())
+            .Should().Equal("/home/u/.opencode/pipeline-*.md");
+    }
+
+    [Theory]
+    [InlineData(AgentProviderType.ClaudeCode, false)]
+    [InlineData(AgentProviderType.KiroCli, true)]
+    public void RemoveStaleConfig_DeletesOnlyThePipelinesOwnFile(AgentProviderType providerType, bool kept)
+    {
+        var path = Path.Combine(_tempDir, "mcp.json");
+        Directory.CreateDirectory(_tempDir);
+        File.WriteAllText(path, """{"mcpServers":{}}""");
+
+        McpConfigWriter.RemoveStaleConfig(path, providerType);
+
+        File.Exists(path).Should().Be(kept);
     }
 }

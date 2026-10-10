@@ -69,9 +69,13 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     private readonly Func<string, string?> _getEnvironmentVariable;
     private readonly ClaudeExitTimings _timings;
 
-    private readonly ConcurrentDictionary<IClaudeProcess, byte> _activeProcesses = new();
+    private readonly ConcurrentDictionary<IClaudeProcess, ClaudeStreamState> _activeProcesses = new();
     private readonly ConcurrentDictionary<string, string> _sessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, ClaudeUsageTotals> _totalsBySession = new(StringComparer.Ordinal);
+
+    // The session whose totals the CLI saved last in each workspace. It restores saved totals on
+    // --resume only for that session, so a call resuming any other one starts from zero.
+    private readonly ConcurrentDictionary<string, string> _lastSavedSessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private volatile string? _lastKnownSessionId;
 
     public ClaudeCodeAgentProvider(
@@ -181,6 +185,12 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             linkedCt => RunProcessAsync(startInfo, BuildPrompt(request), state, Emit, stderrLines, linkedCt),
             () =>
             {
+                // The answer is complete at a result with no turn after it; only the stop was cut short.
+                if (state.ResultSeen && !state.TurnInProgress)
+                {
+                    _logger.Warning("Claude Code timed out after {Timeout} while it lingered after its result; the result stands", request.Timeout);
+                    return Task.FromResult(ExitCodes.Success);
+                }
                 _logger.Warning("Claude Code execution timed out after {Timeout}", request.Timeout);
                 return Task.FromResult(ExitCodes.Timeout);
             });
@@ -196,7 +206,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         }
 
         RememberSession(state.SessionId, workspacePath, resumeSessionId is null);
-        var details = BuildUsage(state, credential, resumeSessionId is not null, out var usage, out var cost);
+        var details = BuildUsage(state, credential, workspacePath, resumeSessionId is not null, out var usage, out var cost);
         var errorCategory = exitCode == ExitCodes.Success ? AgentErrorCategory.None : state.ClassifyFailure();
 
         LogInvocation(state, exitCode, stopwatch.Elapsed, usage, cost, details, errorCategory);
@@ -269,17 +279,18 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     /// <inheritdoc />
     public Task KillAsync()
     {
-        foreach (var process in _activeProcesses.Keys)
-            process.Kill();
+        foreach (var (process, state) in _activeProcesses)
+            KillBeforeSaving(process, state);
         return Task.CompletedTask;
     }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
-        foreach (var process in _activeProcesses.Keys)
-            process.Kill();
+        foreach (var (process, state) in _activeProcesses)
+            KillBeforeSaving(process, state);
         _sessionByWorkspace.Clear();
+        _lastSavedSessionByWorkspace.Clear();
         _totalsBySession.Clear();
         _lastKnownSessionId = null;
         return ValueTask.CompletedTask;
@@ -411,18 +422,18 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         CancellationToken ct)
     {
         IClaudeProcess process;
-        var results = new ResultClock();
+        var firstResult = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             process = _launcher.Start(
                 startInfo,
                 line =>
                 {
-                    var resultCount = state.ResultCount;
-                    foreach (var readable in ClaudeStreamJsonParser.ProcessLine(line, state))
-                        emit(readable);
-                    if (state.ResultCount != resultCount)
-                        results.OnResult();
+                    var readable = ClaudeStreamJsonParser.ProcessLine(line, state);
+                    if (state.ResultCount > 0)
+                        firstResult.TrySetResult();
+                    foreach (var text in readable)
+                        emit(text);
                 },
                 line =>
                 {
@@ -438,7 +449,7 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
             return ExitCodes.GeneralFailure;
         }
 
-        _activeProcesses[process] = 0;
+        _activeProcesses[process] = state;
         try
         {
             try
@@ -451,11 +462,11 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
                 _logger.Warning(ex, "Claude Code CLI closed stdin before the prompt was written");
             }
 
-            return await WaitForExitOrStopAfterResultAsync(process, state, results, ct);
+            return await WaitForExitOrStopAfterResultAsync(process, state, firstResult.Task, ct);
         }
         catch (OperationCanceledException)
         {
-            process.Kill();
+            KillBeforeSaving(process, state);
             throw;
         }
         finally
@@ -472,17 +483,17 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
     /// CLI counts as a success; an error result still fails the call.
     /// </summary>
     private async Task<int> WaitForExitOrStopAfterResultAsync(
-        IClaudeProcess process, ClaudeStreamState state, ResultClock results, CancellationToken ct)
+        IClaudeProcess process, ClaudeStreamState state, Task firstResult, CancellationToken ct)
     {
         var exit = process.WaitForExitAsync(ct);
-        if (await Task.WhenAny(exit, results.FirstResult) == exit)
+        if (await Task.WhenAny(exit, firstResult) == exit)
             return await exit;
 
         while (true)
         {
             var wait = state.TurnInProgress
                 ? _timings.ResultExitGrace
-                : _timings.ResultExitGrace - results.SinceLastResult;
+                : _timings.ResultExitGrace - state.SinceLastResult;
             if (wait <= TimeSpan.Zero)
                 break;
             if (await Task.WhenAny(exit, Task.Delay(wait, ct)) == exit)
@@ -506,10 +517,20 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         if (process.Terminate() && await ExitsWithinStopTimeoutAsync(exit, ct))
             return ExitCodes.Success;
 
-        process.Kill();
-        state.StoppedBeforeSaving = true;
+        KillBeforeSaving(process, state);
         await ExitsWithinStopTimeoutAsync(exit, ct);
         return ExitCodes.Success;
+    }
+
+    /// <summary>
+    /// Kills the CLI. Only a CLI still running loses its unsaved totals: one that already exited
+    /// (a detached child holding its output open) has saved them.
+    /// </summary>
+    private static void KillBeforeSaving(IClaudeProcess process, ClaudeStreamState state)
+    {
+        if (process.IsRunning)
+            state.StoppedBeforeSaving = true;
+        process.Kill();
     }
 
     private async Task<bool> ExitsWithinStopTimeoutAsync(Task<int> exit, CancellationToken ct)
@@ -526,30 +547,14 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         }
     }
 
-    /// <summary>When the stream's results arrived, written on the stdout thread and read by the waiter.</summary>
-    private sealed class ResultClock
-    {
-        private readonly TaskCompletionSource _firstResult = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private long _lastResultTicks;
-
-        public Task FirstResult => _firstResult.Task;
-
-        public TimeSpan SinceLastResult =>
-            DateTime.UtcNow - new DateTime(Interlocked.Read(ref _lastResultTicks), DateTimeKind.Utc);
-
-        public void OnResult()
-        {
-            Interlocked.Exchange(ref _lastResultTicks, DateTime.UtcNow.Ticks);
-            _firstResult.TrySetResult();
-        }
-    }
-
     /// <summary>
     /// Turns the result event's totals into this call's usage. A resumed session reports the whole
-    /// conversation, so the totals seen at the end of the previous call are subtracted.
+    /// conversation when the CLI restored its saved totals, so those are subtracted. It restores them
+    /// only for the session it saved last in the workspace; after an isolated call has run there, a
+    /// resumed main conversation counts from zero.
     /// </summary>
     private AgentUsageDetails? BuildUsage(
-        ClaudeStreamState state, ClaudeCredential? credential, bool resumed,
+        ClaudeStreamState state, ClaudeCredential? credential, string workspacePath, bool resumed,
         out TokenUsage? usage, out decimal? cost)
     {
         usage = null;
@@ -567,12 +572,17 @@ public sealed class ClaudeCodeAgentProvider : IAgentProvider
         ClaudeUsageTotals? previous = null;
         if (state.SessionId is { } sessionId)
         {
-            if (resumed)
+            if (resumed
+                && _lastSavedSessionByWorkspace.TryGetValue(workspacePath, out var lastSaved)
+                && lastSaved == sessionId)
                 _totalsBySession.TryGetValue(sessionId, out previous);
-            // A CLI killed before saving its totals restores the previous ones on the next resume,
-            // so the next call must be measured against those.
+            // A CLI killed before saving leaves the previous save in place, for this session and
+            // for the workspace, so the next call must be measured against that.
             if (!state.StoppedBeforeSaving)
+            {
                 _totalsBySession[sessionId] = totals;
+                _lastSavedSessionByWorkspace[workspacePath] = sessionId;
+            }
         }
 
         var delta = totals.Minus(previous);

@@ -99,6 +99,7 @@ internal sealed class ClaudeStreamState
 
     private volatile bool _turnInProgress;
     private int _resultCount;
+    private long _lastResultTicks;
 
     public string? SessionId { get; set; }
     public string? Model { get; set; }
@@ -117,13 +118,22 @@ internal sealed class ClaudeStreamState
     /// <summary>How many <c>result</c> events the stream has carried.</summary>
     public int ResultCount => Volatile.Read(ref _resultCount);
 
+    /// <summary>Time since the last <c>result</c> event; meaningful once <see cref="ResultCount"/> is above zero.</summary>
+    public TimeSpan SinceLastResult =>
+        DateTime.UtcNow - new DateTime(Interlocked.Read(ref _lastResultTicks), DateTimeKind.Utc);
+
     /// <summary>
     /// True when the CLI was killed before it could save the session's usage totals, which it does
     /// at exit. A later resumed call then reports totals that lack this call's usage.
     /// </summary>
     public bool StoppedBeforeSaving { get; set; }
 
-    internal void CountResult() => Interlocked.Increment(ref _resultCount);
+    /// <summary>Records a result; called before the turn is marked finished, so a reader never sees a stale time.</summary>
+    internal void CountResult()
+    {
+        Interlocked.Exchange(ref _lastResultTicks, DateTime.UtcNow.Ticks);
+        Interlocked.Increment(ref _resultCount);
+    }
     public bool ResultIsError { get; set; }
     public string? ResultSubtype { get; set; }
     public string? ResultText { get; set; }
@@ -283,8 +293,8 @@ internal static class ClaudeStreamJsonParser
     private static IReadOnlyList<string> ProcessResult(JsonElement root, ClaudeStreamState state)
     {
         state.ResultSeen = true;
-        state.TurnInProgress = false;
         state.CountResult();
+        state.TurnInProgress = false;
         state.SessionId = GetString(root, "session_id") ?? state.SessionId;
         state.ResultIsError = root.TryGetProperty("is_error", out var isError) && isError.ValueKind == JsonValueKind.True;
         state.ResultSubtype = GetString(root, "subtype");

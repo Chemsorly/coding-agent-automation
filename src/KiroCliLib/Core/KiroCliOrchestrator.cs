@@ -11,17 +11,24 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
 {
     /// <summary>
     /// What kiro-cli 2.29 prints to stderr (<c>error: ACP load_session failed</c>, exit 1) when
-    /// <c>--resume-id</c> names a session its store cannot load.
+    /// <c>--resume-id</c> names a session its store cannot load. Matched as the CLI's own error line,
+    /// so a tool's output that merely quotes it does not count.
     /// </summary>
     internal const string SessionLoadFailedError = "load_session failed";
+
+    private const string ErrorLinePrefix = "error:";
 
     private readonly ILogger _logger;
     private readonly Func<IProcessWrapper> _processWrapperFactory;
     private readonly Func<IOutputParser> _outputParserFactory;
     private volatile IProcessWrapper? _activeProcess;
+    private volatile bool _lastRunStartedFreshSession;
     private bool _disposed;
 
     public bool IsExecuting => _activeProcess != null;
+
+    /// <inheritdoc />
+    public bool LastRunStartedFreshSession => _lastRunStartedFreshSession;
     public int? ActiveProcessId
     {
         get
@@ -120,11 +127,13 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 }, cancellationToken);
             }
 
+            _lastRunStartedFreshSession = false;
             var (exitCode, sessionNotLoaded) = await RunProcessAsync(
                 prompt, workspaceDirectory, useResume, resumeSessionId, environmentVariables, channel?.Writer, cancellationToken);
 
             if (sessionNotLoaded)
             {
+                _lastRunStartedFreshSession = true;
                 // kiro-cli 2.29+ fails a --resume-id it cannot load (e.g. a session from another pod's
                 // store); older versions started a fresh session, which is what the run gets now.
                 _logger.Warning("Kiro session {SessionId} could not be loaded; running the prompt in a fresh session", resumeSessionId);
@@ -190,7 +199,9 @@ public class KiroCliOrchestrator : IKiroCliOrchestrator
                 var clean = AnsiStripper.Strip(line);
                 _logger.Debug("Kiro (stderr): {Line}", clean);
                 outputParser.ProcessLine(line);
-                if (clean.Contains(SessionLoadFailedError, StringComparison.OrdinalIgnoreCase))
+                var trimmed = clean.TrimStart();
+                if (trimmed.StartsWith(ErrorLinePrefix, StringComparison.OrdinalIgnoreCase)
+                    && trimmed.Contains(SessionLoadFailedError, StringComparison.OrdinalIgnoreCase))
                     sessionLoadFailed = true;
             };
             outputParser.StateChanged += (_, newState) =>

@@ -118,12 +118,12 @@ public class KiroCliAgentProviderProcessTests
         arguments.Should().Equal("whoami");
     }
 
-    [Fact]
-    public async Task ExecuteAsync_UseResume_ContinuesTheTrackedMainSessionById()
+    private string _newestSession = "main-1";
+
+    private List<(bool UseResume, string? SessionId)> RecordRunsAndListNewestSession(int exitCode = 0)
     {
-        var newestSession = "main-1";
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: $$"""[{"cwd":"/w","sessions":[{"sessionId":"{{newestSession}}","updatedAt":"2026-10-10T15:00:00Z"}]}]"""));
+            .Returns(() => StartShellProcess(stdout: $$"""[{"cwd":"/w","sessions":[{"sessionId":"{{_newestSession}}","updatedAt":"2026-10-10T15:00:00Z"}]}]"""));
         var calls = new List<(bool UseResume, string? SessionId)>();
         _mockOrchestrator
             .Setup(o => o.ExecutePromptAsync(
@@ -131,18 +131,55 @@ public class KiroCliAgentProviderProcessTests
                 It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
             .Callback<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
                 (_, _, useResume, _, _, sessionId, _) => calls.Add((useResume, sessionId)))
-            .ReturnsAsync(0);
+            .ReturnsAsync(exitCode);
+        return calls;
+    }
+
+    private static AgentRequest Continue(string prompt) => new() { Prompt = prompt, WorkspacePath = "/workspace", UseResume = true };
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)] // e.g. an MCP startup failure before the session was touched
+    public async Task ExecuteAsync_UseResume_ContinuesTheTrackedMainSessionById_ThoughANewerSessionIsListed(int exitCode)
+    {
+        var calls = RecordRunsAndListNewestSession(exitCode);
         var provider = CreateProvider();
-        AgentRequest Continue(string prompt) => new() { Prompt = prompt, WorkspacePath = "/workspace", UseResume = true };
 
         await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);   // starts the main session
-        await provider.ExecuteAsync(Continue("codegen"), CancellationToken.None);    // continues it by ID
-        newestSession = "fresh-2"; // e.g. the CLI fell back to a fresh session for an unloadable ID
+        _newestSession = "reviewer-2"; // an isolated reviewer ran in the workspace since
+        await provider.ExecuteAsync(Continue("refinement"), CancellationToken.None); // continues it by ID
+        await provider.ExecuteAsync(Continue("codegen"), CancellationToken.None);
+
+        calls.Should().Equal((false, null), (false, "main-1"), (false, "main-1"));
+        (await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None)).Should().Be("main-1");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_MainSessionThatCouldNotBeLoaded_IsReplacedByTheFreshSessionTheRunFellBackTo()
+    {
+        var calls = RecordRunsAndListNewestSession();
+        var provider = CreateProvider();
+
+        await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);
+        _newestSession = "fresh-2";
+        _mockOrchestrator.Setup(o => o.LastRunStartedFreshSession).Returns(true);
         await provider.ExecuteAsync(Continue("fix"), CancellationToken.None);
+        _mockOrchestrator.Setup(o => o.LastRunStartedFreshSession).Returns(false);
         await provider.ExecuteAsync(Continue("summary"), CancellationToken.None);
 
-        calls.Should().Equal((false, null), (false, "main-1"), (false, "main-1"), (false, "fresh-2"));
-        (await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None)).Should().Be("fresh-2");
+        calls.Should().Equal((false, null), (false, "main-1"), (false, "fresh-2"));
+    }
+
+    [Fact]
+    public async Task GetHealthStatus_IdleAfterARun_ReportsTheRunsEndAsLastOutput()
+    {
+        RecordRunsAndListNewestSession();
+        var provider = CreateProvider();
+        provider.GetHealthStatus().LastOutputTime.Should().BeNull();
+
+        await provider.ExecuteAsync(Continue("analysis"), CancellationToken.None);
+
+        provider.GetHealthStatus().LastOutputTime.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(30));
     }
 
     [Fact]

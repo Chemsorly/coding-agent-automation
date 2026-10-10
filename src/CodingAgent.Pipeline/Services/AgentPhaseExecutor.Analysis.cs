@@ -276,8 +276,9 @@ public partial class AgentPhaseExecutor
 
     /// <summary>
     /// Ends a run whose model provider is unavailable (rate limit, overload, rejected credentials) as an
-    /// infrastructure failure, without the needs-refinement label: the issue is not at fault, and that
-    /// label would take it out of dispatch until someone removes it.
+    /// infrastructure failure at once: retrying against the same outage cannot help. The run ends with
+    /// <c>agent:error</c> like other infrastructure failures, not <c>agent:needs-refinement</c>, which
+    /// would ask the author to rewrite an issue that is not at fault.
     /// </summary>
     private async Task FailForUnavailableProviderAsync(AgentPhaseContext context, ProviderUnavailableException ex)
     {

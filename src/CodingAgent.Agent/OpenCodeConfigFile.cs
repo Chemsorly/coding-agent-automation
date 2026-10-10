@@ -12,7 +12,19 @@ internal static class OpenCodeConfigFile
 {
     private static readonly JsonSerializerOptions WriteOptions = new() { WriteIndented = true };
 
-    /// <summary>Applies <paramref name="update"/> to the file's root object and writes it back.</summary>
+    // OpenCode accepts JSONC; an existing file with comments or trailing commas is kept, minus its comments.
+    private static readonly JsonDocumentOptions ReadOptions = new()
+    {
+        CommentHandling = JsonCommentHandling.Skip,
+        AllowTrailingCommas = true
+    };
+
+    /// <summary>
+    /// Applies <paramref name="update"/> to the file's root object and writes it back. Every write also
+    /// sets <c>experimental.continue_loop_on_deny</c>: no one is there to answer the question tool, so
+    /// the pipeline rejects its questions, and without the setting a rejection ends the turn with no
+    /// error, which reads as finished work.
+    /// </summary>
     public static void Update(string fullPath, Action<JsonObject> update)
     {
         ArgumentNullException.ThrowIfNull(fullPath);
@@ -24,6 +36,12 @@ internal static class OpenCodeConfigFile
 
         var root = Read(fullPath);
         root["$schema"] = "https://opencode.ai/config.json";
+        if (root["experimental"] is not JsonObject experimental)
+        {
+            experimental = new JsonObject();
+            root["experimental"] = experimental;
+        }
+        experimental["continue_loop_on_deny"] = true;
         update(root);
         File.WriteAllText(fullPath, root.ToJsonString(WriteOptions));
     }
@@ -34,7 +52,7 @@ internal static class OpenCodeConfigFile
             return new JsonObject();
         try
         {
-            return JsonNode.Parse(File.ReadAllText(fullPath)) as JsonObject ?? new JsonObject();
+            return JsonNode.Parse(File.ReadAllText(fullPath), documentOptions: ReadOptions) as JsonObject ?? new JsonObject();
         }
         catch (JsonException)
         {

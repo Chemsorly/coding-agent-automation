@@ -20,6 +20,13 @@ namespace CodingAgent.Agent.OpenCode;
 /// </remarks>
 public sealed partial class OpenCodeAgentProvider : IAgentProvider
 {
+    /// <summary>
+    /// Bounds every call besides the prompt itself (session create, abort, usage, replies): the client
+    /// has no timeout of its own, so that a long prompt is limited only by the request's timeout, and a
+    /// wedged server must not hang a run or a kill.
+    /// </summary>
+    internal static readonly TimeSpan ControlCallTimeout = TimeSpan.FromSeconds(30);
+
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly string? _model;
@@ -578,7 +585,8 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
-            await client.PostAsync($"/session/{sessionId}/abort", null);
+            using var timeout = new CancellationTokenSource(ControlCallTimeout);
+            await client.PostAsync($"/session/{sessionId}/abort", null, timeout.Token);
         }
         catch (Exception ex)
         {
@@ -598,10 +606,11 @@ public sealed partial class OpenCodeAgentProvider : IAgentProvider
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
-            var response = await client.GetAsync($"/session/{sessionId}", CancellationToken.None);
+            using var timeout = new CancellationTokenSource(ControlCallTimeout);
+            var response = await client.GetAsync($"/session/{sessionId}", timeout.Token);
             if (!response.IsSuccessStatusCode) return (null, null);
 
-            var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
+            var json = await response.Content.ReadAsStringAsync(timeout.Token);
             var session = System.Text.Json.JsonSerializer.Deserialize<SessionDetailResponse>(json, OpenCodeJson.JsonOptions);
             if (session?.Tokens is null) return (null, null);
 

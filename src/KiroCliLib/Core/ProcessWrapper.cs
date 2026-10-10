@@ -191,8 +191,27 @@ public class ProcessWrapper : IProcessWrapper
         return args.ToString();
     }
 
-    /// <summary>Quotes one value for <see cref="ProcessStartInfo.Arguments"/>, escaping embedded quotes.</summary>
-    private static string Quote(string value) => $"\"{value.Trim().Replace("\"", "\\\"")}\"";
+    /// <summary>
+    /// Quotes one value for <see cref="ProcessStartInfo.Arguments"/>, which .NET splits by the Windows
+    /// rules on every platform: backslashes are literal except before a quote, where they are doubled,
+    /// so a trailing backslash cannot escape the closing quote.
+    /// </summary>
+    internal static string Quote(string value)
+    {
+        var quoted = new System.Text.StringBuilder("\"");
+        var backslashes = 0;
+        foreach (var c in value.Trim())
+        {
+            if (c == '\\')
+            {
+                backslashes++;
+                continue;
+            }
+            quoted.Append('\\', c == '"' ? backslashes * 2 + 1 : backslashes).Append(c);
+            backslashes = 0;
+        }
+        return quoted.Append('\\', backslashes * 2).Append('"').ToString();
+    }
 
     /// <summary>
     /// The resume argument: a specific session when <paramref name="resumeSessionId"/> is set, otherwise the

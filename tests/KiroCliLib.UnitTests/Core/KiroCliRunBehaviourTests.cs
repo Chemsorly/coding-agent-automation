@@ -31,6 +31,17 @@ public class KiroCliRunBehaviourTests
             .Should().Be("chat --agent-engine v2 --no-interactive --trust-all-tools \"@.agent/p.md\"");
     }
 
+    [Theory]
+    [InlineData("reviewer", "\"reviewer\"")]
+    [InlineData("my \"agent\"", "\"my \\\"agent\\\"\"")]
+    [InlineData(@"agents\", "\"agents\\\\\"")]          // a trailing backslash must not escape the closing quote
+    [InlineData(@"a\""b", "\"a\\\\\\\"b\"")]           // backslash before a quote: doubled, plus the quote's escape
+    [InlineData(@"C:\dir\x", "\"C:\\dir\\x\"")]        // other backslashes stay literal
+    public void Quote_FollowsTheArgumentSplittingRules(string value, string expected)
+    {
+        ProcessWrapper.Quote(value).Should().Be(expected);
+    }
+
     [Fact]
     public async Task ExecutePromptAsync_Cancelled_Rethrows_SoATimeoutIsSeenAsOne()
     {

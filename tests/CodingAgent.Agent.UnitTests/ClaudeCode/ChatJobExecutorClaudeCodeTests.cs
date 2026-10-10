@@ -55,6 +55,7 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
         {
             ProviderType = providerType,
             ClaudeRulesDirectory = RulesDirectory,
+            OpenCodeSteeringDirectory = Path.Combine(_tempDir, "opencode"),
             OpenCodeProviderFactory = message => CreateFakeProvider(message),
             ClaudeCodeProviderFactory = message => CreateFakeProvider(message)
         });

@@ -57,10 +57,12 @@ public sealed partial class OpenCodeAgentProvider
             using var client = CreateDirectoryClientForPath(absolutePath);
             var request = new CreateSessionRequest { Title = title, Path = absolutePath };
 
-            var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(ControlCallTimeout);
+            var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, timeout.Token);
             response.EnsureSuccessStatusCode();
 
-            var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, ct);
+            var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, timeout.Token);
             if (result is not null)
             {
                 _logger.Debug("Created isolated session {SessionId} for workspace {WorkspacePath}",

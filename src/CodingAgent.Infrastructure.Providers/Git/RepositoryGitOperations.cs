@@ -129,8 +129,14 @@ internal static class RepositoryGitOperations
 
         StageAllChangedFiles(repo, preStatus);
 
-        // Hardcoded: ALWAYS unstage pipeline-owned paths regardless of configured blacklist.
-        var universalHardcoded = new[] { AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory };
+        // Hardcoded: ALWAYS unstage pipeline-owned paths regardless of configured blacklist, including
+        // the pipeline's own Kiro steering files: a repository that once committed one must not get
+        // the pipeline's overwrite committed as an edit.
+        var universalHardcoded = new[]
+        {
+            AgentWorkspacePaths.MetadataDirectory, AgentWorkspacePaths.BrainDirectory,
+            AgentWorkspacePaths.KiroSteeringProjectFilePath, AgentWorkspacePaths.KiroSteeringRepoFilePath
+        };
 
         var unstaged = UnstageBlacklistedPaths(repo, universalHardcoded, pipelineInjectedPaths, blacklistedPaths);
 

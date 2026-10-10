@@ -92,15 +92,28 @@ public static class McpConfigWriter
     }
 
     /// <summary>
-    /// For a job or chat with no MCP servers: deletes the Claude Code <c>--mcp-config</c> file an earlier
-    /// job on this long-lived agent left behind, which the provider would otherwise pass to the CLI,
-    /// with that project's servers and auth headers. That file is the pipeline's own; the other
-    /// providers' files are the CLI's own config and are left alone.
+    /// For a job or chat with no MCP servers: removes the servers an earlier job on this long-lived
+    /// agent left behind, with that project's auth headers, which the CLI would otherwise load. The
+    /// Claude Code <c>--mcp-config</c> file is the pipeline's own and is deleted; OpenCode's
+    /// <c>opencode.json</c> loses only its <c>mcp</c> section, keeping the steering <c>instructions</c>.
+    /// Kiro's file is the CLI's own global config and is left alone. A file that cannot be changed
+    /// (e.g. mounted read-only) is logged and left in place.
     /// </summary>
-    public static void RemoveStaleConfig(string fullPath, AgentProviderType providerType)
+    public static void RemoveStaleConfig(string fullPath, AgentProviderType providerType, Serilog.ILogger? logger = null)
     {
-        if (providerType == AgentProviderType.ClaudeCode && File.Exists(fullPath))
-            File.Delete(fullPath);
+        if (string.IsNullOrWhiteSpace(fullPath) || !File.Exists(fullPath))
+            return;
+        try
+        {
+            if (providerType == AgentProviderType.ClaudeCode)
+                File.Delete(fullPath);
+            else if (providerType == AgentProviderType.OpenCode)
+                OpenCodeConfigFile.Update(fullPath, root => root.Remove("mcp"));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            (logger ?? Serilog.Log.Logger).Warning(ex, "Could not remove the earlier job's MCP servers from {McpConfigPath}", fullPath);
+        }
     }
 
     /// <summary>

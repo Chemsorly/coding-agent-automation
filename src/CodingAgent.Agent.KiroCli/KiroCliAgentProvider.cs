@@ -35,12 +35,16 @@ public partial class KiroCliAgentProvider : IAgentProvider
     private readonly ConcurrentDictionary<string, string> _mainSessionByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<IKiroCliOrchestrator, byte> _activeOrchestrators = new();
     private int _cliSettingsApplied;
+    private long _lastRunEndedTicks;
 
     internal const string WarmUpPrompt =
         "Briefly describe the project structure of this workspace. Do not make any changes.";
 
     /// <summary>Bounds the warm-up prompt, which runs outside any request timeout.</summary>
     internal static readonly TimeSpan WarmUpTimeout = TimeSpan.FromMinutes(10);
+
+    /// <summary>Bounds the session list, which runs after main-conversation runs.</summary>
+    internal static readonly TimeSpan SessionListTimeout = TimeSpan.FromSeconds(30);
 
     public AgentProviderType ProviderType => AgentProviderType.KiroCli;
 
@@ -122,7 +126,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
 
             _establishedSessions[normalizedPath] = 0;
             if (!_mainSessionByWorkspace.ContainsKey(normalizedPath))
-                await TrackMainSessionAsync(workspacePath, normalizedPath, ct);
+                await TrackMainSessionAsync(workspacePath, normalizedPath, replace: false, ct);
             _logger.Information("Session established via warm-up prompt for workspace {WorkspacePath}", normalizedPath);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -137,16 +141,27 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// </summary>
     public AgentHealthStatus GetHealthStatus()
     {
+        // A live process wins over one that has just exited and is still being cleaned up, which
+        // would otherwise read as a dead agent to every parallel call's stall monitor.
         var orchestrator = _activeOrchestrators.Keys
             .Where(o => o.IsExecuting)
-            .OrderByDescending(o => o.LastOutputTime ?? DateTime.MinValue)
+            .OrderByDescending(o => o.IsActiveProcessAlive == true)
+            .ThenByDescending(o => o.LastOutputTime ?? DateTime.MinValue)
             .FirstOrDefault() ?? _orchestrator;
+
+        // Between runs, e.g. while a call reads the session list after its run, the last run's end
+        // counts as output; without it the stall monitor measures from the pipeline run's start.
+        var lastOutput = orchestrator.LastOutputTime;
+        var lastRunEnded = Interlocked.Read(ref _lastRunEndedTicks);
+        if (lastOutput is null && !orchestrator.IsExecuting && lastRunEnded != 0)
+            lastOutput = new DateTime(lastRunEnded, DateTimeKind.Utc);
+
         return new AgentHealthStatus
         {
             IsExecuting = orchestrator.IsExecuting,
             ProcessId = orchestrator.ActiveProcessId,
             IsProcessAlive = orchestrator.IsActiveProcessAlive,
-            LastOutputTime = orchestrator.LastOutputTime
+            LastOutputTime = lastOutput
         };
     }
 
@@ -175,22 +190,29 @@ public partial class KiroCliAgentProvider : IAgentProvider
                 request.Timeout, ct,
                 async linkedCt =>
                 {
-                    var exitCode = await orchestrator.ExecutePromptAsync(
-                        request.Prompt,
-                        request.WorkspacePath,
-                        useResume: false,
-                        linkedCt,
-                        onOutputLine: line =>
-                        {
-                            var clean = AnsiStripper.Strip(line);
-                            outputLines.Add(clean);
-                            onOutputLine?.Invoke(clean);
-                            return Task.CompletedTask;
-                        },
-                        resumeSessionId: resumeSessionId,
-                        environmentVariables: request.EnvironmentVariables);
+                    try
+                    {
+                        var exitCode = await orchestrator.ExecutePromptAsync(
+                            request.Prompt,
+                            request.WorkspacePath,
+                            useResume: false,
+                            linkedCt,
+                            onOutputLine: line =>
+                            {
+                                var clean = AnsiStripper.Strip(line);
+                                outputLines.Add(clean);
+                                onOutputLine?.Invoke(clean);
+                                return Task.CompletedTask;
+                            },
+                            resumeSessionId: resumeSessionId,
+                            environmentVariables: request.EnvironmentVariables);
 
-                    return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+                        return new AgentResult { ExitCode = exitCode, OutputLines = outputLines.AsReadOnly() };
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _lastRunEndedTicks, DateTime.UtcNow.Ticks);
+                    }
                 },
                 () =>
                 {
@@ -198,10 +220,14 @@ public partial class KiroCliAgentProvider : IAgentProvider
                     return Task.FromResult(new AgentResult { ExitCode = ExitCodes.Timeout, OutputLines = outputLines.AsReadOnly() });
                 });
 
-            // A run on the main conversation may have started it, or fallen back to a fresh session
-            // because its ID could not be loaded; either way the newest session is now the main one.
-            if (onMainConversation)
-                await TrackMainSessionAsync(request.WorkspacePath, normalizedPath, ct);
+            // A main-conversation run without an ID started a new session, which becomes the main one
+            // unless another call got there first. One whose ID could not be loaded ran in a fresh
+            // session, which replaces it. Any other run continued the known main session: the newest
+            // listed session may then be an isolated call's, so the list is not asked.
+            if (onMainConversation && resumeSessionId is null)
+                await TrackMainSessionAsync(request.WorkspacePath, normalizedPath, replace: false, ct);
+            else if (onMainConversation && orchestrator.LastRunStartedFreshSession)
+                await TrackMainSessionAsync(request.WorkspacePath, normalizedPath, replace: true, ct);
             return result;
         }
         finally
@@ -227,10 +253,14 @@ public partial class KiroCliAgentProvider : IAgentProvider
         return (null, !hasMain);
     }
 
-    private async Task TrackMainSessionAsync(string workspacePath, string normalizedPath, CancellationToken ct)
+    private async Task TrackMainSessionAsync(string workspacePath, string normalizedPath, bool replace, CancellationToken ct)
     {
-        if (await QueryNewestSessionIdAsync(workspacePath, ct) is { } sessionId)
+        if (await QueryNewestSessionIdAsync(workspacePath, ct) is not { } sessionId)
+            return;
+        if (replace)
             _mainSessionByWorkspace[normalizedPath] = sessionId;
+        else
+            _mainSessionByWorkspace.TryAdd(normalizedPath, sessionId);
     }
 
     /// <summary>
@@ -275,11 +305,19 @@ public partial class KiroCliAgentProvider : IAgentProvider
             throw new InvalidOperationException($"Failed to start kiro-cli {arguments} process");
         }
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
-        await process.WaitForExitAsync(ct);
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        string stdout, stderr;
+        try
+        {
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            await process.WaitForExitAsync(ct);
+            stdout = await stdoutTask;
+            stderr = await stderrTask;
+        }
+        finally
+        {
+            StopIfRunning(process);
+        }
 
         if (process.ExitCode != 0)
         {
@@ -323,11 +361,27 @@ public partial class KiroCliAgentProvider : IAgentProvider
             using var process = _processStarter.Start(psi);
             if (process == null) return null;
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-            var stderrTask = process.StandardError.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct);
-            var stdout = await stdoutTask;
-            await stderrTask;
+            string stdout;
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(SessionListTimeout);
+            try
+            {
+                var stdoutTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+                var stderrTask = process.StandardError.ReadToEndAsync(timeout.Token);
+                await process.WaitForExitAsync(timeout.Token);
+                stdout = await stdoutTask;
+                await stderrTask;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                _logger.Warning("kiro-cli --list-sessions did not finish within {Timeout} for {WorkspacePath}",
+                    SessionListTimeout, workspacePath);
+                return null;
+            }
+            finally
+            {
+                StopIfRunning(process);
+            }
 
             var id = ParseLatestSessionId(stdout);
             if (id is not null)
@@ -340,6 +394,20 @@ public partial class KiroCliAgentProvider : IAgentProvider
         {
             _logger.Warning(ex, "Failed to retrieve session ID for workspace {WorkspacePath}", workspacePath);
             return null;
+        }
+    }
+
+    /// <summary>Kills a CLI check left running by a cancellation or timeout, with anything it started.</summary>
+    private void StopIfRunning(System.Diagnostics.Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            _logger.Debug(ex, "Could not stop kiro-cli process");
         }
     }
 

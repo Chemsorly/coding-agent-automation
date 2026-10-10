@@ -237,6 +237,52 @@ public class KiroCliAgentProviderTests
     }
 
     [Fact]
+    public async Task GetHealthStatus_ParallelCalls_ReportsALiveProcessOverOneThatJustExited()
+    {
+        // The finishing reviewer still counts as executing for a moment, with the newest output.
+        var alive = HangingEphemeral(alive: true, lastOutput: new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc), out var aliveStarted);
+        var exiting = HangingEphemeral(alive: false, lastOutput: new DateTime(2026, 10, 10, 12, 5, 0, DateTimeKind.Utc), out var exitingStarted);
+        var ephemerals = new Queue<IKiroCliOrchestrator>([alive.Object, exiting.Object]);
+        var provider = new KiroCliAgentProvider(
+            _mockOrchestrator.Object, _mockLogger.Object, null, "/usr/bin/fake-kiro-cli", AgentEffortLevel.High,
+            _mockProcessStarter.Object, createEphemeralOrchestrator: _ => ephemerals.Dequeue());
+        using var cts = new CancellationTokenSource();
+        var review = new AgentRequest { Prompt = "review", WorkspacePath = "/workspace", Timeout = TimeSpan.FromMinutes(1) };
+
+        var runs = new[] { provider.ExecuteAsync(review, cts.Token), provider.ExecuteAsync(review, cts.Token) };
+        await Task.WhenAll(aliveStarted, exitingStarted).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var health = provider.GetHealthStatus();
+        health.IsProcessAlive.Should().BeTrue();
+        health.LastOutputTime.Should().Be(new DateTime(2026, 10, 10, 12, 0, 0, DateTimeKind.Utc));
+
+        await cts.CancelAsync();
+        foreach (var run in runs)
+            await run.Invoking(t => t).Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    private static Mock<IKiroCliOrchestrator> HangingEphemeral(bool alive, DateTime lastOutput, out Task started)
+    {
+        var orchestrator = new Mock<IKiroCliOrchestrator>();
+        var startedSource = new TaskCompletionSource();
+        orchestrator.Setup(o => o.IsExecuting).Returns(true);
+        orchestrator.Setup(o => o.IsActiveProcessAlive).Returns(alive);
+        orchestrator.Setup(o => o.LastOutputTime).Returns(lastOutput);
+        orchestrator.Setup(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()))
+            .Returns<string, string, bool, CancellationToken, Func<string, Task>?, string?, IReadOnlyDictionary<string, string>?>(
+                async (_, _, _, ct, _, _, _) =>
+                {
+                    startedSource.TrySetResult();
+                    await Task.Delay(Timeout.Infinite, ct);
+                    return 0;
+                });
+        started = startedSource.Task;
+        return orchestrator;
+    }
+
+    [Fact]
     public async Task ExecuteAsync_WithResumeSessionId_PassesToOrchestrator()
     {
         _mockOrchestrator

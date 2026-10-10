@@ -179,7 +179,7 @@ public sealed class ChatJobExecutor : IAsyncDisposable
             }
             else if (!message.UseResume)
             {
-                McpConfigWriter.RemoveStaleConfig(message.McpConfigPath, _providerType);
+                McpConfigWriter.RemoveStaleConfig(message.McpConfigPath, _providerType, _logger);
             }
 
             // Write project steering before dispatching to the provider.
