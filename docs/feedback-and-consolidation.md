@@ -60,6 +60,7 @@ Configuration: `BrainConsolidationReviewEnabled` (default: `true`) controls whet
 Dispatches agents to analyze the codebase holistically for architectural drift using a multi-phase, multi-agent pipeline. Produces up to `MaxRefactoringProposals` (default: 3) GitHub issues with bounded refactoring proposals. Each issue includes:
 
 - **Problem** — what goes wrong or what it costs (for a bug: the failure scenario)
+- **Before You Start** — how to check that the problem still exists (the Scope search or the quoted evidence), and to report `wont_do` when it is already fixed
 - Category, estimated effort, risk level and named refactoring technique
 - **Suggested Approach** — one concrete change
 - Prerequisites (e.g., "add characterization tests before refactoring")
