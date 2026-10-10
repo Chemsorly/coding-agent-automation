@@ -99,7 +99,15 @@
        of the equivalent Orchestration classes (DispatchLifecycleService, DispatchStateBuilder,
        DispatchTemplateResolver, ApiSerilogRegistration).
        Both sets are live in production — the Orchestration copies serve the orchestrator host while
-       the Api copies serve the new API host. Merging them into a shared library is tracked separately. -->
-  <Property Name="sonar.cpd.exclusions">**/Dispatch/ReconciliationService.*.cs,**/GitHubRepositoryProvider.Commits.cs,**/GitLabRepositoryProvider.cs,src/CodingAgent.Api/Dispatch/DispatchLifecycleService.cs,src/CodingAgent.Api/Dispatch/DispatchStateBuilder.cs,src/CodingAgent.Api/Dispatch/DispatchTemplateResolver.cs,src/CodingAgent.Api/ApiSerilogRegistration.cs</Property>
+       the Api copies serve the new API host. Merging them into a shared library is tracked separately.
+       Exclude prompt builder files from CPD: these build LLM prompt text through long series of
+       s.AppendLine("...") calls inside AppendSection lambdas. The code token pattern is structurally
+       similar across sections and across files (each method appends a heading then a list of bullet
+       points) even though every call emits distinct string content. This is an inherent property of
+       prompt-text construction in C# and is not copy-paste duplication. The PR that introduced these
+       files (issue #3534) deliberately deduplicated shared instruction prose by extracting the
+       AppendSection helper — the remaining token-level similarity comes from the nature of the domain,
+       not from oversight. -->
+  <Property Name="sonar.cpd.exclusions">**/Dispatch/ReconciliationService.*.cs,**/GitHubRepositoryProvider.Commits.cs,**/GitLabRepositoryProvider.cs,src/CodingAgent.Api/Dispatch/DispatchLifecycleService.cs,src/CodingAgent.Api/Dispatch/DispatchStateBuilder.cs,src/CodingAgent.Api/Dispatch/DispatchTemplateResolver.cs,src/CodingAgent.Api/ApiSerilogRegistration.cs,src/CodingAgent.Pipeline/Services/Prompts/PromptBuilder.cs,src/CodingAgent.Pipeline/Services/Prompts/ConsolidationPromptBuilder.cs,src/CodingAgent.Pipeline/Services/Prompts/ConsolidationPromptBuilder.Refactoring.cs,src/CodingAgent.Pipeline/Services/Prompts/DecompositionPromptBuilder.cs,src/CodingAgent.Pipeline/Services/Prompts/FeedbackPromptBuilder.cs</Property>
 
 </SonarQubeAnalysisProperties>

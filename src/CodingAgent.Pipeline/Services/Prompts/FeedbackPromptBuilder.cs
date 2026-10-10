@@ -55,7 +55,7 @@ public static class FeedbackPromptBuilder
         sb.AppendLine("Output ONLY a JSON block — no prose, no explanation, no markdown outside the JSON fence.");
         sb.AppendLine();
 
-        // Run context
+        // Run context — conditional body, not using AppendSection
         sb.AppendLine("## Run Context");
         sb.AppendLine();
         sb.AppendLine($"- **Elapsed time:** {FormatElapsed(elapsed)}");
@@ -78,27 +78,34 @@ public static class FeedbackPromptBuilder
         sb.AppendLine();
 
         // Feedback instructions
-        sb.AppendLine("## Feedback Instructions");
-        sb.AppendLine();
-        sb.AppendLine("Based on your experience during this run, provide structured feedback.");
-        sb.AppendLine("Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.");
-        sb.AppendLine();
-        sb.AppendLine("**Distinguish between:**");
-        sb.AppendLine("- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix");
-        sb.AppendLine("- **Issue feedback** — things about the issue description or repository that the issue author needs to fix");
-        sb.AppendLine();
-        sb.AppendLine("If the issue was well-written and the repo was clean, set the `issue` section to null.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Feedback Instructions", s =>
+        {
+            s.AppendLine("Based on your experience during this run, provide structured feedback.");
+            s.AppendLine("Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.");
+            s.AppendLine();
+            s.AppendLine("**Distinguish between:**");
+            s.AppendLine("- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix");
+            s.AppendLine("- **Issue feedback** — things about the issue description or repository that the issue author needs to fix");
+            s.AppendLine();
+            s.AppendLine("If the issue was well-written and the repo was clean, set the `issue` section to null.");
+        });
 
         // Previous categories for reuse
         AppendPreviousCategories(sb, previousHarnessCategories, previousIssueCategories);
 
         // JSON schema instruction
-        sb.AppendLine("## Response Format");
-        sb.AppendLine();
-        sb.AppendLine("Output ONLY the following JSON block. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.");
-        sb.AppendLine();
-        sb.AppendLine(JsonSchemaExample);
+        // NOTE (issue #3534): s.Append(JsonSchemaExample) is intentional here — JsonSchemaExample already ends with a
+        // newline, so AppendSection's own trailing sb.AppendLine() provides the second newline without duplication.
+        // Using s.AppendLine(JsonSchemaExample) would add a third newline and break the characterization snapshots.
+        // This is the only AppendSection body that uses Append instead of AppendLine for its final line; future
+        // maintainers adding new AppendSection bodies should always use AppendLine for their last line unless their
+        // content string already carries a trailing newline. (Review finding: FeedbackPromptBuilder.cs:97)
+        PromptBuilder.AppendSection(sb, "## Response Format", s =>
+        {
+            s.AppendLine("Output ONLY the following JSON block. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.");
+            s.AppendLine();
+            s.Append(JsonSchemaExample);
+        });
 
         return sb.ToString();
     }
@@ -129,15 +136,15 @@ public static class FeedbackPromptBuilder
         sb.AppendLine();
 
         // Original issue context
-        sb.AppendLine("## Original Issue");
-        sb.AppendLine();
-        sb.AppendLine($"**Title:** {issue.Title}");
-        sb.AppendLine();
-        sb.AppendLine("**Description:**");
-        sb.AppendLine(issue.Description);
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Original Issue", s =>
+        {
+            s.AppendLine($"**Title:** {issue.Title}");
+            s.AppendLine();
+            s.AppendLine("**Description:**");
+            s.AppendLine(issue.Description);
+        });
 
-        // Retry context
+        // Retry context — conditional body, not using AppendSection
         sb.AppendLine("## Retry Context");
         sb.AppendLine();
         sb.AppendLine($"- **Retry count:** {run.RetryCount}");
@@ -158,36 +165,39 @@ public static class FeedbackPromptBuilder
 
         sb.AppendLine();
 
-        // Latest quality gate report
+        // Latest quality gate report — delegate body, not using AppendSection
         sb.AppendLine("## Latest Quality Gate Report");
         sb.AppendLine();
         AppendQualityGateReport(sb, latestReport);
         sb.AppendLine();
 
         // Feedback instructions
-        sb.AppendLine("## Feedback Instructions");
-        sb.AppendLine();
-        sb.AppendLine("Based on the errors above and your experience during this run, provide structured feedback.");
-        sb.AppendLine("Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.");
-        sb.AppendLine();
-        sb.AppendLine("**You MUST explain the `stuckReason`:** What pipeline/tool limitation or issue problem blocked progress?");
-        sb.AppendLine();
-        sb.AppendLine("**Distinguish between:**");
-        sb.AppendLine("- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix");
-        sb.AppendLine("- **Issue feedback** — things about the issue description or repository that the issue author needs to fix");
-        sb.AppendLine();
-        sb.AppendLine("If the issue itself contributed to the failure (e.g., contradictory acceptance criteria, missing component, pre-existing bug), fill the `issue` section. Otherwise, set it to null.");
-        sb.AppendLine();
+        PromptBuilder.AppendSection(sb, "## Feedback Instructions", s =>
+        {
+            s.AppendLine("Based on the errors above and your experience during this run, provide structured feedback.");
+            s.AppendLine("Ground your answers in concrete evidence — reference specific file names, error messages, or tool names.");
+            s.AppendLine();
+            s.AppendLine("**You MUST explain the `stuckReason`:** What pipeline/tool limitation or issue problem blocked progress?");
+            s.AppendLine();
+            s.AppendLine("**Distinguish between:**");
+            s.AppendLine("- **Harness feedback** — things about the pipeline, tools, or prompts that the pipeline team can fix");
+            s.AppendLine("- **Issue feedback** — things about the issue description or repository that the issue author needs to fix");
+            s.AppendLine();
+            s.AppendLine("If the issue itself contributed to the failure (e.g., contradictory acceptance criteria, missing component, pre-existing bug), fill the `issue` section. Otherwise, set it to null.");
+        });
 
         // Previous categories for reuse
         AppendPreviousCategories(sb, previousHarnessCategories, previousIssueCategories);
 
         // JSON schema instruction
-        sb.AppendLine("## Response Format");
-        sb.AppendLine();
-        sb.AppendLine("Produce a JSON block with the following structure. The `stuckReason` field is required for failure feedback. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.");
-        sb.AppendLine();
-        sb.AppendLine(JsonSchemaExample);
+        // NOTE (issue #3534): s.Append(JsonSchemaExample) is intentional here — see the same comment in
+        // BuildStandaloneFeedbackPrompt for explanation. (Review finding: FeedbackPromptBuilder.cs:97)
+        PromptBuilder.AppendSection(sb, "## Response Format", s =>
+        {
+            s.AppendLine("Produce a JSON block with the following structure. The `stuckReason` field is required for failure feedback. Reuse an existing category label if the root cause matches, or create a new short label (2-4 words) if it's genuinely novel.");
+            s.AppendLine();
+            s.Append(JsonSchemaExample);
+        });
 
         return sb.ToString();
     }
