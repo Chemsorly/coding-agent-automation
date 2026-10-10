@@ -44,10 +44,15 @@ public sealed class FeedbackCommentRelayServiceTests
             gracePeriod: TimeSpan.Zero,
             sweepInterval: TimeSpan.FromMilliseconds(10));
 
+    // Old enough that the inline fast path has given up on the row and left it to the relay.
+    private static DateTimeOffset AbandonedCreatedAt() =>
+        DateTimeOffset.UtcNow - FeedbackCommentRelayService.FastPathReservation - TimeSpan.FromMinutes(1);
+
     private static FeedbackCommentOutboxEntry MakeEntry(
         string runId = "run-1",
         string? pullRequestNumber = null,
-        string? description = "Issue is unclear") =>
+        string? description = "Issue is unclear",
+        DateTimeOffset? createdAt = null) =>
         new()
         {
             Id = Guid.NewGuid(),
@@ -61,7 +66,7 @@ public sealed class FeedbackCommentRelayServiceTests
                 PipelineJsonOptions.Default),
             Status = "Pending",
             AttemptCount = 0,
-            CreatedAt = DateTimeOffset.UtcNow
+            CreatedAt = createdAt ?? AbandonedCreatedAt()
         };
 
     private void SetupConfig(int maxAttempts = 5)
@@ -106,6 +111,45 @@ public sealed class FeedbackCommentRelayServiceTests
         // the correct IssueIdentifier ("GH-42") and a non-empty comment body. Without it, a change
         // that marks entries completed without actually posting would not be caught by this test.
         _outboxClient.Verify(c => c.MarkCompletedAsync(entry.Id, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Test: freshly enqueued row → left to the inline fast path ─────────
+
+    [Fact]
+    public async Task FreshEntry_InlinePathStillDelivering_NotPosted()
+    {
+        // AgentJobLifecycleService enqueues the row before it swaps the label and posts the comment
+        // itself, and marks it Completed only afterwards. A sweep in between used to post the same
+        // comment a second time, about 2 s after the first (issues #3236, #3312, #3452).
+        var fresh = MakeEntry("run-fresh", createdAt: DateTimeOffset.UtcNow);
+        var abandoned = MakeEntry("run-abandoned");
+        SetupConfig();
+
+        _outboxClient.Setup(c => c.GetPendingAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([abandoned, fresh]);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/42#issuecomment-123");
+        mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var issueConfig = new ProviderConfig { Id = "github", Kind = ProviderKind.Issue, DisplayName = "GitHub", ProviderType = "GitHub" };
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([issueConfig]);
+        _configClient.Setup(c => c.GetProviderConfigsWithSecretsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([]);
+        _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        await CreateSut().SweepOnceForTestAsync(CancellationToken.None);
+
+        // Only the abandoned row is delivered; the fresh one is neither posted nor touched.
+        mockIssueProvider.Verify(
+            p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(abandoned.Id, It.IsAny<CancellationToken>()), Times.Once);
+        _outboxClient.Verify(c => c.MarkCompletedAsync(fresh.Id, It.IsAny<CancellationToken>()), Times.Never);
+        _outboxClient.Verify(c => c.MarkFailedAsync(fresh.Id, It.IsAny<string>(), It.IsAny<int>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── Test: provider throws → stays pending, AttemptCount++ ─────────────

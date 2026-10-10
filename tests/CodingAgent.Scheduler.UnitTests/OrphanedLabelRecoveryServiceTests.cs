@@ -87,7 +87,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Default: no active WorkItems — issues are not distributed.
         _mockWorkItemClient
-            .Setup(w => w.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(w => w.IsIssueDistributedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         // Default: no recently-completed runs.
@@ -546,8 +546,8 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         // IsIssueDistributedAsync returns true — live agent is processing this issue.
         _mockWorkItemClient
             .Setup(w => w.IsIssueDistributedAsync(
-                It.Is<string>(id => id == "99"),
-                It.IsAny<string>(),
+                It.Is<IssueIdentifier>(id => id.Value == "99"),
+                It.IsAny<ProviderConfigId>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -567,7 +567,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Positive guard: verify the distributed check actually fired (test can't pass vacuously).
         _mockWorkItemClient.Verify(
-            w => w.IsIssueDistributedAsync("99", "provider-1", It.IsAny<CancellationToken>()),
+            w => w.IsIssueDistributedAsync((IssueIdentifier)"99", (ProviderConfigId)"provider-1", It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
             "IsIssueDistributedAsync must have been called to reach the Times.Never assertion above");
     }
@@ -1122,8 +1122,8 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         _mockWorkItemClient
             .Setup(w => w.IsIssueDistributedAsync(
-                It.Is<string>(id => id == "303"),
-                It.IsAny<string>(),
+                It.Is<IssueIdentifier>(id => id.Value == "303"),
+                It.IsAny<ProviderConfigId>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -1143,7 +1143,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Positive guard: verify the distributed check fired.
         _mockWorkItemClient.Verify(
-            w => w.IsIssueDistributedAsync("303", "provider-1", It.IsAny<CancellationToken>()),
+            w => w.IsIssueDistributedAsync((IssueIdentifier)"303", (ProviderConfigId)"provider-1", It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
             "IsIssueDistributedAsync must have been called to reach the Times.Never assertion above");
     }
@@ -1370,8 +1370,8 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         _mockWorkItemClient
             .Setup(w => w.IsIssueDistributedAsync(
-                It.Is<string>(id => id == "402"),
-                It.IsAny<string>(),
+                It.Is<IssueIdentifier>(id => id.Value == "402"),
+                It.IsAny<ProviderConfigId>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -1391,7 +1391,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Positive guard: verify the distributed check fired.
         _mockWorkItemClient.Verify(
-            w => w.IsIssueDistributedAsync("402", "provider-1", It.IsAny<CancellationToken>()),
+            w => w.IsIssueDistributedAsync((IssueIdentifier)"402", (ProviderConfigId)"provider-1", It.IsAny<CancellationToken>()),
             Times.AtLeastOnce,
             "IsIssueDistributedAsync must have been called to reach the Times.Never assertion above");
     }
@@ -2015,7 +2015,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         // Gate: IsIssueDistributedAsync is the Defense 3 check — fires when sweep evaluated this issue
         var defense3Checked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockWorkItemClient
-            .Setup(w => w.IsIssueDistributedAsync("2087", "provider-1", It.IsAny<CancellationToken>()))
+            .Setup(w => w.IsIssueDistributedAsync((IssueIdentifier)"2087", (ProviderConfigId)"provider-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true)
             .Callback(() => defense3Checked.TrySetResult());
 
@@ -2067,7 +2067,7 @@ public sealed class OrphanedLabelRecoveryServiceTests : IDisposable
         // Gate: Defense 3 throws — fires when sweep has attempted the API check
         var defense3Attempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockWorkItemClient
-            .Setup(w => w.IsIssueDistributedAsync("2087", "provider-1", It.IsAny<CancellationToken>()))
+            .Setup(w => w.IsIssueDistributedAsync((IssueIdentifier)"2087", (ProviderConfigId)"provider-1", It.IsAny<CancellationToken>()))
             .Callback(() => defense3Attempted.TrySetResult())
             .ThrowsAsync(new HttpRequestException("API unreachable"));
 
