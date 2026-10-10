@@ -68,5 +68,16 @@ public enum PipelineStep
     /// conflict files were re-applied during code generation (issue #3435).
     /// Non-blocking: always returns Continue. Runs after GeneratingCode, before ReviewingCode.
     /// </summary>
-    CheckingDroppedIdentifiers = 33
+    CheckingDroppedIdentifiers = 33,
+
+    // 34–46 are reserved for the consolidation progress steps of #3566; gaps are fine.
+
+    /// <summary>Triage: the agent investigates the reported problem and writes its result.</summary>
+    Investigating = 47,
+
+    /// <summary>Triage: the adversarial review checks the root cause analysis and the drafts.</summary>
+    ReviewingRca = 48,
+
+    /// <summary>Triage: the result is reported to the API and, for a tracker issue, posted as a comment.</summary>
+    ReportingRca = 49
 }

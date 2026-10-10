@@ -135,6 +135,9 @@ public static class PipelineConstants
     public const int DefaultOrphanedLabelSweepIntervalMinutes = 30;
     public const int DefaultFeedbackCommentOutboxMaxAttempts = 5;
 
+    /// <summary>Default days a triage is kept after its last change.</summary>
+    public const int DefaultTriageRetentionDays = 30;
+
     /// <summary>
     /// Default cooldown period for restart-induced dedup protection.
     /// Issues with WorkItems that reached terminal state within this window are treated

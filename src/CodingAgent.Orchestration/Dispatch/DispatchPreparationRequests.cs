@@ -10,8 +10,10 @@ namespace CodingAgent.Orchestration.Dispatch;
 /// Groups the 10 orchestration parameters to satisfy S107.
 /// <see cref="AdditionalRepoProviderIds"/> lists the other repositories a project epic's
 /// decomposition clones next to its own; null for every other run.
-/// <see cref="PullRequest"/> is the pull request a review is about; null for every other run.
-/// A review's subject is that pull request in the repository, so the tracker is not read.
+/// <see cref="PullRequest"/> is a pre-built subject that stands in for the tracker issue, so the tracker is not
+/// read: the pull request a review is about, or an operator triage's report; null for every other run.
+/// <see cref="NewestComments"/> keeps the newest comments instead of the oldest when an issue has more than the
+/// cap; a triage needs the latest feedback.
 /// </summary>
 internal sealed record DispatchCoreRequest(
     IReadOnlyList<string> RequiredLabels,
@@ -24,7 +26,8 @@ internal sealed record DispatchCoreRequest(
     PipelineProject Project,
     ILogger Logger,
     IReadOnlyList<string>? AdditionalRepoProviderIds = null,
-    IssueDetail? PullRequest = null);
+    IssueDetail? PullRequest = null,
+    bool NewestComments = false);
 
 /// <summary>
 /// Parameter object for <see cref="DispatchOrchestrationService.PrepareAsync"/>

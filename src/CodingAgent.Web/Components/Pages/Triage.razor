@@ -1,0 +1,313 @@
+@page "/triage"
+@attribute [Authorize(Policy = AccessPolicies.AnyAccess)]
+@layout CockpitLayout
+@implements IAsyncDisposable
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Pipeline.Services
+@using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Services
+@inject IPipelineApiTriageClient Triages
+@inject IPipelineApiConfigClient ConfigClient
+@inject CockpitState State
+@inject CurrentAccess Access
+
+@*
+    Triage — the history of triages of the selected project (spec 050, mock B1). Both flows: operator
+    triages started on /triage/new and agent:triage label triages. Rows open /triage/{id}.
+    The list is scoped like Runs: the switcher's project, or all projects for global roles.
+*@
+
+<PageTitle>Triage - Coding Agent</PageTitle>
+
+<div class="cockpit-page" data-testid="triage-page">
+    <div class="cockpit-page-header">
+        <div class="cockpit-page-titles">
+            <h1>Triage</h1>
+            <span class="cockpit-page-sub">Describe a problem. An agent checks code, logs, metrics and existing issues, then proposes a root cause and fix issues.</span>
+        </div>
+        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <RefreshBar OnRefresh="RefreshQuietAsync" StorageKey="autoRefresh.triage" />
+            @if (Access.Grant.HasAnyOperator)
+            {
+                <a class="triage-btn is-primary" href="triage/new" data-testid="triage-new"><Icon Name="plus" Size="16" /> New triage</a>
+            }
+        </div>
+    </div>
+
+    <div class="cockpit-toolbar" style="flex-wrap: wrap; gap: 12px;">
+        <div class="cockpit-segmented" role="tablist" aria-label="Filter triages by status">
+            @foreach (var tab in Tabs)
+            {
+                var active = _tab == tab.Tab;
+                <button class="cockpit-seg-btn @(active ? "is-active" : "")" role="tab" aria-selected="@(active ? "true" : "false")"
+                        data-testid="triage-tab-@tab.TestId" @onclick="() => SetTabAsync(tab.Tab)">
+                    @tab.Label@(TabCount(tab.Tab) is { } n ? $" · {n}" : "")
+                </button>
+            }
+        </div>
+        <div class="cockpit-segmented" role="group" aria-label="Filter triages by source">
+            <button class="cockpit-seg-btn @(_source is null ? "is-active" : "")" aria-pressed="@(_source is null ? "true" : "false")" @onclick="() => SetSourceAsync(null)">All sources</button>
+            <button class="cockpit-seg-btn @(_source == TriageSource.Operator ? "is-active" : "")" aria-pressed="@(_source == TriageSource.Operator ? "true" : "false")" @onclick="() => SetSourceAsync(TriageSource.Operator)">Operator</button>
+            <button class="cockpit-seg-btn @(_source == TriageSource.Issue ? "is-active" : "")" aria-pressed="@(_source == TriageSource.Issue ? "true" : "false")" @onclick="() => SetSourceAsync(TriageSource.Issue)">Tracker issue</button>
+        </div>
+        <input class="triage-search" type="search" placeholder="Search titles" aria-label="Search triage titles"
+               value="@_search" @onchange="SearchAsync" data-testid="triage-search" />
+    </div>
+
+    <div class="cockpit-card">
+        @if (_loading)
+        {
+            <div class="cockpit-empty">Loading triages…</div>
+        }
+        else if (_error is not null)
+        {
+            <div class="cockpit-empty">@_error</div>
+        }
+        else if (_page is null || _page.Items.Count == 0)
+        {
+            <div class="cockpit-empty" data-testid="triage-empty">
+                @(_tab == TriageListTab.All && _source is null && string.IsNullOrEmpty(_search)
+                    ? "No triages yet. Start one when something behaves differently than expected."
+                    : "No triages match the current filters.")
+            </div>
+        }
+        else
+        {
+            <div class="monitoring-table-wrap">
+                <table class="monitoring-table" data-testid="triage-table">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Problem</th>
+                            <th>Source</th>
+                            <th>Verdict</th>
+                            <th>Issues</th>
+                            <th>Tokens</th>
+                            <th>Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var t in _page.Items)
+                        {
+                            <tr data-testid="triage-row">
+                                <td><span class="triage-pill is-@TriageDisplay.StatusTone(t.Status)"><span class="dot"></span>@TriageDisplay.StatusLabel(t.Status)</span></td>
+                                <td style="min-width: 240px;">
+                                    <a class="triage-row-title" href="triage/@t.Id">@t.Title</a>
+                                    <div class="triage-row-sub">@RowSubline(t)</div>
+                                </td>
+                                <td style="white-space: nowrap;">
+                                    @if (t.Source == TriageSource.Issue && TriageDisplay.SafeLink(t.Facts.IssueUrl) is { } issueUrl)
+                                    {
+                                        <a href="@issueUrl" target="_blank" rel="noopener noreferrer" class="triage-mono">Issue #@t.IssueIdentifier ↗</a>
+                                    }
+                                    else
+                                    {
+                                        @TriageDisplay.SourceText(t.Source, t.Facts.RequestedBy, t.IssueIdentifier)
+                                    }
+                                </td>
+                                <td>
+                                    @if (t.Facts.Verdict is { } verdict)
+                                    {
+                                        <span class="triage-pill is-@TriageDisplay.VerdictTone(verdict)">@TriageDisplay.VerdictWithConfidence(verdict, t.Facts.Confidence)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="triage-muted">—</span>
+                                    }
+                                </td>
+                                <td style="white-space: nowrap;">@(t.Facts.DraftCount > 0 ? $"{t.Facts.CreatedIssueCount} of {t.Facts.DraftCount}" : "—")</td>
+                                <td class="triage-mono">@(t.LatestTokens is > 0 ? CostFormatter.FormatTokens(t.LatestTokens.Value) : "—")</td>
+                                <td style="white-space: nowrap;" title="@t.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm")">@TriageDisplay.Ago(t.UpdatedAt, DateTimeOffset.UtcNow)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
+    <div class="cockpit-pager">
+        <span class="cockpit-pager-info">
+            @PagerText
+            @if (_retentionDays is { } days)
+            {
+                <text> · History is kept for @days days</text>
+            }
+        </span>
+        <div class="cockpit-pager-buttons">
+            <button class="cockpit-pager-btn" disabled="@(_pageNumber <= 1 || _loading)" @onclick="PrevPageAsync">
+                <Icon Name="chevrons-left" Size="14" /> Prev
+            </button>
+            <button class="cockpit-pager-btn" disabled="@(!HasMore || _loading)" @onclick="NextPageAsync">
+                Next <Icon Name="chevrons-right" Size="14" />
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int PageSize = 25;
+
+    private sealed record TabDef(TriageListTab Tab, string Label, string TestId);
+
+    private static readonly TabDef[] Tabs =
+    [
+        new(TriageListTab.All, "All", "all"),
+        new(TriageListTab.NeedYou, "Need you", "need-you"),
+        new(TriageListTab.Investigating, "Investigating", "investigating"),
+        new(TriageListTab.Done, "Done", "done"),
+    ];
+
+    private readonly CancellationTokenSource _cts = new();
+    private TriageListPage? _page;
+    private TriageListTab _tab = TriageListTab.All;
+    private TriageSource? _source;
+    private string? _search;
+    private int _pageNumber = 1;
+    private bool _loading = true;
+    private string? _error;
+    private int? _needYouCount;
+    private int? _investigatingCount;
+    private int? _retentionDays;
+
+    private bool HasMore => _page is not null && _pageNumber * PageSize < _page.Total;
+
+    private string PagerText => _page is null || _page.Total == 0
+        ? "No triages"
+        : $"{(_pageNumber - 1) * PageSize + 1}–{(_pageNumber - 1) * PageSize + _page.Items.Count} of {_page.Total}";
+
+    private int? TabCount(TriageListTab tab) => tab switch
+    {
+        TriageListTab.NeedYou => _needYouCount,
+        TriageListTab.Investigating => _investigatingCount,
+        _ => null
+    };
+
+    protected override void OnInitialized() => State.OnProjectChanged += HandleProjectChanged;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        try
+        {
+            _retentionDays = (await ConfigClient.GetPipelineConfigAsync(_cts.Token)).TriageRetentionDays;
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex) { Serilog.Log.Debug(ex, "Triage: failed to load the retention setting"); }
+    }
+
+    private async void HandleProjectChanged()
+    {
+        _pageNumber = 1;
+        try
+        {
+            await LoadAsync();
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { /* Already disposed. */ }
+    }
+
+    private TriageListQuery Query(TriageListTab tab, int page, int pageSize) => new()
+    {
+        ProjectId = string.IsNullOrEmpty(State.SelectedProjectId) ? null : State.SelectedProjectId,
+        Tab = tab,
+        Source = _source,
+        Search = string.IsNullOrWhiteSpace(_search) ? null : _search.Trim(),
+        Page = page,
+        PageSize = pageSize,
+    };
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        _error = null;
+        await FetchAsync(showErrors: true);
+        _loading = false;
+    }
+
+    private Task RefreshQuietAsync() => FetchAsync(showErrors: false);
+
+    private async Task FetchAsync(bool showErrors)
+    {
+        try
+        {
+            var list = Triages.ListAsync(Query(_tab, _pageNumber, PageSize), _cts.Token);
+            var needYou = Triages.ListAsync(Query(TriageListTab.NeedYou, 1, 1), _cts.Token);
+            var investigating = Triages.ListAsync(Query(TriageListTab.Investigating, 1, 1), _cts.Token);
+            await Task.WhenAll(list, needYou, investigating);
+            _page = list.Result;
+            _needYouCount = needYou.Result.Total;
+            _investigatingCount = investigating.Result.Total;
+            _error = null;
+        }
+        catch (OperationCanceledException) { /* Expected on cancellation. */ }
+        catch (Exception ex)
+        {
+            if (showErrors)
+                _error = $"Failed to load triages: {ex.Message}";
+        }
+    }
+
+    private async Task SetTabAsync(TriageListTab tab)
+    {
+        if (_tab == tab) return;
+        _tab = tab;
+        _pageNumber = 1;
+        await LoadAsync();
+    }
+
+    private async Task SetSourceAsync(TriageSource? source)
+    {
+        if (_source == source) return;
+        _source = source;
+        _pageNumber = 1;
+        await LoadAsync();
+    }
+
+    private async Task SearchAsync(ChangeEventArgs e)
+    {
+        _search = e.Value as string;
+        _pageNumber = 1;
+        await LoadAsync();
+    }
+
+    private async Task PrevPageAsync()
+    {
+        if (_pageNumber <= 1) return;
+        _pageNumber--;
+        await LoadAsync();
+    }
+
+    private async Task NextPageAsync()
+    {
+        if (!HasMore) return;
+        _pageNumber++;
+        await LoadAsync();
+    }
+
+    private static string RowSubline(TriageListItem t)
+    {
+        var attempt = t.Facts.AttemptCount > 0 ? $"Attempt {t.Facts.AttemptCount} · " : "";
+        return t.Status switch
+        {
+            TriageStatus.New => "Waiting for an agent",
+            TriageStatus.Investigating => $"{attempt}investigating",
+            TriageStatus.NeedsReview when t.Facts.DraftCount > 0 => $"{attempt}{t.Facts.DraftCount} issue draft{(t.Facts.DraftCount == 1 ? "" : "s")} to review",
+            TriageStatus.NeedsReview => $"{attempt}RCA to review",
+            TriageStatus.NeedsInput => $"{attempt}the agent has questions",
+            TriageStatus.IssuesCreated => $"{t.Facts.CreatedIssueCount} issue{(t.Facts.CreatedIssueCount == 1 ? "" : "s")} created",
+            TriageStatus.Failed => $"{attempt}failed without a result",
+            TriageStatus.Cancelled => $"{attempt}cancelled",
+            TriageStatus.Dismissed => "Dismissed",
+            _ => attempt.TrimEnd(' ', '·')
+        };
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        State.OnProjectChanged -= HandleProjectChanged;
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+}

@@ -51,6 +51,7 @@ public class OverviewComponentTests : BunitContext
         mockWorkItems ??= BuildEmptyWorkItemsMock();
 
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());

@@ -215,6 +215,13 @@ public sealed class LabelService : ILabelService
         CancellationToken ct,
         bool throwOnRemoveExhaustion = false)
     {
+        // An operator triage has no issue: its sentinel tracker never has labels to swap
+        if (TriageConstants.IsOperatorTriage(issueProviderConfigId.Value))
+        {
+            _logger.Debug("Skipping label swap to {Label} for operator triage {IssueIdentifier}", newLabel, issueIdentifier);
+            return;
+        }
+
         var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderConfigId.Value, ProviderKind.Issue, ct);
         if (issueConfig is null)
         {

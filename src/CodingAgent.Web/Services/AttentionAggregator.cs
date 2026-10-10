@@ -1,3 +1,4 @@
+using CodingAgent.Api.Client;
 using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Web.Services;
@@ -8,10 +9,14 @@ namespace CodingAgent.Web.Services;
 public sealed record AttentionResult(
     IReadOnlyList<PipelineRunSummary> NeedsRefinement,
     IReadOnlyList<PipelineRunSummary> FailedRuns,
-    IReadOnlyList<PipelineRunSummary> PlansToApprove)
+    IReadOnlyList<PipelineRunSummary> PlansToApprove,
+    IReadOnlyList<TriageListItem>? Triages = null)
 {
-    /// <summary>Sum of all three section counts — drives the top-bar badge.</summary>
-    public int TotalCount => NeedsRefinement.Count + FailedRuns.Count + PlansToApprove.Count;
+    /// <summary>Triages waiting for a person: an RCA to review or questions to answer.</summary>
+    public IReadOnlyList<TriageListItem> TriagesNeedingYou { get; } = Triages ?? [];
+
+    /// <summary>Sum of all section counts — drives the top-bar badge.</summary>
+    public int TotalCount => NeedsRefinement.Count + FailedRuns.Count + PlansToApprove.Count + TriagesNeedingYou.Count;
 }
 
 /// <summary>
@@ -44,7 +49,11 @@ public static class AttentionAggregator
     /// The caller is responsible for pre-filtering by project and for passing only
     /// non-active runs when that is the desired scope.
     /// </summary>
-    public static AttentionResult Aggregate(IReadOnlyList<PipelineRunSummary> items)
+    /// <remarks>
+    /// <paramref name="triages"/> (both flows) are kept when they wait for a person; they come from the triage
+    /// list, not from run history, because a triage's state is set by people as well as runs.
+    /// </remarks>
+    public static AttentionResult Aggregate(IReadOnlyList<PipelineRunSummary> items, IReadOnlyList<TriageListItem>? triages = null)
     {
         ArgumentNullException.ThrowIfNull(items);
 
@@ -82,7 +91,40 @@ public static class AttentionAggregator
                      && r.FinalStep == PipelineStep.Completed)
             .ToList();
 
-        return new AttentionResult(needsRefinement, failedRuns, plansToApprove);
+        var triagesNeedingYou = (triages ?? [])
+            .Where(t => TriageStatusResolver.IsInTab(t.Status, TriageListTab.NeedYou))
+            .ToList();
+
+        return new AttentionResult(needsRefinement, failedRuns, plansToApprove, triagesNeedingYou);
+    }
+
+    /// <summary>Most triages Attention lists; the Triage page shows the rest.</summary>
+    public const int MaxTriages = 50;
+
+    /// <summary>
+    /// The triages of the project scope (<c>""</c> = all) that wait for a person, newest first. Attention
+    /// degrades to no triage group when the triage API is unavailable.
+    /// </summary>
+    public static async Task<IReadOnlyList<TriageListItem>> LoadTriagesNeedingYouAsync(
+        IPipelineApiTriageClient client, string? projectId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        try
+        {
+            var page = await client.ListAsync(new TriageListQuery
+            {
+                ProjectId = string.IsNullOrEmpty(projectId) ? null : projectId,
+                Tab = TriageListTab.NeedYou,
+                PageSize = MaxTriages,
+            }, ct);
+            return page.Items;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Serilog.Log.Debug(ex, "Attention: failed to load triages");
+            return [];
+        }
     }
 
     private static string NormaliseRunType(PipelineRunType runType) =>

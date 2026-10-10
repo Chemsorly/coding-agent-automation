@@ -1,0 +1,174 @@
+@using CodingAgent.Pipeline.Models
+@using CodingAgent.Web.Components.Shared
+@using CodingAgent.Web.Services
+
+@*
+    TriageReport — one attempt's root cause analysis (spec 050, mock B4): verdict, causal chain, evidence,
+    and what the agent investigated (hypotheses, every check, what it did not check). Every value is
+    agent-written text, rendered as text; links are http(s) only. AfterVerdict holds the page's questions
+    form for an inconclusive result.
+*@
+
+<section class="cockpit-card cockpit-card-pad triage-verdict" aria-label="Verdict" data-testid="triage-verdict">
+    <div class="triage-pills">
+        <span class="triage-pill is-@TriageDisplay.VerdictTone(Result.Verdict)" data-testid="triage-verdict-pill">@TriageDisplay.VerdictLabel(Result.Verdict)</span>
+        @if (Result.Confidence is { } confidence)
+        {
+            <span class="triage-pill is-@TriageDisplay.VerdictTone(Result.Verdict)">Confidence: @TriageDisplay.ConfidenceLabel(confidence)</span>
+        }
+        <span class="cockpit-chip" style="margin: 0;">@(Result.Reproduced ? "Reproduced ✓" : "Not reproduced")</span>
+    </div>
+    <p class="triage-cause">@Result.Summary</p>
+    @if (!string.IsNullOrWhiteSpace(Result.Impact))
+    {
+        <p class="triage-text triage-muted">Impact: @Result.Impact</p>
+    }
+    @if (Result.Reproduced && !string.IsNullOrWhiteSpace(Result.Reproduction))
+    {
+        <p class="triage-text triage-muted">Reproduction: @Result.Reproduction</p>
+    }
+    @if (Result.Verdict == TriageVerdict.Duplicate && !string.IsNullOrWhiteSpace(Result.DuplicateOf))
+    {
+        <p class="triage-text">
+            Duplicate of
+            @if (TriageDisplay.SafeLink(Result.DuplicateOf) is { } dupLink)
+            {
+                <a href="@dupLink" target="_blank" rel="noopener noreferrer">@Result.DuplicateOf ↗</a>
+            }
+            else
+            {
+                <span class="triage-mono">@Result.DuplicateOf</span>
+            }
+        </p>
+    }
+</section>
+
+@AfterVerdict
+
+@if (Result.CausalChain.Count > 0)
+{
+    <section class="cockpit-card" aria-label="Causal chain" data-testid="triage-chain">
+        <div class="cockpit-card-header"><h2>From symptom to cause</h2></div>
+        <ol class="triage-chain">
+            @for (var i = 0; i < Result.CausalChain.Count; i++)
+            {
+                var step = Result.CausalChain[i];
+                <li class="@(step.Kind == TriageChainKind.RootCause ? "is-root" : "")">
+                    <span class="n">@(i + 1)</span>
+                    <div style="min-width: 0; overflow-wrap: anywhere;">
+                        @if (TriageDisplay.ChainTag(step.Kind) is { } tag)
+                        {
+                            <span class="triage-tag">@tag</span>
+                        }
+                        @step.Text
+                        @foreach (var id in step.EvidenceIds)
+                        {
+                            <span class="triage-eid">@id</span>
+                        }
+                    </div>
+                </li>
+            }
+        </ol>
+    </section>
+}
+
+@if (Result.Evidence.Count > 0)
+{
+    <section class="cockpit-card" aria-label="Evidence" data-testid="triage-evidence">
+        <div class="cockpit-card-header"><h2>Evidence</h2><span class="triage-hint">Each claim with the query or code it came from</span></div>
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <thead><tr><th>#</th><th>Claim</th><th>Source</th></tr></thead>
+                <tbody>
+                    @foreach (var e in Result.Evidence)
+                    {
+                        <tr>
+                            <td class="triage-eid">@e.Id</td>
+                            <td style="overflow-wrap: anywhere;">
+                                @e.Claim
+                                @if (!string.IsNullOrWhiteSpace(e.Query))
+                                {
+                                    <br /><span class="triage-q">@e.Query</span>
+                                }
+                            </td>
+                            <td style="overflow-wrap: anywhere;">
+                                @e.Source
+                                @if (TriageDisplay.SafeLink(e.Link) is { } link)
+                                {
+                                    <br /><a href="@link" target="_blank" rel="noopener noreferrer">Open ↗</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+<section class="cockpit-card" aria-label="What the agent investigated" data-testid="triage-investigated">
+    <div class="cockpit-card-header"><h2>What the agent investigated</h2><span class="triage-hint">Every check, in order. Judge whether it looked in the right places.</span></div>
+    @if (Result.Hypotheses.Count > 0)
+    {
+        <div class="triage-pad triage-chips" style="border-bottom: 1px solid var(--hairline);">
+            @foreach (var h in Result.Hypotheses)
+            {
+                <span class="triage-hypo @(h.State == TriageHypothesisState.Confirmed ? "is-confirmed" : "")" title="@h.Text">
+                    <strong>@h.Id</strong> @Short(h.Text, 60) · @TriageDisplay.HypothesisLabel(h.State)
+                </span>
+            }
+        </div>
+    }
+    @if (Result.Investigated.Count == 0)
+    {
+        <div class="cockpit-empty" style="padding: 20px;">The agent listed no checks.</div>
+    }
+    else
+    {
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <thead><tr><th>#</th><th>Check</th><th>Where</th><th>For</th><th>Result</th></tr></thead>
+                <tbody>
+                    @for (var i = 0; i < Result.Investigated.Count; i++)
+                    {
+                        var c = Result.Investigated[i];
+                        <tr>
+                            <td class="triage-eid">@(i + 1)</td>
+                            <td style="overflow-wrap: anywhere;">@c.Check</td>
+                            <td style="overflow-wrap: anywhere;">@c.Where</td>
+                            <td>@(string.IsNullOrWhiteSpace(c.For) ? "—" : c.For)</td>
+                            <td style="overflow-wrap: anywhere;">
+                                @c.Result
+                                @foreach (var id in c.EvidenceIds)
+                                {
+                                    <span class="triage-eid">@id</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+    @if (Result.NotChecked.Count > 0)
+    {
+        <div class="triage-pad triage-sep">
+            <h3 class="triage-h3">Not checked</h3>
+            <ul style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px;">
+                @foreach (var gap in Result.NotChecked)
+                {
+                    <li style="overflow-wrap: anywhere;"><strong>@gap.What</strong>: @gap.Why</li>
+                }
+            </ul>
+        </div>
+    }
+</section>
+
+@code {
+    [Parameter, EditorRequired] public TriageResult Result { get; set; } = default!;
+
+    /// <summary>Rendered right after the verdict card.</summary>
+    [Parameter] public RenderFragment? AfterVerdict { get; set; }
+
+    private static string Short(string text, int max) => text.Length <= max ? text : text[..(max - 1)] + "…";
+}

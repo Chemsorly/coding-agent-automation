@@ -116,12 +116,12 @@ internal sealed class AgentProviderResolver : IAgentProviderResolver
     }
 
     /// <summary>
-    /// The repositories a run reads besides its own: a project epic's decomposition reads the project's
-    /// repositories, and so do the project reviewers of a code review. Null when there are none.
+    /// The repositories a run reads besides its own: a project epic's decomposition and a triage read the
+    /// project's repositories, and so do the project reviewers of a code review. Null when there are none.
     /// </summary>
     private static IReadOnlyList<RepositoryTarget>? GetAdditionalRepositories(JobAssignmentMessage job)
     {
-        if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+        if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition or PipelineRunType.Triage)
             return job.ProjectContext?.Repositories;
 
         return job.ProjectReviewers.Count > 0 ? job.ProjectReviewRepositories : null;

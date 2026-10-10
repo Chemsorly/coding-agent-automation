@@ -365,6 +365,7 @@ public sealed class ApiOrchestrationDiTests : IAsyncLifetime
         services.AddSingleton<IHarnessSuggestionStore>(new Mock<IHarnessSuggestionStore>().Object);
         services.AddSingleton<ILoopStateStore>(new Mock<ILoopStateStore>().Object);
         services.AddSingleton<IFeedbackCommentOutbox>(new Mock<IFeedbackCommentOutbox>().Object);
+        services.AddSingleton<ITriageStore>(new Mock<ITriageStore>().Object);
 
         // ── WorkItemTransitionService + fallback service ─────────────────────
         // These are registered by AddApiInfrastructure; replicate minimally here.

@@ -383,7 +383,8 @@ public class DispatchInfrastructure
     internal async Task<IssueContextResult?> BuildIssueContextAsync(
         IssueIdentifier issueIdentifier,
         ProviderConfigId issueProviderId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool newestComments = false)
     {
         var issueConfig = await Resolution.ConfigStore
             .GetProviderConfigByIdAsync(issueProviderId.Value, ProviderKind.Issue, ct);
@@ -398,10 +399,12 @@ public class DispatchInfrastructure
             issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
             parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
             var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
-            // Cap at 50 comments per REQ-4.4
-            issueComments = allComments.Count > 50
-                ? allComments.Take(50).ToList().AsReadOnly()
-                : allComments;
+            // Cap at 50 comments per REQ-4.4 (the newest ones when asked: a triage needs the latest feedback)
+            issueComments = allComments.Count <= 50
+                ? allComments
+                : newestComments
+                    ? allComments.Skip(allComments.Count - 50).ToList().AsReadOnly()
+                    : allComments.Take(50).ToList().AsReadOnly();
         }
 
         // Extract images from body + comments (mirrors FetchIssueStep pattern).
@@ -598,7 +601,7 @@ public class DispatchInfrastructure
         // A review is about a pull request, so its context comes from the pull request, never from the tracker.
         var issueContext = request.PullRequest is { } pullRequest
             ? BuildPullRequestContext(pullRequest)
-            : await BuildIssueContextAsync(issueIdentifier, issueProviderId, ct);
+            : await BuildIssueContextAsync(issueIdentifier, issueProviderId, ct, request.NewestComments);
         if (issueContext is null)
         {
             logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);

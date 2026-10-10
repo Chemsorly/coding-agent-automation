@@ -61,6 +61,9 @@ public static class PipelineStepExtensions
         PipelineStep.PrMerged => "PR Merged",
         PipelineStep.PrClosed => "PR Closed",
         PipelineStep.CheckingDroppedIdentifiers => "Checking Dropped Identifiers",
+        PipelineStep.Investigating => "Investigating",
+        PipelineStep.ReviewingRca => "Reviewing RCA",
+        PipelineStep.ReportingRca => "Reporting RCA",
         _ => step.ToString()
     };
 }

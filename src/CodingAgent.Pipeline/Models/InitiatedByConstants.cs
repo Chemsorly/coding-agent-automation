@@ -29,6 +29,9 @@ public static class InitiatedByConstants
     /// <summary>Epic-decomposition run dispatched by the main polling loop.</summary>
     public const string LoopDecomposition = "loop:decomposition";
 
+    /// <summary>Triage of an <c>agent:triage</c> issue dispatched by the main polling loop.</summary>
+    public const string LoopTriage = "loop:triage";
+
     // ── Manual (human-initiated via UI) ──────────────────────────────────────
 
     /// <summary>Run dispatched manually from a UI drawer (issue, PR review, or epic).</summary>

@@ -17,14 +17,16 @@ public sealed partial class AgentHub
     /// All other <c>agent:*</c> labels (including <c>agent:epic-approved</c>) are dropped.
     /// </summary>
     [RequiresActiveJob]
-    public Task<CreatedIssueResult> RequestCreateIssue(JobId jobId, string title, string body, IReadOnlyList<string> labels)
+    public async Task<CreatedIssueResult> RequestCreateIssue(JobId jobId, string title, string body, IReadOnlyList<string> labels)
     {
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
+        await RefuseIssueCreationForTriageAsync(jobId);
+
         var filteredLabels = FilterLabelsForIssueCreation(labels, jobId.Value);
-        return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId.Value, "create issue",
+        return await ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId.Value, "create issue",
             (provider, ct) => provider.CreateIssueAsync(title, body, filteredLabels, ct));
     }
 
@@ -44,6 +46,8 @@ public sealed partial class AgentHub
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
+
+        await RefuseIssueCreationForTriageAsync(jobId);
 
         var (_, issueConfig) = await LoadProviderForCrossRepoAsync(jobId, issueProviderConfigId, "routing");
 
@@ -188,6 +192,14 @@ public sealed partial class AgentHub
     /// </summary>
     private async Task<bool> IsInProjectEpicScopeAsync(PipelineRun run, string issueProviderConfigId)
     {
+        // A triage reads the open issues of every enabled tracker of its project (it can never create issues:
+        // RefuseIssueCreationForTriageAsync runs before this check).
+        if (run.RunType == PipelineRunType.Triage && !string.IsNullOrEmpty(run.ProjectId))
+        {
+            var projectTemplates = await _facade.LoadTemplatesForProjectAsync(run.ProjectId, CancellationToken.None);
+            return projectTemplates.Any(t => t.Enabled && t.IssueProviderId == issueProviderConfigId);
+        }
+
         if (run.RunType != PipelineRunType.Decomposition || string.IsNullOrEmpty(run.ProjectId))
             return false;
 

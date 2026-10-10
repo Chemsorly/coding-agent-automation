@@ -1,0 +1,61 @@
+@using CodingAgent.Api.Client
+@using CodingAgent.Pipeline.Models
+
+<section class="settings-section">
+    <h2>Triage</h2>
+    <p class="section-description">Controls triage runs — an agent investigates a reported problem with the project's code, MCP servers and issues, and proposes a root cause and fix issues. Whether the loop picks up <code>agent:triage</code> issues is a switch on each template.</p>
+    <div class="provider-form">
+        <div class="form-group form-checkbox" data-setting="@nameof(PipelineConfiguration.TriageReviewEnabled)">
+            <label>
+                <input type="checkbox" @bind="_triageReviewEnabled" />
+                Review the RCA before it is reported
+            </label>
+            <span class="form-hint">A second agent checks that every claim has evidence, that ruled-out explanations are really ruled out, and that nothing sensitive is quoted.</span>
+        </div>
+        <div class="form-group" data-setting="@nameof(PipelineConfiguration.TriageRetentionDays)">
+            <div class="label-with-hint">
+                <label>Keep Triage History (days)</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Days a triage is kept after its last change. Created issues and tracker comments are not affected. Valid range: 1–365. Default: 30">?</span>
+            </div>
+            <input type="number" @bind="_triageRetentionDays" min="@SettingLimits.Min(nameof(PipelineConfiguration.TriageRetentionDays))" max="@SettingLimits.Max(nameof(PipelineConfiguration.TriageRetentionDays))" />
+        </div>
+
+        <div class="pipeline-form-actions">
+            <button class="btn-save" @onclick="SaveAsync">Save Triage Settings</button>
+        </div>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IPipelineApiConfigClient ConfigClient { get; set; } = default!;
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    private bool _triageReviewEnabled = true;
+    private int _triageRetentionDays = PipelineConstants.DefaultTriageRetentionDays;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await ConfigClient.GetPipelineConfigAsync(CancellationToken.None);
+        _triageReviewEnabled = config.TriageReviewEnabled;
+        _triageRetentionDays = config.TriageRetentionDays;
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            await ConfigClient.UpdatePipelineConfigAsync(
+                current => current with
+                {
+                    TriageReviewEnabled = _triageReviewEnabled,
+                    TriageRetentionDays = _triageRetentionDays
+                },
+                CancellationToken.None);
+            await OnShowStatus.InvokeAsync(("Triage settings saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+}

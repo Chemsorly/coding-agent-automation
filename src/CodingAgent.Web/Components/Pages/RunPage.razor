@@ -12,6 +12,7 @@
 @inject IPipelineApiRunHistoryClient RunHistory
 @inject IPipelineApiWorkItemClient WorkItems
 @inject IPipelineApiConfigClient ConfigClient
+@inject IPipelineApiTriageClient Triages
 @inject IConfigurationStore ConfigStore
 @inject IAgentHubConnection HubConnection
 @inject NavigationManager Nav
@@ -60,6 +61,10 @@
                     {
                         <span class="run-type-badge run-type-consolidation"><Icon Name="refresh-cw" Size="14" /> Consolidation</span>
                     }
+                    else if (run.RunType == PipelineRunType.Triage)
+                    {
+                        <span class="run-type-badge run-type-triage"><Icon Name="stethoscope" Size="14" /> Triage</span>
+                    }
                     else
                     {
                         <span class="run-type-badge run-type-impl"><Icon Name="hammer" Size="14" /> Impl</span>
@@ -70,7 +75,15 @@
                         <span class="cockpit-page-sub">at @((_liveStep ?? run.FinalStep).ToDisplayName())</span>
                     }
                 </div>
-                <h1>@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier @run.IssueTitle</h1>
+                @if (TriageConstants.TryParseTriageId(run.IssueIdentifier.Value) is not null)
+                {
+                    @* An operator triage has no issue: its identifier is the triage:{id} sentinel *@
+                    <h1>@run.IssueTitle</h1>
+                }
+                else
+                {
+                    <h1>@(run.RunType == PipelineRunType.Review ? "PR " : "")#@run.IssueIdentifier @run.IssueTitle</h1>
+                }
                 <span class="cockpit-page-sub mono">run @Truncate(run.RunId, 12)</span>
             </div>
         </div>
@@ -82,9 +95,13 @@
 
         var implPr = run.RunType != PipelineRunType.Review ? run.PullRequestUrl : null;
         var reviewPr = run.RunType == PipelineRunType.Review ? run.ReviewPrUrl : null;
-        @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr))
+        @if (!string.IsNullOrEmpty(run.IssueUrl) || !string.IsNullOrEmpty(implPr) || !string.IsNullOrEmpty(reviewPr) || _triageId is not null)
         {
             <div class="cockpit-links-rail">
+                @if (_triageId is { } triageId)
+                {
+                    <a href="triage/@triageId" class="cockpit-link-chip" data-testid="run-triage-link"><Icon Name="stethoscope" Size="14" /> Triage ↗</a>
+                }
                 @if (!string.IsNullOrEmpty(run.IssueUrl))
                 {
                     <a href="@run.IssueUrl" target="_blank" rel="noopener" class="cockpit-link-chip"><Icon Name="clipboard-list" Size="14" /> Issue #@run.IssueIdentifier ↗</a>
@@ -312,6 +329,9 @@
     private readonly CancellationTokenSource _cts = new();
     private PipelineRunSummary? _run;
     private string? _resolvedAgentName;
+
+    /// <summary>The triage a Triage run belongs to, for the "Triage ↗" link; null for other runs.</summary>
+    private Guid? _triageId;
     private bool _loading = true;
     private string? _error;
 
@@ -357,6 +377,7 @@
         _error = null;
         _run = null;
         _resolvedAgentName = null;
+        _triageId = null;
         _model = null;
 
         if (!Guid.TryParse(RunId, out var id))
@@ -377,6 +398,12 @@
                 var cfg = await ConfigStore.GetProviderConfigByIdAsync(
                     _run.AgentProviderConfigId, ProviderKind.Agent, _cts.Token);
                 _resolvedAgentName = cfg?.DisplayName;
+            }
+            if (_run?.RunType == PipelineRunType.Triage)
+            {
+                try { _triageId = await Triages.FindByRunAsync(_run.RunId, _cts.Token); }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex) { Serilog.Log.Debug(ex, "RunPage: failed to look up the triage of run {RunId}", _run.RunId); }
             }
             _isLive = _run is not null && IsActive(_run);
 

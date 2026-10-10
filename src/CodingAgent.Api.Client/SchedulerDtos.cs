@@ -41,7 +41,9 @@ public record RetentionSweepResultDto(
     int StalePipelineRunsDeleted,
     int RetentionPipelineRunsDeleted,
     int RetentionWorkItemsDeleted,
-    int OrphanedPipelineRunsReconciled = 0);
+    int OrphanedPipelineRunsReconciled = 0,
+    int TriageAttemptsBackfilled = 0,
+    int TriagesDeleted = 0);
 
 /// <summary>Work item count grouped by status, returned by GET /api/work-items/counts-by-status.</summary>
 public record WorkItemCountDto(string Status, string AgentSelector, long Count);

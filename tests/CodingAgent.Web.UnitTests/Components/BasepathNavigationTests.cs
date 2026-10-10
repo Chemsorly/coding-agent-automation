@@ -116,6 +116,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(new List<ActiveWorkItemDto>());
 
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockAgents.Object);
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton<ILoopStatusService>(Mock.Of<ILoopStatusService>());
@@ -191,6 +192,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(Array.Empty<ProviderConfig>());
 
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(Mock.Of<IProviderFactory>());
         Services.AddSingleton(Mock.Of<IDependencyChecker>());
@@ -252,6 +254,7 @@ public class BasepathNavigationTests : BunitContext
             .ReturnsAsync(new List<ActiveWorkItemDto>());
 
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(mockWorkItems.Object);
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(mockConfigStore);
@@ -298,6 +301,7 @@ public class BasepathNavigationTests : BunitContext
 
         Services.AddSingleton(mockConfigClient.Object);
         Services.AddSingleton(mockRunHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(new CockpitState());
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();

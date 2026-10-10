@@ -7,6 +7,7 @@
 @using CodingAgent.Web.Components.Shared
 @using CodingAgent.Web.Services
 @inject IPipelineApiRunHistoryClient RunHistory
+@inject IPipelineApiTriageClient Triages
 @inject BlockedIssuesService BlockedIssues
 @inject CockpitState State
 @inject NavigationManager Nav
@@ -25,7 +26,7 @@
     <div class="cockpit-page-header">
         <div class="cockpit-page-titles">
             <h1>Attention</h1>
-            <span class="cockpit-page-sub">@(_loading ? "… items" : AttentionItemsLabel(_sections.Sum(s => s.Rows.Count))) that may need a human — acted on in the issue tracker</span>
+            <span class="cockpit-page-sub">@(_loading ? "… items" : AttentionItemsLabel(_sections.Sum(s => s.Rows.Count) + _triages.Count)) that may need a human — triages here, the rest in the issue tracker</span>
         </div>
         <RefreshBar OnRefresh="RefreshAsync" IsLoading="@_loading" StorageKey="autoRefresh.attention" />
     </div>
@@ -46,6 +47,32 @@
     }
     else
     {
+        @if (_triages.Count > 0)
+        {
+            <div class="cockpit-card" data-testid="attention-section-triage">
+                <div class="cockpit-card-header">
+                    <span style="display: inline-flex; align-items: center; gap: 9px;">
+                        <span style="width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #0B5566; background: var(--bg-info);"><Icon Name="stethoscope" Size="15" /></span>
+                        <h2>Triage</h2>
+                    </span>
+                    <span data-testid="attention-section-count-triage" style="font-size: 11.5px; color: var(--text-muted); font-weight: 600; background: var(--surface-alt); padding: 1px 8px; border-radius: 999px;">@_triages.Count</span>
+                </div>
+                @foreach (var t in _triages)
+                {
+                    <a class="cockpit-run-row" data-testid="attention-triage-row" href="triage/@t.Id" style="text-decoration: none; color: inherit;">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">@t.Title</div>
+                            <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">@TriageSubline(t) · @TriageDisplay.SourceText(t.Source, t.Facts.RequestedBy, t.IssueIdentifier)</div>
+                        </div>
+                        <span style="display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0;">
+                            <span class="triage-pill is-@TriageDisplay.StatusTone(t.Status)">@TriageDisplay.StatusLabel(t.Status)</span>
+                            <Icon Name="chevron-right" Size="16" Class="cockpit-row-chevron" />
+                        </span>
+                    </a>
+                }
+            </div>
+        }
+
         @foreach (var sec in _sections.Where(s => s.Rows.Count > 0))
         {
             <div class="cockpit-card" data-testid="attention-section-@sec.TestId">
@@ -79,7 +106,7 @@
             </div>
         }
 
-        @if (_sections.Sum(s => s.Rows.Count) == 0)
+        @if (_sections.Sum(s => s.Rows.Count) + _triages.Count == 0)
         {
             <div class="cockpit-card"><div class="cockpit-empty">Nothing needs attention right now.</div></div>
         }
@@ -132,10 +159,17 @@
         return run.RetryCount > 0 ? $"Failed after {run.RetryCount} retries" : "Failed";
     }
 
+    private static string TriageSubline(TriageListItem t) => t.Status == TriageStatus.NeedsInput
+        ? "The agent has questions — answer them to re-run"
+        : t.Facts.DraftCount > 0
+            ? $"RCA ready — review {t.Facts.DraftCount} issue draft{(t.Facts.DraftCount == 1 ? "" : "s")}"
+            : "RCA ready — review it";
+
     private readonly CancellationTokenSource _cts = new();
     private bool _loading = true;
     private string? _error;
     private List<Section> _sections = new();
+    private IReadOnlyList<TriageListItem> _triages = [];
 
     // Blocked issues are a LIVE provider query (see BlockedIssuesService) — loaded after first render.
     private IReadOnlyList<BlockedIssue> _blockedIssues = [];
@@ -212,7 +246,9 @@
             // still technically active (race condition or stale state), it could appear in FailedRuns here.
             // For consistency with Overview.razor, consider applying a client-side IsActive() filter before
             // passing to Aggregate, or document that includeActive: false is the sole guard.
-            var attn = AttentionAggregator.Aggregate(items);
+            var triages = await AttentionAggregator.LoadTriagesNeedingYouAsync(Triages, State.SelectedProjectId, _cts.Token);
+            var attn = AttentionAggregator.Aggregate(items, triages);
+            _triages = attn.TriagesNeedingYou;
 
             _sections = new()
             {
@@ -224,7 +260,7 @@
                     _ => "Plan posted — approve by adding agent:epic-approved on the issue", "plans-posted"),
             };
 
-            State.SetAttentionCount(_sections.Sum(s => s.Rows.Count));
+            State.SetAttentionCount(attn.TotalCount);
         }
         catch (OperationCanceledException) { /* Expected on cancellation. */ }
         catch (Exception ex)

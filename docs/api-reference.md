@@ -233,6 +233,27 @@ List work items that are `Dispatched` or `Running` and were dispatched more than
 
 ---
 
+## Triage Endpoints
+
+The [triage](triage.md) endpoints under `/api/triages`. All of them need the **OperatorApiKey**; agent-derived keys get `403`. The web host checks the signed-in user's role on the triage's stored project before it calls them. Bodies and responses use the pipeline's JSON options (camelCase, snake_case enum values such as `need_you` or `cause_found`). Refusals are problem responses whose `detail` is the reason shown to the user.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/triages` | List: `projectId` (omit for all projects), `tab` (`all`, `need_you`, `investigating`, `done`), `source` (`operator`, `issue`), `q` (title contains), `page`, `pageSize`. Returns `{ items, total }` |
+| GET | `/api/triages/similar` | Triages of `projectId` from the retention window whose titles share words with `title` (at most 3) |
+| GET | `/api/triages/by-run/{runId}` | `{ id }` of the triage a run belongs to, or `404` |
+| GET | `/api/triages/{id}` | The triage record with its status, the running attempt's WorkItem id and run facts per attempt |
+| POST | `/api/triages` | Start an operator triage: `{ projectId, requestedBy, request: { title, whatHappened, expected, from?, until?, environment?, where?, startInTemplateId?, version?, links?, alreadyTried? } }`. Writes the triage and its Pending WorkItem together. `201` |
+| POST | `/api/triages/{id}/rerun` | Start another attempt: `{ author, feedback?, answers?: [{ question, answer }] }`. For a label triage it posts the feedback on the issue and sets `agent:triage`. `202` |
+| PUT | `/api/triages/{id}/drafts/{draftId}` | Edit a draft: `{ kind, targetRepository, title, body, editedBy }` |
+| POST | `/api/triages/{id}/drafts/{draftId}/reset` | Restore the agent's version of a draft |
+| POST | `/api/triages/{id}/create-issues` | Create issues from drafts: `{ draftIds, queue, createdBy }` → `{ created, errors }`. Drafts already created are skipped |
+| POST | `/api/triages/{id}/dismiss` | Dismiss: `{ by, reason? }` |
+
+**Status codes:** `400` invalid input (for example a repository or start-in template that is not an enabled template of the triage's project, or a project without an enabled template), `404` unknown triage, draft or project, `409` an attempt is running (re-run, create issues, dismiss), the draft's issue already exists, or the triage changed meanwhile.
+
+---
+
 ## Config Import/Export Endpoints
 
 > ⚠️ **Warning:** The import endpoint is destructive — it clears ALL existing configuration before inserting the uploaded bundle. This operation is transactional (atomic commit or full rollback).
@@ -502,6 +523,7 @@ Kubernetes readiness probe. Returns 200 if ready to accept traffic, 503 during g
 | POST | `/api/work-items/{id}/status` | AgentApiKey | Report status transition |
 | POST | `/api/work-items/{id}/priority` | OperatorApiKey | Set dispatch priority weight (Pending items only) |
 | GET | `/api/work-items/active` | OperatorApiKey | List Dispatched and Running work items older than a threshold |
+| GET, POST, PUT | `/api/triages/…` | OperatorApiKey | [Triage endpoints](#triage-endpoints): list, read, start, re-run, edit drafts, create issues, dismiss |
 | GET | `/api/config/export` | OperatorApiKey | Download config bundle |
 | POST | `/api/config/import` | OperatorApiKey | Upload config bundle (destructive) |
 | GET | `/api/export/runs.json` | OperatorApiKey | Download run history |

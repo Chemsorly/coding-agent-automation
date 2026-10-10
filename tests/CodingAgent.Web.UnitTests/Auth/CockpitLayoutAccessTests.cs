@@ -46,6 +46,7 @@ public class CockpitLayoutAccessTests : BunitContext
 
         Services.AddSingleton(_configClient.Object);
         Services.AddSingleton(_runHistory.Object);
+        Services.AddSingleton(Mock.Of<IPipelineApiTriageClient>());
         Services.AddSingleton(_state);
         Services.AddSingleton<IFaroService>(Mock.Of<IFaroService>());
         Services.AddSingleton<NotificationService>();
@@ -162,9 +163,9 @@ public class CockpitLayoutAccessTests : BunitContext
     }
 
     [Theory]
-    [InlineData(AccessRole.Admin, new[] { "Overview", "Work", "Runs", "Fleet", "Attention", "Insights", "Pipelines", "Consolidation", "Settings", "Knowledge", "Agent Chat", "About" })]
-    [InlineData(AccessRole.Operator, new[] { "Overview", "Work", "Runs", "Fleet", "Attention", "Insights", "Pipelines", "Consolidation", "Knowledge", "Agent Chat", "About" })]
-    [InlineData(AccessRole.ReadOnly, new[] { "Overview", "Work", "Runs", "Fleet", "Attention", "Insights", "Pipelines", "Consolidation", "Knowledge", "About" })]
+    [InlineData(AccessRole.Admin, new[] { "Overview", "Work", "Runs", "Triage", "Fleet", "Attention", "Insights", "Pipelines", "Consolidation", "Settings", "Knowledge", "Agent Chat", "About" })]
+    [InlineData(AccessRole.Operator, new[] { "Overview", "Work", "Runs", "Triage", "Fleet", "Attention", "Insights", "Pipelines", "Consolidation", "Knowledge", "Agent Chat", "About" })]
+    [InlineData(AccessRole.ReadOnly, new[] { "Overview", "Work", "Runs", "Triage", "Fleet", "Attention", "Insights", "Pipelines", "Consolidation", "Knowledge", "About" })]
     public void GlobalRole_NavigationFollowsPagePolicies(AccessRole role, string[] expected)
     {
         var cut = RenderLayout(TestAccess.Global(role));
@@ -178,7 +179,7 @@ public class CockpitLayoutAccessTests : BunitContext
         var cut = RenderLayout(TestAccess.Scoped((PaymentsId, AccessRole.Operator)));
 
         cut.WaitForAssertion(() => NavLabels(cut).Should().Equal(
-            "Overview", "Work", "Runs", "Attention", "Insights", "Pipelines", "Knowledge", "Agent Chat", "About"));
+            "Overview", "Work", "Runs", "Triage", "Attention", "Insights", "Pipelines", "Knowledge", "Agent Chat", "About"));
     }
 
     [Fact]

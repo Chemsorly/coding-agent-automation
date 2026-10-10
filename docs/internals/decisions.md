@@ -33,12 +33,13 @@ The rules a plausible change could break. Details are in the linked entries.
 - Reviewers run in isolated sessions. ([Isolated review](#code-review-always-uses-isolated-sessions-no-shared-mode))
 - Durable agent output gets an adversarial review step with its own switch. ([Adversarial review](#adversarial-review-is-a-default-pattern-for-all-durable-agent-outputs))
 - Only CRITICAL findings trigger another review round; non-compliant acceptance criteria count as CRITICAL. ([Review iteration](#code-review-iteration-critical-only-triggers-re-review-warnings-get-one-fix-pass), [Acceptance criteria](#noncompliant-acceptance-criteria-as-critical-hard-contract-retry-budget-bounds-cost))
-- Dispatch order is Review, Decomposition, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation))
+- Dispatch order is Review, Decomposition and Triage, Implementation, Consolidation; no urgency crosses a tier. ([Dispatch priority](#dispatch-priority-static-ordering-review--decomposition--implementation--consolidation))
 - A work item stores identity only; config is resolved at assignment, and a failed enrichment returns 503. ([Payload](#workitemspayload-config-snapshot-must-be-at-dispatch-time-not-enqueue-time))
 - `AgentTimeout` is the only agent time limit; chat pods have their own. ([Timeouts](#agenttimeout-is-the-only-agent-time-limit))
 - An agent pod exits 0 exactly when its run's outcome is recorded and never reports SIGTERM; pod retries belong to the Kubernetes Job. ([Agent Jobs](#agent-jobs-kubernetes-retries-pods-the-agent-records-outcomes))
 - Merging is always a human action. ([Refactoring loop](#refactoring-consolidation-loop-autonomous-up-to-pr-creation-merge-is-human-gated))
 - Epics need human approval between the plan and the sub-issues. ([Epics](#epic-decomposition-two-phase-with-human-gate))
+- Agents never create issues from a triage; a person creates the reviewed drafts in the app. ([Triage](#triage-project-wide-investigation-issues-created-by-a-person-in-the-app))
 - One enabled template is one repository and one tracker; an epic's tracker decides where its sub-issues go. ([1:1:1](#111-template-binding-one-repo-one-tracker-per-enabled-template--intentional-constraint), [Epic scope](#epic-scope-tracker-of-record-determines-sub-issue-routing--intentional-same-rationale-as-111))
 - Every setting is read by code, shown on a settings page, documented and range-checked. ([Settings](#settings-are-read-offered-and-range-checked--one-record-four-scopes))
 - Context reaches agents as workspace files, and agents return structured output as files. ([Files](#filesystem-as-context-workspace-files-are-the-context-delivery-mechanism))
@@ -147,7 +148,7 @@ The rules a plausible change could break. Details are in the linked entries.
 **Rule:** Agents can't set labels that mark a human approval (today only `agent:epic-approved`); the hub ignores such requests with a warning. Every new human-approval label joins this set.
 **Why:** An agent must not escalate its own privileges by setting its own transition label.
 **Not:** per-label gating config; webhook approval gates.
-**Revisit when:** a human gate needs something other than a label, such as a UI action.
+**Revisit when:** a human gate needs something other than a label. The first such gate is triage approval, an operator action in the app ([Triage](#triage-project-wide-investigation-issues-created-by-a-person-in-the-app)); agents can't reach it because the triage API is operator-tier and the hub refuses issue creation for triage runs.
 
 ### Repository and project content runs next to the agent's credentials
 <!-- 2026-10-10 -->
@@ -174,9 +175,9 @@ The rules a plausible change could break. Details are in the linked entries.
 ## Dispatch and scheduling
 
 ### Dispatch priority: static ordering Review > Decomposition > Implementation > Consolidation
-<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 -->
-**Rule:** Pending work dispatches by tier: Review, then Decomposition, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable. All projects share this one queue.
-**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
+<!-- 2026-08-14; updated 2026-09-13, 2026-10-10 (triage) -->
+**Rule:** Pending work dispatches by tier: Review, then Decomposition and Triage, then Implementation, then Consolidation. Within a tier, higher priority weight goes first (manual dispatch counts as higher), then the oldest. The order is fixed, not configurable. All projects share this one queue. In the loop, triage follows decomposition and has no concurrency cap of its own.
+**Why:** Review unblocks people waiting for feedback, one decomposition unblocks many implementation runs, a triage answers someone waiting on a problem, implementation is background work, and consolidation is housekeeping. Round-robin made a review wait behind ten implementations. **Accepting:** lower tiers can starve; urgency never crosses a tier; a burst of triages delays implementation. A project operator can raise the priority of their project's work, and their manual dispatches go ahead of every other project's queued work in the tier.
 **Not:** configurable weights per run type; age-based promotion; round-robin; label-based priority; fair share between projects.
 **Revisit when:** lower tiers or one project's work visibly starve in practice, or someone needs cross-tier urgency.
 
@@ -342,6 +343,20 @@ The rules a plausible change could break. Details are in the linked entries.
 **Why:** The human gate stops a bad plan from creating many issues that all fail. The limit of 12 rests on agents routinely handling changes of 10–15 files; it is a low-confidence estimate, not measured on sub-issues.
 **Not:** auto-approval after a clean review (possible later); fully autonomous decomposition; a limit of 5 (fragments the work) or 20 and more (no evidence).
 **Revisit when:** outcomes from 50 or more sub-issues show errors rising with file count, or auto-approval is built.
+
+### Triage: project-wide investigation, issues created by a person in the app
+<!-- 2026-10-10 -->
+**Rule:** A triage run has the project's scope wherever the report came from: it reads every enabled repository of the project (the executor's writable, the others read-only clones), lists the issues of every enabled tracker, and its drafts may target any enabled repository. The agent only reports; it never creates issues (the hub refuses it). A person with `operator` on the triage's project reviews, edits and creates the drafts in the app, one by one or together, and the API creates them in the tracker of each draft's repository. Label triages are approved in the app too; there is no approval label.
+**Why:** A bug report rarely knows which repository holds the cause, so tying the scope to the reporting tracker (as the [epic scope](#epic-scope-tracker-of-record-determines-sub-issue-routing--intentional-same-rationale-as-111) does) would hide the cause; this is the epic scope's "Revisit when" case, solved with a new concept instead of loosening the tracker check. Creating issues from reviewed, editable drafts keeps a person between a guessed root cause and implementation runs, and an app action can't be set by an agent.
+**Not:** an `agent:triage-approved` label; a second agent run that writes the issues; auto-creating drafts after a clean review; per-template triage scope.
+**Revisit when:** reviewers routinely create every draft unchanged; then consider auto-creation behind a switch.
+
+### Triage: the agent writes what it investigated
+<!-- 2026-10-10 -->
+**Rule:** "What the agent investigated" (hypotheses, every check with where, why and result, and what it did not check) is part of the agent's result file and is shown as written. Checks per source are counted from that list.
+**Why:** People judge an RCA by whether the agent looked in the right places, and the agent knows why it ran each check. **Accepting:** the list can be incomplete or embellished; the adversarial review checks every entry for a source.
+**Not:** counting real tool calls from the agent CLI output (provider-specific and noisy).
+**Revisit when:** reviewers find investigated lists that don't match what the run did.
 
 ### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
 <!-- 2026-07-25 -->

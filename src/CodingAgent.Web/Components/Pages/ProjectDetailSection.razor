@@ -405,6 +405,9 @@
             @RenderBoolOverride("Brain Consolidation Review Enabled", nameof(PipelineConfiguration.BrainConsolidationReviewEnabled), () => _draft.BrainConsolidationReviewEnabled, v => _draft = _draft with { BrainConsolidationReviewEnabled = v }, _globalConfig.BrainConsolidationReviewEnabled)
             @RenderBoolOverride("Brain Read-Only", nameof(PipelineConfiguration.BrainReadOnly), () => _draft.BrainReadOnly, v => _draft = _draft with { BrainReadOnly = v }, _globalConfig.BrainReadOnly)
 
+            <h3>Triage</h3>
+            @RenderBoolOverride("Triage Review Enabled", nameof(PipelineConfiguration.TriageReviewEnabled), () => _draft.TriageReviewEnabled, v => _draft = _draft with { TriageReviewEnabled = v }, _globalConfig.TriageReviewEnabled)
+
             <h3>Prompts</h3>
             @RenderStringOverride("Analysis Prompt", nameof(PipelineConfiguration.AnalysisPrompt), () => _draft.AnalysisPrompt, v => _draft = _draft with { AnalysisPrompt = v }, _globalConfig.AnalysisPrompt)
             @RenderStringOverride("Implementation Prompt", nameof(PipelineConfiguration.ImplementationPrompt), () => _draft.ImplementationPrompt, v => _draft = _draft with { ImplementationPrompt = v }, _globalConfig.ImplementationPrompt)

@@ -43,6 +43,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleImplementation { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
+    [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleTriage { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleHousekeeping { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleBranchCleanup { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
@@ -191,6 +192,7 @@ public partial class TemplateTableSection
         public bool ImplementationEnabled { get; set; } = true;
         public bool ReviewEnabled { get; set; } = true;
         public bool DecompositionEnabled { get; set; }
+        public bool TriageEnabled { get; set; }
 
         /// <summary>A form that edits <paramref name="template"/>, filled with its current values.</summary>
         public static TemplateFormModel ForEdit(PipelineJobTemplate template, string projectId) => new()
@@ -209,6 +211,7 @@ public partial class TemplateTableSection
             ImplementationEnabled = template.ImplementationEnabled,
             ReviewEnabled = template.ReviewEnabled,
             DecompositionEnabled = template.DecompositionEnabled,
+            TriageEnabled = template.TriageEnabled,
         };
     }
 
