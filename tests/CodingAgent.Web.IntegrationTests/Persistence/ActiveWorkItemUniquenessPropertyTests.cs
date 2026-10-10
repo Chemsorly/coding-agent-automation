@@ -74,12 +74,12 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
             });
         // IsIssueDistributedAsync: query InMemory DB directly
         mockApiClient
-            .Setup(c => c.IsIssueDistributedAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(async (string issueId, string providerId, CancellationToken ct) =>
+            .Setup(c => c.IsIssueDistributedAsync(It.IsAny<IssueIdentifier>(), It.IsAny<ProviderConfigId>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IssueIdentifier issueId, ProviderConfigId providerId, CancellationToken ct) =>
             {
                 await using var db = await _dbFactory.CreateDbContextAsync(ct);
                 var active = new[] { WorkItemStatus.Pending, WorkItemStatus.Dispatched, WorkItemStatus.Running };
-                return await db.WorkItems.AsNoTracking().AnyAsync(w => w.IssueIdentifier == issueId && w.IssueProviderConfigId == providerId && active.Contains(w.Status), ct);
+                return await db.WorkItems.AsNoTracking().AnyAsync(w => w.IssueIdentifier == issueId.Value && w.IssueProviderConfigId == providerId.Value && active.Contains(w.Status), ct);
             });
         _distributor = new KubernetesWorkDistributor(
             mockApiClient.Object,
