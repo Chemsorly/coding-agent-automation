@@ -460,7 +460,8 @@ public static class ApiServiceCollectionExtensions
         services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
-            Log.Logger));
+            Log.Logger,
+            ResolveRedisStoreOrNull(sp)));  // null when Redis is not configured
 
         // ── ConsolidationBadgeService ────────────────────────────────────────
         services.AddSingleton<ConsolidationBadgeService>();
