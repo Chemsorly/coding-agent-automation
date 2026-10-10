@@ -824,55 +824,11 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         }
     }
 
-    private static AgentEntry WithAgentField(AgentEntry current, string field, string? value) => field switch
-    {
-        AgentFieldNames.ActiveJobId => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-        AgentFieldNames.ActiveChatSessionId => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-        // TODO (WARNING): clearing `disabled` with null or "" reaches bool.TryParse("", ...) which returns
-        // false (parse failure), so the snapshot entry is returned unchanged while Redis already holds ""
-        // (mapped to false by the reader). The local snapshot and Redis diverge for the clear-operation
-        // path. Fix: AgentFieldNames.Disabled => string.IsNullOrEmpty(value) ? current with { Disabled = false }
-        //   : bool.TryParse(value, out var d) ? current with { Disabled = d } : current
-        AgentFieldNames.Disabled => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
-        // TODO (WARNING): OrphanRestoredAt is parsed without DateTimeStyles.RoundtripKind, inconsistent
-        // with IsValidFieldValue which uses RoundtripKind. For ISO-8601 values with an explicit offset
-        // the two overloads can produce differing Offset/Kind, so a TTL-triggered re-register could
-        // restore a timestamp with a different UTC offset than what Redis holds. Use the same
-        // DateTimeStyles.RoundtripKind overload as IsValidFieldValue for parity.
-        AgentFieldNames.OrphanRestoredAt => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
-        // TODO (WARNING): LastJobCompletedAt is not handled here — it falls through to `_ => current`,
-        // so the local snapshot silently drops validated writes to this field. An agent's
-        // lastJobCompletedAt is written to Redis but the snapshot never captures it; if the hash TTL
-        // fires before the next heartbeat, UpdateHeartbeatAsync re-registers from the stale snapshot
-        // and reverts lastJobCompletedAt to its Register()-time value. Add a case:
-        //   AgentFieldNames.LastJobCompletedAt => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
-        //       DateTimeStyles.RoundtripKind, out var ljc) ? current with { LastJobCompletedAt = ljc } : current,
-        _ => current
-    };
+    private static AgentEntry WithAgentField(AgentEntry current, string field, string? value) =>
+        AgentEntryFieldApplier.Apply(current, field, value);
 
-    /// <summary>
-    /// Returns <c>true</c> when <paramref name="value"/> is valid for the given
-    /// <paramref name="field"/>.
-    /// <para>
-    /// Null or empty is always valid (rule 4: clears the field).
-    /// For timestamp fields a non-empty value must parse as an ISO-8601 round-trip date.
-    /// For <c>disabled</c> a non-empty value must parse as a <see cref="bool"/>.
-    /// String ID fields accept any non-empty value.
-    /// </para>
-    /// </summary>
-    private static bool IsValidFieldValue(string field, string? value)
-    {
-        // Empty = clear operation — always valid (rule 4).
-        if (string.IsNullOrEmpty(value)) return true;
-
-        return field switch
-        {
-            AgentFieldNames.OrphanRestoredAt or AgentFieldNames.LastJobCompletedAt =>
-                DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out _),
-            AgentFieldNames.Disabled => bool.TryParse(value, out _),
-            _ => true // string ID fields (activeJobId, activeChatSessionId) accept any non-empty string
-        };
-    }
+    private static bool IsValidFieldValue(string field, string? value) =>
+        AgentEntryFieldApplier.IsValid(field, value);
 
     // ── SetLocalSnapshotField ─────────────────────────────────────────
 
@@ -922,14 +878,7 @@ public sealed class DistributedAgentRegistryService : IAgentRegistryService
         var committedField = _localSnapshot.AddOrUpdate(
             agentId.Value,
             addValueFactory: CreateDeregistrationRaceSentinel,
-            updateValueFactory: (_, current) => field switch
-            {
-                AgentFieldNames.ActiveJobId => current with { ActiveJobId = string.IsNullOrEmpty(value) ? null : value },
-                AgentFieldNames.OrphanRestoredAt => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, out var ora) ? current with { OrphanRestoredAt = ora } : current,
-                AgentFieldNames.ActiveChatSessionId => current with { ActiveChatSessionId = string.IsNullOrEmpty(value) ? null : value },
-                AgentFieldNames.Disabled => bool.TryParse(value, out var d) ? current with { Disabled = d } : current,
-                _ => current
-            });
+            updateValueFactory: (_, current) => AgentEntryFieldApplier.Apply(current, field, value));
         RemoveSentinelIfDeregistrationRace(_localSnapshot, agentId.Value, committedField,
             "SetLocalSnapshotField", _logger);
     }

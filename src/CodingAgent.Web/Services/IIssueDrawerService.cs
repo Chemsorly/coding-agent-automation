@@ -56,9 +56,9 @@ public interface IIssueDrawerService
     // ── Active issues ──
 
     Task RefreshActiveIssuesAsync();
-    bool IsIssueActive(IssueIdentifier issueIdentifier, string issueProviderConfigId);
-    WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, string issueProviderConfigId);
-    Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId);
+    bool IsIssueActive(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
+    WorkItemStatus? GetIssueWorkItemStatus(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
+    Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId);
 
     // ── Cross-drawer coordination ──
 

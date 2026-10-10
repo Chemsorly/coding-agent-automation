@@ -423,14 +423,21 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
             // Post issue feedback comment if present (non-fatal)
             var swComment = Stopwatch.StartNew();
-            await _issueOps.PostIssueFeedbackCommentAsync(run, ct);
+            var commentDelivered = await _issueOps.PostIssueFeedbackCommentAsync(run, ct);
             _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
 
-            // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
-            // Best-effort: a transient DB failure here does not undo the committed label swap and
-            // comment post. The outbox row stays Pending; FeedbackCommentRelayService will redeliver.
-            if (outboxEntryId != Guid.Empty)
+            if (outboxEntryId != Guid.Empty && !commentDelivered)
             {
+                // Inline post failed — leave the outbox row Pending so FeedbackCommentRelayService delivers it.
+                _logger.Information(
+                    "Job {JobId} feedback comment was not posted inline — outbox entry {OutboxEntryId} stays pending for FeedbackCommentRelayService",
+                    jobId.Value, outboxEntryId);
+            }
+            else if (outboxEntryId != Guid.Empty)
+            {
+                // Inline fast-path succeeded — mark the outbox row Completed so the relay skips it.
+                // Best-effort: a transient DB failure here does not undo the committed label swap and
+                // comment post. The outbox row stays Pending; FeedbackCommentRelayService will redeliver.
                 try
                 {
                     await _outbox.MarkCompletedAsync(outboxEntryId, CancellationToken.None);
@@ -448,8 +455,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // Graceful shutdown or connection abort — bookkeeping aborted cleanly.
             // OrphanedLabelRecoveryService will correct any stuck agent:in-progress label
             // on its next sweep (default interval: ~30 min).
-            // FeedbackCommentRelayService will deliver the feedback comment on its next sweep —
-            // the outbox row was enqueued with CancellationToken.None before cts was created.
+            // FeedbackCommentRelayService will deliver the feedback comment once the row is older than
+            // its fast-path reservation — the outbox row was enqueued with CancellationToken.None
+            // before cts was created.
             _logger.Information( // NOSONAR S6667 — expected cancellation; the message says so
                 "PostCompletionBookkeepingAsync cancelled for job {JobId} — OrphanedLabelRecoveryService will handle label cleanup, FeedbackCommentRelayService will deliver the feedback comment",
                 jobId.Value);
