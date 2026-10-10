@@ -943,13 +943,13 @@ public class RefactoringExecutorTests : IDisposable
 
     private static RefactoringProposal Proposal(
         string title, IReadOnlyList<string>? prerequisites = null) => new()
-    {
-        Title = title,
-        AffectedFiles = ["x"],
-        Description = "d",
-        Rationale = "r",
-        Prerequisites = prerequisites
-    };
+        {
+            Title = title,
+            AffectedFiles = ["x"],
+            Description = "d",
+            Rationale = "r",
+            Prerequisites = prerequisites
+        };
 
     [Fact]
     public async Task ExecuteAsync_ProposalWithDependsOnInJson_CreatesInFileOrderWithNoDependsOnLines()
