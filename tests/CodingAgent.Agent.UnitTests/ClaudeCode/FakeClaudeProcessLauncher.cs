@@ -5,13 +5,17 @@ namespace CodingAgent.Agent.UnitTests.ClaudeCode;
 
 /// <summary>Scripted output of one fake Claude Code CLI run.</summary>
 /// <param name="Hang">Prints nothing and runs until killed.</param>
-/// <param name="KeepRunningAfterOutput">Prints its output, then runs until killed (a CLI waiting for background commands).</param>
+/// <param name="KeepRunningAfterOutput">Prints its output, then runs until stopped (a CLI waiting for background commands).</param>
+/// <param name="LaterStdout">Lines printed after the given delay from the previous batch, before the run keeps running.</param>
+/// <param name="IgnoresTerminate">A stopped run exits on SIGTERM unless this is set; then only a kill stops it.</param>
 internal sealed record FakeClaudeRun(
     IReadOnlyList<string> Stdout,
     int ExitCode = 0,
     IReadOnlyList<string>? Stderr = null,
     bool Hang = false,
-    bool KeepRunningAfterOutput = false);
+    bool KeepRunningAfterOutput = false,
+    IReadOnlyList<(TimeSpan Delay, string[] Lines)>? LaterStdout = null,
+    bool IgnoresTerminate = false);
 
 /// <summary>
 /// <see cref="IClaudeProcessLauncher"/> that records what would be started and plays back
@@ -57,13 +61,14 @@ internal sealed class FakeClaudeProcess(
     private readonly CancellationTokenSource _killed = new();
 
     public bool Killed { get; private set; }
+    public bool Terminated { get; private set; }
     public bool Disposed { get; private set; }
 
     /// <summary>Completes once the provider waits for the process to exit.</summary>
     public Task Running => _started.Task;
 
     public int? ProcessId => 4242;
-    public bool IsRunning => !Killed && (run.Hang || run.KeepRunningAfterOutput);
+    public bool IsRunning => !_killed.IsCancellationRequested && (run.Hang || run.KeepRunningAfterOutput);
     public DateTime LastOutputTime { get; } = DateTime.UtcNow;
 
     public Task WriteStdinAndCloseAsync(string text, CancellationToken ct)
@@ -86,12 +91,27 @@ internal sealed class FakeClaudeProcess(
         foreach (var line in run.Stderr ?? [])
             onStderrLine(line);
 
+        foreach (var (delay, lines) in run.LaterStdout ?? [])
+        {
+            await Task.Delay(delay, ct);
+            foreach (var line in lines)
+                onStdoutLine(line);
+        }
+
         if (run.KeepRunningAfterOutput)
         {
             await WaitUntilKilledAsync(ct);
             return KilledExitCode;
         }
         return run.ExitCode;
+    }
+
+    public bool Terminate()
+    {
+        Terminated = true;
+        if (!run.IgnoresTerminate)
+            _killed.Cancel();
+        return true;
     }
 
     /// <summary>Returns once the process is killed; throws when <paramref name="ct"/> is cancelled first.</summary>

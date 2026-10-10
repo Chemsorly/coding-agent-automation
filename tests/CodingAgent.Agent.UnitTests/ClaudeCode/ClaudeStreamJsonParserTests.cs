@@ -285,7 +285,7 @@ public class ClaudeUsageTotalsTests
         delta.CacheWriteTokens.Should().Be(60);
         delta.WebSearchRequests.Should().Be(0);
         delta.CostUsd.Should().Be(0.15m);
-        delta.Turns.Should().Be(2);
+        delta.Turns.Should().Be(5); // num_turns is per call, so it is not subtracted
         delta.ApiDurationMs.Should().Be(5000);
         delta.Models["m"].InputTokens.Should().Be(60);
         delta.Models["m"].CostUsd.Should().Be(0.15m);

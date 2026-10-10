@@ -58,7 +58,7 @@ internal sealed record ClaudeUsageTotals
             CacheWriteTokens = Delta(CacheWriteTokens, previous.CacheWriteTokens),
             WebSearchRequests = (int)Delta(WebSearchRequests, previous.WebSearchRequests),
             CostUsd = Delta(CostUsd, previous.CostUsd),
-            Turns = (int)Delta(Turns, previous.Turns),
+            Turns = Turns, // num_turns counts this call's turns only, even on a resumed session
             ApiDurationMs = Delta(ApiDurationMs, previous.ApiDurationMs),
             Models = Models.ToDictionary(
                 kvp => kvp.Key,
@@ -89,13 +89,41 @@ internal sealed record ClaudeUsageTotals
 
 /// <summary>
 /// What the stream of one Claude Code invocation told us. Written by <see cref="ClaudeStreamJsonParser"/>
-/// on the process's stdout callback; read after the process exits.
+/// on the process's stdout callback; read after the process exits, except <see cref="TurnInProgress"/>
+/// and <see cref="ResultCount"/>, which the provider reads while the CLI runs.
 /// </summary>
 internal sealed class ClaudeStreamState
 {
+    /// <summary>Rate-limit window the CLI reports for extra usage beyond the subscription.</summary>
+    internal const string OverageWindow = "overage";
+
+    private volatile bool _turnInProgress;
+    private int _resultCount;
+
     public string? SessionId { get; set; }
     public string? Model { get; set; }
     public bool ResultSeen { get; set; }
+
+    /// <summary>
+    /// True from a turn's first event until its <c>result</c>. A <c>claude -p</c> run can start another
+    /// turn after its result, e.g. when a background command it started finishes.
+    /// </summary>
+    public bool TurnInProgress
+    {
+        get => _turnInProgress;
+        set => _turnInProgress = value;
+    }
+
+    /// <summary>How many <c>result</c> events the stream has carried.</summary>
+    public int ResultCount => Volatile.Read(ref _resultCount);
+
+    /// <summary>
+    /// True when the CLI was killed before it could save the session's usage totals, which it does
+    /// at exit. A later resumed call then reports totals that lack this call's usage.
+    /// </summary>
+    public bool StoppedBeforeSaving { get; set; }
+
+    internal void CountResult() => Interlocked.Increment(ref _resultCount);
     public bool ResultIsError { get; set; }
     public string? ResultSubtype { get; set; }
     public string? ResultText { get; set; }
@@ -121,8 +149,10 @@ internal sealed class ClaudeStreamState
             || status is 401 or 403)
             return AgentErrorCategory.PermanentAuthFailure;
 
+        // The overage window reads "rejected" on any account without extra usage, even while the
+        // subscription window allows requests, so only the subscription windows count here.
         if (LastErrorCategory is "rate_limit" || status is 429
-            || RateLimits.Values.Any(r => r.Status == "rejected"))
+            || RateLimits.Any(r => r.Key != OverageWindow && r.Value.Status == "rejected"))
             return AgentErrorCategory.ProviderRateLimit;
 
         if (LastErrorCategory is "overloaded" or "server_error" || status is 500 or 502 or 503 or 529)
@@ -183,6 +213,7 @@ internal static class ClaudeStreamJsonParser
         switch (GetString(root, "subtype"))
         {
             case "init":
+                state.TurnInProgress = true;
                 state.SessionId = GetString(root, "session_id") ?? state.SessionId;
                 state.Model = GetString(root, "model") ?? state.Model;
                 return [];
@@ -203,17 +234,32 @@ internal static class ClaudeStreamJsonParser
 
     private static List<string> ProcessAssistant(JsonElement root, ClaudeStreamState state)
     {
+        state.TurnInProgress = true;
         state.SessionId ??= GetString(root, "session_id");
-        if (GetString(root, "error") is { } error)
-            state.LastErrorCategory = error;
+
+        // Messages from subagents carry the ID of the tool call that started them. Only the main
+        // conversation's API errors describe the call; a main message without one means any
+        // earlier retried error was recovered from.
+        var isSubagent = GetString(root, "parent_tool_use_id") is not null;
+        if (!isSubagent)
+        {
+            if (GetString(root, "error") is { } error)
+            {
+                state.LastErrorCategory = error;
+            }
+            else
+            {
+                state.LastErrorCategory = null;
+                state.LastErrorStatus = null;
+            }
+        }
 
         if (!root.TryGetProperty("message", out var message)
             || !message.TryGetProperty("content", out var content)
             || content.ValueKind != JsonValueKind.Array)
             return [];
 
-        // Messages from subagents carry the ID of the tool call that started them.
-        var indent = GetString(root, "parent_tool_use_id") is null ? "" : "  ";
+        var indent = isSubagent ? "  " : "";
         var lines = new List<string>();
         foreach (var block in content.EnumerateArray())
         {
@@ -237,6 +283,8 @@ internal static class ClaudeStreamJsonParser
     private static IReadOnlyList<string> ProcessResult(JsonElement root, ClaudeStreamState state)
     {
         state.ResultSeen = true;
+        state.TurnInProgress = false;
+        state.CountResult();
         state.SessionId = GetString(root, "session_id") ?? state.SessionId;
         state.ResultIsError = root.TryGetProperty("is_error", out var isError) && isError.ValueKind == JsonValueKind.True;
         state.ResultSubtype = GetString(root, "subtype");
@@ -281,10 +329,10 @@ internal static class ClaudeStreamJsonParser
         var overageStatus = GetString(info, "overageStatus", "overage_status");
         if (overageStatus is not null)
         {
-            state.RateLimits["overage"] = new AgentRateLimitObservation
+            state.RateLimits[ClaudeStreamState.OverageWindow] = new AgentRateLimitObservation
             {
                 Provider = ProviderTag,
-                Window = "overage",
+                Window = ClaudeStreamState.OverageWindow,
                 Status = overageStatus,
                 ResetsAt = GetUnixTime(info, "overageResetsAt", "overage_resets_at")
             };

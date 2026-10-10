@@ -36,10 +36,10 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         string? authMode = ClaudeCodeAuthModes.Auto,
         string? model = "claude-opus-5-5",
         AgentEffortLevel effort = AgentEffortLevel.High,
-        TimeSpan? resultExitGrace = null) =>
+        ClaudeExitTimings? timings = null) =>
         new(new Mock<Serilog.ILogger>().Object,
             new ClaudeCodeSettings(model, "/opt/claude", effort, authMode, _mcpConfigPath),
-            _launcher, name => _env.GetValueOrDefault(name), resultExitGrace);
+            _launcher, name => _env.GetValueOrDefault(name), timings);
 
     private AgentRequest Request(string prompt = "do it", bool useResume = false, string? resumeSessionId = null) => new()
     {
@@ -299,7 +299,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         second.Usage!.InputTokens.Should().Be(60);
         second.Usage.OutputTokens.Should().Be(30);
         second.Cost.Should().Be(0.15m);
-        second.UsageDetails!.Turns.Should().Be(3);
+        second.UsageDetails!.Turns.Should().Be(5); // num_turns is per call, not cumulative
     }
 
     [Fact]
@@ -331,7 +331,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_ReturnsTheLastFreshSession_WithoutStartingTheCli()
+    public async Task GetLatestSessionIdAsync_ReturnsTheWorkspacesMainSession_WithoutStartingTheCli()
     {
         var provider = CreateProvider();
         (await provider.GetLatestSessionIdAsync(_workspace, CancellationToken.None)).Should().BeNull();
@@ -341,8 +341,24 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         await provider.ExecuteAsync(Request(), CancellationToken.None);
         await provider.ExecuteAsync(Request(), CancellationToken.None);
 
-        (await provider.GetLatestSessionIdAsync(_workspace, CancellationToken.None)).Should().Be("s2");
+        (await provider.GetLatestSessionIdAsync(_workspace, CancellationToken.None)).Should().Be("s1");
         _launcher.Started.Should().HaveCount(2);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_IsolatedCallAfterTheMainSession_DoesNotBecomeWhatUseResumeContinues()
+    {
+        // Analysis starts the main conversation, an isolated reviewer runs, then codegen resumes.
+        var provider = CreateProvider();
+        _launcher.Enqueue(Init("analysis"), Result("analysis", 1, 1, 0, 0.01m, 1));
+        _launcher.Enqueue(Init("reviewer"), Result("reviewer", 1, 1, 0, 0.01m, 1));
+        _launcher.Enqueue(Init("analysis"), Result("analysis", 2, 2, 0, 0.02m, 1));
+
+        await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+        await provider.ExecuteAsync(Request(useResume: false), CancellationToken.None);
+        await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+
+        _launcher.Started[2].ArgumentList.Should().ContainInOrder("--resume", "analysis");
     }
 
     [Fact]
@@ -378,6 +394,37 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         var result = await CreateProvider().ExecuteAsync(Request(), CancellationToken.None);
 
         result.ExitCode.Should().Be(ExitCodes.Success);
+        result.ErrorCategory.Should().Be(AgentErrorCategory.None);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RejectedOverageOnly_DoesNotMakeAFailureARateLimit()
+    {
+        // Accounts without extra usage report overageStatus "rejected" while the window is allowed.
+        _launcher.Enqueue(
+            Init("s1"),
+            """{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","overageStatus":"rejected"}}""",
+            Result("s1", 1, 1, 0, 0.01m, 1, isError: true, apiErrorStatus: 400));
+
+        var result = await CreateProvider().ExecuteAsync(Request(), CancellationToken.None);
+
+        result.ExitCode.Should().Be(ExitCodes.GeneralFailure);
+        result.ErrorCategory.Should().Be(AgentErrorCategory.None);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_RecoveredRetryAndSubagentErrors_DoNotClassifyALaterFailure()
+    {
+        _launcher.Enqueue(
+            Init("s1"),
+            """{"type":"system","subtype":"api_retry","attempt":1,"max_retries":10,"error_status":529,"error":"overloaded"}""",
+            Text("recovered"),
+            """{"type":"assistant","parent_tool_use_id":"tool_1","error":"rate_limit","message":{"content":[]}}""",
+            Result("s1", 1, 1, 0, 0.01m, 1, isError: true));
+
+        var result = await CreateProvider().ExecuteAsync(Request(), CancellationToken.None);
+
+        result.ExitCode.Should().Be(ExitCodes.GeneralFailure);
         result.ErrorCategory.Should().Be(AgentErrorCategory.None);
     }
 
@@ -421,22 +468,66 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         _launcher.Processes[0].Killed.Should().BeTrue();
     }
 
+    private static ClaudeExitTimings FastExit(int graceMs = 50, int stopMs = 200) =>
+        new(TimeSpan.FromMilliseconds(graceMs), TimeSpan.FromMilliseconds(stopMs));
+
     [Theory]
     [InlineData(false, ExitCodes.Success)]
     [InlineData(true, ExitCodes.GeneralFailure)]
-    public async Task ExecuteAsync_CliStillRunningAfterItsResult_IsStopped_AndTheResultDecides(bool isError, int expectedExitCode)
+    public async Task ExecuteAsync_CliStillRunningAfterItsResult_IsAskedToExit_AndTheResultDecides(bool isError, int expectedExitCode)
     {
         // CLI 2.1.292+ keeps running after its result while background commands are still alive.
         _launcher.Enqueue(new FakeClaudeRun(
             [Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1, isError: isError)], KeepRunningAfterOutput: true));
 
-        var result = await CreateProvider(resultExitGrace: TimeSpan.FromMilliseconds(50))
-            .ExecuteAsync(Request(), CancellationToken.None);
+        var result = await CreateProvider(timings: FastExit()).ExecuteAsync(Request(), CancellationToken.None);
 
         result.ExitCode.Should().Be(expectedExitCode);
         result.Usage.Should().NotBeNull();
-        _launcher.Processes[0].Killed.Should().BeTrue();
+        _launcher.Processes[0].Terminated.Should().BeTrue();
+        _launcher.Processes[0].Killed.Should().BeFalse();
         _launcher.Processes[0].Disposed.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_FollowUpTurnAfterTheResult_RunsToItsOwnResult()
+    {
+        // A background command finishes 100 ms after the first result and starts a second turn,
+        // which ends 300 ms later: past the 200 ms grace counted from the first result.
+        _launcher.Enqueue(new FakeClaudeRun(
+            [Init("s1"), Result("s1", 1, 1, 0, 0.01m, 1)],
+            KeepRunningAfterOutput: true,
+            LaterStdout:
+            [
+                (TimeSpan.FromMilliseconds(100), [Init("s1"), Text("follow-up turn")]),
+                (TimeSpan.FromMilliseconds(300), [Text("follow-up done"), Result("s1", 2, 2, 0, 0.02m, 1, isError: true)])
+            ]));
+
+        var result = await CreateProvider(timings: FastExit(graceMs: 200)).ExecuteAsync(Request(), CancellationToken.None);
+
+        result.OutputLines.Should().Contain("follow-up done");
+        result.ExitCode.Should().Be(ExitCodes.GeneralFailure, "the last turn's result decides");
+        _launcher.Processes[0].Terminated.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_CliThatIgnoresSigterm_IsKilled_AndTheNextResumeIsMeasuredAgainstSavedTotals()
+    {
+        // Killed before it could save its totals, the CLI restores none on the next resume, so that
+        // call's cumulative totals are all its own.
+        var provider = CreateProvider(timings: FastExit());
+        _launcher.Enqueue(new FakeClaudeRun(
+            [Init("s1"), Result("s1", input: 100, output: 50, thinking: 0, cost: 0.10m, turns: 1)],
+            KeepRunningAfterOutput: true, IgnoresTerminate: true));
+        _launcher.Enqueue(Init("s1"), Result("s1", input: 160, output: 80, thinking: 0, cost: 0.25m, turns: 1));
+
+        var first = await provider.ExecuteAsync(Request(), CancellationToken.None);
+        var second = await provider.ExecuteAsync(Request(useResume: true), CancellationToken.None);
+
+        first.ExitCode.Should().Be(ExitCodes.Success);
+        _launcher.Processes[0].Terminated.Should().BeTrue();
+        _launcher.Processes[0].Killed.Should().BeTrue();
+        second.Usage!.InputTokens.Should().Be(160);
     }
 
     [Fact]
@@ -445,8 +536,7 @@ public class ClaudeCodeAgentProviderTests : IDisposable
         _launcher.Enqueue(new FakeClaudeRun([Init("s1"), Text("working")], KeepRunningAfterOutput: true));
         var request = new AgentRequest { Prompt = "p", WorkspacePath = _workspace, Timeout = TimeSpan.FromMilliseconds(300) };
 
-        var result = await CreateProvider(resultExitGrace: TimeSpan.FromMilliseconds(10))
-            .ExecuteAsync(request, CancellationToken.None);
+        var result = await CreateProvider(timings: FastExit(graceMs: 10)).ExecuteAsync(request, CancellationToken.None);
 
         result.ExitCode.Should().Be(ExitCodes.Timeout);
         _launcher.Processes[0].Killed.Should().BeTrue();
