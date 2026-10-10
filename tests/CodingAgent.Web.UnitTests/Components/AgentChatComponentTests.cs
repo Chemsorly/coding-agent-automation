@@ -932,6 +932,8 @@ public class AgentChatReconnectTests : BunitContext
 {
     private const string FakeAgentId = "chat-reconnect-agent-1";
     private const string TemplateLabels = "kiro,dotnet";
+    private const string ProfileId = "reconnect-profile";
+    private const string AgentProviderConfigId = "reconnect-cfg";
 
     private readonly Mock<IAgentHubConnection> _mockHub;
     private readonly Mock<IChatJobDispatcher> _mockDispatcher;
@@ -953,7 +955,9 @@ public class AgentChatReconnectTests : BunitContext
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
         mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<AgentProfile>());
+            .ReturnsAsync(new[] { AgentChatTestData.Profile(ProfileId, TemplateLabels, AgentProviderConfigId) });
+        mockStore.Setup(s => s.GetProviderConfigByIdAsync(AgentProviderConfigId, ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(AgentChatTestData.AgentConfig(AgentProviderConfigId));
         mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
         mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -992,7 +996,7 @@ public class AgentChatReconnectTests : BunitContext
         Services.AddSingleton(mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton(AgentChatTestData.Templates(TemplateLabels));
         Services.AddSingleton(_mockDispatcher.Object);
         Services.AddSingleton(_mockHub.Object);
         Services.AddSingleton(_mockAgentClient.Object);
@@ -1007,8 +1011,8 @@ public class AgentChatReconnectTests : BunitContext
     private async Task<IRenderedComponent<AgentChat>> LaunchPodAsync()
     {
         var cut = Render<AgentChat>();
-        var select = cut.Find("select#template-select");
-        await cut.InvokeAsync(() => select.Change(TemplateLabels));
+        var select = cut.Find("select#profile-select");
+        await cut.InvokeAsync(() => select.Change(ProfileId));
         var launchBtn = cut.FindAll("button").First(b => b.TextContent.Contains("Launch Chat Pod"));
         await cut.InvokeAsync(() => launchBtn.Click());
         cut.WaitForAssertion(() => Assert.Contains("chat-window", cut.Markup), timeout: TimeSpan.FromSeconds(5));
