@@ -1887,4 +1887,129 @@ public class RefactoringExecutorTests : IDisposable
 
         summary.Should().Be("No refactoring opportunities identified (2 proposal(s) dropped by validation)");
     }
+
+    // ── Before You Start section (issue #3541) ────────────────────────────────────────────────
+
+    // TODO: Add a test that asserts the footer (GeneratedIssueFooter / "automatically generated" line) is still the
+    // body's last line when the ## Before You Start section is present. The issue explicitly requires "the footer is
+    // still the body's last line", but no test currently covers that invariant for bodies that contain the new section.
+    // See review finding #9 (Correctness) and TestQualityReviewer finding at line 1966.
+
+    [Fact]
+    public void FormatIssueBody_WithScopeQueryAndEvidenceAndCommitSha_RendersBeforeYouStartSection()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = "git grep -n 'catch (Exception ex)' -- src",
+            Evidence = "src/A.cs:L10\ncatch (Exception ex) { }"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "50e1ff446xyz012");
+
+        // Section is present and before ## Suggested Approach
+        var beforeYouStart = body.IndexOf("## Before You Start", StringComparison.Ordinal);
+        var suggestedApproach = body.IndexOf("## Suggested Approach", StringComparison.Ordinal);
+        beforeYouStart.Should().BeGreaterThanOrEqualTo(0);
+        suggestedApproach.Should().BeGreaterThan(beforeYouStart);
+
+        // 12-char SHA truncation
+        // TODO: Add a test case with a commitSha shorter than 12 characters to explicitly verify that Math.Min(12,
+        // commitSha.Length) produces the full string rather than truncating. The current input "50e1ff446xyz012"
+        // (15 chars) validates the happy-path truncation, but a short SHA (e.g. "abc") is untested.
+        // See TestQualityReviewer finding at line 1907.
+        body.Should().Contain("`50e1ff446xyz`");
+
+        // Both bullets present
+        body.Should().Contain("Run the search under **Scope**.");
+        body.Should().Contain("Look for the code quoted under **Evidence**.");
+
+        // wont_do instruction
+        body.Should().Contain("`wont_do`");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithEvidenceButNoScopeQuery_RendersBeforeYouStartWithOnlyEvidenceBullet()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = null,
+            Evidence = "src/A.cs:L10\ncatch (Exception ex) { }"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+
+        body.Should().Contain("## Before You Start");
+        body.Should().Contain("Look for the code quoted under **Evidence**.");
+        body.Should().NotContain("Run the search under **Scope**.");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithScopeQueryButNoEvidence_RendersBeforeYouStartWithOnlyScopeBullet()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = "git grep -n 'pattern' -- src",
+            Evidence = null
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+
+        body.Should().Contain("## Before You Start");
+        body.Should().Contain("Run the search under **Scope**.");
+        body.Should().NotContain("Look for the code quoted under **Evidence**.");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNeitherScopeQueryNorEvidence_OmitsBeforeYouStartSection()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = null,
+            Evidence = null
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, "abc123");
+
+        body.Should().NotContain("## Before You Start");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullCommitSha_RendersEarlierCommitWording()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Fix it",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            ScopeQuery = "git grep -n 'pattern' -- src",
+            Evidence = "src/A.cs:L10\nsome code"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, commitSha: null);
+
+        body.Should().Contain("## Before You Start");
+        body.Should().Contain("written against an earlier commit");
+        // TODO: The NotContain assertion below passes both when the null branch correctly uses "an earlier commit"
+        // and if the section were omitted entirely. The positive Contain assertion above is the real guard; this
+        // negative assertion gives a false sense of completeness. Consider replacing or supplementing it with a
+        // stricter assertion (e.g. asserting the full intro sentence). See TestQualityReviewer finding at line 1940.
+        body.Should().NotContain("written against commit `");
+    }
 }
