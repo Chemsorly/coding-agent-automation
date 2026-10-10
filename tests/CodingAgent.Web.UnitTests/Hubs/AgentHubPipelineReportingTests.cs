@@ -227,38 +227,47 @@ public sealed class AgentHubPipelineReportingTests
     }
 
     [Fact]
-    public async Task ReportChatEntry_WithRun_EnqueuesChatEntry()
+    public async Task ReportChatEntry_AppendsEntryThroughFacade()
     {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        ChatEntry? captured = null;
+        _mockFacade.Setup(f => f.AppendChatEntry(
+                It.Is<JobId>(j => j.Value == "job-1"),
+                It.IsAny<ChatEntry>()))
+            .Callback<JobId, ChatEntry>((_, e) => captured = e);
 
         var hub = CreateHub();
         await hub.ReportChatEntry("job-1", ChatRole.User, "Hello, agent!");
 
-        run.ChatHistory.Count.Should().Be(1);
-        // BoundedConcurrentQueue<T> is IEnumerable<T>
-        var entry = run.ChatHistory.First();
-        entry.Role.Should().Be(ChatRole.User);
-        entry.Content.Should().Be("Hello, agent!");
+        captured.Should().NotBeNull();
+        captured!.Role.Should().Be(ChatRole.User);
+        captured.Content.Should().Be("Hello, agent!");
     }
 
     [Fact]
-    public async Task ReportChatEntry_AgentRole_EnqueuesWithCorrectRole()
+    public async Task ReportChatEntry_AgentRole_AppendsWithCorrectRole()
     {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        ChatEntry? captured = null;
+        _mockFacade.Setup(f => f.AppendChatEntry(
+                It.Is<JobId>(j => j.Value == "job-1"),
+                It.IsAny<ChatEntry>()))
+            .Callback<JobId, ChatEntry>((_, e) => captured = e);
 
         var hub = CreateHub();
         await hub.ReportChatEntry("job-1", ChatRole.Agent, "Here is my analysis.");
 
-        run.ChatHistory.First().Role.Should().Be(ChatRole.Agent);
+        captured.Should().NotBeNull();
+        captured!.Role.Should().Be(ChatRole.Agent);
     }
 
     [Fact]
     public async Task ReportChatEntry_NullRun_DoesNotThrow()
     {
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
-
+        // ReportChatEntry no longer calls GetRun — it routes through AppendChatEntry on the facade.
+        // No setup needed; Moq's default Loose behaviour makes AppendChatEntry a no-op.
+        // TODO: Add _mockFacade.Verify(f => f.AppendChatEntry(It.IsAny<JobId>(), It.IsAny<ChatEntry>()), Times.Once)
+        // to assert AppendChatEntry is still called unconditionally even for an unknown job ID.
+        // Without this, a silent early-return regression (guard returning before the facade call) would
+        // not be caught by this test.
         var hub = CreateHub();
         var act = () => hub.ReportChatEntry("job-1", ChatRole.User, "message");
 
@@ -268,14 +277,19 @@ public sealed class AgentHubPipelineReportingTests
     [Fact]
     public async Task ReportChatEntry_SetsTimestamp()
     {
-        var run = CreateRun();
-        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        var before = DateTime.UtcNow;
+        ChatEntry? captured = null;
+        _mockFacade.Setup(f => f.AppendChatEntry(
+                It.Is<JobId>(j => j.Value == "job-1"),
+                It.IsAny<ChatEntry>()))
+            .Callback<JobId, ChatEntry>((_, e) => captured = e);
+
+        var before = DateTimeOffset.UtcNow;
 
         var hub = CreateHub();
         await hub.ReportChatEntry("job-1", ChatRole.User, "test");
 
-        run.ChatHistory.First().Timestamp.Should().BeOnOrAfter(before);
+        captured.Should().NotBeNull();
+        captured!.Timestamp.Should().BeOnOrAfter(before);
     }
 
     // ── ReportQualityGateResult ───────────────────────────────────────────

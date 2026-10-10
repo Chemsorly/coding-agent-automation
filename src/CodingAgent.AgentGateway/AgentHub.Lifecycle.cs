@@ -151,8 +151,8 @@ public sealed partial class AgentHub
     {
         ArgumentNullException.ThrowIfNull(content);
 
-        var run = _facade.GetRun(jobId);
-        run?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
+        // Stored through the run service: in Redis mode GetRun returns a copy, so enqueuing on it would be lost.
+        _facade.AppendChatEntry(jobId, new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
 
         // Push chat entry to subscribed UI circuits (Req 5.2)
         await _uiContext.Clients.Group($"run-{jobId.Value}")
