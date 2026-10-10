@@ -146,6 +146,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.GetChatHistoryAsync(jobId.Value);
 
     /// <inheritdoc />
+    public void AppendQualityGateReport(JobId jobId, QualityGateReport report)
+        => _runService.AppendQualityGateReport(jobId.Value, report);
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<QualityGateReport>> GetQualityGateHistoryAsync(JobId jobId)
+        => _runService.GetQualityGateHistoryAsync(jobId.Value);
+
+    /// <inheritdoc />
     public void RemoveRun(JobId jobId)
         => _runService.RemoveRun(jobId.Value);
 

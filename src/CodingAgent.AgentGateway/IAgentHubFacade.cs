@@ -106,6 +106,18 @@ public interface IAgentHubFacade
     Task<IReadOnlyList<ChatEntry>> GetChatHistoryAsync(JobId jobId);
 
     /// <summary>
+    /// Appends one quality-gate report to the run's persistent history.
+    /// Delegates to the run service; in distributed mode writes to Redis.
+    /// </summary>
+    void AppendQualityGateReport(JobId jobId, QualityGateReport report);
+
+    /// <summary>
+    /// Returns the run's quality-gate history, oldest entries first.
+    /// Used by <c>SubscribeToRun</c> to seed <see cref="RunStateSnapshot.QualityGateHistory"/>.
+    /// </summary>
+    Task<IReadOnlyList<QualityGateReport>> GetQualityGateHistoryAsync(JobId jobId);
+
+    /// <summary>
     /// Removes a pipeline run from the active runs collection.
     /// </summary>
     void RemoveRun(JobId jobId);
