@@ -211,6 +211,7 @@ Implement carefully.
 - If referenced code is missing, search for it. Adapt — never fabricate.
 
 Do NOT run git write commands (git add, git commit, git push, git checkout, git reset, etc.). The pipeline handles all version control operations — it automatically stages and commits ALL new and modified files (including untracked files). Read-only git commands (git log, git diff, git status, git show) are fine.
+Fix the cause, not the check. Do NOT add or widen exclusions, suppressions or ignore rules in static-analysis, coverage, lint or CI configuration (for example `sonar.*.exclusions`, `NOSONAR`, `#pragma warning disable`, `[SuppressMessage]`, `eslint-disable`, coverage excludes or CI workflow files). Do NOT skip, disable or delete tests. Do NOT change the expected value of an existing test to match new output unless the issue asks for the behaviour change that test covers. These rules do not apply to a change the issue explicitly asks for. If a check cannot pass without breaking one of these rules, leave it failing and say why; the pipeline then keeps the PR as a draft for a person to decide.
 The analysis for this issue is at `.agent/analysis.md` — read it before implementing.
 
 # Issue #1: Test Issue

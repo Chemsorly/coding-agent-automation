@@ -35,6 +35,15 @@ public static partial class PromptBuilder
     internal const string AnalysisScopeFence =
         "Analysis only. Do not modify source code. Write output to designated files only.\n\n";
 
+    // Non-configurable evaluation rules for the acceptance criteria compliance agent (issue #3534 lessons).
+    internal const string AcceptanceCriteriaEvaluationRules = """
+        ## Evaluation Rules
+
+        - Judge each criterion only from the diff, the files in this workspace and the local test results. You cannot see external CI results such as SonarCloud, Codecov or deployment checks.
+        - If a criterion can only be checked with such an external result, or needs runtime, benchmark or manual checks, set its status to `not_applicable` and start `reasoning` with "Cannot be verified in the workspace:". Do not mark it `non_compliant`.
+        - A passing test is no evidence for a criterion if this diff added the test or changed its expected values. If a criterion says that existing output or behaviour stays unchanged, and the diff changes the expected value of an existing test, mark the criterion `non_compliant` and name the changed test in `reasoning`.
+        """;
+
     /// <summary>
     /// Anti-fabrication clause for implementation prompts. Addresses documented 5-26% API
     /// hallucination rate. Kept brief per Compliance Gap research (arXiv:2605.01771).
@@ -236,6 +245,7 @@ public static partial class PromptBuilder
 
         // Pipeline mechanics (non-configurable)
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
+        sb.AppendLine(PipelineConstants.GateIntegrityRule);
         sb.AppendLine($"The analysis for this issue is at `{AgentWorkspacePaths.AnalysisFilePath}` — read it before implementing.");
         sb.AppendLine();
 
@@ -357,6 +367,7 @@ public static partial class PromptBuilder
         sb.AppendLine(fixInstructions);
         sb.AppendLine();
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
+        sb.AppendLine(PipelineConstants.GateIntegrityRule);
         sb.AppendLine();
         sb.AppendLine($"Review findings have been written to `{AgentWorkspacePaths.ReviewFindingsFilePath}`. Read the file, then fix only items marked [CRITICAL].");
         return sb.ToString().TrimEnd();
@@ -957,6 +968,8 @@ public static partial class PromptBuilder
         sb.AppendLine(ReviewScopeFence);
 
         sb.AppendLine(instructions);
+        sb.AppendLine();
+        sb.AppendLine(AcceptanceCriteriaEvaluationRules);
         sb.AppendLine();
         sb.AppendLine($"Write your assessment to `{AgentWorkspacePaths.AcceptanceCriteriaFilePath}`. Do NOT print results to stdout — only write the JSON file.");
 
