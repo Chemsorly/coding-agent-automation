@@ -15,6 +15,11 @@ namespace CodingAgent.Scheduler;
 /// Called by the WebUI to start/stop/resume the loop and poll status.
 ///
 /// Authentication: X-Api-Key header must match AGENT_API_KEY env var — same key as the API.
+///
+/// Leader-awareness: when this pod is not the leader and Redis is configured, the three write
+/// endpoints relay commands to the leader via <see cref="ILoopCommandRelay"/> and return the
+/// leader's result. When this pod is the leader, when there is no leader gate (single-replica),
+/// or when Redis is not configured, commands run locally via <see cref="ILoopCommandExecutor"/>.
 /// </summary>
 public static class SchedulerLoopEndpoints
 {
@@ -45,6 +50,15 @@ public static class SchedulerLoopEndpoints
         group.MapPost("/resume", ResumeLoop);
     }
 
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns true when this pod should handle the command locally (no relay needed).
+    /// Local path: this pod is the leader, no leader gate configured (single-replica), or Redis absent.
+    /// </summary>
+    private static bool ShouldRunLocally(ILeaderGate? leaderGate, IRedisStore? store)
+        => leaderGate is null || leaderGate.IsLeader || store is null;
+
     // ── Handlers ─────────────────────────────────────────────────────────────
 
     internal static async Task<IResult> GetLoopStatus(IPipelineLoopService loopService, LoopStatusCache cache)
@@ -58,44 +72,77 @@ public static class SchedulerLoopEndpoints
     }
 
     internal static async Task<IResult> StartLoop(
+        ILoopCommandExecutor executor,
+        ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
+        ILeaderGate? leaderGate,
+        IRedisStore? store,
         CancellationToken ct)
     {
-        var started = await loopService.StartLoopAsync();
-        if (started)
+        if (ShouldRunLocally(leaderGate, store))
         {
-            // Persist ClosedLoopAutoStart=true so the Scheduler auto-starts on next boot
-            await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, ct);
+            var dto = await executor.ExecuteStartAsync(loopService, configClient, ct);
+            return Results.Ok(dto);
         }
-        var error = started ? null : DescribeStartFailure(loopService);
-        return Results.Ok(new LoopStartResultDto(started, error));
-    }
 
-    /// <summary>Explains why <see cref="IPipelineLoopService.StartLoopAsync"/> refused to start the loop.</summary>
-    private static string DescribeStartFailure(IPipelineLoopService loopService)
-    {
-        if (loopService.ValidationErrors.Count > 0)
-            return "Loop failed to start due to validation errors.";
-        if (loopService.IsLoopActive)
-            return "Loop is already active.";
-        return "A manual run is in progress. Wait for it to complete.";
+        var result = await relay.SendAsync(LoopCommand.Start, ct);
+        if (result.Success && result.StartResult is not null)
+            return Results.Ok(result.StartResult);
+
+        // Relay timed out or failed — return Started=false with the error.
+        return Results.Ok(new LoopStartResultDto(false, result.Error));
     }
 
     internal static async Task<IResult> StopLoop(
+        ILoopCommandExecutor executor,
+        ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
+        ILeaderGate? leaderGate,
+        IRedisStore? store,
         CancellationToken ct)
     {
-        loopService.StopLoop();
-        await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, ct);
-        return Results.NoContent();
+        // Always persist locally — durable even if the leader never confirms.
+        // TODO [WARNING]: If UpdatePipelineConfigAsync throws (e.g., transient network failure),
+        // the exception propagates before relay.SendAsync is called, so the leader never executes
+        // StopLoop(). The config flag is already set to ClosedLoopAutoStart=false but the loop
+        // keeps running on the leader until the next LoopWatchdogService cycle (up to 2 min).
+        // The issue spec explicitly states "stop persists first", so the design is intentional, but
+        // callers receive an unhandled 500 rather than a 503 with an error body (see Correctness
+        // review).
+        await executor.ExecuteStopPersistAsync(configClient, ct);
+
+        if (ShouldRunLocally(leaderGate, store))
+        {
+            await executor.ExecuteStopLoopOnlyAsync(loopService);
+            return Results.NoContent();
+        }
+
+        var result = await relay.SendAsync(LoopCommand.Stop, ct);
+        return result.Success
+            ? Results.NoContent()
+            : Results.Problem(result.Error, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
-    internal static IResult ResumeLoop(IPipelineLoopService loopService)
+    internal static async Task<IResult> ResumeLoop(
+        ILoopCommandExecutor executor,
+        ILoopCommandRelay relay,
+        IPipelineLoopService loopService,
+        ILeaderGate? leaderGate,
+        IRedisStore? store,
+        CancellationToken ct)
     {
-        loopService.ResumeLoop();
-        return Results.NoContent();
+        if (ShouldRunLocally(leaderGate, store))
+        {
+            await executor.ExecuteResumeAsync(loopService);
+            return Results.NoContent();
+        }
+
+        var result = await relay.SendAsync(LoopCommand.Resume, ct);
+        return result.Success
+            ? Results.NoContent()
+            : Results.Problem(result.Error, statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 
     internal static LoopStatusDto BuildDto(IPipelineLoopService svc) => new(
