@@ -15,12 +15,16 @@ namespace CodingAgent.Pipeline.Services;
 public sealed class PullRequestFinalizationService
 {
     private readonly Serilog.ILogger _logger;
+    private readonly Func<string?, CancellationToken, Task<IReadOnlyList<string>>> _getChangedFiles;
     private const string PipelineRunIdTag = "pipeline.run_id";
 
-    public PullRequestFinalizationService(Serilog.ILogger logger)
+    public PullRequestFinalizationService(
+        Serilog.ILogger logger,
+        Func<string?, CancellationToken, Task<IReadOnlyList<string>>>? getChangedFiles = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+        _getChangedFiles = getChangedFiles ?? GateConfigGuard.GetChangedFilesAsync;
     }
 
     /// <summary>
@@ -206,40 +210,72 @@ public sealed class PullRequestFinalizationService
             // Non-fatal: a failure to mark-ready is logged but does not abort the post-PR sequence.
             if (int.TryParse(run.PullRequestNumber, out var prNum))
             {
+                // A branch that changes quality-gate configuration stays a draft so that a person
+                // reviews the change; agents have weakened failing checks this way (#3585).
+                IReadOnlyList<string> gateFiles;
                 try
                 {
-                    // TODO [WARNING]: run.PullRequestBody may be stale here when GeneratePrDescriptionAsync
-                    // did not update it (file missing, empty output, or invalid PR number inside
-                    // GeneratePrDescriptionAsync). In those skip paths run.PullRequestBody still holds the
-                    // pre-description body, causing the mark-ready PATCH to send body content that differs
-                    // from what was last written to the API by GeneratePrDescriptionAsync on the happy path.
-                    // Consider always keeping run.PullRequestBody in sync with the latest value sent to the
-                    // API on exit from GeneratePrDescriptionAsync, or passing null for the body argument here
-                    // to make this a state-change-only call that avoids overwriting with potentially stale
-                    // content. The body divergence is functionally harmless (idempotent on the happy path,
-                    // fallback body on skip) but obscures which body revision was used for the final PR state.
-                    // TODO [WARNING]: TaskCanceledException is a subclass of OperationCanceledException, so the
-                    // "when (ex is not OperationCanceledException)" filter correctly excludes both. This is the
-                    // intended behavior matching all other UpdatePullRequestAsync guards in this file.
-                    await repoProvider.UpdatePullRequestAsync(prNum, run.PullRequestBody ?? "", true, ct);
-                    emitOutputLine($"✅ PR #{run.PullRequestNumber} marked ready for review");
-                    // Record the mark-ready timestamp so post-PR CI polling can use it as the
-                    // notBefore anchor (filters out push-event CI runs that completed before
-                    // mark-ready, ensuring only the pull_request-event CI is observed).
-                    // TODO [WARNING] (DotNetSpecialist): DateTime.UtcNow is captured after the
-                    // async continuation resumes, not at the exact instant the HTTP call returned.
-                    // On a busy thread pool the delta between HTTP completion and this assignment
-                    // can be a few ms. This cannot produce a false-negative (timestamp is always
-                    // >= actual mark-ready, never before it), so no CI run will be wrongly accepted
-                    // due to this. The XML doc on PrMarkedReadyAt describes the field as set after
-                    // UpdatePullRequestAsync(markReady:true) completes successfully — that approximation
-                    // is acceptable given the usage as a filter anchor, but reviewers should be aware
-                    // of the imprecision if clock resolution requirements tighten.
-                    run.PrMarkedReadyAt = DateTime.UtcNow;
+                    gateFiles = GateConfigGuard.FindGateConfigFiles(await _getChangedFiles(run.WorkspacePath, ct));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    _logger.Warning(ex, "Pipeline {RunId} failed to mark PR ready for review, continuing", run.RunId);
+                    _logger.Warning(ex, "Pipeline {RunId} could not list changed files for the quality-gate configuration check, continuing", run.RunId);
+                    gateFiles = [];
+                }
+
+                if (gateFiles.Count > 0)
+                {
+                    try
+                    {
+                        var body = GateConfigGuard.AppendWarningSection(run.PullRequestBody ?? "", gateFiles);
+                        await repoProvider.UpdatePullRequestAsync(prNum, body, false, ct);
+                        run.PullRequestBody = body;
+                        emitOutputLine($"⚠️ PR #{run.PullRequestNumber} changes quality-gate configuration ({string.Join(", ", gateFiles)}) — left as draft for review");
+                        _logger.Warning("Pipeline {RunId} left PR {PrNumber} as draft: it changes quality-gate configuration {Files}",
+                            run.RunId, run.PullRequestNumber, gateFiles);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Pipeline {RunId} failed to leave PR as draft for quality-gate configuration change, continuing", run.RunId);
+                    }
+                }
+                else
+                {
+                    try
+                    {
+                        // TODO [WARNING]: run.PullRequestBody may be stale here when GeneratePrDescriptionAsync
+                        // did not update it (file missing, empty output, or invalid PR number inside
+                        // GeneratePrDescriptionAsync). In those skip paths run.PullRequestBody still holds the
+                        // pre-description body, causing the mark-ready PATCH to send body content that differs
+                        // from what was last written to the API by GeneratePrDescriptionAsync on the happy path.
+                        // Consider always keeping run.PullRequestBody in sync with the latest value sent to the
+                        // API on exit from GeneratePrDescriptionAsync, or passing null for the body argument here
+                        // to make this a state-change-only call that avoids overwriting with potentially stale
+                        // content. The body divergence is functionally harmless (idempotent on the happy path,
+                        // fallback body on skip) but obscures which body revision was used for the final PR state.
+                        // TODO [WARNING]: TaskCanceledException is a subclass of OperationCanceledException, so the
+                        // "when (ex is not OperationCanceledException)" filter correctly excludes both. This is the
+                        // intended behavior matching all other UpdatePullRequestAsync guards in this file.
+                        await repoProvider.UpdatePullRequestAsync(prNum, run.PullRequestBody ?? "", true, ct);
+                        emitOutputLine($"✅ PR #{run.PullRequestNumber} marked ready for review");
+                        // Record the mark-ready timestamp so post-PR CI polling can use it as the
+                        // notBefore anchor (filters out push-event CI runs that completed before
+                        // mark-ready, ensuring only the pull_request-event CI is observed).
+                        // TODO [WARNING] (DotNetSpecialist): DateTime.UtcNow is captured after the
+                        // async continuation resumes, not at the exact instant the HTTP call returned.
+                        // On a busy thread pool the delta between HTTP completion and this assignment
+                        // can be a few ms. This cannot produce a false-negative (timestamp is always
+                        // >= actual mark-ready, never before it), so no CI run will be wrongly accepted
+                        // due to this. The XML doc on PrMarkedReadyAt describes the field as set after
+                        // UpdatePullRequestAsync(markReady:true) completes successfully — that approximation
+                        // is acceptable given the usage as a filter anchor, but reviewers should be aware
+                        // of the imprecision if clock resolution requirements tighten.
+                        run.PrMarkedReadyAt = DateTime.UtcNow;
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Pipeline {RunId} failed to mark PR ready for review, continuing", run.RunId);
+                    }
                 }
             }
             else
