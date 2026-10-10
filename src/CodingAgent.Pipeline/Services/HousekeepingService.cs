@@ -136,12 +136,14 @@ public sealed class HousekeepingService : IHousekeepingService
     /// Without this seam the absent-path eviction in Step 3 always clears the dedup entry
     /// in the same <c>ExecuteAsync</c> call, making the bug unobservable through the
     /// public API.
+    /// <para>
+    /// Risk: any internal caller that sets this to <c>true</c> in production will silently
+    /// disable <c>recordedForRepo</c> eviction for the singleton's lifetime, causing the dedup
+    /// set to grow unbounded and suppressing metrics for all subsequently re-opened PRs.
+    /// Consider restricting this to the test assembly via
+    /// <c>[assembly: InternalsVisibleTo]</c> if the seam grows beyond its current single use.
+    /// </para>
     /// </summary>
-    // TODO: Consider restricting this seam to the test assembly via [assembly: InternalsVisibleTo]
-    // or adding [EditorBrowsable(EditorBrowsableState.Never)] to reduce accidental-use risk.
-    // Any internal caller that sets this to true in production will silently disable recordedForRepo
-    // eviction for the singleton's lifetime, causing the dedup set to grow unbounded and suppressing
-    // metrics for all subsequently re-opened PRs. (DotNetSpecialist review finding.)
     internal bool SkipRecordedOutcomesEvictionCleanup { get; set; }
 
     public HousekeepingService(
@@ -461,19 +463,15 @@ public sealed class HousekeepingService : IHousekeepingService
 
         var recordedForRepo = _recordedPrOutcomes.GetOrAdd(repoProviderId, _ => new HashSet<int>());
 
-        // TODO: Consider snapshotting inFlight with .ToList() before this loop, as EvictInFlightSlots
-        // does. The current code iterates inFlight directly with an awaited body; while safe today
-        // because ExecuteAsync is called sequentially, a future refactor that adds concurrent access
-        // to _inFlight would cause InvalidOperationException on concurrent modification.
+        // Note: iterates inFlight directly with an awaited body; safe today because ExecuteAsync
+        // is called sequentially. A future refactor adding concurrent access to _inFlight should
+        // snapshot with .ToList() first (as EvictInFlightSlots does) to avoid InvalidOperationException.
         foreach (var prNumber in inFlight)
         {
             if (currentPrNumbers.Contains(prNumber)) continue;   // still present — not evicted yet
-            // TODO: The Contains + Add below is a check-then-act on a non-thread-safe HashSet<int>.
-            // If ExecuteAsync were ever called concurrently for the same repoProviderId, two threads
-            // could both pass Contains, both call Add, and the metric would fire twice. This is a
-            // pre-existing structural issue (inner HashSet is not thread-safe); safe today because
-            // ExecuteAsync is called sequentially. A future refactor should replace the inner
-            // HashSet with a thread-safe equivalent or add locking. (DotNetSpecialist review finding.)
+            // Note: Contains + Add is a check-then-act on a non-thread-safe HashSet<int>; safe today
+            // because ExecuteAsync is called sequentially. A future refactor should replace the inner
+            // HashSet with a thread-safe equivalent or add locking if concurrent access is introduced.
             if (recordedForRepo.Contains(prNumber)) continue;     // already recorded in a previous cycle
 
             string? outcome;
@@ -540,9 +538,8 @@ public sealed class HousekeepingService : IHousekeepingService
                 inFlight.Remove(prNumber);
                 _lastTriggeredAt.TryRemove((repoProviderId, prNumber), out _);  // PR merged/closed — clear cooldown state
                 _prCreatedAtCache.TryRemove((repoProviderId, prNumber), out _); // bound the cache — evict alongside _lastTriggeredAt
-                if (_recordedPrOutcomes.TryGetValue(repoProviderId, out var recordedForRepo))
-                    if (!SkipRecordedOutcomesEvictionCleanup)
-                        recordedForRepo.Remove(prNumber); // bound the deduplication set — evict alongside _lastTriggeredAt
+                if (_recordedPrOutcomes.TryGetValue(repoProviderId, out var recordedForRepo) && !SkipRecordedOutcomesEvictionCleanup)
+                    recordedForRepo.Remove(prNumber); // bound the deduplication set — evict alongside _lastTriggeredAt
                 PipelineTelemetry.HousekeepingEvicted.Add(1, repoTag);
             }
             else
