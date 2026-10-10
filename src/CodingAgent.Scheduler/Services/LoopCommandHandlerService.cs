@@ -146,29 +146,29 @@ public sealed class LoopCommandHandlerService : BackgroundService
         switch (command)
         {
             case LoopCommand.Start:
-            {
-                var dto = await _executor.ExecuteStartAsync(_loopService, _configClient, ct);
-                // NOTE (issue #3552): When dto.Started is false, Success=false and Error=null here.
-                // SchedulerLoopEndpoints.StartLoop's relay fall-through branch reads result.Error
-                // (null) and returns { Started: false, Error: null } to the caller, silently
-                // dropping the leader's failure reason (e.g. "Loop is already active.").
-                // Fix: populate Error from dto.Error when dto.Started is false, e.g.:
-                //   return new LoopCommandResultMessage(dto.Started, dto, dto.Started ? null : dto.Error);
-                // (see Correctness review and SUGGESTION in review-findings.md).
-                return new LoopCommandResultMessage(dto.Started, dto, null);
-            }
+                {
+                    var dto = await _executor.ExecuteStartAsync(_loopService, _configClient, ct);
+                    // NOTE (issue #3552): When dto.Started is false, Success=false and Error=null here.
+                    // SchedulerLoopEndpoints.StartLoop's relay fall-through branch reads result.Error
+                    // (null) and returns { Started: false, Error: null } to the caller, silently
+                    // dropping the leader's failure reason (e.g. "Loop is already active.").
+                    // Fix: populate Error from dto.Error when dto.Started is false, e.g.:
+                    //   return new LoopCommandResultMessage(dto.Started, dto, dto.Started ? null : dto.Error);
+                    // (see Correctness review and SUGGESTION in review-findings.md).
+                    return new LoopCommandResultMessage(dto.Started, dto, null);
+                }
             case LoopCommand.Stop:
-            {
-                // Config persistence was already done locally by the non-leader endpoint.
-                // Here we only call StopLoop() on the leader.
-                await _executor.ExecuteStopLoopOnlyAsync(_loopService);
-                return new LoopCommandResultMessage(true, null, null);
-            }
+                {
+                    // Config persistence was already done locally by the non-leader endpoint.
+                    // Here we only call StopLoop() on the leader.
+                    await _executor.ExecuteStopLoopOnlyAsync(_loopService);
+                    return new LoopCommandResultMessage(true, null, null);
+                }
             case LoopCommand.Resume:
-            {
-                await _executor.ExecuteResumeAsync(_loopService);
-                return new LoopCommandResultMessage(true, null, null);
-            }
+                {
+                    await _executor.ExecuteResumeAsync(_loopService);
+                    return new LoopCommandResultMessage(true, null, null);
+                }
             default:
                 throw new ArgumentOutOfRangeException(nameof(command), command,
                     "Unknown loop command.");
