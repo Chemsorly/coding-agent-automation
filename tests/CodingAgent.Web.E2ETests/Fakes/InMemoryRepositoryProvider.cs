@@ -161,7 +161,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
     public Task<IReadOnlyList<LinkedPullRequest>> GetAgentPullRequestsAsync(IssueIdentifier issueIdentifier, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<LinkedPullRequest>>(Array.Empty<LinkedPullRequest>());
 
-    public Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct) => Task.CompletedTask;
+    public Task ClosePullRequestAsync(int prNumber, CancellationToken ct) => Task.CompletedTask;
 
     public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, BranchName branchName, CancellationToken ct) =>
         Task.CompletedTask;
@@ -171,7 +171,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task PullAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.CompletedTask;
 
-    public Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct) =>
+    public Task UpdatePullRequestAsync(int prNumber, string body, bool markReady, CancellationToken ct) =>
         Task.CompletedTask;
 
     // TODO: This implementation ignores the labels parameter. If future tests rely on label-filtered
