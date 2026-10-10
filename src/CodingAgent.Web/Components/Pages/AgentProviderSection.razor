@@ -7,7 +7,7 @@
 
 <section class="settings-section">
     <h2>Agent Provider Configs (referenced by Agent Profiles)</h2>
-    <p class="section-description">These configurations define how agents execute. They are linked from Agent Profiles — each profile references one provider config to determine the executable path and model settings for matched agents.</p>
+    <p class="section-description">These configurations define how agents execute. They are linked from Agent Profiles — each profile references one provider config to determine the model and settings for matched agents.</p>
     <div class="provider-list">
         @foreach (var p in Providers)
         {
@@ -15,7 +15,7 @@
                 <div class="provider-info">
                     <strong>@p.DisplayName</strong>
                     <span class="provider-type">@p.ProviderType</span>
-                    <span class="provider-detail">@{var execPath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, "");}@if (!string.IsNullOrEmpty(execPath)){<text>@execPath · </text>}model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
+                    <span class="provider-detail">model: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto")) · effort: @(p.Settings.GetValueOrDefault(ProviderSettingKeys.Effort, "auto"))</span>
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
@@ -43,7 +43,7 @@
                 <h3>@(_editingProvider != null ? "Edit" : "Add") Agent Provider</h3>
                 <div class="form-group">
                     <label>Provider Type</label>
-                    <select @bind="_form.ProviderType" @bind:after="OnProviderTypeChanged">
+                    <select @bind="_form.ProviderType">
                         <option value="KiroCli">KiroCli</option>
                         <option value="OpenCode">OpenCode</option>
                         <option value="@ProviderTypes.ClaudeCode">@ProviderTypes.ClaudeCode</option>
@@ -53,21 +53,7 @@
                     <label>Display Name</label>
                     <input type="text" @bind="_form.DisplayName" placeholder="@DisplayNamePlaceholder" />
                 </div>
-                @if (_form.ProviderType == "KiroCli")
-                {
-                    <div class="form-group">
-                        <label>Executable Path</label>
-                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" /> @* TODO(#1775): Clarify if this placeholder should reference AgentDefaults.KiroCliPath (/home/ubuntu/...) or remain /root/... for a different container context *@
-                    </div>
-                }
-                else if (IsClaudeCode)
-                {
-                    <div class="form-group">
-                        <label>Executable Path</label>
-                        <input type="text" @bind="_form.ExecutablePath" placeholder="@AgentDefaults.ClaudeCliPath" />
-                    </div>
-                }
-                else
+                @if (_form.ProviderType != "KiroCli" && !IsClaudeCode)
                 {
                     <div class="form-group">
                         <label>Base URL</label>
@@ -202,7 +188,6 @@
                     </ul>
                     <p class="help-heading">Fields:</p>
                     <ul>
-                        <li><strong>Executable Path</strong> — full path to the kiro-cli binary (e.g. <code>/home/ubuntu/.local/bin/kiro-cli</code>)</li>
                         <li><strong>Agent Name</strong> — leave as <code>default</code> unless you have a custom agent configured</li>
                         <li><strong>Model</strong> — the LLM model to use. <code>auto</code> uses the CLI default. Click "Fetch Models" to see available options with cost multipliers</li>
                     </ul>
@@ -219,7 +204,6 @@
                     </ul>
                     <p class="help-heading">Fields:</p>
                     <ul>
-                        <li><strong>Executable Path</strong> — full path to the claude binary (default <code>@AgentDefaults.ClaudeCliPath</code>)</li>
                         <li><strong>Model</strong> — full model ID to pin a version, an alias for the latest of a family, or <code>auto</code></li>
                         <li><strong>Auth Mode</strong> — which of the two credentials the CLI uses</li>
                     </ul>
@@ -319,7 +303,6 @@
         {
             ProviderType = p.ProviderType,
             DisplayName = p.DisplayName,
-            ExecutablePath = p.Settings.GetValueOrDefault(ProviderSettingKeys.ExecutablePath, ""),
             BaseUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl),
             AgentName = p.Settings.GetValueOrDefault(ProviderSettingKeys.AgentName, ""),
             Model = p.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto"),
@@ -393,14 +376,11 @@
 
         if (_form.ProviderType == "KiroCli")
         {
-            settings[ProviderSettingKeys.ExecutablePath] = _form.ExecutablePath;
             settings[ProviderSettingKeys.AgentName] = _form.AgentName;
             settings[ProviderSettingKeys.Effort] = effort;
         }
         else if (IsClaudeCode)
         {
-            settings[ProviderSettingKeys.ExecutablePath] = string.IsNullOrWhiteSpace(_form.ExecutablePath)
-                ? AgentDefaults.ClaudeCliPath : _form.ExecutablePath.Trim();
             settings[ProviderSettingKeys.Effort] = effort;
             settings[ProviderSettingKeys.AuthMode] = ClaudeCodeAuthModes.Normalize(_form.AuthMode);
         }
@@ -485,25 +465,10 @@
         _ => "Kiro CLI Agent"
     };
 
-    /// <summary>
-    /// Swaps the executable path to the new type's default when it still holds the other type's
-    /// default (or nothing), so switching types does not keep kiro-cli's path for Claude Code.
-    /// </summary>
-    private void OnProviderTypeChanged()
-    {
-        var path = _form.ExecutablePath?.Trim();
-        var isDefaultPath = string.IsNullOrEmpty(path) || path == AgentDefaults.KiroCliPath || path == AgentDefaults.ClaudeCliPath;
-        if (!isDefaultPath)
-            return;
-
-        _form.ExecutablePath = _form.ProviderType == ProviderTypes.ClaudeCode ? AgentDefaults.ClaudeCliPath : AgentDefaults.KiroCliPath;
-    }
-
     private sealed class AgentProviderForm
     {
         public string ProviderType { get; set; } = "KiroCli";
         public string DisplayName { get; set; } = "";
-        public string ExecutablePath { get; set; } = AgentDefaults.KiroCliPath;
         public string BaseUrl { get; set; } = AgentDefaults.OpenCodeBaseUrl;
         public string AgentName { get; set; } = "default";
         public string Model { get; set; } = "auto";

@@ -1,6 +1,7 @@
 using Bunit;
 using Moq;
 using CodingAgent.Api.Client;
+using CodingAgent.Kubernetes;
 using CodingAgent.Web.Components.Pages;
 using CodingAgent.Pipeline.Models;
 
@@ -346,5 +347,85 @@ public class AgentProfileSectionComponentTests : BunitContext
         cut.Find(".btn-edit").Click();
 
         Assert.Contains("Edit", cut.Markup);
+    }
+
+    // ── Type mismatch UI tests ────────────────────────────────────────────────
+
+    private const string KiroTemplateYaml = """
+        - labels: dotnet,kiro
+          image: kiro-agent:latest
+          providerType: kiro
+        """;
+
+    [Fact]
+    public void MismatchingProfile_ShowsWrongAgentTypeAndBannerMessage()
+    {
+        var claudeProvider = new ProviderConfig
+        {
+            Id = "claude-provider",
+            Kind = ProviderKind.Agent,
+            ProviderType = "ClaudeCode",
+            DisplayName = "My Claude Provider"
+        };
+
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "mismatch-profile",
+                    DisplayName = "Mismatch Profile",
+                    AgentProviderConfigId = "claude-provider",
+                    Enabled = true,
+                    MatchLabels = ["dotnet", "kiro"]
+                }
+            });
+
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+
+        var cut = Render<AgentProfileSection>(p =>
+            p.Add(s => s.ConfigClient, _mockClient.Object)
+             .Add(s => s.AgentProviders, new List<ProviderConfig> { claudeProvider })
+             .Add(s => s.JobTemplateStore, store)
+             .Add(s => s.IsKubernetesMode, true));
+
+        Assert.Contains("Wrong agent type", cut.Markup);
+        Assert.Contains("does not match their job template", cut.Markup);
+    }
+
+    [Fact]
+    public void MatchingProfile_DoesNotShowWrongAgentTypeOrMismatchBanner()
+    {
+        var kiroProvider = new ProviderConfig
+        {
+            Id = "kiro-provider",
+            Kind = ProviderKind.Agent,
+            ProviderType = "KiroCli",
+            DisplayName = "My Kiro Provider"
+        };
+
+        _mockClient.Setup(s => s.GetAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "match-profile",
+                    DisplayName = "Match Profile",
+                    AgentProviderConfigId = "kiro-provider",
+                    Enabled = true,
+                    MatchLabels = ["dotnet", "kiro"]
+                }
+            });
+
+        var store = JobTemplateStore.LoadFromYaml(KiroTemplateYaml);
+
+        var cut = Render<AgentProfileSection>(p =>
+            p.Add(s => s.ConfigClient, _mockClient.Object)
+             .Add(s => s.AgentProviders, new List<ProviderConfig> { kiroProvider })
+             .Add(s => s.JobTemplateStore, store)
+             .Add(s => s.IsKubernetesMode, true));
+
+        Assert.DoesNotContain("Wrong agent type", cut.Markup);
+        Assert.DoesNotContain("does not match their job template", cut.Markup);
     }
 }

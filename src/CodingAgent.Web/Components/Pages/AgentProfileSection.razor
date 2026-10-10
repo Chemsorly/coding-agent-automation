@@ -7,12 +7,19 @@
     <h2>Agent Profiles</h2>
     <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
 
-    @if (_missingTemplates.Count > 0)
+    @if (_missingTemplates.Count > 0 || _typeMismatches.Count > 0)
     {
         <div class="agent-detail-error" style="margin-bottom: 12px;">
             <Icon Name="alert-octagon" Size="16" />
-            <strong>Dispatch will fail:</strong> @_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap.
-            Work items routed to these profiles will fail at dispatch. See highlighted rows below.
+            @if (_missingTemplates.Count > 0)
+            {
+                <text><strong>Dispatch will fail:</strong> @_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap.
+                Work items routed to these profiles will fail at dispatch. See highlighted rows below.</text>
+            }
+            @if (_typeMismatches.Count > 0)
+            {
+                <text> @_typeMismatches.Count profile(s) use an agent provider whose type does not match their job template. Their runs fail when the agent starts.</text>
+            }
         </div>
     }
 
@@ -88,6 +95,12 @@
                                         <span class="template-missing"
                                               title="No job template matches labels [@string.Join(", ", profile.MatchLabels)]. Work items will fail at dispatch.">
                                             <Icon Name="alert-octagon" Size="14" /> No template
+                                        </span>
+                                    }
+                                    else if (_typeMismatches.ContainsKey(profile.Id))
+                                    {
+                                        <span class="template-missing" title="@_typeMismatches[profile.Id]">
+                                            <Icon Name="alert-octagon" Size="14" /> Wrong agent type
                                         </span>
                                     }
                                     else if (profile.Enabled && profile.MatchLabels.Count > 0)
@@ -285,6 +298,7 @@
 
     private List<AgentProfile> _profiles = new();
     private HashSet<string> _missingTemplates = new();
+    private Dictionary<string, string> _typeMismatches = new();
     private bool _showForm;
     private AgentProfile? _editingProfile;
     private ProfileForm _form = new();
@@ -308,6 +322,17 @@
         {
             _profiles = (await ConfigClient.GetAgentProfilesAsync(CancellationToken.None)).ToList();
             _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore, IsKubernetesMode);
+            _typeMismatches = new Dictionary<string, string>();
+            if (IsKubernetesMode && JobTemplateStore is not null)
+            {
+                foreach (var profile in _profiles)
+                {
+                    var provider = AgentProviders.FirstOrDefault(p => p.Id == profile.AgentProviderConfigId);
+                    var msg = JobTemplateStore.FindProviderTypeMismatch(profile, provider);
+                    if (msg is not null)
+                        _typeMismatches[profile.Id] = msg;
+                }
+            }
         }
         catch (Exception ex)
         {

@@ -56,7 +56,7 @@ public class ActiveJobStateFactoryTests
                 Kind = ProviderKind.Agent,
                 ProviderType = "KiroCli",
                 DisplayName = "No Model",
-                Settings = new Dictionary<string, string> { [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro" }
+                Settings = new Dictionary<string, string>()
             }
         ]);
 

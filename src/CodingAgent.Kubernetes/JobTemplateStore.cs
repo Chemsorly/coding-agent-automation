@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgent.Pipeline.Models;
 using Serilog;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
@@ -129,6 +130,31 @@ public sealed class JobTemplateStore
     public IReadOnlyCollection<JobTemplate> GetAllTemplates()
     {
         return _templates.Values.ToList().AsReadOnly();
+    }
+
+    /// <summary>
+    /// Returns a mismatch message when <paramref name="profile"/> is enabled, has labels, has a
+    /// non-null <paramref name="agentProvider"/>, resolves to a job template, and the job
+    /// template's <c>ProviderType</c> is incompatible with the agent provider's
+    /// <c>ProviderType</c>. Returns <c>null</c> in all other cases (no opinion).
+    /// </summary>
+    public string? FindProviderTypeMismatch(AgentProfile profile, ProviderConfig? agentProvider)
+    {
+        if (!profile.Enabled || profile.MatchLabels.Count == 0 || agentProvider is null)
+            return null;
+
+        var selector = NormalizeLabels(string.Join(",", profile.MatchLabels));
+        var template = Resolve(selector);
+        if (template is null)
+            return null;
+
+        if (JobTemplateProviderType.MatchesProviderConfigType(template.ProviderType, agentProvider.ProviderType))
+            return null;
+
+        return $"Agent profile '{profile.DisplayName}' uses agent provider '{agentProvider.DisplayName}' " +
+               $"of type {agentProvider.ProviderType}, but the job template for labels [{selector}] starts " +
+               $"{template.ProviderType} pods. Choose an agent provider of the matching type, or change the " +
+               $"job template's providerType in the Helm values.";
     }
 
     /// <summary>

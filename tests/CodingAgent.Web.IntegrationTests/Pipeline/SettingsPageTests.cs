@@ -143,7 +143,7 @@ public class SettingsPageTests
     }
 
     [Fact]
-    public async Task AddAgentProvider_SavesWithExecutablePathAndTimeout()
+    public async Task AddAgentProvider_SavesWithAgentNameAndTimeout()
     {
         // Arrange
         ProviderConfig? savedConfig = null;
@@ -160,7 +160,6 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 [ProviderSettingKeys.AgentName] = "default"
             }
         };
@@ -170,8 +169,8 @@ public class SettingsPageTests
         savedConfig.Should().NotBeNull();
         savedConfig!.Kind.Should().Be(ProviderKind.Agent);
         savedConfig.ProviderType.Should().Be("KiroCli");
-        savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.ExecutablePath).WhoseValue.Should().Be("/root/.local/bin/kiro-cli");
         savedConfig.Settings.Should().ContainKey(ProviderSettingKeys.AgentName).WhoseValue.Should().Be("default");
+        savedConfig.Settings.Should().NotContainKey("executablePath");
     }
 
     [Fact]
@@ -190,7 +189,6 @@ public class SettingsPageTests
             DisplayName = "Kiro CLI Agent",
             Settings = new Dictionary<string, string>
             {
-                [ProviderSettingKeys.ExecutablePath] = "/root/.local/bin/kiro-cli",
                 [ProviderSettingKeys.AgentName] = "default",
                 [ProviderSettingKeys.Model] = "claude-sonnet-4.6"
             }
@@ -578,7 +576,7 @@ public class SettingsPageTests
         var agentConfig = new ProviderConfig
         {
             Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Kiro Agent",
-            Settings = new() { [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli" }
+            Settings = new()
         };
 
         agentConfig.ProviderType.Should().NotBe("GitHub");
