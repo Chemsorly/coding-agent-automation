@@ -138,6 +138,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.GetOutputBacklogAsync(jobId.Value);
 
     /// <inheritdoc />
+    public void AppendChatEntry(JobId jobId, ChatEntry entry)
+        => _runService.AppendChatEntry(jobId.Value, entry);
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<ChatEntry>> GetChatHistoryAsync(JobId jobId)
+        => _runService.GetChatHistoryAsync(jobId.Value);
+
+    /// <inheritdoc />
     public void RemoveRun(JobId jobId)
         => _runService.RemoveRun(jobId.Value);
 

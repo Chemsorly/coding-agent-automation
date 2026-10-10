@@ -25,8 +25,7 @@ public static partial class ServiceCollectionExtensions
     ///
     /// <para>
     /// The local <see cref="AgentRegistryService"/> singleton stays registered under its concrete
-    /// type because <c>ModelFetchService</c>, <c>AgentChat.razor</c> resolve it directly,
-    /// and because it is the instance the E2E factories swap for a resettable one.
+    /// type because it is the instance the E2E factories swap for a resettable one.
     /// </para>
     /// </summary>
     private static void RegisterAgentRegistry(IServiceCollection services)
