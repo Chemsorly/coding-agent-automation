@@ -159,51 +159,42 @@ public class KiroCliAgentProviderProcessTests
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_CommentLinesSkipped_ReturnsNull()
+    public async Task GetLatestSessionIdAsync_ListsSessionsAsJson_OnTheRunsEngine()
     {
+        ProcessStartInfo? captured = null;
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "# This is a comment\n# Another comment\n"));
+            .Callback<ProcessStartInfo>(psi => captured = psi)
+            .Returns(() => StartShellProcess(stdout: "[]"));
 
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+        await CreateProvider().GetLatestSessionIdAsync("/workspace", CancellationToken.None);
 
-        result.Should().BeNull();
+        captured!.Arguments.Should().Be("chat --agent-engine v2 --list-sessions --format json");
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_SessionHeaderSkipped_ReturnsNull()
+    public async Task GetLatestSessionIdAsync_JsonOnStdout_ReturnsTheNewestSession()
     {
+        // kiro-cli 2.29.0 output for a workspace with two sessions, newest first.
+        const string json =
+            """[{"cwd":"/app/workspaces/w","sessions":[{"sessionId":"5cd7489d-9219-4ae4-a304-f8ff78d689de","source":"v2","title":"t","updatedAt":"2026-10-10T15:06:53.016Z","messageCount":4},{"sessionId":"af7a196c-8906-4c22-ab3f-00cdae373730","source":"v2","title":"t","updatedAt":"2026-10-10T15:06:01.371Z","messageCount":8}],"complete":true}]""";
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "Session ID  Created  Status\n"));
+            .Returns(() => StartShellProcess(stdout: json));
 
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+        var result = await CreateProvider().GetLatestSessionIdAsync("/workspace", CancellationToken.None);
 
-        result.Should().BeNull();
+        result.Should().Be("5cd7489d-9219-4ae4-a304-f8ff78d689de");
     }
 
     [Fact]
-    public async Task GetLatestSessionIdAsync_ShortToken_Skipped()
+    public async Task GetLatestSessionIdAsync_PlainListOnStderr_ReturnsNull()
     {
+        // The display format kiro-cli prints without --format json; it never yields an ID.
         _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "abc\n"));
+            .Returns(() => StartShellProcess(stderr: "Chat sessions for /w:\nChat SessionId: 5cd7489d-9219-4ae4-a304-f8ff78d689de\n"));
 
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
+        var result = await CreateProvider().GetLatestSessionIdAsync("/workspace", CancellationToken.None);
 
         result.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task GetLatestSessionIdAsync_ValidSessionId_ReturnsId()
-    {
-        _mockProcessStarter.Setup(p => p.Start(It.IsAny<ProcessStartInfo>()))
-            .Returns(() => StartShellProcess(stdout: "# Sessions\nabcdef12-3456-7890-abcd-ef1234567890 2024-01-01\n"));
-
-        var provider = CreateProvider();
-        var result = await provider.GetLatestSessionIdAsync("/workspace", CancellationToken.None);
-
-        result.Should().Be("abcdef12-3456-7890-abcd-ef1234567890");
     }
 
     [Fact]

@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.Json;
 using CodingAgent.Pipeline;
 using KiroCliLib.Core;
 using CodingAgent.Pipeline.Interfaces;
@@ -209,8 +211,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
             var psi = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = _executablePath,
-                // Same engine as the runs, so the list holds the sessions they created.
-                Arguments = $"chat {ProcessWrapper.AgentEngineArgument} --list-sessions",
+                // Same engine as the runs, so the list holds the sessions they created. The plain
+                // list goes to stderr in a display format; the JSON one goes to stdout.
+                Arguments = $"chat {ProcessWrapper.AgentEngineArgument} --list-sessions --format json",
                 WorkingDirectory = workspacePath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -222,34 +225,86 @@ public partial class KiroCliAgentProvider : IAgentProvider
             using var process = _processStarter.Start(psi);
             if (process == null) return null;
 
-            var stdout = await process.StandardOutput.ReadToEndAsync(ct);
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
             await process.WaitForExitAsync(ct);
+            var stdout = await stdoutTask;
+            await stderrTask;
 
-            // Parse the first session ID from the output (most recent session listed first)
-            foreach (var line in stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var trimmed = line.Trim();
-                // Session IDs are UUIDs or similar identifiers — take the first non-empty token
-                if (trimmed.Length > 0 && !trimmed.StartsWith('#') && !trimmed.StartsWith("Session", StringComparison.OrdinalIgnoreCase))
-                {
-                    // Extract the ID portion (first whitespace-delimited token or the whole line)
-                    var id = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
-                    if (id.Length >= 8) // Minimum reasonable session ID length
-                    {
-                        _logger.Debug("Captured latest session ID: {SessionId}", id);
-                        return id;
-                    }
-                }
-            }
-
-            _logger.Debug("No session ID found in --list-sessions output for {WorkspacePath}", workspacePath);
-            return null;
+            var id = ParseLatestSessionId(stdout);
+            if (id is not null)
+                _logger.Debug("Captured latest session ID: {SessionId}", id);
+            else
+                _logger.Debug("No session ID found in --list-sessions output for {WorkspacePath}", workspacePath);
+            return id;
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex, "Failed to retrieve session ID for workspace {WorkspacePath}", workspacePath);
             return null;
         }
+    }
+
+    /// <summary>
+    /// The newest session in <c>kiro-cli chat --list-sessions --format json</c> output, which lists
+    /// sessions newest first: <c>[{"cwd": "…", "sessions": [{"sessionId": "…", "updatedAt": "…"}]}]</c>.
+    /// A later entry wins only with a newer <c>updatedAt</c>. Null when no session is listed or the
+    /// output is not that JSON.
+    /// </summary>
+    internal static string? ParseLatestSessionId(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return null;
+
+            string? latestId = null;
+            DateTimeOffset? latestUpdatedAt = null;
+            foreach (var session in document.RootElement.EnumerateArray().SelectMany(ListedSessions))
+            {
+                if (!TryReadSession(session, out var id, out var updatedAt))
+                    continue;
+                if (latestId is null || updatedAt > latestUpdatedAt)
+                {
+                    latestId = id;
+                    latestUpdatedAt = updatedAt;
+                }
+            }
+            return latestId;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static IEnumerable<JsonElement> ListedSessions(JsonElement envelope) =>
+        envelope.ValueKind == JsonValueKind.Object
+        && envelope.TryGetProperty("sessions", out var sessions)
+        && sessions.ValueKind == JsonValueKind.Array
+            ? sessions.EnumerateArray()
+            : [];
+
+    private static bool TryReadSession(JsonElement session, out string id, out DateTimeOffset? updatedAt)
+    {
+        id = string.Empty;
+        updatedAt = null;
+        if (session.ValueKind != JsonValueKind.Object
+            || !session.TryGetProperty("sessionId", out var idElement)
+            || idElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(idElement.GetString()))
+            return false;
+
+        id = idElement.GetString()!;
+        if (session.TryGetProperty("updatedAt", out var updatedElement)
+            && updatedElement.ValueKind == JsonValueKind.String
+            && DateTimeOffset.TryParse(updatedElement.GetString(), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsed))
+            updatedAt = parsed;
+        return true;
     }
 
     /// <inheritdoc />
