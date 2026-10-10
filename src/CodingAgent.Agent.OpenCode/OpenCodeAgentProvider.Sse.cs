@@ -1,8 +1,24 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json;
-using CodingAgent.Pipeline.Models;
 
 namespace CodingAgent.Agent.OpenCode;
+
+/// <summary>
+/// What one call's SSE reader has seen, shared with the response handler so text the stream
+/// already showed is not shown again from the HTTP response.
+/// </summary>
+internal sealed class SseCallState
+{
+    /// <summary>IDs of the call session's assistant messages (from <c>message.updated</c>).</summary>
+    public ConcurrentDictionary<string, byte> AssistantMessageIds { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>IDs of the text parts already emitted.</summary>
+    public ConcurrentDictionary<string, byte> EmittedTextPartIds { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Tool calls already announced.</summary>
+    public ConcurrentDictionary<string, byte> AnnouncedToolCalls { get; } = new(StringComparer.Ordinal);
+}
 
 public sealed partial class OpenCodeAgentProvider
 {
@@ -21,13 +37,15 @@ public sealed partial class OpenCodeAgentProvider
     }
 
     /// <summary>
-    /// Connects to the SSE stream (GET /event) and processes events for the given session.
-    /// Routes events to the onOutputLine callback and auto-approves permission requests.
-    /// Logs a warning on unexpected disconnect; does not reconnect.
+    /// Connects to the SSE stream (GET /event) and processes events for the given session: emits
+    /// the assistant's completed text parts and tool steps, keeps the stall clock running, answers
+    /// permission requests and rejects questions (no one can answer them). Logs a warning on an
+    /// unexpected disconnect; does not reconnect.
     /// </summary>
     internal async Task ConnectAndProcessSseAsync(string sessionId, Action<string>? onOutputLine, CancellationToken ct,
-        string? workspacePath = null, Action<bool>? onSseEmitted = null)
+        string? workspacePath = null, SseCallState? state = null)
     {
+        state ??= new SseCallState();
         using var client = workspacePath is not null
             ? CreateDirectoryClientForPath(workspacePath)
             : CreateDirectoryClient();
@@ -54,11 +72,8 @@ public sealed partial class OpenCodeAgentProvider
                 if (line is null)
                     break; // stream closed by server
 
-                var sseEvent = TryParseSseLine(line);
-                if (sseEvent is null || sseEvent.SessionId != sessionId)
-                    continue;
-
-                await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, onSseEmitted, workspacePath, ct);
+                if (TryParseSseLine(line) is { } sseEvent)
+                    await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, state, workspacePath, ct);
             }
         }
         catch (OperationCanceledException)
@@ -92,38 +107,48 @@ public sealed partial class OpenCodeAgentProvider
     }
 
     /// <summary>
-    /// Routes a single SSE event to the appropriate handler based on its type.
-    /// Updates LastOutputTime only for events that represent meaningful agent progress.
+    /// Routes a single SSE event. Permission requests and questions are answered whatever session
+    /// asks: a subagent runs in a child session of the call's, and nothing else uses this server.
+    /// Everything else is filtered to the call's session.
     /// </summary>
     private async Task ProcessSseEventAsync(
         SseEvent sseEvent,
         string sessionId,
         Action<string>? onOutputLine,
-        Action<bool>? onSseEmitted,
+        SseCallState state,
         string? workspacePath,
         CancellationToken ct)
     {
+        var properties = sseEvent.Properties;
         switch (sseEvent.Type)
         {
+            case "permission.asked":
+                await ReplyAsync($"/permission/{properties.Id}/reply", new PermissionReply { Reply = "always" }, properties.Id, workspacePath, ct);
+                return;
+
+            case "question.asked":
+                await ReplyAsync<object?>($"/question/{properties.Id}/reject", null, properties.Id, workspacePath, ct);
+                return;
+        }
+
+        if (properties.SessionId != sessionId)
+            return;
+
+        switch (sseEvent.Type)
+        {
+            case "message.updated":
+                if (properties.Info is { Role: "assistant", Id: { } messageId })
+                    state.AssistantMessageIds.TryAdd(messageId, 0);
+                break;
+
+            case "message.part.delta":
+                LastOutputTime = DateTime.UtcNow; // streaming tokens: the agent is working
+                break;
+
             case "message.part.updated":
                 LastOutputTime = DateTime.UtcNow;
-                onSseEmitted?.Invoke(true);
-                onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
-                break;
-
-            case "tool.execute.before":
-                LastOutputTime = DateTime.UtcNow;
-                onOutputLine?.Invoke(StripAnsiEscapes($"[tool_call] {sseEvent.ToolName} {sseEvent.ToolArgs}"));
-                break;
-
-            case "tool.execute.after":
-                LastOutputTime = DateTime.UtcNow;
-                onOutputLine?.Invoke(StripAnsiEscapes($"[tool_result] {sseEvent.ToolResult}"));
-                break;
-
-            case "permission.updated":
-                LastOutputTime = DateTime.UtcNow;
-                await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct, workspacePath);
+                if (properties.Part is { } part)
+                    EmitPart(part, state, onOutputLine);
                 break;
 
             case "session.idle":
@@ -133,11 +158,39 @@ public sealed partial class OpenCodeAgentProvider
                 break;
 
             case "session.status":
-                HandleSessionStatusEvent(sseEvent, sessionId, onOutputLine);
+                HandleSessionStatusEvent(properties.Status, sessionId, onOutputLine);
                 break;
 
             default:
-                // Discard metadata events (session.updated, session.diff, message.updated, etc.)
+                // Discard metadata events (session.updated, session.diff, ...)
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Emits an assistant text part once it is complete, and a tool step once per call (plus its
+    /// error). The user's own prompt parts arrive here too and are skipped.
+    /// </summary>
+    private static void EmitPart(SsePart part, SseCallState state, Action<string>? onOutputLine)
+    {
+        if (onOutputLine is null)
+            return;
+
+        switch (part.Type)
+        {
+            case "text" when part.Time?.End is not null
+                && part.MessageId is { } messageId && state.AssistantMessageIds.ContainsKey(messageId)
+                && part.Id is { } partId && state.EmittedTextPartIds.TryAdd(partId, 0):
+                foreach (var line in (part.Text ?? "").ReplaceLineEndings("\n").Split('\n'))
+                    onOutputLine(StripAnsiEscapes(line));
+                break;
+
+            case "tool" when part.State is { } toolState:
+                var callId = part.CallId ?? part.Id ?? "";
+                if (toolState.Status is "running" or "completed" && state.AnnouncedToolCalls.TryAdd(callId, 0))
+                    onOutputLine(StripAnsiEscapes(string.IsNullOrEmpty(toolState.Title) ? $"▶ {part.Tool}" : $"▶ {part.Tool}: {toolState.Title}"));
+                else if (toolState.Status == "error" && state.AnnouncedToolCalls.TryAdd(callId + ":error", 0))
+                    onOutputLine(StripAnsiEscapes($"✖ {part.Tool}: {toolState.Error}"));
                 break;
         }
     }
@@ -146,19 +199,19 @@ public sealed partial class OpenCodeAgentProvider
     /// Handles session.status SSE events by updating session status fields and
     /// logging/emitting retry details when the provider indicates a retry.
     /// </summary>
-    private void HandleSessionStatusEvent(SseEvent sseEvent, string sessionId, Action<string>? onOutputLine)
+    private void HandleSessionStatusEvent(SseSessionStatus? status, string sessionId, Action<string>? onOutputLine)
     {
-        if (sseEvent.Status is null)
+        if (status is null)
             return;
 
-        _sessionStatus = sseEvent.Status.Type;
-        if (string.Equals(sseEvent.Status.Type, "retry", StringComparison.OrdinalIgnoreCase))
+        _sessionStatus = status.Type;
+        if (string.Equals(status.Type, "retry", StringComparison.OrdinalIgnoreCase))
         {
-            var retryMsg = sseEvent.Status.Message ?? "unknown error";
-            var provider = sseEvent.Status.Action?.Provider;
+            var retryMsg = status.Message ?? "unknown error";
+            var provider = status.Action?.Provider;
             _sessionStatusMessage = provider is not null
-                ? $"[{provider}] attempt {sseEvent.Status.Attempt}: {retryMsg}"
-                : $"attempt {sseEvent.Status.Attempt}: {retryMsg}";
+                ? $"[{provider}] attempt {status.Attempt}: {retryMsg}"
+                : $"attempt {status.Attempt}: {retryMsg}";
             _logger.Warning("Session {SessionId} retry status: {Message}", sessionId, _sessionStatusMessage);
             onOutputLine?.Invoke(StripAnsiEscapes($"[session.status] retry — {_sessionStatusMessage}"));
         }
@@ -169,26 +222,29 @@ public sealed partial class OpenCodeAgentProvider
     }
 
     /// <summary>
-    /// Auto-approves a permission request by calling POST /session/:id/permissions/:permissionId.
-    /// Best-effort — logs warning on failure without rethrowing.
+    /// Answers a permission request or question. Best-effort — logs a warning on failure. Parallel
+    /// calls in one workspace all see the request, so all but the first answer get a 404.
     /// </summary>
-    private async Task AutoApprovePermissionAsync(string sessionId, string? permissionId, CancellationToken ct, string? workspacePath = null)
+    private async Task ReplyAsync<T>(string path, T body, string? requestId, string? workspacePath, CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(permissionId))
+        if (string.IsNullOrEmpty(requestId))
             return;
 
         try
         {
-            _logger.Debug("POST /session/{SessionId}/permissions/{PermissionId} (auto-approve)", sessionId, permissionId);
+            _logger.Debug("POST {Path} (auto-answer)", path);
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
-            var body = new PermissionResponse { Response = "allow", Remember = true };
-            await client.PostAsJsonAsync($"/session/{sessionId}/permissions/{permissionId}", body, OpenCodeJson.JsonOptions, ct);
+            using var response = body is null
+                ? await client.PostAsync(path, null, ct)
+                : await client.PostAsJsonAsync(path, body, OpenCodeJson.JsonOptions, ct);
+            if (!response.IsSuccessStatusCode)
+                _logger.Debug("Auto-answer {Path} returned HTTP {Status}", path, (int)response.StatusCode);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.Warning(ex, "Failed to auto-approve permission {PermissionId} for session {SessionId}", permissionId, sessionId);
+            _logger.Warning(ex, "Failed to answer OpenCode request {RequestId}", requestId);
         }
     }
 }

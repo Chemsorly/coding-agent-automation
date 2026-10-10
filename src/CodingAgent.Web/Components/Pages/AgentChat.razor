@@ -410,7 +410,7 @@
                 // agentConfig is non-null, so the user is alerted to the missing configuration.
                 _resolvedMcpConfigPath = agentConfig?.ProviderType?.ToLowerInvariant() switch
                 {
-                    "opencode" => "/home/ubuntu/.opencode/mcp.json",
+                    "opencode" => "/home/ubuntu/.opencode/opencode.json",
                     "claudecode" => AgentDefaults.ClaudeMcpConfigPath,
                     _ => "/home/ubuntu/.kiro/settings/mcp.json"
                 };

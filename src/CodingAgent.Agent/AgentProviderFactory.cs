@@ -168,7 +168,11 @@ public sealed class AgentProviderFactory : IProviderFactory
 
     private OpenCodeAgentProvider CreateOpenCodeAgentProvider(ProviderConfig config)
     {
-        var baseUrl = config.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl, AgentDefaults.OpenCodeBaseUrl);
+        // A blank Base URL (the UI saves "" when the field is cleared) keeps the client's address.
+        var configuredBaseUrl = config.Settings.GetValueOrDefault(ProviderSettingKeys.BaseUrl);
+        if (string.IsNullOrWhiteSpace(configuredBaseUrl))
+            configuredBaseUrl = null;
+        var baseUrl = configuredBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
 
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "http" && uri.Scheme != "https"))
@@ -188,7 +192,8 @@ public sealed class AgentProviderFactory : IProviderFactory
         }
 
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model);
+        // A configured Base URL overrides the client's address (OPENCODE_BASE_URL or the default).
+        return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model, configuredBaseUrl);
     }
 
     private GitHubActionsPipelineProvider CreateGitHubPipelineProvider(ProviderConfig config)

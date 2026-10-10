@@ -85,8 +85,56 @@ public static class McpConfigWriter
     {
         if (providerType == AgentProviderType.ClaudeCode)
             WriteClaudeCodeConfig(fullPath, servers);
+        else if (providerType == AgentProviderType.OpenCode)
+            WriteOpenCodeConfig(fullPath, servers);
         else
             WriteConfig(fullPath, servers);
+    }
+
+    /// <summary>
+    /// Writes an OpenCode config file (<c>~/.opencode/opencode.json</c>) with an <c>mcp</c> section, the
+    /// only place OpenCode reads MCP servers from: local servers as
+    /// <c>{"type":"local","command":[command, ...args],"environment":{...}}</c>, remote ones as
+    /// <c>{"type":"remote","url":"...","headers":{...}}</c>, disabled ones with <c>"enabled": false</c>.
+    /// </summary>
+    public static void WriteOpenCodeConfig(string fullPath, IReadOnlyList<McpServerConfig> servers)
+    {
+        ArgumentNullException.ThrowIfNull(fullPath);
+        ArgumentNullException.ThrowIfNull(servers);
+
+        var directory = Path.GetDirectoryName(fullPath);
+        if (directory is not null)
+            Directory.CreateDirectory(directory);
+
+        var mcp = new Dictionary<string, Dictionary<string, object>>();
+        foreach (var server in servers)
+        {
+            var entry = new Dictionary<string, object>();
+            if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
+            {
+                entry["type"] = "remote";
+                entry["url"] = server.Url ?? string.Empty;
+                if (server.Headers.Count > 0)
+                    entry["headers"] = server.Headers;
+            }
+            else
+            {
+                entry["type"] = "local";
+                entry["command"] = new[] { server.Command ?? string.Empty }.Concat(server.Args).ToArray();
+                if (server.Env.Count > 0)
+                    entry["environment"] = server.Env;
+            }
+            entry["enabled"] = !server.Disabled;
+            mcp[server.Name] = entry;
+        }
+
+        var config = new Dictionary<string, object>
+        {
+            ["$schema"] = "https://opencode.ai/config.json",
+            ["mcp"] = mcp
+        };
+        File.WriteAllText(fullPath, JsonSerializer.Serialize(config, PipelineJsonOptions.Default));
     }
 
     /// <summary>

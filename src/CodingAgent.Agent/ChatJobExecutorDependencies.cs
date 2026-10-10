@@ -57,6 +57,12 @@ public sealed record ChatJobExecutorDependencies(
     /// </summary>
     public Func<ChatPromptMessage, IAgentProvider>? ClaudeCodeProviderFactory { get; init; }
 
+    /// <summary>
+    /// Creates the provider an OpenCode chat conversation runs on. Tests substitute a fake;
+    /// null builds an <c>OpenCodeAgentProvider</c> with the chat model.
+    /// </summary>
+    public Func<ChatPromptMessage, IAgentProvider>? OpenCodeProviderFactory { get; init; }
+
     /// <summary>Directory for Claude Code steering rules; null means <c>~/.claude/rules</c>.</summary>
     public string? ClaudeRulesDirectory { get; init; }
 }

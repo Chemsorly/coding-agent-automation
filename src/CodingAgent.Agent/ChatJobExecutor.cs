@@ -31,8 +31,15 @@ public sealed class ChatJobExecutor : IAsyncDisposable
     private readonly AgentProviderType _providerType;
     private readonly Func<ChatPromptMessage, IAgentProvider> _claudeCodeProviderFactory;
     private readonly string? _claudeRulesDirectory;
-    private readonly Lock _claudeChatProviderLock = new();
-    private IAgentProvider? _claudeChatProvider;
+    private readonly Func<ChatPromptMessage, IAgentProvider> _openCodeProviderFactory;
+
+    /// <summary>
+    /// The current conversation's provider (Claude Code, OpenCode), which remembers the session that
+    /// follow-ups resume, and the project secrets the first prompt carried: follow-ups carry none.
+    /// </summary>
+    private readonly Lock _chatProviderLock = new();
+    private IAgentProvider? _chatProvider;
+    private IReadOnlyDictionary<string, string>? _chatSecrets;
     private readonly bool _isChatMode;
     private readonly TimeSpan _chatTaskCompletionGracePeriod;
     private readonly Serilog.ILogger _logger;
@@ -65,6 +72,8 @@ public sealed class ChatJobExecutor : IAsyncDisposable
                 AgentEffortLevelExtensions.ParseEffort(deps.ChatEffort),
                 message.AgentAuthMode,
                 message.McpConfigPath));
+        _openCodeProviderFactory = deps.OpenCodeProviderFactory
+            ?? (_ => new OpenCodeAgentProvider(_httpClientFactory, deps.Logger, deps.ChatModel));
         _claudeRulesDirectory = deps.ClaudeRulesDirectory;
         _isChatMode = deps.IsChatMode;
         _chatTaskCompletionGracePeriod = deps.ChatTaskCompletionGracePeriod;
@@ -181,11 +190,12 @@ public sealed class ChatJobExecutor : IAsyncDisposable
                 await outputBatcher.AddLineAsync($"🔐 Loaded {message.ProjectSecrets.Count} project secret(s) for process injection", chatToken);
             }
 
+            var secrets = ConversationSecrets(message);
             return _providerType switch
             {
                 AgentProviderType.OpenCode => await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatToken),
-                AgentProviderType.ClaudeCode => await ExecuteChatViaClaudeCodeAsync(message, chatWorkspace, outputBatcher, chatToken),
-                _ => await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatToken)
+                AgentProviderType.ClaudeCode => await ExecuteChatViaClaudeCodeAsync(message, secrets, chatWorkspace, outputBatcher, chatToken),
+                _ => await ExecuteChatViaKiroCliAsync(message, secrets, chatWorkspace, outputBatcher, chatToken)
             };
         }
         catch (OperationCanceledException)
@@ -219,11 +229,14 @@ public sealed class ChatJobExecutor : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Runs a chat prompt on OpenCode. Like Claude Code, the provider lives as long as the chat
+    /// conversation, because it remembers the session that follow-ups continue.
+    /// </summary>
     private async Task<(int exitCode, string? error)> ExecuteChatViaOpenCodeAsync(
         ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
     {
-        await using var provider = new OpenCodeAgentProvider(_httpClientFactory, _logger);
-        await provider.EnsureSessionAsync(chatWorkspace, ct);
+        var provider = await GetChatProviderAsync(message, _openCodeProviderFactory);
 
         var result = await provider.ExecuteAsync(
             new AgentRequest
@@ -240,7 +253,7 @@ public sealed class ChatJobExecutor : IAsyncDisposable
                 Timeout = PipelineConstants.DefaultAgentTimeout
             },
             ct,
-            onOutputLine: async line => await outputBatcher.AddLineAsync(line, ct));
+            onOutputLine: ForwardTo(outputBatcher, ct));
 
         var exitCode = result.ExitCode;
 
@@ -263,9 +276,10 @@ public sealed class ChatJobExecutor : IAsyncDisposable
     /// Project secrets reach the CLI process per call, as with Kiro CLI.
     /// </summary>
     private async Task<(int exitCode, string? error)> ExecuteChatViaClaudeCodeAsync(
-        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
+        ChatPromptMessage message, IReadOnlyDictionary<string, string>? secrets, string chatWorkspace,
+        OutputBatcher outputBatcher, CancellationToken ct)
     {
-        var provider = await GetClaudeChatProviderAsync(message);
+        var provider = await GetChatProviderAsync(message, _claudeCodeProviderFactory);
 
         var result = await provider.ExecuteAsync(
             new AgentRequest
@@ -273,11 +287,11 @@ public sealed class ChatJobExecutor : IAsyncDisposable
                 Prompt = message.Prompt,
                 WorkspacePath = chatWorkspace,
                 UseResume = message.UseResume,
-                EnvironmentVariables = message.ProjectSecrets,
+                EnvironmentVariables = secrets,
                 Timeout = PipelineConstants.DefaultAgentTimeout
             },
             ct,
-            onOutputLine: async line => await outputBatcher.AddLineAsync(line, ct));
+            onOutputLine: ForwardTo(outputBatcher, ct));
 
         string? error = result.ExitCode != ExitCodes.Success
             ? string.Join("\n", result.OutputLines.TakeLast(3))
@@ -286,18 +300,23 @@ public sealed class ChatJobExecutor : IAsyncDisposable
         return (result.ExitCode, error);
     }
 
-    private async Task<IAgentProvider> GetClaudeChatProviderAsync(ChatPromptMessage message)
+    /// <summary>
+    /// The conversation's provider: the first prompt (no <c>UseResume</c>) starts a new one,
+    /// follow-ups reuse it.
+    /// </summary>
+    private async Task<IAgentProvider> GetChatProviderAsync(
+        ChatPromptMessage message, Func<ChatPromptMessage, IAgentProvider> createProvider)
     {
         IAgentProvider? previous = null;
         IAgentProvider provider;
-        lock (_claudeChatProviderLock)
+        lock (_chatProviderLock)
         {
-            if (!message.UseResume || _claudeChatProvider is null)
+            if (!message.UseResume || _chatProvider is null)
             {
-                previous = _claudeChatProvider;
-                _claudeChatProvider = _claudeCodeProviderFactory(message);
+                previous = _chatProvider;
+                _chatProvider = createProvider(message);
             }
-            provider = _claudeChatProvider;
+            provider = _chatProvider;
         }
 
         if (previous is not null)
@@ -307,16 +326,55 @@ public sealed class ChatJobExecutor : IAsyncDisposable
     }
 
     /// <summary>
-    /// Disposes the Claude Code provider of the current chat conversation, if any. Called when the
-    /// chat ends and when the executor is disposed on shutdown.
+    /// The project secrets for this prompt. Only the first prompt carries them (to limit wire
+    /// exposure), so they are kept for the follow-ups of the same conversation.
     /// </summary>
-    private async Task ReleaseClaudeChatProviderAsync()
+    private IReadOnlyDictionary<string, string>? ConversationSecrets(ChatPromptMessage message)
+    {
+        lock (_chatProviderLock)
+        {
+            if (!message.UseResume || message.ProjectSecrets is { Count: > 0 })
+                _chatSecrets = message.ProjectSecrets;
+            return _chatSecrets;
+        }
+    }
+
+    /// <summary>
+    /// Forwards a provider's output lines to the batcher. Providers call this on their output
+    /// thread, where an exception escaping an async void lambda (AddLineAsync cancelled because
+    /// the chat ended) would end the agent process.
+    /// </summary>
+    private Action<string> ForwardTo(OutputBatcher outputBatcher, CancellationToken ct) =>
+        line => _ = AddLineSafelyAsync(outputBatcher, line, ct);
+
+    private async Task AddLineSafelyAsync(OutputBatcher outputBatcher, string line, CancellationToken ct)
+    {
+        try
+        {
+            await outputBatcher.AddLineAsync(line, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // The chat ended; the line is no longer wanted.
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to forward a chat output line");
+        }
+    }
+
+    /// <summary>
+    /// Disposes the provider of the current chat conversation, if any, and forgets its secrets.
+    /// Called when the chat ends and when the executor is disposed on shutdown.
+    /// </summary>
+    private async Task ReleaseChatProviderAsync()
     {
         IAgentProvider? provider;
-        lock (_claudeChatProviderLock)
+        lock (_chatProviderLock)
         {
-            provider = _claudeChatProvider;
-            _claudeChatProvider = null;
+            provider = _chatProvider;
+            _chatProvider = null;
+            _chatSecrets = null;
         }
 
         if (provider is not null)
@@ -324,10 +382,11 @@ public sealed class ChatJobExecutor : IAsyncDisposable
     }
 
     /// <inheritdoc />
-    public async ValueTask DisposeAsync() => await ReleaseClaudeChatProviderAsync();
+    public async ValueTask DisposeAsync() => await ReleaseChatProviderAsync();
 
     private async Task<(int exitCode, string? error)> ExecuteChatViaKiroCliAsync(
-        ChatPromptMessage message, string chatWorkspace, OutputBatcher outputBatcher, CancellationToken ct)
+        ChatPromptMessage message, IReadOnlyDictionary<string, string>? secrets, string chatWorkspace,
+        OutputBatcher outputBatcher, CancellationToken ct)
     {
         // On the first prompt (no --resume), Kiro CLI suppresses response text because
         // tool trust isn't established yet. Send a lightweight warm-up prompt first to
@@ -360,7 +419,7 @@ public sealed class ChatJobExecutor : IAsyncDisposable
                 var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
                 await outputBatcher.AddLineAsync(clean, ct);
             },
-            environmentVariables: message.ProjectSecrets);
+            environmentVariables: secrets);
 
         return (exitCode, null);
     }
@@ -394,7 +453,7 @@ public sealed class ChatJobExecutor : IAsyncDisposable
         }
 
         // The conversation is over: its Claude Code session must not be resumed by a later chat.
-        await ReleaseClaudeChatProviderAsync();
+        await ReleaseChatProviderAsync();
 
         if (_isChatMode)
         {

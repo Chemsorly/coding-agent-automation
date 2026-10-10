@@ -35,7 +35,7 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
 
     private string RulesDirectory => Path.Combine(_tempDir, "rules");
 
-    private ChatJobExecutor CreateExecutor()
+    private ChatJobExecutor CreateExecutor(AgentProviderType providerType = AgentProviderType.ClaudeCode)
     {
         var logger = new Mock<Serilog.ILogger>().Object;
         var lifetime = Mock.Of<IHostApplicationLifetime>();
@@ -53,26 +53,30 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
             IsChatMode: true,
             Logger: logger)
         {
-            ProviderType = AgentProviderType.ClaudeCode,
+            ProviderType = providerType,
             ClaudeRulesDirectory = RulesDirectory,
-            ClaudeCodeProviderFactory = message =>
-            {
-                var provider = new Mock<IAgentProvider>();
-                provider.SetupGet(p => p.ProviderType).Returns(AgentProviderType.ClaudeCode);
-                provider
-                    .Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
-                    .Returns((AgentRequest request, CancellationToken _, Action<string>? onLine) =>
-                    {
-                        _requests.Add(request);
-                        onLine?.Invoke("answer");
-                        return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = ["answer"] });
-                    });
-                _created.Add((message, provider));
-                return provider.Object;
-            }
+            OpenCodeProviderFactory = message => CreateFakeProvider(message),
+            ClaudeCodeProviderFactory = message => CreateFakeProvider(message)
         });
     }
 
+    private IAgentProvider CreateFakeProvider(ChatPromptMessage message)
+    {
+        var provider = new Mock<IAgentProvider>();
+        provider.SetupGet(p => p.ProviderType).Returns(AgentProviderType.ClaudeCode);
+        provider
+            .Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns((AgentRequest request, CancellationToken _, Action<string>? onLine) =>
+            {
+                _requests.Add(request);
+                onLine?.Invoke("answer");
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = ["answer"] });
+            });
+        _created.Add((message, provider));
+        return provider.Object;
+    }
+
+    // Like the web's ChatPromptBuilder, only the first prompt carries the project secrets.
     private ChatPromptMessage Prompt(string text, bool useResume, string? steering = null, IReadOnlyList<McpServerConfig>? mcp = null) => new()
     {
         SessionId = "session",
@@ -81,7 +85,7 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
         ChatWindowId = "window-1",
         AgentAuthMode = ClaudeCodeAuthModes.Subscription,
         ProjectSteeringContent = steering,
-        ProjectSecrets = new Dictionary<string, string> { ["TOKEN"] = "value" },
+        ProjectSecrets = useResume ? null : new Dictionary<string, string> { ["TOKEN"] = "value" },
         McpServers = mcp ?? [],
         McpConfigPath = Path.Combine(_tempDir, "pipeline-mcp.json")
     };
@@ -103,6 +107,20 @@ public class ChatJobExecutorClaudeCodeTests : IDisposable
         _requests.Select(r => (r.Prompt, r.UseResume)).Should().Equal(("hi", false), ("more", true), ("new chat", false));
         _requests[0].WorkspacePath.Should().Be(Path.Combine(AgentDefaults.ChatWorkspacesRoot, "window-1"));
         _requests[0].EnvironmentVariables.Should().ContainKey("TOKEN");
+        _requests[1].EnvironmentVariables.Should().ContainKey("TOKEN", "a follow-up keeps the first prompt's secrets");
+    }
+
+    [Fact]
+    public async Task OpenCodeConversation_RunsOnOneProvider_SoFollowUpsKeepTheSession()
+    {
+        var executor = CreateExecutor(AgentProviderType.OpenCode);
+        await using var batcher = new OutputBatcher();
+
+        await executor.ExecuteChatWithOutputAsync(Prompt("my name is Bob", useResume: false), batcher, CancellationToken.None);
+        await executor.ExecuteChatWithOutputAsync(Prompt("what is my name?", useResume: true), batcher, CancellationToken.None);
+
+        _created.Should().ContainSingle("the follow-up reuses the provider that knows the session");
+        _requests.Select(r => r.UseResume).Should().Equal(false, true);
     }
 
     [Fact]

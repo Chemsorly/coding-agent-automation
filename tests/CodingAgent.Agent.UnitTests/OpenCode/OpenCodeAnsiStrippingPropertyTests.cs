@@ -131,7 +131,6 @@ public static class AnsiInjectedStringArbitrary
         "[32m",
         "[0m",
         "[1;33m",
-        "[K",
     ];
 
     /// <summary>

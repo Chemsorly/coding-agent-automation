@@ -293,8 +293,7 @@ public class OpenCodeSessionStatusTests
         var sseEvent = new SseEvent
         {
             Type = "session.status",
-            SessionId = "sess-null-status",
-            Status = null
+            Properties = new SseEventProperties { SessionId = "sess-null-status", Status = null }
         };
 
         var sseContent = BuildSseStream(sseEvent);
@@ -316,13 +315,16 @@ public class OpenCodeSessionStatusTests
         var sseEvent = new SseEvent
         {
             Type = "session.status",
-            SessionId = "sess-retry",
-            Status = new SseSessionStatus
+            Properties = new SseEventProperties
             {
-                Type = "retry",
-                Message = "rate limit exceeded",
-                Attempt = 2,
-                Action = new SseSessionStatusAction { Provider = "anthropic" }
+                SessionId = "sess-retry",
+                Status = new SseSessionStatus
+                {
+                    Type = "retry",
+                    Message = "rate limit exceeded",
+                    Attempt = 2,
+                    Action = new SseSessionStatusAction { Provider = "anthropic" }
+                }
             }
         };
 
@@ -349,11 +351,14 @@ public class OpenCodeSessionStatusTests
         var sseEvent = new SseEvent
         {
             Type = "session.status",
-            SessionId = "sess-busy",
-            Status = new SseSessionStatus
+            Properties = new SseEventProperties
             {
-                Type = "busy",
-                Message = "should be cleared"
+                SessionId = "sess-busy",
+                Status = new SseSessionStatus
+                {
+                    Type = "busy",
+                    Message = "should be cleared"
+                }
             }
         };
 

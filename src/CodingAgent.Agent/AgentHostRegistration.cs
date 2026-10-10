@@ -88,8 +88,10 @@ internal static class AgentHostRegistration
             var runtimeOpts = sp.GetRequiredService<AgentRuntimeOptions>();
             var baseUrl = runtimeOpts.OpenCodeBaseUrl ?? AgentDefaults.OpenCodeBaseUrl;
             client.BaseAddress = new Uri(baseUrl);
-            // OpenCode message API blocks until the agent finishes — can take minutes for complex tasks
-            client.Timeout = TimeSpan.FromMinutes(60);
+            // OpenCode's message API blocks until the agent finishes, which may take as long as the
+            // request's AgentTimeout (up to 24 h). That timeout (TimeoutHelper) bounds each call and
+            // aborts the session; a fixed client timeout would cut long turns short without an abort.
+            client.Timeout = Timeout.InfiniteTimeSpan;
 
             var password = runtimeOpts.OpenCodeServerPassword;
             if (!string.IsNullOrEmpty(password))
