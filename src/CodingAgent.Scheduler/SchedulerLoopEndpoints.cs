@@ -72,7 +72,6 @@ public static class SchedulerLoopEndpoints
     }
 
     internal static async Task<IResult> StartLoop(
-        ILoopCommandExecutor executor,
         ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
@@ -82,8 +81,11 @@ public static class SchedulerLoopEndpoints
     {
         if (ShouldRunLocally(leaderGate, store))
         {
-            var dto = await executor.ExecuteStartAsync(loopService, configClient, ct);
-            return Results.Ok(dto);
+            var started = await loopService.StartLoopAsync();
+            if (started)
+                await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, ct);
+            string? error = started ? null : DescribeStartFailure(loopService);
+            return Results.Ok(new LoopStartResultDto(started, error));
         }
 
         var result = await relay.SendAsync(LoopCommand.Start, ct);
@@ -95,7 +97,6 @@ public static class SchedulerLoopEndpoints
     }
 
     internal static async Task<IResult> StopLoop(
-        ILoopCommandExecutor executor,
         ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         IPipelineApiConfigClient configClient,
@@ -104,18 +105,18 @@ public static class SchedulerLoopEndpoints
         CancellationToken ct)
     {
         // Always persist locally — durable even if the leader never confirms.
-        // TODO [WARNING]: If UpdatePipelineConfigAsync throws (e.g., transient network failure),
+        // NOTE (issue #3552): If UpdatePipelineConfigAsync throws (e.g., transient network failure),
         // the exception propagates before relay.SendAsync is called, so the leader never executes
         // StopLoop(). The config flag is already set to ClosedLoopAutoStart=false but the loop
         // keeps running on the leader until the next LoopWatchdogService cycle (up to 2 min).
         // The issue spec explicitly states "stop persists first", so the design is intentional, but
         // callers receive an unhandled 500 rather than a 503 with an error body (see Correctness
         // review).
-        await executor.ExecuteStopPersistAsync(configClient, ct);
+        await configClient.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = false }, ct);
 
         if (ShouldRunLocally(leaderGate, store))
         {
-            await executor.ExecuteStopLoopOnlyAsync(loopService);
+            loopService.StopLoop();
             return Results.NoContent();
         }
 
@@ -126,7 +127,6 @@ public static class SchedulerLoopEndpoints
     }
 
     internal static async Task<IResult> ResumeLoop(
-        ILoopCommandExecutor executor,
         ILoopCommandRelay relay,
         IPipelineLoopService loopService,
         ILeaderGate? leaderGate,
@@ -135,7 +135,7 @@ public static class SchedulerLoopEndpoints
     {
         if (ShouldRunLocally(leaderGate, store))
         {
-            await executor.ExecuteResumeAsync(loopService);
+            loopService.ResumeLoop();
             return Results.NoContent();
         }
 
@@ -143,6 +143,16 @@ public static class SchedulerLoopEndpoints
         return result.Success
             ? Results.NoContent()
             : Results.Problem(result.Error, statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+
+    /// <summary>Explains why <see cref="IPipelineLoopService.StartLoopAsync"/> refused to start the loop.</summary>
+    private static string DescribeStartFailure(IPipelineLoopService loopService)
+    {
+        if (loopService.ValidationErrors.Count > 0)
+            return "Loop failed to start due to validation errors.";
+        if (loopService.IsLoopActive)
+            return "Loop is already active.";
+        return "A manual run is in progress. Wait for it to complete.";
     }
 
     internal static LoopStatusDto BuildDto(IPipelineLoopService svc) => new(
