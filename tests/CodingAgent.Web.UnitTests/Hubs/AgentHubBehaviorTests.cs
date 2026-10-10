@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgent.AgentGateway;
+using CodingAgent.Contracts;
 using CodingAgent.Infrastructure.Persistence.Entities;
 using CodingAgent.Orchestration;
 using CodingAgent.Pipeline.Interfaces;
@@ -51,6 +52,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
+        mockContext.Setup(c => c.ConnectionAborted).Returns(CancellationToken.None);
         hub.Context = mockContext.Object;
 
         return hub;
@@ -1022,6 +1024,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
+        mockContext.Setup(c => c.ConnectionAborted).Returns(CancellationToken.None);
         hub.Context = mockContext.Object;
 
         return hub;
@@ -1539,7 +1542,11 @@ public sealed class AgentHubBehaviorTests : IDisposable
     {
         var agent = CreateAgent();
         agent.ActiveChatSessionId = "s1";
+        var authoritativeEntry = CreateAgent();
+        authoritativeEntry.ActiveChatSessionId = "s1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(authoritativeEntry);
 
         var hub = CreateHubWithOrchestration();
         var message = new ChatResponseMessage { SessionId = "s1", Lines = new[] { "hello" } };
@@ -1556,6 +1563,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var agent = CreateAgent();
         agent.ActiveChatSessionId = "s1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        // GetByAgentIdAsync not set up → returns null → rejected
 
         var hub = CreateHub();
         var message = new ChatResponseMessage { SessionId = "s2", Lines = new[] { "hello" } };
@@ -1583,15 +1591,24 @@ public sealed class AgentHubBehaviorTests : IDisposable
     {
         var agent = CreateAgent();
         agent.ActiveChatSessionId = "s1";
+        var authoritativeEntry = CreateAgent();
+        authoritativeEntry.ActiveChatSessionId = "s1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(authoritativeEntry);
+        _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
+                   .Returns(Task.CompletedTask);
 
         var hub = CreateHubWithOrchestration();
         var message = new ChatCompletedMessage { SessionId = "s1", ExitCode = 0 };
 
         await hub.ReportChatCompleted(message);
 
-        // ReportChatCompleted clears ActiveChatSessionId upon successful completion
-        agent.ActiveChatSessionId.Should().BeNull();
+        // ReportChatCompleted clears ActiveChatSessionId via UpdateAgentFieldAsync
+        _mockFacade.Verify(f => f.UpdateAgentFieldAsync(
+            new AgentId("agent-1"),
+            AgentFieldNames.ActiveChatSessionId,
+            null), Times.Once);
     }
 
     [Fact]
@@ -1600,6 +1617,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var agent = CreateAgent();
         agent.ActiveChatSessionId = "s1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        // GetByAgentIdAsync not set up → returns null → rejected
 
         var hub = CreateHub();
         var message = new ChatCompletedMessage { SessionId = "s2", ExitCode = 0 };
@@ -1613,14 +1631,24 @@ public sealed class AgentHubBehaviorTests : IDisposable
     {
         var agent = CreateAgent();
         agent.ActiveChatSessionId = "s1";
+        var authoritativeEntry = CreateAgent();
+        authoritativeEntry.ActiveChatSessionId = "s1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetByAgentIdAsync(new AgentId("agent-1"), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(authoritativeEntry);
+        _mockFacade.Setup(f => f.UpdateAgentFieldAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string?>()))
+                   .Returns(Task.CompletedTask);
 
         var hub = CreateHubWithOrchestration();
         var message = new ChatCompletedMessage { SessionId = "s1", ExitCode = 0 };
 
         await hub.ReportChatCompleted(message);
 
-        agent.ActiveChatSessionId.Should().BeNull();
+        // Session is cleared via UpdateAgentFieldAsync, not by direct mutation of the snapshot object
+        _mockFacade.Verify(f => f.UpdateAgentFieldAsync(
+            new AgentId("agent-1"),
+            AgentFieldNames.ActiveChatSessionId,
+            null), Times.Once);
     }
 
     #endregion

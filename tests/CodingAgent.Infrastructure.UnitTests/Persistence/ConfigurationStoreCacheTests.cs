@@ -235,6 +235,85 @@ public sealed class ConfigurationStoreCacheTests : IDisposable
         after.Should().NotContain(c => c.Id == providerId);
     }
 
+    // ── Two-store, no-cache: cross-instance propagation ───────────────────
+    // These tests reproduce the bug from issue #3549: with caching disabled, a second store
+    // instance must not return a value loaded before another instance wrote to the DB.
+    // Both tests FAIL before the fix (LoadPipelineConfigAsync ignores CacheEnabled).
+
+    // TODO: These tests use EF in-memory (single in-process DB) and cannot prove the regression
+    // for out-of-process replicas sharing a real Postgres instance. They validate that the
+    // in-memory _pipelineConfigCache field is not returned stale, but they cannot simulate
+    // actual network-level read isolation between processes. Consider adding an integration
+    // test using a real Postgres container to cover the true multi-replica scenario.
+    //
+    // TODO: The two tests below are asymmetric — they only verify that storeB sees storeA's write,
+    // not the reverse (storeA seeing storeB's write). If CacheEnabled were accidentally inverted,
+    // storeA would still return the correct value (it wrote it) and the test would still pass.
+    // Consider adding a reverse-direction assertion: after storeB reads storeA's value, have storeB
+    // write a new value and verify storeA loads it on the next call.
+
+    [Fact]
+    public async Task NoCache_TwoStores_Save_PropagatesAcrossInstances()
+    {
+        // Arrange: two stores sharing the same DB with caching disabled (mirrors API config)
+        var storeA = CreateStore(ttl: TimeSpan.FromTicks(-1));
+        var storeB = CreateStore(ttl: TimeSpan.FromTicks(-1));
+
+        var initial = new PipelineConfiguration { MaxRetries = 1, WorkspaceBaseDirectory = "/initial" };
+        await storeA.SavePipelineConfigAsync(initial, CancellationToken.None);
+
+        // Warm B's in-memory field — without the fix, this populates _pipelineConfigCache on B
+        // TODO: This is a setup assertion (confirming the warm-up read succeeded), not a behavior
+        // assertion. If SavePipelineConfigAsync on storeA silently wrote nothing, this assertion
+        // would fail with a misleading message. Consider wrapping the initial save in a separate
+        // setup step with its own explicit verification, or use WriteDirectlyToPipelineConfigDbAsync
+        // to bypass the store entirely for the initial state.
+        var warmRead = await storeB.LoadPipelineConfigAsync(CancellationToken.None);
+        warmRead.WorkspaceBaseDirectory.Should().Be("/initial");
+
+        // Act: A writes a new value
+        var updated = new PipelineConfiguration { MaxRetries = 99, WorkspaceBaseDirectory = "/after-save" };
+        await storeA.SavePipelineConfigAsync(updated, CancellationToken.None);
+
+        // B must see the new value — it must NOT return the stale in-memory field
+        var secondRead = await storeB.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Assert
+        secondRead.WorkspaceBaseDirectory.Should().Be("/after-save",
+            "with caching disabled, B must always read from DB and never return a value pre-dating A's write");
+        secondRead.MaxRetries.Should().Be(99);
+    }
+
+    [Fact]
+    public async Task NoCache_TwoStores_Update_PropagatesAcrossInstances()
+    {
+        // Arrange: two stores sharing the same DB with caching disabled
+        var storeA = CreateStore(ttl: TimeSpan.FromTicks(-1));
+        var storeB = CreateStore(ttl: TimeSpan.FromTicks(-1));
+
+        var initial = new PipelineConfiguration { MaxRetries = 2, WorkspaceBaseDirectory = "/before-update" };
+        await storeA.SavePipelineConfigAsync(initial, CancellationToken.None);
+
+        // Warm B's in-memory field
+        // TODO: This is a setup assertion (confirming the warm-up read succeeded), not a behavior
+        // assertion. See the equivalent comment in NoCache_TwoStores_Save_PropagatesAcrossInstances.
+        var warmRead = await storeB.LoadPipelineConfigAsync(CancellationToken.None);
+        warmRead.WorkspaceBaseDirectory.Should().Be("/before-update");
+
+        // Act: A applies an atomic update
+        await storeA.UpdatePipelineConfigAsync(
+            c => c with { MaxRetries = 77, WorkspaceBaseDirectory = "/after-update" },
+            CancellationToken.None);
+
+        // B must see the updated value
+        var secondRead = await storeB.LoadPipelineConfigAsync(CancellationToken.None);
+
+        // Assert
+        secondRead.WorkspaceBaseDirectory.Should().Be("/after-update",
+            "with caching disabled, B must always read from DB and never return a value pre-dating A's update");
+        secondRead.MaxRetries.Should().Be(77);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private async Task WriteDirectlyToPipelineConfigDbAsync(PipelineConfiguration config)

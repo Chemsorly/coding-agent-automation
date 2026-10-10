@@ -934,9 +934,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Running, Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } } });
-        mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+        mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus { State = PipelineRunState.Passed, Jobs = Array.Empty<PipelineJobResult>() });
         _mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>())).ReturnsAsync(mockPipelineProvider.Object);
 
@@ -2592,14 +2592,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
                 Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
             });
         mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Failed,
@@ -3039,14 +3039,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Running,
                 Jobs = new[] { new PipelineJobResult { Name = "build", State = PipelineRunState.Running } }
             });
         mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
-                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+                It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus
             {
                 State = PipelineRunState.Passed,
@@ -3085,7 +3085,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         //    the pipeline must poll CI again to verify PR-triggered workflows passed.
         //    (Regression fix for run 563d3745: CI only fires on pull_request, not on branch push.)
         mockPipelineProvider.Verify(p => p.WaitForCompletionAsync(
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<BranchName>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
 
         // The 5-param CommitAllAsync (allowEmpty) should never be called — we skip CI instead of empty-commit
         _mockRepoProvider.Verify(p => p.CommitAllAsync(

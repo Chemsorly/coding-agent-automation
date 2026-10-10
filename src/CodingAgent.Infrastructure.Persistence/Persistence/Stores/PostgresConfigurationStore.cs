@@ -26,7 +26,14 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
     private readonly SemaphoreSlim _projectLock = new(1, 1);
 
-    // Pipeline config is cached permanently until write invalidates
+    // Pipeline config cache. When CacheEnabled=true, populated on every load/save/update and cleared
+    // by InvalidateCaches(). When CacheEnabled=false, this field is never set and every read goes
+    // directly to the database; InvalidateCaches() assigns null, which is a no-op in that mode.
+    // TODO: The comment "cached permanently until write invalidates" that appeared here was accurate
+    // only for the CacheEnabled=true path. With CacheEnabled=false (as used by the API to prevent
+    // stale config across replicas) this field is intentionally unused. If the two-mode behaviour
+    // becomes confusing, consider splitting into CachingConfigurationStore / PassThroughConfigurationStore
+    // (see docs/internals/decisions.md for guidance on introducing new store abstractions).
     private PipelineConfiguration? _pipelineConfigCache;
 
     /// <inheritdoc />
@@ -65,7 +72,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
 
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
     {
-        if (_pipelineConfigCache is not null)
+        if (CacheEnabled && _pipelineConfigCache is not null)
             return _pipelineConfigCache;
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
@@ -89,7 +96,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             result = new PipelineConfiguration();
         }
 
-        _pipelineConfigCache = result;
+        if (CacheEnabled) _pipelineConfigCache = result;
         return result;
     }
 
@@ -120,7 +127,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             }
 
             await db.SaveChangesAsync(ct);
-            _pipelineConfigCache = config;
+            if (CacheEnabled) _pipelineConfigCache = config;
         }
         finally
         {
@@ -175,7 +182,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             }
 
             await db.SaveChangesAsync(ct);
-            _pipelineConfigCache = updated;
+            if (CacheEnabled) _pipelineConfigCache = updated;
         }
         finally
         {

@@ -24,8 +24,10 @@ public interface IHubConsolidationOperations
     /// <summary>
     /// Completes a pending model fetch request by delivering the response
     /// to the waiting <see cref="ModelFetchService"/> continuation.
+    /// When Redis is configured and this replica is not the one waiting for the request,
+    /// the result is stored in Redis for the waiting replica to poll.
     /// </summary>
-    void CompleteModelFetchRequest(FetchModelsResponse response);
+    Task CompleteModelFetchRequestAsync(FetchModelsResponse response);
 
     /// <summary>
     /// Handles consolidation job completion: updates run status, persists harness
@@ -79,10 +81,10 @@ internal sealed class HubConsolidationOperations : IHubConsolidationOperations
     }
 
     /// <inheritdoc />
-    public void CompleteModelFetchRequest(FetchModelsResponse response)
+    public async Task CompleteModelFetchRequestAsync(FetchModelsResponse response)
     {
         ArgumentNullException.ThrowIfNull(response);
-        _modelFetchService.CompleteRequest(response);
+        await _modelFetchService.CompleteRequestAsync(response);
     }
 
     /// <inheritdoc />
